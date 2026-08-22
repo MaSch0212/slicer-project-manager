@@ -1,0 +1,6 @@
+# Generated artifacts — Prettier does not own these.
+pnpm-lock.yaml
+deno.lock
+dist/
+.angular/
+coverage/
