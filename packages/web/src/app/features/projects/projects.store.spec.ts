@@ -107,4 +107,20 @@ describe('ProjectsStore', () => {
     await settle()
     expect(store.knownTags()).toEqual(['boat', 'petg'])
   })
+
+  // Fix round 1, finding 1: Angular's resource() only substitutes `defaultValue` before a
+  // load has ever completed. Once a load settles to the public 'error' status, `.value()`
+  // throws a ResourceValueError instead. knownTags used to read `.value()` unconditionally,
+  // so the first failed `list()` (server error, network blip, expired session) would crash
+  // it — and the template, which also reads `.value()` in its @else-if/@for. This proves the
+  // store stays readable, and that the error state is observable, so the page can render a
+  // real fallback instead of throwing.
+  it('stays readable when list rejects, and exposes an observable error state', async () => {
+    const { store } = setup(vi.fn().mockRejectedValue(new Error('boom')))
+    await settle()
+
+    expect(store.projects.status()).toBe('error')
+    expect(() => store.knownTags()).not.toThrow()
+    expect(store.knownTags()).toEqual([])
+  })
 })

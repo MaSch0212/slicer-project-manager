@@ -18,16 +18,32 @@ export class ProjectsStore {
   })
 
   /**
+   * `Resource.value()` only substitutes `defaultValue` before any load has ever completed
+   * (or while a same-params reload is in flight). Once a load settles to the public 'error'
+   * status, `value()` throws a `ResourceValueError` instead — `defaultValue` does not shield
+   * reads after that point. `status()` is the public, typed way to check for that state
+   * (`Resource<T>` exposes `status`/`error`/`isLoading`, but no `isError`).
+   */
+  readonly loadFailed = computed(() => this.projects.status() === 'error')
+
+  /**
    * Ruling 59: the tag filter bar must always offer a way to un-toggle an active filter. With
    * AND filtering, two tags that no single loaded project shares in common yield an empty
    * result set — and knownTags used to be derived only from the loaded projects, so it would
    * go empty right along with the list, hiding every filter button (including the ones that
    * caused the empty result) with no way back except reloading the page. Folding the tags
    * currently in `query()` into the union guarantees a selected tag always has a button.
+   *
+   * Fix round 1: guard on `loadFailed` before ever touching `this.projects.value()` — reading
+   * it after a failed load throws (see `loadFailed` above), and this computed is read by the
+   * filter bar independently of the grid, so it must survive a failed load on its own.
    */
   readonly knownTags = computed(() => {
-    const loaded = this.projects.value().flatMap((project) => project.tags)
     const selected = this.query().tags ?? []
+    if (this.loadFailed()) {
+      return [...new Set(selected)].sort((a, b) => a.localeCompare(b))
+    }
+    const loaded = this.projects.value().flatMap((project) => project.tags)
     return [...new Set([...loaded, ...selected])].sort((a, b) => a.localeCompare(b))
   })
 

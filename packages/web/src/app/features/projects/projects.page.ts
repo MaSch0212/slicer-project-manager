@@ -29,6 +29,9 @@ import { ProjectsStore } from './projects.store'
           }}
         </p>
       }
+      @if (rescanError()) {
+        <p role="alert">{{ t.translations().errors.generic }}</p>
+      }
     </header>
 
     <section>
@@ -47,7 +50,10 @@ import { ProjectsStore } from './projects.store'
         {{ t.translations().projects.includeArchived }}
       </label>
 
-      <select (change)="onSort($any($event.target).value)">
+      <select
+        [attr.aria-label]="t.translations().settings.sort"
+        (change)="onSort($any($event.target).value)"
+      >
         <option value="updatedAt:desc">{{ t.translations().settings.sort }}</option>
         <option value="name:asc">A–Z</option>
         <option value="createdAt:desc">Newest</option>
@@ -72,9 +78,14 @@ import { ProjectsStore } from './projects.store'
       <button type="submit" [disabled]="createForm().submitting()">
         {{ t.translations().projects.newProject }}
       </button>
+      @if (createError()) {
+        <p role="alert">{{ t.translations().errors.generic }}</p>
+      }
     </form>
 
-    @if (store.projects.isLoading()) {
+    @if (store.loadFailed()) {
+      <p role="alert">{{ t.translations().errors.generic }}</p>
+    } @else if (store.projects.isLoading()) {
       <p>...</p>
     } @else if (store.projects.value().length === 0) {
       <p>{{ t.translations().projects.empty }}</p>
@@ -115,7 +126,9 @@ export class ProjectsPage {
   protected readonly t = inject(TranslateService)
 
   readonly rescanned = signal<RescanResultDto | null>(null)
+  readonly rescanError = signal(false)
   readonly createModel = signal({ name: '' })
+  readonly createError = signal(false)
   // The same schema the server validates with (spec 2.3).
   protected readonly createForm = form(this.createModel, (path) => {
     validateStandardSchema(path, createProjectSchema)
@@ -127,15 +140,27 @@ export class ProjectsPage {
   }
 
   // Public (like LoginPage.onSubmit / ActivatePage.onSubmit): the "does not call create when
-  // invalid" test (ruling 58) drives this directly, the same way the auth pages' specs do.
+  // invalid" test (ruling 58) and the create-rejection test (fix round 1) drive this directly,
+  // the same way the auth pages' specs do.
   async onCreate(): Promise<void> {
-    // Ruling 58: gate on the shared createProjectSchema via submit(), the same way ruling 53
-    // fixed LoginPage — an invalid name never reaches the network, and a rejected attempt
-    // surfaces its error in the jig hint instead of the submit silently doing nothing.
+    this.createError.set(false)
     await submit(this.createForm, {
+      // Ruling 58: gate on the shared createProjectSchema via submit() — an invalid name
+      // never reaches the network. Note `submit()`'s own guarantee stops there: it is
+      // `try { … } finally { … }` with no catch, so a *rejected* `action` (a real network or
+      // server failure, as opposed to a client-side validation failure) would otherwise
+      // escape as an unhandled rejection — `jigErrors`/`onInvalid` only ever fire for
+      // schema-validation failures, never for an exception thrown inside `action`. Hence the
+      // try/catch below, matching LoginPage/ActivatePage's own pattern for their network
+      // calls. A failed create leaves the typed name in place (it stays in `createModel`)
+      // so the user can just retry, rather than having to retype it.
       action: async () => {
-        await this.store.create(this.createModel())
-        this.createModel.set({ name: '' })
+        try {
+          await this.store.create(this.createModel())
+          this.createModel.set({ name: '' })
+        } catch {
+          this.createError.set(true)
+        }
       },
       onInvalid: (field) => {
         field().markAsTouched()
@@ -143,7 +168,15 @@ export class ProjectsPage {
     })
   }
 
-  protected async onRescan(): Promise<void> {
-    this.rescanned.set(await this.store.rescan())
+  // Public, for the same reason as onCreate: the rescan-rejection test drives this directly.
+  async onRescan(): Promise<void> {
+    this.rescanError.set(false)
+    try {
+      this.rescanned.set(await this.store.rescan())
+    } catch {
+      // A rescan is a one-shot action, not a form (spec: nothing to preserve on failure) —
+      // it just needs to surface visibly instead of escaping as an unhandled rejection.
+      this.rescanError.set(true)
+    }
   }
 }
