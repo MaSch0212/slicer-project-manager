@@ -19,6 +19,7 @@ import {
 } from '../src/auth/sessions.ts'
 import { newId } from '../src/db/ids.ts'
 import type { Db } from '../src/db/open.ts'
+import { AppError } from '@spm/contract/errors.ts'
 import { assert, test } from './harness.ts'
 import { withLibrary } from './tmp-library.ts'
 
@@ -151,12 +152,63 @@ test('consuming an activation token twice never yields two consumptions', async 
   })
 })
 
+// consumeActivationToken has real await points (findToken awaits sha256Bytes, which calls
+// crypto.subtle.digest), so starting both calls before awaiting either genuinely interleaves
+// them at the JS microtask level — this is the actual regression test for the TOCTOU: it
+// fails against the pre-fix code, where both calls could pass the `consumedAt === null`
+// read before either wrote.
+test('two concurrent consumptions of the same token: exactly one wins', async () => {
+  await withLibrary(async ({ db }) => {
+    const userId = seedUser(db, { status: 'pending' })
+    const token = await issueActivationToken(db, userId)
+
+    const results = await Promise.allSettled([
+      consumeActivationToken(db, token),
+      consumeActivationToken(db, token),
+    ])
+
+    const fulfilled = results.filter(
+      (r): r is PromiseFulfilledResult<string> => r.status === 'fulfilled',
+    )
+    const rejected = results.filter((r): r is PromiseRejectedResult => r.status === 'rejected')
+    assert.equal(fulfilled.length, 1)
+    assert.equal(rejected.length, 1)
+    assert.equal(fulfilled[0]!.value, userId)
+    assert.ok(rejected[0]!.reason instanceof AppError)
+    assert.equal((rejected[0]!.reason as AppError).code, 'InvalidToken')
+
+    const rows = db
+      .prepare('SELECT consumed_at FROM activation_tokens WHERE user_id = ?')
+      .all(userId) as { consumed_at: number | null }[]
+    assert.equal(rows.length, 1)
+    assert.equal(rows[0]!.consumed_at !== null, true)
+  })
+})
+
 test('an expired activation token is invalid', async () => {
   await withLibrary(async ({ db }) => {
     const userId = seedUser(db, { status: 'pending' })
     const token = await issueActivationToken(db, userId, 0)
     const eightDays = 8 * 24 * 60 * 60 * 1000
     assert.equal((await checkActivationToken(db, token, eightDays)).valid, false)
+  })
+})
+
+test('an already-consumed token reports InvalidToken even after it also expires', async () => {
+  await withLibrary(async ({ db }) => {
+    const userId = seedUser(db, { status: 'pending' })
+    const token = await issueActivationToken(db, userId, 0)
+    await consumeActivationToken(db, token, 0)
+
+    const eightDays = 8 * 24 * 60 * 60 * 1000
+    let caught: unknown
+    try {
+      await consumeActivationToken(db, token, eightDays)
+    } catch (error) {
+      caught = error
+    }
+    assert.ok(caught instanceof AppError)
+    assert.equal((caught as AppError).code, 'InvalidToken')
   })
 })
 

@@ -48,7 +48,11 @@ export async function consumeActivationToken(
   now: number = Date.now(),
 ): Promise<string> {
   const row = await findToken(db, token)
-  if (!row) throw new AppError('InvalidToken', 'activation token is not usable')
+  // Already-consumed takes precedence over expired: a token both used and past its TTL
+  // must still read as "not usable", not "expired" — the caller shouldn't be told to
+  // request a new invite for an account that already activated.
+  if (!row || row.consumedAt !== null)
+    throw new AppError('InvalidToken', 'activation token is not usable')
   if (row.expiresAt <= now) throw new AppError('TokenExpired', 'activation token has expired')
 
   // `consumed_at IS NULL` in the WHERE clause is the single source of truth for who owns
