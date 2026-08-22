@@ -10,12 +10,13 @@
     "lint": "eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
+    "typecheck": "tsc --noEmit -p packages/contract/tsconfig.json && tsc --noEmit -p packages/core/tsconfig.json",
     "test:contract": "node --test \"packages/contract/test/**/*.test.ts\"",
     "test:core:node": "node --test \"packages/core/test/**/*.test.ts\"",
     "test:core:deno": "deno test --allow-read --allow-write --allow-env packages/core/test/",
     "test:server": "deno test --allow-all packages/server/test/",
     "test:web": "pnpm --filter @spm/web test",
-    "verify": "pnpm lint && pnpm format:check && pnpm test:contract && pnpm test:core:node && pnpm test:core:deno"
+    "verify": "pnpm lint && pnpm format:check && pnpm typecheck && pnpm test:contract && pnpm test:core:node && pnpm test:core:deno"
   },
   "devDependencies": {
     "@types/node": "^24.3.0",
