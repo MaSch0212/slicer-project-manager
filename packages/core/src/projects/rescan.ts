@@ -34,12 +34,22 @@ function walkFiles(dir: string, prefix = ''): DiskFile[] {
   return found
 }
 
+function isMissingRootError(err: unknown): boolean {
+  const code = (err as { code?: string } | undefined)?.code
+  return code === 'ENOENT' || code === 'ENOTDIR'
+}
+
 function listProjectFolders(root: string): string[] {
   let entries
   try {
     entries = readdirSync(root, { withFileTypes: true })
-  } catch {
-    return [] // The library root itself is missing: report nothing rather than deleting.
+  } catch (err) {
+    // The library root itself is absent (unmounted drive, deleted folder): report nothing
+    // rather than deleting. Anything else (EPERM/EACCES, a transient I/O error) means the
+    // drive IS there and something else is wrong; hiding that behind "missing" would tell
+    // the user their whole library vanished when the real problem is permissions.
+    if (isMissingRootError(err)) return []
+    throw err
   }
   return entries.filter((e) => e.isDirectory() && !isHidden(e.name)).map((e) => e.name)
 }

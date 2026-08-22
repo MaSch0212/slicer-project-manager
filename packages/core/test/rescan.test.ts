@@ -142,6 +142,31 @@ test('a project whose folder disappeared is marked missing and keeps its files',
     assert.equal(project!.state, 'missing')
     // The drive may simply be unmounted: a thousand tags must not evaporate.
     assert.equal(project!.fileCounts.model, 1)
+
+    // markedMissing is reported to the user: a still-missing project must not be re-counted.
+    const again = await rescan(lib, ctx)
+    assert.equal(again.markedMissing, 0)
+  })
+})
+
+test('an absent library root degrades to missing projects instead of throwing', async () => {
+  await withLibrary(async (lib) => {
+    const ctx = seedUser(lib)
+    const dir = join(root(lib), 'Benchy')
+    mkdirSync(dir)
+    writeFileSync(join(dir, 'benchy.stl'), 'solid')
+    await rescan(lib, ctx)
+
+    // Not just the project folder: the whole user root is gone (e.g. an unmounted network
+    // drive), which is exactly the ENOENT case listProjectFolders must swallow.
+    rmSync(root(lib), { recursive: true, force: true })
+    const result = await rescan(lib, ctx)
+
+    assert.equal(result.markedMissing, 1)
+    assert.equal(result.filesRemoved, 0)
+    const [project] = listProjects(lib, ctx, {})
+    assert.equal(project!.state, 'missing')
+    assert.equal(project!.fileCounts.model, 1)
   })
 })
 
@@ -208,6 +233,42 @@ test('a changed file resets its preview to pending and updates its hash', async 
     }
     assert.equal(file_row.size_bytes, 'solid one but longer now'.length)
     assert.equal(file_row.content_hash.byteLength, 32)
+  })
+})
+
+test('a same-size edit is still detected by its changed mtime', async () => {
+  await withLibrary(async (lib) => {
+    const ctx = seedUser(lib)
+    const dir = join(root(lib), 'Benchy')
+    mkdirSync(dir)
+    const file = join(dir, 'benchy.stl')
+    // Same length, different content: an in-place slicer re-save often looks exactly like
+    // this, and size_bytes alone would never notice it.
+    writeFileSync(file, 'solid one')
+    await rescan(lib, ctx)
+    const before = (
+      lib.db.prepare('SELECT content_hash FROM files').get() as { content_hash: Uint8Array }
+    ).content_hash
+    lib.db.prepare("UPDATE previews SET state = 'ready', source_hash = X'00'").run()
+
+    writeFileSync(file, 'solid TWO')
+    assert.equal('solid one'.length, 'solid TWO'.length)
+    const later = new Date(Date.now() + 5000)
+    utimesSync(file, later, later)
+
+    const result = await rescan(lib, ctx)
+    assert.equal(result.previewsQueued, 1)
+    const row = lib.db.prepare('SELECT state FROM previews').get() as { state: string }
+    assert.equal(row.state, 'pending')
+    const after = lib.db.prepare('SELECT content_hash, size_bytes FROM files').get() as {
+      content_hash: Uint8Array
+      size_bytes: number
+    }
+    assert.equal(after.size_bytes, 'solid TWO'.length)
+    const sameHash =
+      after.content_hash.length === before.length &&
+      after.content_hash.every((byte, i) => byte === before[i])
+    assert.equal(sameHash, false)
   })
 })
 
