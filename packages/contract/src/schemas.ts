@@ -44,6 +44,8 @@ export const updateUserSchema = z.object({
 
 export const tagNameSchema = z.string().trim().min(1).max(60)
 
+export const tagBodySchema = z.object({ name: tagNameSchema })
+
 export const createProjectSchema = z.object({
   name: z.string().trim().min(1).max(200),
   website: z.url().nullable().optional(),
