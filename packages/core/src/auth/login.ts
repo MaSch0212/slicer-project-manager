@@ -20,6 +20,16 @@ export async function login(
 ): Promise<LoginResult> {
   const row = findUserByUsername(lib.db, username)
   // One message for every failure mode: unknown user, pending, disabled, wrong password.
+  // Known timing channel, deliberately not closed here: this branch returns in about a
+  // millisecond, while a wrong password on an active account costs a real PBKDF2 derive
+  // (150-400ms), so the two are distinguishable by wall-clock time even though the thrown
+  // error is identical in code and message. The fix considered and rejected for this call
+  // site is a dummy verifyPassword on every failure path to equalise timing — on a
+  // self-hosted single-process server with admin-created accounts, no self-registration
+  // and no rate limiting yet, that trade makes every bogus request cost 600,000 PBKDF2
+  // iterations, which is a cheaper DoS than the enumeration it prevents. The mitigation
+  // that fixes both at once — rate limiting — belongs in the transport and is a
+  // requirement carried into the task that builds the server's route table.
   if (!row || row.status !== 'active' || !row.pw_hash || !row.pw_salt || !row.pw_iterations) {
     throw new AppError('Unauthorized', UNAUTHORIZED)
   }

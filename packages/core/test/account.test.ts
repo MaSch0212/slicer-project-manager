@@ -2,7 +2,8 @@ import { existsSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import type { AppError } from '@spm/contract/errors.ts'
 import { activateAccount, login } from '../src/auth/login.ts'
-import { PW_ITERATIONS, hashPassword } from '../src/auth/password.ts'
+import { PW_ALGO, PW_ITERATIONS, hashPassword } from '../src/auth/password.ts'
+import { timingSafeEqual } from '../src/auth/tokens.ts'
 import {
   changePassword,
   getSettings,
@@ -79,7 +80,10 @@ test('activation cannot be replayed', async () => {
   await withLibrary(async (lib) => {
     const boot = await ensureBootstrapAdmin(lib)
     await activateAccount(lib, boot!.token, 'a good long password', null)
-    await assert.rejects(() => activateAccount(lib, boot!.token, 'another password', null))
+    await assert.rejects(
+      () => activateAccount(lib, boot!.token, 'another password', null),
+      (e: unknown) => (e as AppError).code === 'InvalidToken',
+    )
   })
 })
 
@@ -111,10 +115,20 @@ test('login upgrades a hash stored with weaker parameters', async () => {
       .run(weak.hash, weak.salt, weak.iterations, weak.algo)
 
     await login(lib, 'admin', 'a good long password', null)
-    const { pw_iterations } = lib.db.prepare('SELECT pw_iterations FROM users').get() as {
-      pw_iterations: number
-    }
-    assert.equal(pw_iterations, PW_ITERATIONS)
+    const row = lib.db
+      .prepare('SELECT pw_hash, pw_salt, pw_iterations, pw_algo FROM users')
+      .get() as { pw_hash: Uint8Array; pw_salt: Uint8Array; pw_iterations: number; pw_algo: string }
+
+    // The write-back must land all four columns together: a partial write (e.g. a
+    // refactor that drops the salt or algo assignment) would leave a password that can
+    // never verify again, silently and permanently.
+    assert.equal(row.pw_iterations, PW_ITERATIONS)
+    assert.equal(row.pw_algo, PW_ALGO)
+    assert.equal(timingSafeEqual(row.pw_hash, weak.hash), false)
+    assert.equal(timingSafeEqual(row.pw_salt, weak.salt), false)
+
+    // End-to-end proof the upgraded row is actually authenticatable, not just rewritten.
+    assert.ok(await login(lib, 'admin', 'a good long password', null))
   })
 })
 
