@@ -1,0 +1,10 @@
+{
+  "name": "@spm/server",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@spm/contract": "workspace:*",
+    "@spm/core": "workspace:*"
+  }
+}

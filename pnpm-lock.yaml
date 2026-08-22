@@ -36,6 +36,15 @@ importers:
         specifier: workspace:*
         version: link:../contract
 
+  packages/server:
+    dependencies:
+      '@spm/contract':
+        specifier: workspace:*
+        version: link:../contract
+      '@spm/core':
+        specifier: workspace:*
+        version: link:../core
+
 packages:
 
   '@eslint-community/eslint-utils@4.10.1':
