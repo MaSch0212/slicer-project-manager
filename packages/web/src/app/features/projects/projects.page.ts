@@ -171,6 +171,9 @@ export class ProjectsPage {
   // Public, for the same reason as onCreate: the rescan-rejection test drives this directly.
   async onRescan(): Promise<void> {
     this.rescanError.set(false)
+    // Clear the previous run's summary too: the banner and the alert are independent @if
+    // blocks, so a stale success would otherwise render beside a fresh failure.
+    this.rescanned.set(null)
     try {
       this.rescanned.set(await this.store.rescan())
     } catch {
