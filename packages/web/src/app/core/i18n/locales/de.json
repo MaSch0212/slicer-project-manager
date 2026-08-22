@@ -29,7 +29,18 @@
     "upload": "Datei hochladen",
     "delete": "Projekt löschen",
     "deleteFiles": "Dateien auf der Festplatte ebenfalls löschen",
-    "previewPending": "Vorschau ausstehend"
+    "previewPending": "Vorschau ausstehend",
+    "backToProjects": "Zurück zu allen Projekten",
+    "edit": "Projekt bearbeiten",
+    "save": "Änderungen speichern",
+    "cancel": "Abbrechen",
+    "rename": "Umbenennen",
+    "newName": "Neuer Dateiname",
+    "deleteFile": "Datei löschen",
+    "removeTag": "Schlagwort entfernen",
+    "confirmDelete": "Dieses Projekt löschen? Projekt und Schlagwörter werden entfernt; die Dateien bleiben auf der Festplatte.",
+    "confirmDeleteWithFiles": "Dieses Projekt löschen und alle zugehörigen Dateien von der Festplatte entfernen? Das kann nicht rückgängig gemacht werden.",
+    "confirmDeleteAction": "Ja, löschen"
   },
   "settings": {
     "title": "Einstellungen",
@@ -55,6 +66,9 @@
   },
   "errors": {
     "quotaExceeded": "Dieser Upload würde das Kontingent überschreiten ({{ usage }} von {{ quota }} belegt)",
+    "notFound": "Dieses Projekt existiert nicht mehr",
+    "invalidTag": "Ein Schlagwort muss zwischen 1 und 60 Zeichen lang sein",
+    "invalidFileName": "Dieser Dateiname ist nicht erlaubt",
     "generic": "Etwas ist schiefgelaufen"
   }
 }

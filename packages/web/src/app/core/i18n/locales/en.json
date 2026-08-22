@@ -29,7 +29,18 @@
     "upload": "Upload file",
     "delete": "Delete project",
     "deleteFiles": "Also delete the files on disk",
-    "previewPending": "Preview pending"
+    "previewPending": "Preview pending",
+    "backToProjects": "Back to all projects",
+    "edit": "Edit project",
+    "save": "Save changes",
+    "cancel": "Cancel",
+    "rename": "Rename",
+    "newName": "New file name",
+    "deleteFile": "Delete file",
+    "removeTag": "Remove tag",
+    "confirmDelete": "Delete this project? The project and its tags are removed; the files stay on disk.",
+    "confirmDeleteWithFiles": "Delete this project and erase every one of its files from the disk? This cannot be undone.",
+    "confirmDeleteAction": "Yes, delete"
   },
   "settings": {
     "title": "Settings",
@@ -55,6 +66,9 @@
   },
   "errors": {
     "quotaExceeded": "This upload would exceed your quota ({{ usage }} of {{ quota }} used)",
+    "notFound": "This project does not exist any more",
+    "invalidTag": "A tag must be between 1 and 60 characters",
+    "invalidFileName": "That file name is not allowed",
     "generic": "Something went wrong"
   }
 }
