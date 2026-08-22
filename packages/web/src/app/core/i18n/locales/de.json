@@ -23,7 +23,7 @@
     "archived": "Archiviert",
     "missing": "Ordner fehlt",
     "rescan": "Bibliothek neu einlesen",
-    "rescanned": "{adopted} übernommen, {filesAdded} Dateien ergänzt",
+    "rescanned": "{{ adopted }} übernommen, {{ filesAdded }} Dateien ergänzt",
     "empty": "Noch keine Projekte",
     "files": "Dateien",
     "upload": "Datei hochladen",
@@ -54,7 +54,7 @@
     "lastAdmin": "Der letzte aktive Administrator muss bestehen bleiben"
   },
   "errors": {
-    "quotaExceeded": "Dieser Upload würde das Kontingent überschreiten ({usage} von {quota} belegt)",
+    "quotaExceeded": "Dieser Upload würde das Kontingent überschreiten ({{ usage }} von {{ quota }} belegt)",
     "generic": "Etwas ist schiefgelaufen"
   }
 }

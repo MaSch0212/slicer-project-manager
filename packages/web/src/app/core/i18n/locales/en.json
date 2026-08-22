@@ -23,7 +23,7 @@
     "archived": "Archived",
     "missing": "Folder missing",
     "rescan": "Rescan library",
-    "rescanned": "Adopted {adopted}, {filesAdded} files added",
+    "rescanned": "Adopted {{ adopted }}, {{ filesAdded }} files added",
     "empty": "No projects yet",
     "files": "Files",
     "upload": "Upload file",
@@ -54,7 +54,7 @@
     "lastAdmin": "The last active administrator must remain"
   },
   "errors": {
-    "quotaExceeded": "This upload would exceed your quota ({usage} of {quota} used)",
+    "quotaExceeded": "This upload would exceed your quota ({{ usage }} of {{ quota }} used)",
     "generic": "Something went wrong"
   }
 }
