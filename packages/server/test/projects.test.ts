@@ -69,15 +69,21 @@ Deno.test('query parameters map onto the project query', async () => {
       body: JSON.stringify({ isArchived: true }),
     })
 
-    const names = async (query: string) =>
-      (await (await server.fetch(`/api/projects${query}`, { cookie })).json())
-        .map((p: { name: string }) => p.name)
-        .sort()
+    /** Names in the order the server returned them, so sort and dir stay observable. */
+    const namesInOrder = async (query: string): Promise<string[]> =>
+      (await (await server.fetch(`/api/projects${query}`, { cookie })).json()).map(
+        (p: { name: string }) => p.name,
+      )
+    /** Names as a set, for the filters where response order is not the point. */
+    const names = async (query: string) => (await namesInOrder(query)).sort()
 
     assert.deepEqual(await names('?search=bench'), ['Benchy'])
     assert.deepEqual(await names('?tags=petg&tags=boat'), ['Benchy'])
-    assert.deepEqual(await names('?sort=name&dir=asc'), ['Benchy', 'Bracket'])
-    assert.deepEqual(await names('?includeArchived=true&sort=name&dir=asc'), [
+    // Asserted in the server's own order and in both directions: sorting these
+    // client-side, or checking only asc, passes even when dir is ignored entirely.
+    assert.deepEqual(await namesInOrder('?sort=name&dir=asc'), ['Benchy', 'Bracket'])
+    assert.deepEqual(await namesInOrder('?sort=name&dir=desc'), ['Bracket', 'Benchy'])
+    assert.deepEqual(await namesInOrder('?includeArchived=true&sort=name&dir=asc'), [
       'Benchy',
       'Bracket',
       'Old',
