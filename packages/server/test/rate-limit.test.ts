@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { EVICTION_BATCH, MAX_TRACKED_KEYS, makeRateLimiter } from '../src/rate-limit.ts'
 import { loginAsAdmin, withServer } from './harness.ts'
 
 const badLogin = { username: 'admin', password: 'the wrong password entirely' }
@@ -88,4 +89,59 @@ Deno.test('activation is rate limited too, since it also takes a token guess', a
     for (let i = 0; i < 10; i++) await attempt()
     assert.equal((await attempt()).status, 429)
   })
+})
+
+Deno.test(
+  'exhausting the login budget for an ip leaves the activation route reachable for it',
+  async () => {
+    await withServer(async (server) => {
+      for (let attempt = 0; attempt < 11; attempt++) await login(server, '10.0.0.7')
+      assert.equal((await login(server, '10.0.0.7')).status, 429)
+      // Same IP, but a different route pattern, so it must be a different budget. The
+      // limiter key visibly includes method+path today; nothing exercised a regression that
+      // collapsed both routes onto one shared bucket keyed on IP alone.
+      const activation = await server.fetch(
+        '/api/auth/activation/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        {
+          method: 'POST',
+          ip: '10.0.0.7',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            password: 'a good long password',
+            confirm: 'a good long password',
+          }),
+        },
+      )
+      assert.notEqual(activation.status, 429)
+    })
+  },
+)
+
+Deno.test('the tracked-key count stays bounded under a flood of distinct keys', () => {
+  // Unit-level: exercises makeRateLimiter directly rather than through the HTTP harness,
+  // since driving 3x the cap through real login/activation handlers would be far slower
+  // (and would pay real PBKDF2 costs). `size()` on RateLimiter is test-facing observability
+  // added for exactly this purpose — see rate-limit.ts.
+  let clock = 0
+  const limiter = makeRateLimiter(() => clock)
+  const rule = { limit: 10, windowMs: 60_000 }
+
+  // Roughly 3x the cap, all inside a single window (nothing here is prunable by the
+  // sweep), simulating an attacker rotating source addresses.
+  const n = (MAX_TRACKED_KEYS + EVICTION_BATCH) * 3
+  for (let i = 0; i < n; i++) {
+    clock += 1
+    limiter.check(`10.0.0.${i}|POST /api/auth/login`, rule)
+  }
+
+  // Under the old (pre-fix) strategy this would equal n: a size-gated sweep never deletes
+  // a bucket that's still inside its own window, so a flood of never-repeated keys grew the
+  // map without bound. The hysteresis eviction here bounds it at MAX_TRACKED_KEYS +
+  // EVICTION_BATCH rather than exactly MAX_TRACKED_KEYS — see rate-limit.ts's comment on
+  // EVICTION_BATCH for why a strict per-insert cap was rejected (it reintroduces the same
+  // non-linear slowdown via Map churn that this whole fix exists to close).
+  assert.ok(
+    limiter.size() <= MAX_TRACKED_KEYS + EVICTION_BATCH,
+    `expected size() <= ${MAX_TRACKED_KEYS + EVICTION_BATCH}, got ${limiter.size()}`,
+  )
 })

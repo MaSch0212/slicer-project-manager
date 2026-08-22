@@ -43,6 +43,12 @@ const ANONYMOUS: Ctx = { userId: '', isAdmin: false }
  */
 function clientAddress(info?: Deno.ServeHandlerInfo): string {
   const addr = info?.remoteAddr
+  // 'unknown' is a defensive fallback for a missing or malformed `info`, not an expected
+  // runtime path: both `main.ts` (via Deno.serve) and the test harness always supply a real
+  // `remoteAddr`. It deliberately is NOT a way to opt out of per-client keying — every
+  // caller that hits this branch shares one bucket, which is the same as being unlimited in
+  // practice, so this should never be relied on to mean "no address available, limit
+  // anyway."
   return addr && 'hostname' in addr ? addr.hostname : 'unknown'
 }
 
