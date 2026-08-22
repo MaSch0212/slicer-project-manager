@@ -34,10 +34,37 @@ type EditModel = { name: string; website: string; notes: string; isArchived: boo
  * projectPatchSchema spells "no website" as `null`, but a text input can only ever hand back
  * `''` — which `z.url()` rejects, leaving the user unable to clear a website they once set.
  * The empty case therefore validates against the very same schema minus that one field
- * (`.omit`, so no constraint is restated here), and `onSaveEdit` maps `''` back to `null`
- * before it reaches the API.
+ * (`.omit`, so no constraint is restated here), and the patch carries `null` instead.
  */
 const PATCH_WITHOUT_WEBSITE = projectPatchSchema.omit({ website: true })
+
+/**
+ * The single definition of "the website field is empty". Both readers — the validator arm the
+ * form picks, and the value the patch carries — go through this, so the two can never drift
+ * into a state where a value validated by the no-website arm is sent as a non-null string.
+ */
+function websiteOrNull(value: string): string | null {
+  const trimmed = value.trim()
+  return trimmed === '' ? null : trimmed
+}
+
+function toEditModel(detail: ProjectDetailDto | undefined): EditModel {
+  return {
+    name: detail?.name ?? '',
+    website: detail?.website ?? '',
+    notes: detail?.notes ?? '',
+    isArchived: detail?.isArchived ?? false,
+  }
+}
+
+function sameEditModel(a: EditModel, b: EditModel): boolean {
+  return (
+    a.name === b.name &&
+    a.website === b.website &&
+    a.notes === b.notes &&
+    a.isArchived === b.isArchived
+  )
+}
 
 @Component({
   selector: 'spm-project-detail-page',
@@ -120,7 +147,12 @@ const PATCH_WITHOUT_WEBSITE = projectPatchSchema.omit({ website: true })
 
             <label>
               <input type="checkbox" [formField]="editForm.isArchived" />
-              {{ t.translations().projects.archived }}
+              <!--
+                Its own key, not the badge's: a non-archived project rendering the bare word
+                "Archived" beside a checkbox read as a state, not an action — and it made the
+                badge impossible to assert on, since the word was on the page either way.
+              -->
+              {{ t.translations().projects.archive }}
             </label>
 
             <button type="submit" [disabled]="editForm().submitting()">
@@ -146,7 +178,7 @@ const PATCH_WITHOUT_WEBSITE = projectPatchSchema.omit({ website: true })
           <input
             type="text"
             [attr.aria-label]="t.translations().projects.addTag"
-            (keydown.enter)="onAddTag($any($event.target).value); $any($event.target).value = ''"
+            (keydown.enter)="onTagInput($event)"
           />
         </section>
 
@@ -305,24 +337,33 @@ export class ProjectDetailPage {
   })
 
   /**
-   * Re-seeded from the project every time it (re)loads, so a saved edit and an external
-   * change both leave the form showing what is actually stored.
+   * Seeded from the project, but re-seeded only when the project's identity or its *stored*
+   * values actually change — not merely when the resource reloads.
+   *
+   * Every mutation on this page ends in `project.reload()`, and each reload resolves to a
+   * fresh DTO object. Keying this on the loaded DTO alone therefore threw away whatever the
+   * user had typed but not yet saved the moment they added a tag, uploaded a file or deleted
+   * one — silently, and with the typed text unrecoverable. Comparing the stored values keeps
+   * both halves of the guarantee: an in-progress edit survives an unrelated mutation, while a
+   * first load, a successful save and an external change all still re-seed the form to what
+   * is really stored.
    */
-  readonly editModel = linkedSignal<EditModel>(() => {
-    const detail = this.loaded()
-    return {
-      name: detail?.name ?? '',
-      website: detail?.website ?? '',
-      notes: detail?.notes ?? '',
-      isArchived: detail?.isArchived ?? false,
-    }
+  readonly editModel = linkedSignal<{ id: string; stored: EditModel }, EditModel>({
+    source: () => ({ id: this.id(), stored: toEditModel(this.loaded()) }),
+    computation: (next, previous) => {
+      const unchanged =
+        previous !== undefined &&
+        previous.source.id === next.id &&
+        sameEditModel(previous.source.stored, next.stored)
+      return unchanged ? previous.value : next.stored
+    },
   })
 
   // The same schema the server validates with (spec 2.3), via submit() so the field errors
   // land in the jig hints instead of coming back as an undisplayed 400.
   protected readonly editForm = form(this.editModel, (path) => {
     validateStandardSchema(path, ({ value }) =>
-      value().website.trim() === '' ? PATCH_WITHOUT_WEBSITE : projectPatchSchema,
+      websiteOrNull(value().website) === null ? PATCH_WITHOUT_WEBSITE : projectPatchSchema,
     )
   })
 
@@ -355,15 +396,24 @@ export class ProjectDetailPage {
     await this.mutate(() => this.api.files.upload(this.id(), file.name, { blob: file }))
   }
 
-  async onAddTag(name: string): Promise<void> {
+  /** Resolves to whether the tag was actually added, so the input only clears on success. */
+  async onAddTag(name: string): Promise<boolean> {
     // Ruling 65: tagNameSchema is what the server validates with — a 61-character tag used
     // to round-trip to a 400 that nothing displayed. safeParse also trims for us.
     const parsed = tagNameSchema.safeParse(name)
     if (!parsed.success) {
       this.errorMessage.set(this.t.translations().errors.invalidTag)
-      return
+      return false
     }
-    await this.mutate(() => this.api.projects.addTag(this.id(), parsed.data))
+    return await this.mutate(() => this.api.projects.addTag(this.id(), parsed.data))
+  }
+
+  protected async onTagInput(event: Event): Promise<void> {
+    const element = event.target as HTMLInputElement
+    // Only wipe the field once the tag is in. A rejected one (too long, a duplicate, a
+    // network failure) stays put next to the error, so it can be corrected rather than
+    // retyped from scratch.
+    if (await this.onAddTag(element.value)) element.value = ''
   }
 
   async onRemoveTag(name: string): Promise<void> {
@@ -412,7 +462,15 @@ export class ProjectDetailPage {
     }
     try {
       await this.api.projects.delete(this.id(), { deleteFiles })
-      await this.router.navigate(['/projects'])
+      // Disarm as soon as the project is gone: whether the navigation lands or not, there is
+      // nothing left here to confirm, and a live "yes, delete" button on an already-deleted
+      // project is misleading at best.
+      this.deleteArmed.set(false)
+      if (!(await this.router.navigate(['/projects']))) {
+        // A guard refused it, or the navigation failed. The delete did happen, so say
+        // something rather than leaving the user on a page that no longer exists.
+        this.errorMessage.set(this.t.translations().errors.generic)
+      }
     } catch (error) {
       // Ruling 64: a Forbidden, a 404 or a network blip must show, not vanish. Disarm as
       // well — a live "yes, delete" button must not outlast a failure unexplained.
@@ -429,12 +487,12 @@ export class ProjectDetailPage {
       // unhandled rejection (the same reason LoginPage/ProjectsPage catch inside theirs).
       action: async () => {
         const model = this.editModel()
-        const website = model.website.trim()
         const patch: ProjectPatchInput = {
           name: model.name.trim(),
           // Nullable in the schema: an emptied field means "no website"/"no notes", which
-          // has to reach the API as null rather than as ''.
-          website: website === '' ? null : website,
+          // has to reach the API as null rather than as ''. websiteOrNull is the same helper
+          // the validator arm above is chosen by, so the two cannot disagree.
+          website: websiteOrNull(model.website),
           notes: model.notes.trim() === '' ? null : model.notes,
           isArchived: model.isArchived,
         }
@@ -454,15 +512,18 @@ export class ProjectDetailPage {
 
   /**
    * Every mutation on this page routes through here (ruling 64): one error surface, one
-   * reload, and nothing escaping as an unhandled rejection.
+   * reload, and nothing escaping as an unhandled rejection. Resolves to whether it worked,
+   * for the callers that need to know (the tag input keeps its text on a failure).
    */
-  private async mutate(action: () => Promise<unknown>): Promise<void> {
+  private async mutate(action: () => Promise<unknown>): Promise<boolean> {
     this.errorMessage.set(null)
     try {
       await action()
       this.project.reload()
+      return true
     } catch (error) {
       this.errorMessage.set(this.describe(error))
+      return false
     }
   }
 

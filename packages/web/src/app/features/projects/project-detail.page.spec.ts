@@ -33,6 +33,18 @@ const detail: ProjectDetailDto = {
   files: [file],
 }
 
+/**
+ * A *fresh* DTO per fetch, which is what the HTTP transport actually hands back (every
+ * response is a new JSON parse). Handing the same object out twice would hide any bug that
+ * depends on object identity across a reload — the edit-form clobbering one below in
+ * particular.
+ */
+const fetched = (over: Partial<ProjectDetailDto> = {}): ProjectDetailDto => ({
+  ...detail,
+  files: detail.files.map((entry) => ({ ...entry })),
+  ...over,
+})
+
 type Mock = ReturnType<typeof vi.fn>
 
 function setup(
@@ -49,8 +61,8 @@ function setup(
 ) {
   const api = {
     projects: {
-      get: overrides.get ?? vi.fn().mockResolvedValue(detail),
-      update: overrides.update ?? vi.fn().mockResolvedValue(detail),
+      get: overrides.get ?? vi.fn(() => Promise.resolve(fetched())),
+      update: overrides.update ?? vi.fn(() => Promise.resolve(fetched())),
       addTag: overrides.addTag ?? vi.fn().mockResolvedValue(undefined),
       removeTag: overrides.removeTag ?? vi.fn().mockResolvedValue(undefined),
       delete: overrides.deleteProject ?? vi.fn().mockResolvedValue(undefined),
@@ -200,6 +212,49 @@ describe('ProjectDetailPage', () => {
     expect(api.projects.addTag).toHaveBeenCalledWith('p1', 'petg')
   })
 
+  // Fix round 1, item 5: the template used to wipe the field unconditionally, so a rejected
+  // 61-character tag left the user staring at an error and an empty box.
+  it('keeps a rejected tag in the input, and clears it once accepted', async () => {
+    const { fixture, api, page } = setup()
+    await settle()
+    const input = fixture.nativeElement.querySelector(
+      `input[aria-label="${en.projects.addTag}"]`,
+    ) as HTMLInputElement
+    const tooLong = 'x'.repeat(61)
+
+    input.value = tooLong
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }))
+    await settle()
+
+    expect(api.projects.addTag).not.toHaveBeenCalled()
+    expect(page.errorMessage()).toBe(en.errors.invalidTag)
+    expect(input.value).toBe(tooLong)
+
+    input.value = 'petg'
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }))
+    await settle()
+
+    expect(api.projects.addTag).toHaveBeenCalledWith('p1', 'petg')
+    expect(input.value).toBe('')
+  })
+
+  it('keeps a tag the server rejects in the input too', async () => {
+    const { fixture, api } = setup({
+      addTag: vi.fn().mockRejectedValue(new AppError('Conflict', 'dup')),
+    })
+    await settle()
+    const input = fixture.nativeElement.querySelector(
+      `input[aria-label="${en.projects.addTag}"]`,
+    ) as HTMLInputElement
+
+    input.value = 'boat'
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }))
+    await settle()
+
+    expect(api.projects.addTag).toHaveBeenCalled()
+    expect(input.value).toBe('boat')
+  })
+
   // Ruling 64: only onUpload had a try/catch. Every other mutation awaited a network call
   // bare, so a 409 on a duplicate tag, a 404 on an already-deleted file or a network blip
   // escaped as an unhandled rejection and the page silently did nothing.
@@ -207,7 +262,7 @@ describe('ProjectDetailPage', () => {
     const { page } = setup({ addTag: vi.fn().mockRejectedValue(new AppError('Conflict', 'dup')) })
     await settle()
 
-    await expect(page.onAddTag('boat')).resolves.toBeUndefined()
+    await expect(page.onAddTag('boat')).resolves.toBe(false)
 
     expect(page.errorMessage()).toBe(en.errors.generic)
   })
@@ -249,6 +304,9 @@ describe('ProjectDetailPage', () => {
   it('renames a file through the per-file rename affordance', async () => {
     const { fixture, api, page } = setup()
     await settle()
+
+    // The control that makes the next assertion falsifiable: the editor is not there yet.
+    expect(text(fixture)).not.toContain(en.projects.newName)
 
     page.startRename(file)
     await settle()
@@ -310,6 +368,45 @@ describe('ProjectDetailPage', () => {
     })
   })
 
+  // Fix round 1, Important: the edit form sits directly above the tags and files sections, so
+  // typing a name and then adding a tag or deleting a file is ordinary. Every mutation ends in
+  // project.reload(), which resolves to a fresh DTO — re-seeding the form on that wiped the
+  // typed text with no message and no way to get it back.
+  it('keeps in-progress edits through an unrelated mutation', async () => {
+    const { api, page } = setup()
+    await settle()
+    const typed = {
+      name: 'Benchy v3',
+      website: '',
+      notes: 'a paragraph of notes',
+      isArchived: true,
+    }
+
+    page.editModel.set(typed)
+    await page.onAddTag('petg')
+    await settle()
+
+    expect(api.projects.addTag).toHaveBeenCalledWith('p1', 'petg')
+    expect(page.editModel()).toEqual(typed)
+  })
+
+  // The other half of that guarantee: "do not clobber" must not decay into "never re-seed".
+  it('re-seeds the form when the stored values really did change', async () => {
+    const get = vi
+      .fn()
+      .mockImplementationOnce(() => Promise.resolve(fetched()))
+      .mockImplementation(() => Promise.resolve(fetched({ name: 'Renamed elsewhere' })))
+    const { page } = setup({ get })
+    await settle()
+    expect(page.editModel().name).toBe('Benchy')
+
+    page.editModel.set({ name: 'typed', website: '', notes: '', isArchived: false })
+    await page.onAddTag('petg')
+    await settle()
+
+    expect(page.editModel().name).toBe('Renamed elsewhere')
+  })
+
   it('does not call update when the patch is invalid', async () => {
     const { api, page } = setup()
     await settle()
@@ -367,6 +464,9 @@ describe('ProjectDetailPage', () => {
   it('arms the delete on the first press and only destroys on the second', async () => {
     const { fixture, api, page, navigate } = setup()
     await settle()
+    // Unarmed, neither warning is on the page — so the assertion below can fail.
+    expect(text(fixture)).not.toContain(en.projects.confirmDeleteWithFiles)
+    expect(text(fixture)).not.toContain(en.projects.confirmDelete)
 
     await page.onDeleteProject(true)
     await settle()
@@ -408,16 +508,26 @@ describe('ProjectDetailPage', () => {
 
   // The router reuses this component instance across a `:id` change, so an armed delete
   // must not survive into a different project — one press would destroy the wrong one.
-  it('disarms a pending delete when the route moves to another project', async () => {
+  // Every piece of per-project state is keyed on the route id, and each one leaks something
+  // different if it is ever downgraded to a plain signal: the previous project's error text,
+  // an open rename editor, or (worst) a live armed delete pointed at the wrong project.
+  it('resets the per-project state when the route moves to another project', async () => {
     const { fixture, api, page } = setup()
     await settle()
 
+    // Arm first: starting any action clears the previous error, by design.
     await page.onDeleteProject(true)
+    page.startRename(file)
+    await page.onAddTag('x'.repeat(61))
+    expect(page.errorMessage()).toBe(en.errors.invalidTag)
+    expect(page.renamingId()).toBe('f1')
     expect(page.deleteArmed()).toBe(true)
 
     fixture.componentRef.setInput('id', 'p2')
     await settle()
 
+    expect(page.errorMessage()).toBeNull()
+    expect(page.renamingId()).toBeNull()
     expect(page.deleteArmed()).toBe(false)
     await page.onDeleteProject(true)
     expect(api.projects.delete).not.toHaveBeenCalled()
@@ -434,16 +544,49 @@ describe('ProjectDetailPage', () => {
 
     expect(page.errorMessage()).toBe(en.errors.generic)
     expect(navigate).not.toHaveBeenCalled()
+    // A failed delete must not leave the confirmation armed either.
+    expect(page.deleteArmed()).toBe(false)
   })
 
-  it('renders the missing-folder warning and the archived badge', async () => {
-    const { fixture } = setup({
-      get: vi.fn().mockResolvedValue({ ...detail, state: 'missing', isArchived: true }),
-    })
+  // Fix round 1, item 4: a guard-blocked or failed navigation used to leave a live
+  // "yes, delete" button on an already-deleted project, with nothing said.
+  it('disarms and reports when the delete lands but the navigation does not', async () => {
+    const { api, page, navigate } = setup()
+    navigate.mockResolvedValue(false)
     await settle()
 
+    await page.onDeleteProject(false)
+    await page.onDeleteProject(false)
+
+    expect(api.projects.delete).toHaveBeenCalledWith('p1', { deleteFiles: false })
+    expect(page.deleteArmed()).toBe(false)
+    expect(page.errorMessage()).toBe(en.errors.generic)
+  })
+
+  // Fix round 1, item 1: asserting `projects.archived` against the whole document could not
+  // fail — the edit form rendered the same string as its checkbox label unconditionally. The
+  // label now has its own key (`projects.archive`), and the badge is asserted inside the
+  // header, with the non-archived case as the control that makes the assertion falsifiable.
+  it('renders the missing-folder warning and the archived badge', async () => {
+    const { fixture } = setup({
+      get: vi.fn(() => Promise.resolve(fetched({ state: 'missing', isArchived: true }))),
+    })
+    await settle()
+    const header = fixture.nativeElement.querySelector('header')?.textContent ?? ''
+
     expect(text(fixture)).toContain(en.projects.missing)
-    expect(text(fixture)).toContain(en.projects.archived)
+    expect(header).toContain(en.projects.archived)
+  })
+
+  it('does not badge a project that is not archived', async () => {
+    const { fixture } = setup()
+    await settle()
+    const header = fixture.nativeElement.querySelector('header')?.textContent ?? ''
+
+    expect(header).not.toContain(en.projects.archived)
+    expect(text(fixture)).not.toContain(en.projects.missing)
+    // The archive checkbox is still offered — under its own, action-shaped label.
+    expect(text(fixture)).toContain(en.projects.archive)
   })
 
   it('formats byte counts for humans', () => {
