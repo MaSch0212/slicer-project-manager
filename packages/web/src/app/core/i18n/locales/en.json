@@ -1,0 +1,60 @@
+{
+  "app": { "title": "Slicer Project Manager", "signOut": "Sign out" },
+  "auth": {
+    "username": "Username",
+    "password": "Password",
+    "confirmPassword": "Confirm password",
+    "signIn": "Sign in",
+    "signInFailed": "Username or password is not correct",
+    "activateTitle": "Choose a password",
+    "activateInvalid": "This activation link is not valid or has expired",
+    "activateSubmit": "Activate account"
+  },
+  "projects": {
+    "title": "Projects",
+    "search": "Search",
+    "newProject": "New project",
+    "name": "Name",
+    "website": "Source URL",
+    "notes": "Notes",
+    "tags": "Tags",
+    "addTag": "Add tag",
+    "includeArchived": "Show archived",
+    "archived": "Archived",
+    "missing": "Folder missing",
+    "rescan": "Rescan library",
+    "rescanned": "Adopted {adopted}, {filesAdded} files added",
+    "empty": "No projects yet",
+    "files": "Files",
+    "upload": "Upload file",
+    "delete": "Delete project",
+    "deleteFiles": "Also delete the files on disk",
+    "previewPending": "Preview pending"
+  },
+  "settings": {
+    "title": "Settings",
+    "theme": "Theme",
+    "language": "Language",
+    "viewMode": "Project view",
+    "sort": "Sort by"
+  },
+  "admin": {
+    "title": "Users",
+    "displayName": "Display name",
+    "isAdmin": "Administrator",
+    "status": "Status",
+    "usage": "Usage",
+    "quota": "Quota",
+    "unlimited": "Unlimited",
+    "createUser": "Create user",
+    "copyLink": "Copy activation link",
+    "reissue": "Re-issue invite",
+    "disable": "Disable",
+    "enable": "Enable",
+    "lastAdmin": "The last active administrator must remain"
+  },
+  "errors": {
+    "quotaExceeded": "This upload would exceed your quota ({usage} of {quota} used)",
+    "generic": "Something went wrong"
+  }
+}

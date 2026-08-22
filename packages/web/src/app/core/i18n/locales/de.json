@@ -1,0 +1,60 @@
+{
+  "app": { "title": "Slicer-Projektverwaltung", "signOut": "Abmelden" },
+  "auth": {
+    "username": "Benutzername",
+    "password": "Passwort",
+    "confirmPassword": "Passwort bestätigen",
+    "signIn": "Anmelden",
+    "signInFailed": "Benutzername oder Passwort ist falsch",
+    "activateTitle": "Passwort festlegen",
+    "activateInvalid": "Dieser Aktivierungslink ist ungültig oder abgelaufen",
+    "activateSubmit": "Konto aktivieren"
+  },
+  "projects": {
+    "title": "Projekte",
+    "search": "Suchen",
+    "newProject": "Neues Projekt",
+    "name": "Name",
+    "website": "Quell-URL",
+    "notes": "Notizen",
+    "tags": "Schlagwörter",
+    "addTag": "Schlagwort hinzufügen",
+    "includeArchived": "Archivierte anzeigen",
+    "archived": "Archiviert",
+    "missing": "Ordner fehlt",
+    "rescan": "Bibliothek neu einlesen",
+    "rescanned": "{adopted} übernommen, {filesAdded} Dateien ergänzt",
+    "empty": "Noch keine Projekte",
+    "files": "Dateien",
+    "upload": "Datei hochladen",
+    "delete": "Projekt löschen",
+    "deleteFiles": "Dateien auf der Festplatte ebenfalls löschen",
+    "previewPending": "Vorschau ausstehend"
+  },
+  "settings": {
+    "title": "Einstellungen",
+    "theme": "Erscheinungsbild",
+    "language": "Sprache",
+    "viewMode": "Projektansicht",
+    "sort": "Sortierung"
+  },
+  "admin": {
+    "title": "Benutzer",
+    "displayName": "Anzeigename",
+    "isAdmin": "Administrator",
+    "status": "Status",
+    "usage": "Belegung",
+    "quota": "Kontingent",
+    "unlimited": "Unbegrenzt",
+    "createUser": "Benutzer anlegen",
+    "copyLink": "Aktivierungslink kopieren",
+    "reissue": "Einladung neu senden",
+    "disable": "Deaktivieren",
+    "enable": "Aktivieren",
+    "lastAdmin": "Der letzte aktive Administrator muss bestehen bleiben"
+  },
+  "errors": {
+    "quotaExceeded": "Dieser Upload würde das Kontingent überschreiten ({usage} von {quota} belegt)",
+    "generic": "Etwas ist schiefgelaufen"
+  }
+}

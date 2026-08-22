@@ -8,6 +8,11 @@
     "noImplicitReturns": true,
     "noFallthroughCasesInSwitch": true,
     "importHelpers": true,
+    /* Only @spm/web imports JSON (the i18n locale files): resolveJsonModule lives here, not
+       in the shared base, since core and server never import JSON as a module. Also what
+       makes `export type Translations = typeof en` catch a locale file missing a key at
+       compile time. */
+    "resolveJsonModule": true,
     "target": "ES2022",
     /* Pinned alongside target: the base config's ES2023 lib would let the compiler accept
        ES2023 methods (toSorted, findLast) that esbuild downlevels syntactically but does not
