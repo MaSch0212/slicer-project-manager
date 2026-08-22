@@ -1,5 +1,5 @@
 import { activateSchema, loginSchema } from '@spm/contract/schemas.ts'
-import { activateAccount, checkActivationToken, deleteSession, login, me } from '@spm/core'
+import { activateAccount, checkActivationToken, deleteSession, login } from '@spm/core'
 import { json, parseJson } from '../json.ts'
 import type { Route } from '../router.ts'
 import { readSessionToken, sessionClearCookie, sessionSetCookie } from '../session.ts'
@@ -58,14 +58,5 @@ export const authRoutes: Route[] = [
         headers: { 'set-cookie': sessionSetCookie(result.token, result.expiresAt, url) },
       })
     },
-  },
-  {
-    // Minimal "who am I" so a session round-trips end to end in this task's own tests.
-    // Task 14 supersedes this with a full accountRoutes (GET + PATCH) file; this single
-    // GET stays out of the way of that by living here, not in routes/index.ts.
-    method: 'GET',
-    path: '/api/account',
-    auth: 'session',
-    handler: ({ env, ctx }) => json(me(env.lib, ctx)),
   },
 ]
