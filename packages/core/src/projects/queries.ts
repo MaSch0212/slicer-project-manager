@@ -108,6 +108,7 @@ function coverByProject(db: Db, ids: string[]): Map<string, string> {
       `SELECT f.project_id AS projectId, f.id AS fileId
        FROM files f JOIN previews pv ON pv.file_id = f.id
        WHERE f.project_id IN (${placeholders(ids.length)}) AND pv.state = 'ready'
+         AND f.kind IN ('model', 'slicer_project')
        ORDER BY (f.kind = 'model') DESC, f.rel_path COLLATE NOCASE`,
     )
     .all(...ids) as { projectId: string; fileId: string }[]
@@ -155,16 +156,30 @@ export function listProjects(lib: Library, ctx: Ctx, query: ProjectQuery): CoreP
 
   if (query.search?.trim()) {
     const like = `%${escapeLike(query.search.trim())}%`
+    // LIKE case-folding here comes from SQLite's default `case_sensitive_like = off`, not from
+    // COLLATE: LIKE's case sensitivity is governed solely by that pragma and ignores any
+    // COLLATE clause on its operands, so one is deliberately not applied to these three.
     where.push(
-      `(p.name LIKE ? ESCAPE '\\' COLLATE NOCASE
-        OR IFNULL(p.notes, '') LIKE ? ESCAPE '\\' COLLATE NOCASE
+      `(p.name LIKE ? ESCAPE '\\'
+        OR IFNULL(p.notes, '') LIKE ? ESCAPE '\\'
         OR EXISTS (SELECT 1 FROM project_tags pt JOIN tags t ON t.id = pt.tag_id
-                   WHERE pt.project_id = p.id AND t.name LIKE ? ESCAPE '\\' COLLATE NOCASE))`,
+                   WHERE pt.project_id = p.id AND t.name LIKE ? ESCAPE '\\'))`,
     )
     params.push(like, like, like)
   }
 
-  const tags = query.tags?.filter((t) => t.trim().length > 0) ?? []
+  // Dedupe case-insensitively: both sides of the COUNT(...) = ? comparison below must agree on
+  // what "every requested tag" means, or ['petg', 'PETG'] (or a literal duplicate) can never match.
+  const seen = new Set<string>()
+  const tags: string[] = []
+  for (const raw of query.tags ?? []) {
+    const trimmed = raw.trim()
+    if (!trimmed) continue
+    const key = trimmed.toLowerCase()
+    if (seen.has(key)) continue
+    seen.add(key)
+    tags.push(trimmed)
+  }
   if (tags.length > 0) {
     // AND semantics: the project must carry every requested tag.
     where.push(

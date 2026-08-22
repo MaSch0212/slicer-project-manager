@@ -100,8 +100,14 @@ test('one user cannot see or fetch another user project', async () => {
       () => getProject(lib, anna, mine.id),
       (e: unknown) => (e as AppError).code === 'NotFound',
     )
-    assert.throws(() => updateProject(lib, anna, mine.id, { name: 'Stolen' }))
-    assert.throws(() => deleteProject(lib, anna, mine.id, { deleteFiles: false }))
+    assert.throws(
+      () => updateProject(lib, anna, mine.id, { name: 'Stolen' }),
+      (e: unknown) => (e as AppError).code === 'NotFound',
+    )
+    assert.throws(
+      () => deleteProject(lib, anna, mine.id, { deleteFiles: false }),
+      (e: unknown) => (e as AppError).code === 'NotFound',
+    )
   })
 })
 
@@ -204,6 +210,25 @@ test('a tags filter requires every tag', async () => {
       [both.id],
     )
     assert.equal(listProjects(lib, ctx, { tags: ['petg'] }).length, 2)
+  })
+})
+
+test('a case-variant or literal duplicate in the tags filter still matches', async () => {
+  await withLibrary((lib) => {
+    const ctx = seedUser(lib, 'marc')
+    const both = createProject(lib, ctx, { name: 'Both', tags: ['petg', 'functional'] })
+
+    // A case-variant duplicate ('PETG' vs 'petg') must not inflate the required count past
+    // what the project can ever satisfy.
+    assert.deepEqual(
+      listProjects(lib, ctx, { tags: ['petg', 'PETG'] }).map((p) => p.id),
+      [both.id],
+    )
+    // A literal duplicate must behave the same way.
+    assert.deepEqual(
+      listProjects(lib, ctx, { tags: ['petg', 'petg'] }).map((p) => p.id),
+      [both.id],
+    )
   })
 })
 
