@@ -2,6 +2,20 @@
 
 This project was generated using [Angular CLI](https://github.com/angular/angular-cli) version 22.1.5.
 
+## `@awdlab/jig` / `@awdlab/jig-themes` local patches
+
+Both packages are published with their **source** `package.json` at the package root (`files:
+["dist", "README.md"]`, no `exports`/`main`/`module`/`typings`) instead of the built manifest that
+actually lives at `dist/package.json`. As published, neither package is importable by Node, `tsc`,
+vitest, or Angular's esbuild bundler. `patches/@awdlab__jig@<version>.patch` and
+`patches/@awdlab__jig-themes@<version>.patch` (wired up via `patchedDependencies` in
+`pnpm-workspace.yaml`) splice the real `dist/package.json` fields into the root manifest, with every
+target rewritten to point into `dist/`.
+
+**Delete these patches** once a released version of `@awdlab/jig` (and/or `@awdlab/jig-themes`) ships
+a root `package.json` that carries its own `exports` field — at that point bump the dependency version
+and drop the corresponding patch file and `patchedDependencies` entry.
+
 ## Development server
 
 To start a local development server, run:
