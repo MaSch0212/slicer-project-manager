@@ -21,13 +21,13 @@ It ships in two forms from one codebase:
 
 ### 1.1 Subsystems and what this spec covers
 
-| | Subsystem | Depends on | This spec |
-|---|---|---|---|
-| **A** | Deno backend (SQLite, file store, auth/users) + Angular project browser + web build | — | **Full, implementable detail** |
-| **B** | 3D model previews (thumbnails + interactive viewer) | A | Skeleton + pipeline design |
-| **C** | Electron shell (offline local folder, native dialogs) | A | Skeleton + extension points |
-| **D** | Slicer configuration and launching | C | Extension points only |
-| **E** | Model browser (embedded browsing, download interception, project matching) | C | Extension points only |
+|       | Subsystem                                                                           | Depends on | This spec                      |
+| ----- | ----------------------------------------------------------------------------------- | ---------- | ------------------------------ |
+| **A** | Deno backend (SQLite, file store, auth/users) + Angular project browser + web build | —          | **Full, implementable detail** |
+| **B** | 3D model previews (thumbnails + interactive viewer)                                 | A          | Skeleton + pipeline design     |
+| **C** | Electron shell (offline local folder, native dialogs)                               | A          | Skeleton + extension points    |
+| **D** | Slicer configuration and launching                                                  | C          | Extension points only          |
+| **E** | Model browser (embedded browsing, download interception, project matching)          | C          | Extension points only          |
 
 B–E each get their own spec and plan cycle. This document fixes the cross-cutting
 architecture they must all fit into — package boundaries, data model, API contract, auth,
@@ -53,7 +53,7 @@ Two CuraManager behaviours are deliberately **not** carried over:
 - The **UI-Automation hack** that drove Cura's save dialog to set a project name. It was
   Windows-only, depended on control tree layout, and broke on most Cura releases.
 - The **`metadata.json` sidecar as source of truth**. Superseded by SQLite (3.2),
-  though the sidecar is still *read* for migration.
+  though the sidecar is still _read_ for migration.
 
 ## 2. Architecture
 
@@ -104,7 +104,7 @@ to call by mistake. Admin-only operations check `ctx.isAdmin` in `core` as well.
 `contract` holds the shared types, the `ApiClient` interface, and the validation schemas.
 It exists as its own package because of one specific payoff: Angular 22's signal forms
 support `validateStandardSchema`, and Zod 4 implements Standard Schema. So a single
-schema object validates in the Angular form *and* on the backend. One definition, no
+schema object validates in the Angular form _and_ on the backend. One definition, no
 client/server drift.
 
 ### 2.4 Capability model
@@ -113,17 +113,17 @@ Capabilities are resolved **at runtime**, not compiled in, because the effective
 the product of two independent axes — the shell the UI runs in, and the backend it is
 talking to.
 
-| Capability | Browser + server | Electron + local folder | Electron + remote server |
-|---|---|---|---|
-| `requiresAuth` | yes | no | yes |
-| `canManageUsers` (admin only) | yes | no | yes |
-| `canPickLocalFolder` | no | yes | no |
-| `canLaunchSlicer` | no | yes | yes |
-| `canConfigureSlicers` | no | yes | yes |
-| `canBrowseModelSites` | no | yes | yes |
+| Capability                    | Browser + server | Electron + local folder | Electron + remote server |
+| ----------------------------- | ---------------- | ----------------------- | ------------------------ |
+| `requiresAuth`                | yes              | no                      | yes                      |
+| `canManageUsers` (admin only) | yes              | no                      | yes                      |
+| `canPickLocalFolder`          | no               | yes                     | no                       |
+| `canLaunchSlicer`             | no               | yes                     | yes                      |
+| `canConfigureSlicers`         | no               | yes                     | yes                      |
+| `canBrowseModelSites`         | no               | yes                     | yes                      |
 
 The third column is why a build-time flag is insufficient: the Electron app pointed at a
-remote server needs remote auth *and* local slicer launching at the same time. The shell
+remote server needs remote auth _and_ local slicer launching at the same time. The shell
 contributes its capabilities, the backend contributes its own, and the client uses the
 union, fetched at bootstrap via `capabilities()`.
 
@@ -155,7 +155,7 @@ login, no session, and `canManageUsers` is false.
 
 ### 2.7 Known constraint: slicer launch against a remote library
 
-In *Electron + remote server* mode, "open in slicer" cannot hand the slicer a URL. It
+In _Electron + remote server_ mode, "open in slicer" cannot hand the slicer a URL. It
 must download the project's files into a local cache directory, launch the slicer against
 those, and then reconcile whatever the slicer writes back on save.
 
@@ -283,10 +283,10 @@ Cura-only check.
 **Verified 2026-08-22 against real project files** produced by all five slicers. Zip
 entry lists:
 
-| Slicer | Distinguishing entries |
-|---|---|
-| Cura | `Cura/*` (16 entries), `Metadata/thumbnail.png` |
-| PrusaSlicer | `Metadata/Slic3r_PE.config`, `Metadata/Slic3r_PE_model.config` |
+| Slicer                  | Distinguishing entries                                                                                                 |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| Cura                    | `Cura/*` (16 entries), `Metadata/thumbnail.png`                                                                        |
+| PrusaSlicer             | `Metadata/Slic3r_PE.config`, `Metadata/Slic3r_PE_model.config`                                                         |
 | Anycubic / Bambu / Orca | **identical layout** — `Metadata/project_settings.config`, `model_settings.config`, `slice_info.config`, `plate_*.png` |
 
 Cura and PrusaSlicer are identifiable by path. The three Bambu-lineage slicers are not:
@@ -295,11 +295,11 @@ their entry lists are effectively the same. They identify themselves only in the
 
 **Measured headers:**
 
-| Slicer | `slice_info.config` header items |
-|---|---|
-| Anycubic Slicer Next 1.4.1.2 | `X-ACNext-Client-Type`, `X-ACNext-Client-Version` |
-| Bambu Studio 02.08.02.61 | `X-BBL-Client-Type`, `X-BBL-Client-Version` |
-| OrcaSlicer 2.4.2 | `X-BBL-Client-Type`, `X-BBL-Client-Version`, **`OrcaSlicer-Version`** |
+| Slicer                       | `slice_info.config` header items                                      |
+| ---------------------------- | --------------------------------------------------------------------- |
+| Anycubic Slicer Next 1.4.1.2 | `X-ACNext-Client-Type`, `X-ACNext-Client-Version`                     |
+| Bambu Studio 02.08.02.61     | `X-BBL-Client-Type`, `X-BBL-Client-Version`                           |
+| OrcaSlicer 2.4.2             | `X-BBL-Client-Type`, `X-BBL-Client-Version`, **`OrcaSlicer-Version`** |
 
 **OrcaSlicer's header is a superset of Bambu Studio's** — it keeps the `X-BBL-*` keys
 inherited from the fork and adds its own. So the registry order is load-bearing:
@@ -360,7 +360,7 @@ A rescan walks each user's library root and reconciles disk against the database
 - **File on disk with no `files` row → insert**, classified per 3.4, with a `previews`
   row seeded `state='pending'`.
 - **`files` row whose file is gone → delete** the row (and its preview) — but only within
-  a project whose folder is *present*. The files of a `state='missing'` project are left
+  a project whose folder is _present_. The files of a `state='missing'` project are left
   intact, because the whole folder may simply be on an unmounted drive.
 - **`mtime_ms` or `size_bytes` changed → recompute `content_hash`**; if it differs from
   `previews.source_hash`, reset that preview to `'pending'`.
@@ -414,19 +414,22 @@ interface ApiClient {
     activate(token, newPassword): Promise<UserDto>
   }
 
-  account: {                                    // any active user, on themselves
+  account: {
+    // any active user, on themselves
     me(): Promise<UserDto>
     changePassword(current, next): Promise<void>
     updateProfile(patch): Promise<UserDto>
   }
 
-  users: {                                      // isAdmin required, enforced in core
+  users: {
+    // isAdmin required, enforced in core
     list(): Promise<UserDto[]>
     create(dto): Promise<{ user: UserDto; activationUrl: string }>
     reissueInvite(id): Promise<{ activationUrl: string }>
-    update(id, patch: { isAdmin?: boolean
-                        isDisabled?: boolean
-                        quotaBytes?: number | null }): Promise<UserDto>
+    update(
+      id,
+      patch: { isAdmin?: boolean; isDisabled?: boolean; quotaBytes?: number | null },
+    ): Promise<UserDto>
     delete(id): Promise<void>
   }
 
@@ -508,9 +511,9 @@ call rather than N+1.
 **`core` returns IDs and never knows about URLs.** The transport adapter decorates DTOs,
 because only it knows its own scheme:
 
-| | Thumbnail | Raw file |
-|---|---|---|
-| HTTP | `/api/files/:id/thumb` | `/api/files/:id/raw` |
+|          | Thumbnail              | Raw file             |
+| -------- | ---------------------- | -------------------- |
+| HTTP     | `/api/files/:id/thumb` | `/api/files/:id/raw` |
 | Electron | `spm://file/:id/thumb` | `spm://file/:id/raw` |
 
 Bulk bytes never cross a JSON boundary. In Electron these are served by
@@ -520,26 +523,26 @@ buffered into memory.
 
 ### 4.3 REST mapping (server transport)
 
-| Method | Path | Notes |
-|---|---|---|
-| `GET` | `/api/capabilities` | unauthenticated |
-| `POST` | `/api/auth/login` | sets session cookie |
-| `POST` | `/api/auth/logout` | |
-| `GET` | `/api/auth/activation/:token` | read-only token check |
-| `POST` | `/api/auth/activation/:token` | set password, issues session |
-| `GET`, `PATCH` | `/api/account` | self-service |
-| `POST` | `/api/account/password` | |
-| `GET`, `POST` | `/api/users` | admin |
-| `PATCH`, `DELETE` | `/api/users/:id` | admin |
-| `POST` | `/api/users/:id/invite` | admin, re-issue |
-| `GET`, `POST` | `/api/projects` | |
-| `GET`, `PATCH`, `DELETE` | `/api/projects/:id` | |
-| `POST` | `/api/projects/rescan` | |
-| `POST` | `/api/projects/:id/tags` | body carries the tag name |
-| `DELETE` | `/api/projects/:id/tags/:name` | name in the path, so no DELETE body |
-| `POST` | `/api/projects/:id/files` | upload |
-| `PATCH`, `DELETE` | `/api/files/:id` | |
-| `GET` | `/api/files/:id/raw`, `/api/files/:id/thumb` | streamed |
+| Method                   | Path                                         | Notes                               |
+| ------------------------ | -------------------------------------------- | ----------------------------------- |
+| `GET`                    | `/api/capabilities`                          | unauthenticated                     |
+| `POST`                   | `/api/auth/login`                            | sets session cookie                 |
+| `POST`                   | `/api/auth/logout`                           |                                     |
+| `GET`                    | `/api/auth/activation/:token`                | read-only token check               |
+| `POST`                   | `/api/auth/activation/:token`                | set password, issues session        |
+| `GET`, `PATCH`           | `/api/account`                               | self-service                        |
+| `POST`                   | `/api/account/password`                      |                                     |
+| `GET`, `POST`            | `/api/users`                                 | admin                               |
+| `PATCH`, `DELETE`        | `/api/users/:id`                             | admin                               |
+| `POST`                   | `/api/users/:id/invite`                      | admin, re-issue                     |
+| `GET`, `POST`            | `/api/projects`                              |                                     |
+| `GET`, `PATCH`, `DELETE` | `/api/projects/:id`                          |                                     |
+| `POST`                   | `/api/projects/rescan`                       |                                     |
+| `POST`                   | `/api/projects/:id/tags`                     | body carries the tag name           |
+| `DELETE`                 | `/api/projects/:id/tags/:name`               | name in the path, so no DELETE body |
+| `POST`                   | `/api/projects/:id/files`                    | upload                              |
+| `PATCH`, `DELETE`        | `/api/files/:id`                             |                                     |
+| `GET`                    | `/api/files/:id/raw`, `/api/files/:id/thumb` | streamed                            |
 
 ## 5. Authentication and users
 
@@ -605,7 +608,7 @@ every account is somehow deleted.
 - Any user can be promoted or demoted via `users.update(id, { isAdmin })`.
 - The bootstrap admin is an ordinary row with no special flag: it can be disabled,
   demoted, or deleted like any other.
-- **Guard:** the last remaining *active admin* cannot be deleted, disabled, or demoted.
+- **Guard:** the last remaining _active admin_ cannot be deleted, disabled, or demoted.
   `users.update` and `users.delete` reject the operation. Without this, one click
   permanently removes all user management with no in-app recovery. This does not make the
   first admin special — any admin including that one can be removed, just never the final
@@ -615,7 +618,7 @@ every account is somehow deleted.
 
 ### 5.6 Disk usage and quotas
 
-Admins cannot see other users' *projects* (5.5), but they can see how much space each
+Admins cannot see other users' _projects_ (5.5), but they can see how much space each
 user consumes and cap it.
 
 **Usage is derived, never stored.** It is an aggregate over data the `files` index
@@ -721,11 +724,11 @@ Implemented in `core/previews`, dependency-free and portable across both runtime
   usable thumbnail in their project files**, so a slicer project almost never needs
   rendering at all. Extract, downscale, record `source='embedded'`:
 
-  | Slicer | Entry | Dimensions | Size |
-  |---|---|---|---|
-  | Cura | `Metadata/thumbnail.png` | 300×300 | 18.8 KB |
-  | PrusaSlicer | `Metadata/thumbnail.png` | 256×256 | 6.3 KB |
-  | Bambu / Orca / Anycubic | `Metadata/plate_1.png` | 512×512 | 3.6–6.1 KB |
+  | Slicer                  | Entry                    | Dimensions | Size       |
+  | ----------------------- | ------------------------ | ---------- | ---------- |
+  | Cura                    | `Metadata/thumbnail.png` | 300×300    | 18.8 KB    |
+  | PrusaSlicer             | `Metadata/thumbnail.png` | 256×256    | 6.3 KB     |
+  | Bambu / Orca / Anycubic | `Metadata/plate_1.png`   | 512×512    | 3.6–6.1 KB |
 
   For the Bambu lineage use `plate_1.png`, not its siblings: `plate_1_small.png` is
   128×128 (below the 256 target), `plate_no_light_1.png` is unlit, `top_1.png` is a
@@ -742,6 +745,7 @@ Implemented in `core/previews`, dependency-free and portable across both runtime
   Implementation order follows from that: extraction is cheap and covers all project
   files, so it lands first; the rasterizer is the expensive component and is only ever
   reached for `.stl`, `.obj`, and plain 3MF meshes.
+
 - **OBJ** — 12 files in the reference library; low priority, `kind='model'` regardless.
 
 ### 7.2 Rendering
@@ -780,13 +784,13 @@ says so immediately rather than Electron breaking months later.
 
 ### 8.2 The rest
 
-| Package | Approach |
-|---|---|
-| `contract` | validator unit tests |
-| `core` | unit tests, run on Deno and Node |
-| `server` | integration tests over HTTP against a temp library dir |
-| `web` | Angular unit tests on Vitest; e2e via `@awdlab/jig-playwright` |
-| `desktop` | smoke test for IPC wiring and the `spm://` protocol |
+| Package    | Approach                                                       |
+| ---------- | -------------------------------------------------------------- |
+| `contract` | validator unit tests                                           |
+| `core`     | unit tests, run on Deno and Node                               |
+| `server`   | integration tests over HTTP against a temp library dir         |
+| `web`      | Angular unit tests on Vitest; e2e via `@awdlab/jig-playwright` |
+| `desktop`  | smoke test for IPC wiring and the `spm://` protocol            |
 
 Reconciliation (3.5) deserves particular test attention: adopt, missing-folder,
 changed-file, and dot-folder-skipping each get explicit cases against a temp directory.
@@ -801,11 +805,11 @@ server specifically so an agent can look up its 65+ controls rather than guess a
 
 ## 9. Extension points for specs B-E
 
-| Subsystem | Seam already in place |
-|---|---|
-| **B** previews | `previews` table, state machine, `thumbUrl` in DTOs, `core/previews` queue |
-| **C** Electron | `IpcApiClient`, `protocol.handle('spm://')`, capability model, local/remote mode picker |
-| **D** slicers | `files.slicer` plus the 3MF flavour detector, machine-local slicer config (3.7), `canLaunchSlicer`, `/settings/slicers` route |
+| Subsystem           | Seam already in place                                                                                                                       |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| **B** previews      | `previews` table, state machine, `thumbUrl` in DTOs, `core/previews` queue                                                                  |
+| **C** Electron      | `IpcApiClient`, `protocol.handle('spm://')`, capability model, local/remote mode picker                                                     |
+| **D** slicers       | `files.slicer` plus the 3MF flavour detector, machine-local slicer config (3.7), `canLaunchSlicer`, `/settings/slicers` route               |
 | **E** model browser | `projects.website` for URL matching, `canBrowseModelSites`, `/browse` route, `files.upload` as the landing path for an intercepted download |
 
 For **E** specifically, prior investigation established that Electron's

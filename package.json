@@ -1,0 +1,27 @@
+{
+  "name": "slicer-project-manager",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24.4.0",
+    "pnpm": ">=10"
+  },
+  "scripts": {
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test:contract": "node --test \"packages/contract/test/**/*.test.ts\"",
+    "test:core:node": "node --test \"packages/core/test/**/*.test.ts\"",
+    "test:core:deno": "deno test --allow-read --allow-write --allow-env packages/core/test/",
+    "test:server": "deno test --allow-all packages/server/test/",
+    "test:web": "pnpm --filter @spm/web test",
+    "verify": "pnpm lint && pnpm format:check && pnpm test:contract && pnpm test:core:node && pnpm test:core:deno"
+  },
+  "devDependencies": {
+    "@types/node": "^24.3.0",
+    "eslint": "^9.34.0",
+    "prettier": "^3.6.0",
+    "typescript": "^5.9.0",
+    "typescript-eslint": "^8.40.0"
+  }
+}

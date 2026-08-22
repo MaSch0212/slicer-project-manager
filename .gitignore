@@ -1,2 +1,10 @@
 # Scratch for the superpowers SDD workflow; never committed.
 .superpowers/
+
+node_modules/
+dist/
+.angular/
+coverage/
+*.tsbuildinfo
+.spm/
+test-tmp/

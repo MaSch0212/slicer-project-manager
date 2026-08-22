@@ -17,13 +17,13 @@
 The spec covers five subsystems (§1.1). **This plan implements subsystem A only**, plus the
 seams the later specs plug into:
 
-| Subsystem | In this plan? |
-|---|---|
-| **A** core + server + web client | **Yes, in full** |
-| **B** previews | Seam only: `previews` table, state machine, bounded queue, `thumbUrl` in DTOs, **and** the embedded-thumbnail extraction path, which §7.1 says lands first because it covers essentially every slicer project file. The mesh rasterizer and the three.js viewer are spec B. |
-| **C** Electron shell | No. `packages/desktop` is **not created**. `ApiClient`, the capability model, and `core`'s dual-runtime test suite are the seams. |
-| **D** slicers | No. Seam: `files.slicer`, populated by the §3.4 detector. |
-| **E** model browser | No. Seam: `projects.website`, `files.upload`. |
+| Subsystem                        | In this plan?                                                                                                                                                                                                                                                               |
+| -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **A** core + server + web client | **Yes, in full**                                                                                                                                                                                                                                                            |
+| **B** previews                   | Seam only: `previews` table, state machine, bounded queue, `thumbUrl` in DTOs, **and** the embedded-thumbnail extraction path, which §7.1 says lands first because it covers essentially every slicer project file. The mesh rasterizer and the three.js viewer are spec B. |
+| **C** Electron shell             | No. `packages/desktop` is **not created**. `ApiClient`, the capability model, and `core`'s dual-runtime test suite are the seams.                                                                                                                                           |
+| **D** slicers                    | No. Seam: `files.slicer`, populated by the §3.4 detector.                                                                                                                                                                                                                   |
+| **E** model browser              | No. Seam: `projects.website`, `files.upload`.                                                                                                                                                                                                                               |
 
 Do not start `packages/desktop` from this plan. If a task tempts you toward Electron, IPC,
 slicer launching, or a mesh rasterizer, stop — that is a later spec.
@@ -59,15 +59,15 @@ set rather than one task at a time.
 
 1. **`settings` is added to `ApiClient`.** §6.3/§6.4 require a runtime language switch and a persisted theme in `user_settings`, but §4.1 has no endpoint for it. Added: `settings.get()` / `settings.put(patch)`, and `GET`/`PUT /api/account/settings`.
 2. **The activation URL base is derived from the request, not configured.** `core` returns the raw token; the server builds `${origin}/activate#${token}` from the request's own origin. Keeps §3.1's "one environment variable" true. `SPM_PORT` is the single addition, optional.
-3. **Embedded thumbnails are stored verbatim, not downscaled.** §7.1 says "extract, downscale", but downscaling needs a PNG decoder *and* encoder, and §7.2 puts the encoder in the rasterizer, which is spec B. Every measured embedded thumbnail is 256–512 px and 3.6–18.8 KB, so storing as-is is correct now; B adds a resize pass. `previews.width`/`height` record real dimensions and no DTO promises a fixed size.
+3. **Embedded thumbnails are stored verbatim, not downscaled.** §7.1 says "extract, downscale", but downscaling needs a PNG decoder _and_ encoder, and §7.2 puts the encoder in the rasterizer, which is spec B. Every measured embedded thumbnail is 256–512 px and 3.6–18.8 KB, so storing as-is is correct now; B adds a resize pass. `previews.width`/`height` record real dimensions and no DTO promises a fixed size.
 4. **Model files keep `previewState: 'pending'` in subsystem A.** The queue selects only rows it has a handler for, so `.stl`/`.obj`/plain-mesh `.3mf` stay `pending` (the UI shows a placeholder) rather than being wrongly marked `unsupported`. Spec B registers the rasterizer handler and they drain with no migration.
 5. **Sessions live 30 days, sliding** — `expires_at = now + 30d`, pushed forward when a session is used more than a day after it was last extended. §5.2 fixes the token shape but not the lifetime.
 6. **`PRAGMA foreign_keys = ON`** on every connection open.
-7. **Upload carries its filename in an `X-Spm-File-Name` header (URL-encoded) with a required `Content-Length`.** The body is the raw stream — bulk bytes never enter a JSON envelope (§4.2) — and the quota check needs the size *before* writing (§5.6).
+7. **Upload carries its filename in an `X-Spm-File-Name` header (URL-encoded) with a required `Content-Length`.** The body is the raw stream — bulk bytes never enter a JSON envelope (§4.2) — and the quota check needs the size _before_ writing (§5.6).
 8. **Password policy: 10–200 characters, no composition rules.** The spec fixes the hashing but not the policy. Long-and-simple beats short-and-gnarly, and 600k PBKDF2 iterations carry the rest.
 9. **A `tags` filter is AND, not OR.** A project must carry every tag listed; filtering is for narrowing.
-10. **The cover thumbnail falls back to a slicer-project preview.** §4.2 says the cover is the first *model* file whose preview is ready, but model previews stay `pending` until spec B, so a strict reading leaves every grid tile blank. The query prefers a ready model preview and falls back to a ready slicer-project thumbnail.
-11. **Transports may call `core` functions outside `ApiClient`.** `ApiClient` is the *client-facing* surface. Streaming raw bytes needs an absolute path, so `core` also exports `resolveFilePath(ctx, id)` and `resolvePreviewPath(ctx, fileId)`, used by the server now and by Electron's `spm://` handler later. Both are still `ctx`-scoped.
+10. **The cover thumbnail falls back to a slicer-project preview.** §4.2 says the cover is the first _model_ file whose preview is ready, but model previews stay `pending` until spec B, so a strict reading leaves every grid tile blank. The query prefers a ready model preview and falls back to a ready slicer-project thumbnail.
+11. **Transports may call `core` functions outside `ApiClient`.** `ApiClient` is the _client-facing_ surface. Streaming raw bytes needs an absolute path, so `core` also exports `resolveFilePath(ctx, id)` and `resolvePreviewPath(ctx, fileId)`, used by the server now and by Electron's `spm://` handler later. Both are still `ctx`-scoped.
 
 ---
 
@@ -158,31 +158,31 @@ together: each `core` subdirectory owns one table cluster and its use cases.
 Tasks 1–12 build `core` bottom-up; 13–16 wrap it in HTTP; 17–22 build the client; 23 closes
 CI. Each task ends green and committed.
 
-| # | Task |
-|---|---|
-| 1 | Workspace scaffolding and the dual-runtime smoke test |
-| 2 | `contract`: DTOs, errors, Zod schemas, `ApiClient` |
-| 3 | `core/db`: migration runner and the §3.3 schema |
-| 4 | `core/auth`: passwords, tokens, sessions, activation |
-| 5 | `core`: library paths, bootstrap, login, account self-service, settings |
-| 6 | `core/users`: admin management, last-admin guard, usage |
-| 7 | `core/files`: zip reader, §3.4 classification, content hashing |
-| 8 | `core/projects`: CRUD, tags, list query |
-| 9 | `core/projects`: rescan / reconciliation (§3.5) |
-| 10 | `core/files`: upload, rename, delete, quota enforcement (§5.6) |
-| 11 | `core/previews`: embedded extraction and the queue |
-| 12 | `core`: CuraManager `metadata.json` importer (§3.6) |
-| 13 | `server`: foundation, capabilities, cookie sessions, auth routes |
-| 14 | `server`: account and admin user routes |
-| 15 | `server`: project, tag, and rescan routes |
-| 16 | `server`: file routes and byte streaming |
-| 17 | `web`: Angular scaffold, transport, capabilities, two build targets |
-| 18 | `web`: i18n and the settings page |
-| 19 | `web`: login and activation pages |
-| 20 | `web`: project list |
-| 21 | `web`: project detail |
-| 22 | `web`: admin users page |
-| 23 | CI: full pipeline and e2e smoke |
+| #   | Task                                                                    |
+| --- | ----------------------------------------------------------------------- |
+| 1   | Workspace scaffolding and the dual-runtime smoke test                   |
+| 2   | `contract`: DTOs, errors, Zod schemas, `ApiClient`                      |
+| 3   | `core/db`: migration runner and the §3.3 schema                         |
+| 4   | `core/auth`: passwords, tokens, sessions, activation                    |
+| 5   | `core`: library paths, bootstrap, login, account self-service, settings |
+| 6   | `core/users`: admin management, last-admin guard, usage                 |
+| 7   | `core/files`: zip reader, §3.4 classification, content hashing          |
+| 8   | `core/projects`: CRUD, tags, list query                                 |
+| 9   | `core/projects`: rescan / reconciliation (§3.5)                         |
+| 10  | `core/files`: upload, rename, delete, quota enforcement (§5.6)          |
+| 11  | `core/previews`: embedded extraction and the queue                      |
+| 12  | `core`: CuraManager `metadata.json` importer (§3.6)                     |
+| 13  | `server`: foundation, capabilities, cookie sessions, auth routes        |
+| 14  | `server`: account and admin user routes                                 |
+| 15  | `server`: project, tag, and rescan routes                               |
+| 16  | `server`: file routes and byte streaming                                |
+| 17  | `web`: Angular scaffold, transport, capabilities, two build targets     |
+| 18  | `web`: i18n and the settings page                                       |
+| 19  | `web`: login and activation pages                                       |
+| 20  | `web`: project list                                                     |
+| 21  | `web`: project detail                                                   |
+| 22  | `web`: admin users page                                                 |
+| 23  | CI: full pipeline and e2e smoke                                         |
 
 ---
 
@@ -193,12 +193,14 @@ written: `node:sqlite` and Web Crypto PBKDF2 both work, under Node **and** under
 one source file. If this task cannot go green, stop and report — nothing later is salvageable.
 
 **Files:**
+
 - Create: `pnpm-workspace.yaml`, `package.json`, `tsconfig.base.json`, `deno.json`, `eslint.config.js`, `.prettierrc.json`, `.gitignore`
 - Create: `packages/core/package.json`, `packages/core/tsconfig.json`
 - Create: `.github/workflows/ci.yml`
 - Test: `packages/core/test/harness.ts`, `packages/core/test/runtime.test.ts`
 
 **Interfaces:**
+
 - Consumes: nothing.
 - Produces: `test(name, fn)` and `assert` from `packages/core/test/harness.ts` — every `core` test file in Tasks 3–12 imports exactly these two. Root scripts `pnpm test:core:node`, `pnpm test:core:deno`, `pnpm verify`.
 
@@ -533,11 +535,13 @@ One definition of every payload, validated identically in the Angular form and o
 load-bearing — later tasks reference these exact identifiers.
 
 **Files:**
+
 - Create: `packages/contract/package.json`, `packages/contract/tsconfig.json`
 - Create: `packages/contract/src/dtos.ts`, `src/errors.ts`, `src/schemas.ts`, `src/api-client.ts`, `src/index.ts`
 - Test: `packages/contract/test/schemas.test.ts`
 
 **Interfaces:**
+
 - Consumes: the workspace and root scripts from Task 1.
 - Produces: everything below. `core` imports `AppError` from `@spm/contract/errors.ts` and DTO types from `@spm/contract/dtos.ts`; it must never import `schemas.ts` or the barrel, so Zod stays out of `core`'s runtime graph.
 
@@ -791,7 +795,10 @@ export const fileNameSchema = z
   // Spaces are legal in a file name; path separators and the Windows-reserved set are not.
   .regex(/^[^"*/:<>?\\|]+$/, 'invalid characters in file name')
   .refine((v) => !v.includes(String.fromCharCode(0)), 'file name must not contain a null byte')
-  .refine((v) => v !== '.' && v !== '..' && !v.startsWith('.'), 'file name must not start with a dot')
+  .refine(
+    (v) => v !== '.' && v !== '..' && !v.startsWith('.'),
+    'file name must not start with a dot',
+  )
 
 export const settingsPatchSchema = z.object({
   theme: z.enum(['light', 'dark', 'system']).optional(),
@@ -962,7 +969,7 @@ pnpm test:contract
 
 Expected: FAIL — `Cannot find module '../src/schemas.ts'` if Step 4 was skipped. If Steps 2–5
 are already written, the tests pass on the first run; that is acceptable here because the
-schemas *are* the specification and there is no behaviour to drive out. Reverse the order for
+schemas _are_ the specification and there is no behaviour to drive out. Reverse the order for
 every behavioural task from Task 3 on.
 
 - [ ] **Step 8: Run the tests to verify they pass**
@@ -985,10 +992,12 @@ git commit -m "feat(contract): DTOs, typed errors, shared Zod schemas and ApiCli
 ### Task 3: `core/db` — migration runner and the §3.3 schema
 
 **Files:**
+
 - Create: `packages/core/src/ctx.ts`, `src/db/ids.ts`, `src/db/migrate.ts`, `src/db/open.ts`, `src/db/migrations/001_init.sql`
 - Test: `packages/core/test/tmp-library.ts`, `packages/core/test/db.test.ts`
 
 **Interfaces:**
+
 - Consumes: the harness from Task 1.
 - Produces:
   - `type Ctx = { userId: string; isAdmin: boolean }` from `src/ctx.ts`
@@ -1365,10 +1374,12 @@ git commit -m "feat(core): SQLite schema, migration runner and library opener"
 Four primitives that share one rule: raw secrets are never stored, only their SHA-256 (§3.3).
 
 **Files:**
+
 - Create: `packages/core/src/auth/password.ts`, `src/auth/tokens.ts`, `src/auth/sessions.ts`, `src/auth/activation.ts`
 - Test: `packages/core/test/auth.test.ts`
 
 **Interfaces:**
+
 - Consumes: `Db`, `Ctx`, `newId`, `withLibrary`.
 - Produces:
   - `PW_ALGO = 'pbkdf2-sha256'`, `PW_ITERATIONS = 600_000`, `type PasswordHash = { hash: Uint8Array; salt: Uint8Array; iterations: number; algo: string }`, `hashPassword(password: string, iterations?: number): Promise<PasswordHash>`, `verifyPassword(password: string, stored: PasswordHash): Promise<boolean>`, `needsRehash(stored: { iterations: number; algo: string }): boolean`
@@ -1412,7 +1423,14 @@ function seedUser(db: Db, over: { admin?: boolean; status?: string } = {}): stri
   const id = newId()
   db.prepare(
     'INSERT INTO users (id, username, display_name, library_dir, is_admin, status, created_at) VALUES (?, ?, ?, ?, ?, ?, 0)',
-  ).run(id, `u-${id.slice(0, 8)}`, 'User', `dir-${id.slice(0, 8)}`, over.admin ? 1 : 0, over.status ?? 'active')
+  ).run(
+    id,
+    `u-${id.slice(0, 8)}`,
+    'User',
+    `dir-${id.slice(0, 8)}`,
+    over.admin ? 1 : 0,
+    over.status ?? 'active',
+  )
   return id
 }
 
@@ -1743,7 +1761,8 @@ export async function consumeActivationToken(
   now: number = Date.now(),
 ): Promise<string> {
   const row = await findToken(db, token)
-  if (!row || row.consumedAt !== null) throw new AppError('InvalidToken', 'activation token is not usable')
+  if (!row || row.consumedAt !== null)
+    throw new AppError('InvalidToken', 'activation token is not usable')
   if (row.expiresAt <= now) throw new AppError('TokenExpired', 'activation token has expired')
   db.prepare('UPDATE activation_tokens SET consumed_at = ? WHERE token_hash = ?').run(
     now,
@@ -1776,10 +1795,12 @@ Everything a single user can do to their own account, plus the two ways a `users
 into existence without an admin: first-run bootstrap (§5.4) and local mode (§2.6).
 
 **Files:**
+
 - Create: `packages/core/src/files/paths.ts`, `src/users/repo.ts`, `src/users/usage.ts`, `src/users/bootstrap.ts`, `src/users/account.ts`, `src/auth/login.ts`
 - Test: `packages/core/test/account.test.ts`
 
 **Interfaces:**
+
 - Consumes: `Library`, `Db`, `Ctx`, `newId`, `hashPassword`, `verifyPassword`, `needsRehash`, `createSession`, `issueActivationToken`, `consumeActivationToken`, `AppError`, `UserDto`, `SettingsDto`, `DEFAULT_SETTINGS`.
 - Produces:
   - `src/files/paths.ts`: `userRoot(lib: Library, libraryDir: string): string`, `projectDir(lib, libraryDir, dirName): string`, `previewPath(lib: Library, fileId: string): string`, `safeJoin(base: string, ...segments: string[]): string`
@@ -1799,7 +1820,13 @@ import { join, resolve } from 'node:path'
 import { AppError } from '@spm/contract/errors.ts'
 import { activateAccount, login } from '../src/auth/login.ts'
 import { PW_ITERATIONS, hashPassword } from '../src/auth/password.ts'
-import { changePassword, getSettings, me, putSettings, updateProfile } from '../src/users/account.ts'
+import {
+  changePassword,
+  getSettings,
+  me,
+  putSettings,
+  updateProfile,
+} from '../src/users/account.ts'
 import { ensureBootstrapAdmin, ensureLocalUser } from '../src/users/bootstrap.ts'
 import { safeJoin, userRoot } from '../src/files/paths.ts'
 import { assert, test } from './harness.ts'
@@ -2049,8 +2076,7 @@ export function findUserById(db: Db, id: string): UserRow | undefined {
 
 export function findUserByUsername(db: Db, username: string): UserRow | undefined {
   return db.prepare(`${SELECT_USER} WHERE username = ? COLLATE NOCASE`).get(username) as
-    | UserRow
-    | undefined
+    UserRow | undefined
 }
 
 export function requireUserRow(db: Db, id: string): UserRow {
@@ -2148,8 +2174,7 @@ export async function ensureBootstrapAdmin(
  */
 export function ensureLocalUser(lib: Library, now: number = Date.now()): Ctx {
   const existing = lib.db.prepare('SELECT id FROM users LIMIT 1').get() as
-    | { id: string }
-    | undefined
+    { id: string } | undefined
   if (existing) return { userId: existing.id, isAdmin: false }
 
   const id = newId()
@@ -2205,7 +2230,9 @@ export async function login(
   if (needsRehash(stored)) {
     const upgraded = await hashPassword(password)
     lib.db
-      .prepare('UPDATE users SET pw_hash = ?, pw_salt = ?, pw_iterations = ?, pw_algo = ? WHERE id = ?')
+      .prepare(
+        'UPDATE users SET pw_hash = ?, pw_salt = ?, pw_iterations = ?, pw_algo = ? WHERE id = ?',
+      )
       .run(upgraded.hash, upgraded.salt, upgraded.iterations, upgraded.algo, row.id)
   }
 
@@ -2279,13 +2306,17 @@ export async function changePassword(
 
   const pw = await hashPassword(next)
   lib.db
-    .prepare('UPDATE users SET pw_hash = ?, pw_salt = ?, pw_iterations = ?, pw_algo = ? WHERE id = ?')
+    .prepare(
+      'UPDATE users SET pw_hash = ?, pw_salt = ?, pw_iterations = ?, pw_algo = ? WHERE id = ?',
+    )
     .run(pw.hash, pw.salt, pw.iterations, pw.algo, ctx.userId)
 }
 
 export function updateProfile(lib: Library, ctx: Ctx, patch: { displayName?: string }): UserDto {
   if (patch.displayName !== undefined) {
-    lib.db.prepare('UPDATE users SET display_name = ? WHERE id = ?').run(patch.displayName, ctx.userId)
+    lib.db
+      .prepare('UPDATE users SET display_name = ? WHERE id = ?')
+      .run(patch.displayName, ctx.userId)
   }
   return me(lib, ctx)
 }
@@ -2347,10 +2378,12 @@ git commit -m "feat(core): library paths, first-run bootstrap, login, account se
 ### Task 6: `core/users` — admin management and the last-active-admin guard
 
 **Files:**
+
 - Create: `packages/core/src/users/admin.ts`
 - Test: `packages/core/test/admin.test.ts`
 
 **Interfaces:**
+
 - Consumes: `Library`, `Ctx`, `newId`, `issueActivationToken`, `userRoot`, `findUserByUsername`, `requireUserRow`, `toUserDto`, `diskUsageByUser`, `diskUsageBytes`, `AppError`, and the input types `CreateUserInput` / `UpdateUserInput` from `@spm/contract/schemas.ts` (**`import type` only** — a value import would drag Zod into `core`).
 - Produces: `requireAdmin(ctx): void`, `listUsers(lib, ctx): UserDto[]`, `createUser(lib, ctx, input): Promise<{ user: UserDto; token: string }>`, `reissueInvite(lib, ctx, id): Promise<{ token: string }>`, `updateUser(lib, ctx, id, patch): UserDto`, `deleteUser(lib, ctx, id): void`
 
@@ -2390,7 +2423,13 @@ test('every users.* operation is refused to a non-admin', async () => {
 
     assert.throws(() => listUsers(lib, NOT_ADMIN), forbidden)
     await assert.rejects(
-      () => createUser(lib, NOT_ADMIN, { username: 'anna', displayName: 'Anna', isAdmin: false, quotaBytes: null }),
+      () =>
+        createUser(lib, NOT_ADMIN, {
+          username: 'anna',
+          displayName: 'Anna',
+          isAdmin: false,
+          quotaBytes: null,
+        }),
       forbidden,
     )
     assert.throws(() => updateUser(lib, NOT_ADMIN, admin.userId, { isAdmin: false }), forbidden)
@@ -2421,9 +2460,20 @@ test('createUser makes a pending user, their folder, and one activation token', 
 test('a duplicate username is a conflict, case-insensitively', async () => {
   await withLibrary(async (lib) => {
     const admin = await activeAdmin(lib)
-    await createUser(lib, admin, { username: 'anna', displayName: 'Anna', isAdmin: false, quotaBytes: null })
+    await createUser(lib, admin, {
+      username: 'anna',
+      displayName: 'Anna',
+      isAdmin: false,
+      quotaBytes: null,
+    })
     await assert.rejects(
-      () => createUser(lib, admin, { username: 'ANNA', displayName: 'Anna II', isAdmin: false, quotaBytes: null }),
+      () =>
+        createUser(lib, admin, {
+          username: 'ANNA',
+          displayName: 'Anna II',
+          isAdmin: false,
+          quotaBytes: null,
+        }),
       (e: unknown) => (e as AppError).code === 'Conflict',
     )
   })
@@ -2432,7 +2482,12 @@ test('a duplicate username is a conflict, case-insensitively', async () => {
 test('reissueInvite hands out a fresh token and invalidates nothing else', async () => {
   await withLibrary(async (lib) => {
     const admin = await activeAdmin(lib)
-    const created = await createUser(lib, admin, { username: 'anna', displayName: 'Anna', isAdmin: false, quotaBytes: null })
+    const created = await createUser(lib, admin, {
+      username: 'anna',
+      displayName: 'Anna',
+      isAdmin: false,
+      quotaBytes: null,
+    })
     const again = await reissueInvite(lib, admin, created.user.id)
     assert.notEqual(again.token, created.token)
 
@@ -2457,7 +2512,12 @@ test('the last active admin cannot be deleted, disabled or demoted', async () =>
 test('once a second admin is active, the first can be removed', async () => {
   await withLibrary(async (lib) => {
     const admin = await activeAdmin(lib)
-    const second = await createUser(lib, admin, { username: 'anna', displayName: 'Anna', isAdmin: true, quotaBytes: null })
+    const second = await createUser(lib, admin, {
+      username: 'anna',
+      displayName: 'Anna',
+      isAdmin: true,
+      quotaBytes: null,
+    })
 
     // Still pending, so not yet an *active* admin.
     assert.throws(
@@ -2477,7 +2537,12 @@ test('once a second admin is active, the first can be removed', async () => {
 test('updateUser toggles admin, disabled and quota, and re-enabling respects pending', async () => {
   await withLibrary(async (lib) => {
     const admin = await activeAdmin(lib)
-    const { user } = await createUser(lib, admin, { username: 'anna', displayName: 'Anna', isAdmin: false, quotaBytes: null })
+    const { user } = await createUser(lib, admin, {
+      username: 'anna',
+      displayName: 'Anna',
+      isAdmin: false,
+      quotaBytes: null,
+    })
 
     assert.equal(updateUser(lib, admin, user.id, { quotaBytes: 100 }).quotaBytes, 100)
     assert.equal(updateUser(lib, admin, user.id, { quotaBytes: null }).quotaBytes, null)
@@ -2491,9 +2556,16 @@ test('updateUser toggles admin, disabled and quota, and re-enabling respects pen
 test('deleting a user cascades their metadata but leaves their folder', async () => {
   await withLibrary(async (lib) => {
     const admin = await activeAdmin(lib)
-    const { user } = await createUser(lib, admin, { username: 'anna', displayName: 'Anna', isAdmin: false, quotaBytes: null })
+    const { user } = await createUser(lib, admin, {
+      username: 'anna',
+      displayName: 'Anna',
+      isAdmin: false,
+      quotaBytes: null,
+    })
     lib.db
-      .prepare('INSERT INTO projects (id, owner_id, name, dir_name, created_at, updated_at) VALUES (?, ?, ?, ?, 0, 0)')
+      .prepare(
+        'INSERT INTO projects (id, owner_id, name, dir_name, created_at, updated_at) VALUES (?, ?, ?, ?, 0, 0)',
+      )
       .run('p1', user.id, 'Bin', 'Bin')
 
     deleteUser(lib, admin, user.id)
@@ -2507,12 +2579,21 @@ test('deleting a user cascades their metadata but leaves their folder', async ()
 test('listUsers reports each user their own derived disk usage', async () => {
   await withLibrary(async (lib) => {
     const admin = await activeAdmin(lib)
-    const { user } = await createUser(lib, admin, { username: 'anna', displayName: 'Anna', isAdmin: false, quotaBytes: null })
+    const { user } = await createUser(lib, admin, {
+      username: 'anna',
+      displayName: 'Anna',
+      isAdmin: false,
+      quotaBytes: null,
+    })
     lib.db
-      .prepare('INSERT INTO projects (id, owner_id, name, dir_name, created_at, updated_at) VALUES (?, ?, ?, ?, 0, 0)')
+      .prepare(
+        'INSERT INTO projects (id, owner_id, name, dir_name, created_at, updated_at) VALUES (?, ?, ?, ?, 0, 0)',
+      )
       .run('p1', user.id, 'Bin', 'Bin')
     lib.db
-      .prepare("INSERT INTO files (id, project_id, rel_path, kind, size_bytes, mtime_ms) VALUES ('f1', 'p1', 'a.stl', 'model', 4096, 0)")
+      .prepare(
+        "INSERT INTO files (id, project_id, rel_path, kind, size_bytes, mtime_ms) VALUES ('f1', 'p1', 'a.stl', 'model', 4096, 0)",
+      )
       .run()
 
     const byName = new Map(listUsers(lib, admin).map((u) => [u.username, u.diskUsageBytes]))
@@ -2570,7 +2651,9 @@ function assertNotLastActiveAdmin(db: Db, row: UserRow): void {
 export function listUsers(lib: Library, ctx: Ctx): UserDto[] {
   requireAdmin(ctx)
   const usage = diskUsageByUser(lib.db)
-  const rows = lib.db.prepare('SELECT * FROM users ORDER BY username COLLATE NOCASE').all() as UserRow[]
+  const rows = lib.db
+    .prepare('SELECT * FROM users ORDER BY username COLLATE NOCASE')
+    .all() as UserRow[]
   return rows.map((row) => toUserDto(row, usage.get(row.id) ?? 0))
 }
 
@@ -2592,7 +2675,15 @@ export async function createUser(
       `INSERT INTO users (id, username, display_name, library_dir, is_admin, status, quota_bytes, created_at)
        VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)`,
     )
-    .run(id, input.username, input.displayName, input.username, input.isAdmin ? 1 : 0, input.quotaBytes, now)
+    .run(
+      id,
+      input.username,
+      input.displayName,
+      input.username,
+      input.isAdmin ? 1 : 0,
+      input.quotaBytes,
+      now,
+    )
   mkdirSync(userRoot(lib, input.username), { recursive: true })
 
   const token = await issueActivationToken(lib.db, id, now)
@@ -2664,10 +2755,12 @@ The one algorithm in this plan that was settled against real measurements. Get t
 order wrong and every OrcaSlicer project is labelled `bambu`.
 
 **Files:**
+
 - Create: `packages/core/src/files/zip.ts`, `src/files/classify.ts`, `src/files/hash.ts`
 - Test: `packages/core/test/fixtures/make-3mf.ts`, `packages/core/test/classify.test.ts`
 
 **Interfaces:**
+
 - Consumes: `AppError`, `FileKind`, `SlicerId`.
 - Produces:
   - `src/files/zip.ts`: `type ZipEntry = { name: string; method: number; compressedSize: number; uncompressedSize: number; localHeaderOffset: number }`, `readZipEntries(path): ZipEntry[]`, `findZipEntry(entries, name): ZipEntry | undefined`, `readZipEntryBytes(path, entry): Uint8Array`, `readZipEntryText(path, entry): string`
@@ -2795,7 +2888,11 @@ export function prusaProject(path: string, thumbnail?: Uint8Array): void {
 }
 
 /** Anycubic, Bambu and Orca share this layout exactly; only the header keys differ. */
-export function bambuLineageProject(path: string, headerKeys: string[], thumbnail?: Uint8Array): void {
+export function bambuLineageProject(
+  path: string,
+  headerKeys: string[],
+  thumbnail?: Uint8Array,
+): void {
   writeZip(path, [
     { name: '3D/3dmodel.model', data: MODEL_XML, deflate: true },
     { name: 'Metadata/project_settings.config', data: '{"version": "02.08.02.61"}' },
@@ -2859,10 +2956,7 @@ test('the zip reader lists entries and inflates a deflated one', async () => {
     const path = join(dir, 'p.3mf')
     plainMesh3mf(path)
     const entries = readZipEntries(path)
-    assert.deepEqual(
-      entries.map((e) => e.name).sort(),
-      ['3D/3dmodel.model', '[Content_Types].xml'],
-    )
+    assert.deepEqual(entries.map((e) => e.name).sort(), ['3D/3dmodel.model', '[Content_Types].xml'])
     const model = findZipEntry(entries, '3D/3dmodel.model')!
     assert.equal(model.method, 8)
     assert.match(readZipEntryText(path, model), /^<\?xml/)
@@ -3047,7 +3141,8 @@ export function readZipEntries(path: string): ZipEntry[] {
     const total = tailView.getUint16(eocd + 10, true)
     const cdSize = tailView.getUint32(eocd + 12, true)
     const cdOffset = tailView.getUint32(eocd + 16, true)
-    if (cdOffset === 0xffffffff) throw new AppError('Validation', 'zip64 archives are not supported')
+    if (cdOffset === 0xffffffff)
+      throw new AppError('Validation', 'zip64 archives are not supported')
 
     const cd = readAt(fd, cdOffset, cdSize)
     const view = new DataView(cd.buffer, cd.byteOffset, cd.byteLength)
@@ -3217,16 +3312,19 @@ git commit -m "feat(core): zip reader, content-based 3MF slicer detection, strea
 ### Task 8: `core/projects` — CRUD, tags, and the list query
 
 **Files:**
+
 - Create: `packages/core/src/projects/queries.ts`, `src/projects/usecases.ts`
 - Test: `packages/core/test/projects.test.ts`
 
 **Interfaces:**
+
 - Consumes: `Library`, `Ctx`, `newId`, `projectDir`, `requireUserRow`, `AppError`, and the undecorated DTO types `CoreProjectDto` / `CoreProjectDetailDto` / `CoreFileDto` from `@spm/contract/dtos.ts`.
 - Produces:
   - `src/projects/queries.ts`: `type ProjectRow`, `requireProjectRow(lib, ctx, id): ProjectRow`, `listProjects(lib, ctx, query: ProjectQuery): CoreProjectDto[]`, `getProject(lib, ctx, id): CoreProjectDetailDto`, `toCoreFileDto(row): CoreFileDto`
   - `src/projects/usecases.ts`: `sanitizeDirName(name): string`, `createProject(lib, ctx, input): CoreProjectDto`, `updateProject(lib, ctx, id, patch): CoreProjectDto`, `deleteProject(lib, ctx, id, opts): void`, `addTag(lib, ctx, id, name): void`, `removeTag(lib, ctx, id, name): void`
 
 **Two semantics the spec leaves open, fixed here:**
+
 - A `tags` filter is **AND**: a project must carry every tag listed. Filtering is for narrowing.
 - The cover thumbnail prefers a **model** file's ready preview (§4.2) and falls back to a ready
   slicer-project thumbnail. Without the fallback, no grid tile would have a cover until spec B
@@ -3409,7 +3507,10 @@ test('list filters by search across name, notes and tags', async () => {
     const tagged = createProject(lib, ctx, { name: 'Bin' })
     addTag(lib, ctx, tagged.id, 'gridfinity')
 
-    const names = (search: string) => listProjects(lib, ctx, { search }).map((p) => p.name).sort()
+    const names = (search: string) =>
+      listProjects(lib, ctx, { search })
+        .map((p) => p.name)
+        .sort()
     assert.deepEqual(names('bench'), ['Benchy'])
     assert.deepEqual(names('PETG'), ['Bracket'])
     assert.deepEqual(names('GRIDFINITY'), ['Bin'])
@@ -3697,7 +3798,9 @@ export function listProjects(lib: Library, ctx: Ctx, query: ProjectQuery): CoreP
   const direction = query.dir === 'asc' ? 'ASC' : 'DESC'
 
   const rows = lib.db
-    .prepare(`SELECT p.* FROM projects p WHERE ${where.join(' AND ')} ORDER BY ${column} ${direction}`)
+    .prepare(
+      `SELECT p.* FROM projects p WHERE ${where.join(' AND ')} ORDER BY ${column} ${direction}`,
+    )
     .all(...params) as ProjectRow[]
 
   const ids = rows.map((row) => row.id)
@@ -3870,9 +3973,7 @@ export function removeTag(lib: Library, ctx: Ctx, projectId: string, name: strin
     .run(projectId, ctx.userId, name.trim())
   // A tag that labels nothing is noise in the filter list.
   lib.db
-    .prepare(
-      'DELETE FROM tags WHERE owner_id = ? AND id NOT IN (SELECT tag_id FROM project_tags)',
-    )
+    .prepare('DELETE FROM tags WHERE owner_id = ? AND id NOT IN (SELECT tag_id FROM project_tags)')
     .run(ctx.userId)
   lib.db.prepare('UPDATE projects SET updated_at = ? WHERE id = ?').run(Date.now(), projectId)
 }
@@ -3906,10 +4007,12 @@ attention: adopt, missing-folder, changed-file, and dot-folder skipping each get
 case against a temp directory.
 
 **Files:**
+
 - Create: `packages/core/src/projects/rescan.ts`
 - Test: `packages/core/test/rescan.test.ts`
 
 **Interfaces:**
+
 - Consumes: `Library`, `Ctx`, `newId`, `userRoot`, `requireUserRow`, `classifyFile`, `fileContentHash`, `sanitizeDirName`, `RescanResultDto`.
 - Produces: `rescan(lib, ctx): Promise<RescanResultDto>`, `RELATIVE_PATH_SEPARATOR = '/'`
 
@@ -4021,7 +4124,9 @@ test('files are indexed with their classification and a pending preview', async 
       { rel_path: 'benchy.stl', kind: 'model', slicer: null },
       { rel_path: 'notes.txt', kind: 'other', slicer: null },
     ])
-    const { n } = lib.db.prepare("SELECT COUNT(*) AS n FROM previews WHERE state = 'pending'").get() as {
+    const { n } = lib.db
+      .prepare("SELECT COUNT(*) AS n FROM previews WHERE state = 'pending'")
+      .get() as {
       n: number
     }
     assert.equal(n, 3)
@@ -4088,7 +4193,9 @@ test('a file removed from a present project loses its row and preview', async ()
 
     assert.equal(result.filesRemoved, 1)
     const { files, previews } = lib.db
-      .prepare('SELECT (SELECT COUNT(*) FROM files) AS files, (SELECT COUNT(*) FROM previews) AS previews')
+      .prepare(
+        'SELECT (SELECT COUNT(*) FROM files) AS files, (SELECT COUNT(*) FROM previews) AS previews',
+      )
       .get() as { files: number; previews: number }
     assert.equal(files, 0)
     assert.equal(previews, 0)
@@ -4136,7 +4243,10 @@ test('an untouched file is not re-queued', async () => {
     const result = await rescan(lib, ctx)
     assert.equal(result.previewsQueued, 0)
     assert.equal(result.filesAdded, 0)
-    assert.equal((lib.db.prepare('SELECT state FROM previews').get() as { state: string }).state, 'ready')
+    assert.equal(
+      (lib.db.prepare('SELECT state FROM previews').get() as { state: string }).state,
+      'ready',
+    )
   })
 })
 
@@ -4283,7 +4393,9 @@ export async function rescan(lib: Library, ctx: Ctx): Promise<RescanResultDto> {
       continue
     }
     if (row.state !== 'ok') {
-      lib.db.prepare("UPDATE projects SET state = 'ok', updated_at = ? WHERE id = ?").run(now, row.id)
+      lib.db
+        .prepare("UPDATE projects SET state = 'ok', updated_at = ? WHERE id = ?")
+        .run(now, row.id)
     }
 
     const files = walkFiles(join(root, row.dir_name))
@@ -4317,7 +4429,8 @@ export async function rescan(lib: Library, ctx: Ctx): Promise<RescanResultDto> {
         continue
       }
 
-      if (Number(known.size_bytes) === file.size && Number(known.mtime_ms) === file.mtimeMs) continue
+      if (Number(known.size_bytes) === file.size && Number(known.mtime_ms) === file.mtimeMs)
+        continue
 
       // Cheap stat mismatch, so pay for the hash and reclassify: a saved 3MF can change slicer.
       const hash = await fileContentHash(file.absPath)
@@ -4376,10 +4489,12 @@ git commit -m "feat(core): rescan reconciles disk against the index"
 ### Task 10: `core/files` — upload, rename, delete, and quota enforcement (§5.6)
 
 **Files:**
+
 - Create: `packages/core/src/files/usecases.ts`
 - Test: `packages/core/test/files.test.ts`
 
 **Interfaces:**
+
 - Consumes: `Library`, `Ctx`, `newId`, `safeJoin`, `projectDir`, `previewPath`, `classifyFile`, `fileContentHash`, `requireProjectRow`, `toCoreFileDto`, `requireUserRow`, `diskUsageBytes`, `AppError`, `QuotaExceededDetails`, `RELATIVE_PATH_SEPARATOR`.
 - Produces:
   - `assertWithinQuota(lib, ctx, incomingBytes): void`
@@ -4875,10 +4990,12 @@ for `.stl`, `.obj`, and plain 3MF meshes — is spec B. This task builds the ext
 machine, and the bounded queue B plugs a second handler into.
 
 **Files:**
+
 - Create: `packages/core/src/previews/png.ts`, `src/previews/embedded.ts`, `src/previews/queue.ts`
 - Test: `packages/core/test/fixtures/make-png.ts`, `packages/core/test/previews.test.ts`
 
 **Interfaces:**
+
 - Consumes: `Library`, `readZipEntries`, `findZipEntry`, `readZipEntryBytes`, `previewPath`, `RELATIVE_PATH_SEPARATOR`, `SlicerId`.
 - Produces:
   - `src/previews/png.ts`: `readPngSize(bytes): { width: number; height: number } | null`
@@ -4939,12 +5056,23 @@ import { newId } from '../src/db/ids.ts'
 import type { Library } from '../src/db/open.ts'
 import { extractEmbeddedThumbnail } from '../src/previews/embedded.ts'
 import { readPngSize } from '../src/previews/png.ts'
-import { MAX_PREVIEW_ATTEMPTS, claimPendingPreviews, runPreviewQueue, EMBEDDED_HANDLER } from '../src/previews/queue.ts'
+import {
+  MAX_PREVIEW_ATTEMPTS,
+  claimPendingPreviews,
+  runPreviewQueue,
+  EMBEDDED_HANDLER,
+} from '../src/previews/queue.ts'
 import { rescan } from '../src/projects/rescan.ts'
 import { getProject, listProjects } from '../src/projects/queries.ts'
 import { assert, test } from './harness.ts'
 import { withLibrary } from './tmp-library.ts'
-import { bambuLineageProject, curaProject, plainMesh3mf, prusaProject, writeZip } from './fixtures/make-3mf.ts'
+import {
+  bambuLineageProject,
+  curaProject,
+  plainMesh3mf,
+  prusaProject,
+  writeZip,
+} from './fixtures/make-3mf.ts'
 import { makePng } from './fixtures/make-png.ts'
 
 function seedUser(lib: Library, username = 'marc'): Ctx {
@@ -5057,12 +5185,18 @@ test('running the queue makes a slicer project preview ready and writes the png'
     assert.equal(row.width, 300)
     assert.equal(row.png_path, `.spm/previews/${row.file_id}.png`)
     assert.ok(existsSync(join(lib.dir, '.spm', 'previews', `${row.file_id}.png`)))
-    assert.equal(readPngSize(readFileSync(join(lib.dir, '.spm', 'previews', `${row.file_id}.png`)))!.width, 300)
+    assert.equal(
+      readPngSize(readFileSync(join(lib.dir, '.spm', 'previews', `${row.file_id}.png`)))!.width,
+      300,
+    )
     assert.equal(row.source_hash.byteLength, 32)
 
     // The ready preview becomes the project cover.
     assert.equal(listProjects(lib, ctx, {})[0]!.coverFileId, row.file_id)
-    assert.equal(getProject(lib, ctx, listProjects(lib, ctx, {})[0]!.id).files[0]!.previewState, 'ready')
+    assert.equal(
+      getProject(lib, ctx, listProjects(lib, ctx, {})[0]!.id).files[0]!.previewState,
+      'ready',
+    )
   })
 })
 
@@ -5076,7 +5210,10 @@ test('a project file with no thumbnail is unsupported, not failed', async () => 
 
     assert.deepEqual(await runPreviewQueue(lib), { ready: 0, failed: 0, unsupported: 1 })
     // Deterministic absence, so it is never retried.
-    assert.equal((lib.db.prepare('SELECT state FROM previews').get() as { state: string }).state, 'unsupported')
+    assert.equal(
+      (lib.db.prepare('SELECT state FROM previews').get() as { state: string }).state,
+      'unsupported',
+    )
   })
 })
 
@@ -5254,9 +5391,7 @@ export const EMBEDDED_HANDLER: PreviewHandler = {
   kinds: ['slicer_project'],
   run: (job) => {
     const found = extractEmbeddedThumbnail(job.absPath)
-    return Promise.resolve(
-      found ? { ...found, source: 'embedded' as const } : null,
-    )
+    return Promise.resolve(found ? { ...found, source: 'embedded' as const } : null)
   },
 }
 
@@ -5322,7 +5457,9 @@ async function runOne(
     if (!output) {
       // Deterministic absence: never retried.
       lib.db
-        .prepare("UPDATE previews SET state = 'unsupported', error = NULL, updated_at = ? WHERE file_id = ?")
+        .prepare(
+          "UPDATE previews SET state = 'unsupported', error = NULL, updated_at = ? WHERE file_id = ?",
+        )
         .run(now, job.fileId)
       counts.unsupported++
       return
@@ -5409,14 +5546,16 @@ git commit -m "feat(core): embedded thumbnail extraction and the bounded preview
 
 Migration is the adopt path plus a sidecar reader — no bespoke tool. A CuraManager library is
 flat, which is exactly the shape of a local-mode library, so local mode needs no restructuring
-at all; importing into a *server* library moves each project folder under the target user.
+at all; importing into a _server_ library moves each project folder under the target user.
 
 **Files:**
+
 - Create: `packages/core/src/projects/import-curamanager.ts`
 - Modify: `packages/core/src/index.ts` (create the barrel — the single entry a transport imports)
 - Test: `packages/core/test/import-curamanager.test.ts`
 
 **Interfaces:**
+
 - Consumes: `Library`, `Ctx`, `rescan`, `addTag`, `updateProject`, `userRoot`, `requireUserRow`, `RescanResultDto`.
 - Produces:
   - `type CuraManagerSidecar = { tags: string[]; website: string | null; isArchived: boolean }`
@@ -5495,7 +5634,11 @@ test('malformed sidecar json is ignored rather than fatal', async () => {
 test('a flat CuraManager library imports into local mode with no restructuring', async () => {
   await withLibrary(async (lib) => {
     const ctx = seedUser(lib, 'local', '.')
-    curaManagerProject(lib.dir, 'Benchy', { Tags: ['boat'], Website: 'https://a.example', IsArchived: false })
+    curaManagerProject(lib.dir, 'Benchy', {
+      Tags: ['boat'],
+      Website: 'https://a.example',
+      IsArchived: false,
+    })
     curaManagerProject(lib.dir, 'Bracket', { Tags: ['petg', 'functional'], IsArchived: true })
     curaManagerProject(lib.dir, 'Plain', null)
 
@@ -5528,7 +5671,10 @@ test('importing into a server library moves each folder under the target user', 
     // Another user's library root is never swept up.
     assert.ok(existsSync(join(lib.dir, 'anna')))
     assert.deepEqual(listProjects(lib, anna, {}), [])
-    assert.deepEqual(listProjects(lib, marc, {}).map((p) => p.name), ['Benchy'])
+    assert.deepEqual(
+      listProjects(lib, marc, {}).map((p) => p.name),
+      ['Benchy'],
+    )
   })
 })
 
@@ -5539,7 +5685,10 @@ test('the .spm folder is never moved or adopted by the importer', async () => {
 
     await importCuraManagerLibrary(lib, ctx, { moveIntoUserFolder: true })
     assert.ok(existsSync(join(lib.dir, '.spm', 'app.db')))
-    assert.deepEqual(listProjects(lib, ctx, {}).map((p) => p.name), ['Benchy'])
+    assert.deepEqual(
+      listProjects(lib, ctx, {}).map((p) => p.name),
+      ['Benchy'],
+    )
   })
 })
 
@@ -5640,7 +5789,12 @@ export async function importCuraManagerLibrary(
   lib: Library,
   ctx: Ctx,
   opts: { moveIntoUserFolder: boolean },
-): Promise<{ rescan: RescanResultDto; projectsUpdated: number; tagsApplied: number; moved: number }> {
+): Promise<{
+  rescan: RescanResultDto
+  projectsUpdated: number
+  tagsApplied: number
+  moved: number
+}> {
   const moved = opts.moveIntoUserFolder ? moveFlatLibraryIntoUserFolder(lib, ctx) : 0
 
   // Adopt every folder and index its files first (spec 3.6, step 2).
@@ -5774,11 +5928,13 @@ logic lives here (§2.2). Integration tests call the composed handler function d
 `Request` object, so no port is ever bound.
 
 **Files:**
+
 - Create: `packages/server/main.ts`, `src/router.ts`, `src/session.ts`, `src/errors.ts`, `src/decorate.ts`, `src/static.ts`, `src/json.ts`, `src/routes/index.ts`, `src/routes/capabilities.ts`, `src/routes/auth.ts`
 - Modify: `.github/workflows/ci.yml` (add the `server` job)
 - Test: `packages/server/test/harness.ts`, `packages/server/test/auth.test.ts`
 
 **Interfaces:**
+
 - Consumes: everything exported from `@spm/core`; `loginSchema`, `activateSchema` from `@spm/contract/schemas.ts`; `AppError` from `@spm/contract/errors.ts`.
 - Produces:
   - `src/router.ts`: `type Env = { lib: Library }`, `type Handler = (input: { req: Request; url: URL; params: Record<string, string>; env: Env; ctx: Ctx }) => Promise<Response> | Response`, `type Route = { method: string; path: string; auth: 'public' | 'session'; handler: Handler }`, `makeHandler(routes: Route[], env: Env): (req: Request) => Promise<Response>`
@@ -6062,7 +6218,10 @@ export function errorResponse(error: unknown): Response {
   }
   // Never leak an internal message or stack to a client.
   console.error('unhandled error', error)
-  return json({ error: { code: 'Internal', message: 'internal error', details: {} } }, { status: 500 })
+  return json(
+    { error: { code: 'Internal', message: 'internal error', details: {} } },
+    { status: 500 },
+  )
 }
 ```
 
@@ -6360,7 +6519,13 @@ export const routes: Route[] = [...capabilityRoutes, ...authRoutes]
 `packages/server/main.ts`:
 
 ```ts
-import { closeLibrary, ensureBootstrapAdmin, openLibrary, pruneExpiredSessions, runPreviewQueue } from '@spm/core'
+import {
+  closeLibrary,
+  ensureBootstrapAdmin,
+  openLibrary,
+  pruneExpiredSessions,
+  runPreviewQueue,
+} from '@spm/core'
 import { makeHandler } from './src/router.ts'
 import { routes } from './src/routes/index.ts'
 
@@ -6412,18 +6577,18 @@ Expected: 9 passing.
 Append to `.github/workflows/ci.yml`:
 
 ```yaml
-  server:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-        with: { version: 10 }
-      - uses: actions/setup-node@v4
-        with: { node-version: '24', cache: pnpm }
-      - uses: denoland/setup-deno@v2
-        with: { deno-version: v2.x }
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm test:server
+server:
+  runs-on: ubuntu-latest
+  steps:
+    - uses: actions/checkout@v4
+    - uses: pnpm/action-setup@v4
+      with: { version: 10 }
+    - uses: actions/setup-node@v4
+      with: { node-version: '24', cache: pnpm }
+    - uses: denoland/setup-deno@v2
+      with: { deno-version: v2.x }
+    - run: pnpm install --frozen-lockfile
+    - run: pnpm test:server
 ```
 
 - [ ] **Step 10: Commit**
@@ -6438,11 +6603,13 @@ git commit -m "feat(server): Deno router, cookie sessions, capabilities and auth
 ### Task 14: `server` — account and admin user routes
 
 **Files:**
+
 - Create: `packages/server/src/routes/account.ts`, `src/routes/users.ts`
 - Modify: `packages/server/src/routes/index.ts`
 - Test: `packages/server/test/users.test.ts`
 
 **Interfaces:**
+
 - Consumes: `me`, `updateProfile`, `changePassword`, `getSettings`, `putSettings`, `listUsers`, `createUser`, `reissueInvite`, `updateUser`, `deleteUser` from `@spm/core`; `profilePatchSchema`, `changePasswordSchema`, `settingsPatchSchema`, `createUserSchema`, `updateUserSchema` from `@spm/contract/schemas.ts`; `Route`, `json`, `noContent`, `parseJson`.
 - Produces: `accountRoutes: Route[]`, `userRoutes: Route[]`, `activationUrl(url: URL, token: string): string`
 
@@ -6482,31 +6649,44 @@ async function activate(server: TestServer, activationUrl: string): Promise<stri
   return response.headers.get('set-cookie')!.split(';')[0]!
 }
 
-Deno.test('creating a user returns an activation url carrying the token in the fragment', async () => {
-  await withServer(async (server) => {
-    const cookie = await loginAsAdmin(server)
-    const response = await createUser(server, cookie, { username: 'anna', displayName: 'Anna' })
-    assert.equal(response.status, 200)
+Deno.test(
+  'creating a user returns an activation url carrying the token in the fragment',
+  async () => {
+    await withServer(async (server) => {
+      const cookie = await loginAsAdmin(server)
+      const response = await createUser(server, cookie, { username: 'anna', displayName: 'Anna' })
+      assert.equal(response.status, 200)
 
-    const body = await response.json()
-    assert.equal(body.user.username, 'anna')
-    assert.equal(body.user.status, 'pending')
-    assert.match(body.activationUrl, /^http:\/\/localhost\/activate#[A-Za-z0-9_-]{43}$/)
-    // A query string would land in access logs and Referer headers (spec 5.3).
-    assert.doesNotMatch(body.activationUrl, /\?/)
-  })
-})
+      const body = await response.json()
+      assert.equal(body.user.username, 'anna')
+      assert.equal(body.user.status, 'pending')
+      assert.match(body.activationUrl, /^http:\/\/localhost\/activate#[A-Za-z0-9_-]{43}$/)
+      // A query string would land in access logs and Referer headers (spec 5.3).
+      assert.doesNotMatch(body.activationUrl, /\?/)
+    })
+  },
+)
 
 Deno.test('a non-admin is refused every users route', async () => {
   await withServer(async (server) => {
     const adminCookie = await loginAsAdmin(server)
-    const created = await (await createUser(server, adminCookie, { username: 'anna', displayName: 'Anna' })).json()
+    const created = await (
+      await createUser(server, adminCookie, { username: 'anna', displayName: 'Anna' })
+    ).json()
     const annaCookie = await activate(server, created.activationUrl)
 
     assert.equal((await server.fetch('/api/users', { cookie: annaCookie })).status, 403)
-    assert.equal((await createUser(server, annaCookie, { username: 'x', displayName: 'X' })).status, 403)
     assert.equal(
-      (await server.fetch(`/api/users/${created.user.id}`, { method: 'DELETE', cookie: annaCookie })).status,
+      (await createUser(server, annaCookie, { username: 'x', displayName: 'X' })).status,
+      403,
+    )
+    assert.equal(
+      (
+        await server.fetch(`/api/users/${created.user.id}`, {
+          method: 'DELETE',
+          cookie: annaCookie,
+        })
+      ).status,
       403,
     )
   })
@@ -6515,9 +6695,14 @@ Deno.test('a non-admin is refused every users route', async () => {
 Deno.test('an invite can be re-issued and the quota updated', async () => {
   await withServer(async (server) => {
     const cookie = await loginAsAdmin(server)
-    const created = await (await createUser(server, cookie, { username: 'anna', displayName: 'Anna' })).json()
+    const created = await (
+      await createUser(server, cookie, { username: 'anna', displayName: 'Anna' })
+    ).json()
 
-    const reissued = await server.fetch(`/api/users/${created.user.id}/invite`, { method: 'POST', cookie })
+    const reissued = await server.fetch(`/api/users/${created.user.id}/invite`, {
+      method: 'POST',
+      cookie,
+    })
     assert.equal(reissued.status, 200)
     assert.notEqual((await reissued.json()).activationUrl, created.activationUrl)
 
@@ -6588,7 +6773,10 @@ Deno.test('settings round-trip through the api', async () => {
     const saved = await put.json()
     assert.equal(saved.language, 'de')
     assert.equal(saved.viewMode, 'list')
-    assert.equal((await (await server.fetch('/api/account/settings', { cookie })).json()).language, 'de')
+    assert.equal(
+      (await (await server.fetch('/api/account/settings', { cookie })).json()).language,
+      'de',
+    )
   })
 })
 
@@ -6744,12 +6932,7 @@ import { authRoutes } from './auth.ts'
 import { capabilityRoutes } from './capabilities.ts'
 import { userRoutes } from './users.ts'
 
-export const routes: Route[] = [
-  ...capabilityRoutes,
-  ...authRoutes,
-  ...accountRoutes,
-  ...userRoutes,
-]
+export const routes: Route[] = [...capabilityRoutes, ...authRoutes, ...accountRoutes, ...userRoutes]
 ```
 
 `/api/users/:id/invite` is listed before `/api/users/:id` — `URLPattern` requires no such
@@ -6776,11 +6959,13 @@ git commit -m "feat(server): account self-service and admin user routes"
 ### Task 15: `server` — project, tag and rescan routes
 
 **Files:**
+
 - Create: `packages/server/src/routes/projects.ts`
 - Modify: `packages/server/src/routes/index.ts`
 - Test: `packages/server/test/projects.test.ts`
 
 **Interfaces:**
+
 - Consumes: `listProjects`, `getProject`, `createProject`, `updateProject`, `deleteProject`, `addTag`, `removeTag`, `rescan` from `@spm/core`; `createProjectSchema`, `projectPatchSchema`, `projectQuerySchema`, `tagNameSchema`; `decorateProject`, `decorateProjectDetail`.
 - Produces: `projectRoutes: Route[]`, `parseProjectQuery(url: URL): ProjectQuery`
 
@@ -6815,7 +7000,10 @@ Deno.test('a project can be created, listed, fetched, patched and deleted', asyn
     assert.deepEqual(project.tags, ['boat'])
 
     const list = await (await server.fetch('/api/projects', { cookie })).json()
-    assert.deepEqual(list.map((p: { id: string }) => p.id), [project.id])
+    assert.deepEqual(
+      list.map((p: { id: string }) => p.id),
+      [project.id],
+    )
 
     const detail = await (await server.fetch(`/api/projects/${project.id}`, { cookie })).json()
     assert.deepEqual(detail.files, [])
@@ -6945,7 +7133,10 @@ Deno.test('another user project is a 404, not a 403', async () => {
       await server.fetch(`/api/auth/activation/${token}`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ password: 'another long password', confirm: 'another long password' }),
+        body: JSON.stringify({
+          password: 'another long password',
+          confirm: 'another long password',
+        }),
       })
     ).headers
       .get('set-cookie')!
@@ -6961,7 +7152,10 @@ Deno.test('another user project is a 404, not a 403', async () => {
     ).json()
 
     // Admins administer users; they never see other users' projects (spec 5.5).
-    assert.equal((await server.fetch(`/api/projects/${mine.id}`, { cookie: annaCookie })).status, 404)
+    assert.equal(
+      (await server.fetch(`/api/projects/${mine.id}`, { cookie: annaCookie })).status,
+      404,
+    )
     assert.deepEqual(await (await server.fetch('/api/projects', { cookie: annaCookie })).json(), [])
   })
 })
@@ -7116,11 +7310,13 @@ git commit -m "feat(server): project, tag and rescan routes"
 ### Task 16: `server` — file routes and byte streaming
 
 **Files:**
+
 - Create: `packages/server/src/routes/files.ts`
 - Modify: `packages/server/src/routes/index.ts`
 - Test: `packages/server/test/files.test.ts`
 
 **Interfaces:**
+
 - Consumes: `uploadFile`, `renameFile`, `deleteFile`, `resolveFilePath`, `resolvePreviewPath`, `runPreviewQueue` from `@spm/core`; `fileNameSchema`; `decorateFile`.
 - Produces: `fileRoutes: Route[]`, `UPLOAD_NAME_HEADER = 'x-spm-file-name'`
 
@@ -7250,7 +7446,9 @@ Deno.test('raw streams the bytes with a real content type', async () => {
   await withServer(async (server) => {
     const cookie = await loginAsAdmin(server)
     const project = await newProject(server, cookie)
-    const file = await (await upload(server, cookie, project.id, 'benchy.stl', 'solid benchy')).json()
+    const file = await (
+      await upload(server, cookie, project.id, 'benchy.stl', 'solid benchy')
+    ).json()
 
     const response = await server.fetch(file.rawUrl, { cookie })
     assert.equal(response.status, 200)
@@ -7274,9 +7472,9 @@ Deno.test('thumb is a 404 while pending and a png once ready', async () => {
     assert.equal((await server.fetch(`/api/files/${pending.id}/thumb`, { cookie })).status, 404)
 
     await runPreviewQueue(server.lib)
-    const ready = (await (await server.fetch(`/api/projects/${project.id}`, { cookie })).json()).files.find(
-      (f: { name: string }) => f.name === 'benchy.3mf',
-    )
+    const ready = (
+      await (await server.fetch(`/api/projects/${project.id}`, { cookie })).json()
+    ).files.find((f: { name: string }) => f.name === 'benchy.3mf')
     assert.equal(ready.previewState, 'ready')
     assert.equal(ready.thumbUrl, `/api/files/${ready.id}/thumb`)
 
@@ -7300,7 +7498,10 @@ Deno.test('rename and delete work through the api', async () => {
     })
     assert.equal((await renamed.json()).name, 'b.stl')
 
-    assert.equal((await server.fetch(`/api/files/${file.id}`, { method: 'DELETE', cookie })).status, 204)
+    assert.equal(
+      (await server.fetch(`/api/files/${file.id}`, { method: 'DELETE', cookie })).status,
+      204,
+    )
     assert.equal((await server.fetch(`/api/files/${file.id}/raw`, { cookie })).status, 404)
   })
 })
@@ -7322,13 +7523,7 @@ Expected: FAIL — the file routes 404.
 import { AppError } from '@spm/contract/errors.ts'
 import { fileNameSchema } from '@spm/contract/schemas.ts'
 import { z } from 'zod'
-import {
-  deleteFile,
-  renameFile,
-  resolveFilePath,
-  resolvePreviewPath,
-  uploadFile,
-} from '@spm/core'
+import { deleteFile, renameFile, resolveFilePath, resolvePreviewPath, uploadFile } from '@spm/core'
 import { decorateFile } from '../decorate.ts'
 import { json, noContent, parseJson } from '../json.ts'
 import type { Route } from '../router.ts'
@@ -7359,7 +7554,11 @@ function requireContentLength(req: Request): number {
 }
 
 /** Streams a file off disk. Bulk bytes never pass through JSON (spec 4.2). */
-async function streamFile(absPath: string, contentType: string, fileName: string): Promise<Response> {
+async function streamFile(
+  absPath: string,
+  contentType: string,
+  fileName: string,
+): Promise<Response> {
   const file = await Deno.open(absPath, { read: true })
   const stat = await file.stat()
   return new Response(file.readable, {
@@ -7454,11 +7653,13 @@ build **physically excludes** desktop-only code via `fileReplacements`, and affo
 gated at runtime by capabilities (§2.5).
 
 **Files:**
+
 - Create: `packages/web/*` via the Angular CLI, then `src/app/core/api/api-client.token.ts`, `src/app/core/api/http-api-client.ts`, `src/app/core/capabilities.store.ts`, `src/app/core/auth.store.ts`, `src/app/core/guards.ts`, `src/app/routes.ts`, `src/app/routes.electron.ts`, `src/app/features/desktop/.gitkeep`
 - Modify: `packages/web/angular.json`, `packages/web/src/app/app.config.ts`, `packages/web/src/app/app.ts`, `.github/workflows/ci.yml`
 - Test: `packages/web/src/app/core/api/http-api-client.spec.ts`
 
 **Interfaces:**
+
 - Consumes: `ApiClient`, every DTO, `AppError` from `@spm/contract`.
 - Produces:
   - `API_CLIENT: InjectionToken<ApiClient>`
@@ -8002,18 +8203,18 @@ Expected: the "absent" message.
 - [ ] **Step 9: Add the CI job**
 
 ```yaml
-  web:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-        with: { version: 10 }
-      - uses: actions/setup-node@v4
-        with: { node-version: '24', cache: pnpm }
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm test:web
-      - run: pnpm --filter @spm/web exec ng build
-      - run: pnpm --filter @spm/web exec ng build --configuration=electron
+web:
+  runs-on: ubuntu-latest
+  steps:
+    - uses: actions/checkout@v4
+    - uses: pnpm/action-setup@v4
+      with: { version: 10 }
+    - uses: actions/setup-node@v4
+      with: { node-version: '24', cache: pnpm }
+    - run: pnpm install --frozen-lockfile
+    - run: pnpm test:web
+    - run: pnpm --filter @spm/web exec ng build
+    - run: pnpm --filter @spm/web exec ng build --configuration=electron
 ```
 
 - [ ] **Step 10: Commit**
@@ -8031,11 +8232,13 @@ git commit -m "feat(web): Angular 22 shell, HTTP transport, capability and auth 
 which cannot satisfy the runtime language switch implied by `user_settings.language` (§6.4).
 
 **Files:**
+
 - Create: `packages/web/src/app/core/i18n/translate.service.ts`, `src/app/core/i18n/locales/en.json`, `src/app/core/i18n/locales/de.json`, `src/app/core/settings.store.ts`, `src/app/features/settings/settings.page.ts`
 - Modify: `packages/web/src/app/app.config.ts`, `src/app/app.ts`
 - Test: `packages/web/src/app/core/settings.store.spec.ts`
 
 **Interfaces:**
+
 - Consumes: `API_CLIENT`, `SettingsDto`, `DEFAULT_SETTINGS`.
 - Produces:
   - `TranslateService extends BaseTranslateService<Translations>` with `setLanguage(lang)`, `translations` signal, `interpolate()`
@@ -8453,10 +8656,12 @@ One Zod schema validates the Angular form and the backend request (§2.3, §6.2)
 token is read from the URL **fragment**, never a query parameter (§5.3).
 
 **Files:**
+
 - Create: `packages/web/src/app/features/auth/login.page.ts`, `src/app/features/auth/activate.page.ts`
 - Test: `packages/web/src/app/features/auth/activate.page.spec.ts`, `src/app/features/auth/login.page.spec.ts`
 
 **Interfaces:**
+
 - Consumes: `API_CLIENT`, `AuthStore`, `TranslateService`, `loginSchema`, `activateSchema`, `Router`, `ActivatedRoute`.
 - Produces: `LoginPage` with public `errorKey: Signal<'signInFailed' | null>`; `ActivatePage` with public `state: Signal<'checking' | 'ready' | 'invalid'>` and `username: Signal<string | null>`.
 
@@ -8781,10 +8986,12 @@ One `list` call renders the whole grid: `coverThumbUrl` is already on the DTO, s
 N+1 (§4.2).
 
 **Files:**
+
 - Create: `packages/web/src/app/features/projects/projects.store.ts`, `src/app/features/projects/projects.page.ts`
 - Test: `packages/web/src/app/features/projects/projects.store.spec.ts`
 
 **Interfaces:**
+
 - Consumes: `API_CLIENT`, `SettingsStore`, `TranslateService`, `ProjectDto`, `ProjectQuery`, `createProjectSchema`.
 - Produces: `ProjectsStore` with `query: Signal<ProjectQuery>`, `projects` (a `resource`), `setSearch(term)`, `toggleTag(name)`, `setIncludeArchived(flag)`, `setSort(sort, dir)`, `create(input)`, `rescan()`, `knownTags: Signal<string[]>`; `ProjectsPage`
 
@@ -8839,9 +9046,7 @@ describe('ProjectsStore', () => {
     await settle()
     store.setSearch('bench')
     await settle()
-    expect(api.projects.list).toHaveBeenLastCalledWith(
-      expect.objectContaining({ search: 'bench' }),
-    )
+    expect(api.projects.list).toHaveBeenLastCalledWith(expect.objectContaining({ search: 'bench' }))
   })
 
   it('drops an empty search term rather than sending it', async () => {
@@ -8865,10 +9070,12 @@ describe('ProjectsStore', () => {
 
   it('collects the tag union of the loaded projects for the filter bar', async () => {
     const { store } = setup(
-      vi.fn().mockResolvedValue([
-        project({ id: 'a', tags: ['petg', 'boat'] }),
-        project({ id: 'b', tags: ['boat', 'functional'] }),
-      ]),
+      vi
+        .fn()
+        .mockResolvedValue([
+          project({ id: 'a', tags: ['petg', 'boat'] }),
+          project({ id: 'b', tags: ['boat', 'functional'] }),
+        ]),
     )
     await settle()
     expect(store.knownTags()).toEqual(['boat', 'functional', 'petg'])
@@ -9131,10 +9338,12 @@ git commit -m "feat(web): project list with search, tag filter, sort and rescan"
 ### Task 21: `web` — the project detail page
 
 **Files:**
+
 - Create: `packages/web/src/app/features/projects/project-detail.page.ts`
 - Test: `packages/web/src/app/features/projects/project-detail.page.spec.ts`
 
 **Interfaces:**
+
 - Consumes: `API_CLIENT`, `TranslateService`, `ProjectDetailDto`, `FileDto`, `projectPatchSchema`, `tagNameSchema`, `AppError`, `QuotaExceededDetails`.
 - Produces: `ProjectDetailPage` with a route input `id: string` (bound by `withComponentInputBinding`), public `project` (a `resource`), `errorMessage: Signal<string | null>`, `onUpload(file: File)`, `onAddTag(name)`, `onRemoveTag(name)`, `onRenameFile(file, name)`, `onDeleteFile(file)`, `onDeleteProject(deleteFiles)`, and `formatBytes(n): string`.
 
@@ -9480,10 +9689,12 @@ Admins manage users and never see other users' projects (§5.5). What they get i
 per-user usage and a quota (§5.6), plus the activation link to copy out of band (§5.7).
 
 **Files:**
+
 - Create: `packages/web/src/app/features/admin/users.page.ts`
 - Test: `packages/web/src/app/features/admin/users.page.spec.ts`
 
 **Interfaces:**
+
 - Consumes: `API_CLIENT`, `TranslateService`, `UserDto`, `createUserSchema`, `AppError`.
 - Produces: `UsersPage` with public `users` (a `resource`), `activationUrl: Signal<string | null>`, `errorMessage: Signal<string | null>`, `onCreate()`, `onReissue(user)`, `onToggleDisabled(user)`, `onToggleAdmin(user)`, `onSetQuota(user, megabytes)`, `onDelete(user)`, `usagePercent(user): number | null`
 
@@ -9518,9 +9729,10 @@ function setup() {
   const api = {
     users: {
       list: vi.fn().mockResolvedValue([user({})]),
-      create: vi
-        .fn()
-        .mockResolvedValue({ user: user({ id: 'u2', username: 'anna', status: 'pending' }), activationUrl: 'http://x/activate#tok' }),
+      create: vi.fn().mockResolvedValue({
+        user: user({ id: 'u2', username: 'anna', status: 'pending' }),
+        activationUrl: 'http://x/activate#tok',
+      }),
       reissueInvite: vi.fn().mockResolvedValue({ activationUrl: 'http://x/activate#tok2' }),
       update: vi.fn().mockResolvedValue(user({})),
       delete: vi.fn().mockResolvedValue(undefined),
@@ -9819,11 +10031,13 @@ git commit -m "feat(web): admin users page with quotas, usage and activation lin
 ### Task 23: CI — the full pipeline and an end-to-end smoke test
 
 **Files:**
+
 - Create: `packages/web/e2e/seed.ts`, `packages/web/e2e/smoke.spec.ts`, `packages/web/playwright.config.ts`, `README.md`
 - Modify: `package.json` (root scripts), `.github/workflows/ci.yml`
 - Test: the e2e suite itself
 
 **Interfaces:**
+
 - Consumes: `openLibrary`, `ensureBootstrapAdmin`, `activateAccount` from `@spm/core`; `@awdlab/jig-playwright` (§8.2).
 - Produces: root script `pnpm e2e`, CI job `e2e`, `README.md`.
 
@@ -9955,7 +10169,7 @@ otherwise leak into the test.
 pnpm e2e
 ```
 
-Expected: 4 passing. If a locator misses, fix the *component* to carry a proper accessible
+Expected: 4 passing. If a locator misses, fix the _component_ to carry a proper accessible
 label rather than weakening the locator to a CSS selector — the label is what a screen reader
 uses too.
 
@@ -9964,19 +10178,19 @@ uses too.
 Add the final job to `.github/workflows/ci.yml`:
 
 ```yaml
-  e2e:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-        with: { version: 10 }
-      - uses: actions/setup-node@v4
-        with: { node-version: '24', cache: pnpm }
-      - uses: denoland/setup-deno@v2
-        with: { deno-version: v2.x }
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter @spm/web exec playwright install --with-deps chromium
-      - run: pnpm e2e
+e2e:
+  runs-on: ubuntu-latest
+  steps:
+    - uses: actions/checkout@v4
+    - uses: pnpm/action-setup@v4
+      with: { version: 10 }
+    - uses: actions/setup-node@v4
+      with: { node-version: '24', cache: pnpm }
+    - uses: denoland/setup-deno@v2
+      with: { deno-version: v2.x }
+    - run: pnpm install --frozen-lockfile
+    - run: pnpm --filter @spm/web exec playwright install --with-deps chromium
+    - run: pnpm e2e
 ```
 
 The finished pipeline has six jobs: `checks`, `core-node`, `core-deno`, `server`, `web`, `e2e`.
@@ -10014,12 +10228,12 @@ password anywhere.
 
 ## Layout
 
-| Package | What it is |
-|---|---|
+| Package    | What it is                                   |
+| ---------- | -------------------------------------------- |
 | `contract` | DTOs, Zod schemas, the `ApiClient` interface |
-| `core` | all behaviour; runs on Deno and Node |
-| `server` | the Deno HTTP transport |
-| `web` | the Angular client |
+| `core`     | all behaviour; runs on Deno and Node         |
+| `server`   | the Deno HTTP transport                      |
+| `web`      | the Angular client                           |
 
 ## Tests
 
