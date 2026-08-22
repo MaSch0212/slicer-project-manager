@@ -9,6 +9,10 @@
     "noFallthroughCasesInSwitch": true,
     "importHelpers": true,
     "target": "ES2022",
+    /* Pinned alongside target: the base config's ES2023 lib would let the compiler accept
+       ES2023 methods (toSorted, findLast) that esbuild downlevels syntactically but does not
+       polyfill, so they would fail in a browser that Angular's target still supports. */
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
     /* Angular/bundler resolution: relative imports here are extensionless, unlike core and
        server which resolve through Deno and must carry the .ts extension. */
     "module": "preserve",

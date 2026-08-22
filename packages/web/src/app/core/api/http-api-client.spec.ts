@@ -14,11 +14,23 @@ describe('HttpApiClient', () => {
     const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ id: '1' }))
     const client = new HttpApiClient('', fetchMock)
 
-    await client.account.me()
+    const me = await client.account.me()
 
     const [url, init] = fetchMock.mock.calls[0]!
     expect(url).toBe('/api/account')
     expect(init.credentials).toBe('include')
+    // The parsed body has to reach the caller: without this, a transport that returned
+    // undefined for every success would still pass every other test here.
+    expect(me).toEqual({ id: '1' })
+  })
+
+  it('prefixes every path with the base url a non-browser shell passes', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ theme: 'dark' }))
+    const client = new HttpApiClient('http://127.0.0.1:8787', fetchMock)
+
+    await client.settings.get()
+
+    expect(fetchMock.mock.calls[0]![0]).toBe('http://127.0.0.1:8787/api/account/settings')
   })
 
   it('builds the project query string from a ProjectQuery', async () => {
@@ -38,6 +50,7 @@ describe('HttpApiClient', () => {
     expect(url.searchParams.getAll('tags')).toEqual(['petg', 'functional'])
     expect(url.searchParams.get('includeArchived')).toBe('true')
     expect(url.searchParams.get('sort')).toBe('name')
+    expect(url.searchParams.get('dir')).toBe('asc')
   })
 
   it('turns the error envelope back into an AppError with its details', async () => {
@@ -63,10 +76,57 @@ describe('HttpApiClient', () => {
     ).rejects.toMatchObject({ code: 'QuotaExceeded', details: { quotaBytes: 100 } })
   })
 
+  it('uploads a Blob without a content-length, leaving the header to the browser', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ id: 'f1' }))
+    const client = new HttpApiClient('', fetchMock)
+    const blob = new Blob(['solid stl'], { type: 'model/stl' })
+
+    await client.files.upload('p1', 'a.stl', { blob })
+
+    const [url, init] = fetchMock.mock.calls[0]!
+    expect(url).toBe('/api/projects/p1/files')
+    expect(init.body).toBe(blob)
+    expect(init.headers['x-spm-file-name']).toBe('a.stl')
+    // Content-Length is a forbidden header name: setting it here is stripped, so the Blob
+    // must be what tells the browser the length. duplex is only for a stream body.
+    expect('content-length' in init.headers).toBe(false)
+    expect(init.duplex).toBeUndefined()
+  })
+
+  it('uploads a stream with the content-length and duplex a non-browser shell needs', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ id: 'f2' }))
+    const client = new HttpApiClient('', fetchMock)
+    const stream = new ReadableStream<Uint8Array>()
+
+    await client.files.upload('p1', 'b.stl', { stream, sizeBytes: 42 })
+
+    const [, init] = fetchMock.mock.calls[0]!
+    expect(init.body).toBe(stream)
+    expect(init.headers['content-length']).toBe('42')
+    expect(init.duplex).toBe('half')
+  })
+
   it('reports a non-JSON failure as an Internal AppError', async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response('gateway down', { status: 502 }))
     const client = new HttpApiClient('', fetchMock)
     const error = await client.capabilities().catch((e: unknown) => e)
+    expect(error).toBeInstanceOf(AppError)
+    expect((error as AppError).code).toBe('Internal')
+  })
+
+  it('reports an unparseable success body as an Internal AppError too', async () => {
+    // The static handler answers an unrecognised path with index.html and status 200, so a
+    // mistyped /api path lands here. Callers must still see an AppError, not a SyntaxError.
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response('<!doctype html><html></html>', {
+        status: 200,
+        headers: { 'content-type': 'text/html' },
+      }),
+    )
+    const client = new HttpApiClient('', fetchMock)
+
+    const error = await client.capabilities().catch((e: unknown) => e)
+
     expect(error).toBeInstanceOf(AppError)
     expect((error as AppError).code).toBe('Internal')
   })

@@ -25,7 +25,13 @@ export class AuthStore {
   }
 
   async logout(): Promise<void> {
-    await this.api.auth.logout()
-    this.state.set(null)
+    try {
+      await this.api.auth.logout()
+    } finally {
+      // Local state is cleared even if the server call failed: the user asked to be signed
+      // out, and the UI must not keep claiming a session. The rejection still reaches the
+      // caller, which is what decides whether to warn about the server.
+      this.state.set(null)
+    }
   }
 }

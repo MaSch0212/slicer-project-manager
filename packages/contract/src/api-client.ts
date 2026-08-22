@@ -16,7 +16,20 @@ import type {
   UpdateUserInput,
 } from './schemas.ts'
 
-export type UploadBody = { stream: ReadableStream<Uint8Array>; sizeBytes: number }
+/**
+ * Two arms because the two shells cannot upload the same way.
+ *
+ * `blob` is the browser's arm: `Content-Length` is a forbidden header name in the Fetch
+ * standard, so a script-set one is silently stripped, and a `ReadableStream` body has no
+ * length the browser could compute for itself. Handing fetch a `Blob` (the `File` an
+ * `<input type="file">` yields is one) lets it set the header, which the server hard-requires
+ * before it writes a byte (spec 5.6). It also avoids `duplex: 'half'` request streaming,
+ * which is Chromium-and-HTTP/2-only.
+ *
+ * `stream` stays for the Node, Deno and Electron shells, which may set `Content-Length`
+ * themselves and do support request streaming, so they can upload without buffering the file.
+ */
+export type UploadBody = { blob: Blob } | { stream: ReadableStream<Uint8Array>; sizeBytes: number }
 
 export interface ApiClient {
   capabilities(): Promise<Capabilities>

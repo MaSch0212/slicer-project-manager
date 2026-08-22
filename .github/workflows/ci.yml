@@ -65,3 +65,15 @@ jobs:
       - run: pnpm test:web
       - run: pnpm --filter @spm/web exec ng build
       - run: pnpm --filter @spm/web exec ng build --configuration=electron
+      # The web build must physically exclude desktop-only code (spec 2.5), and the electron
+      # build must keep it. Grepping the exported class name, not the module path: paths are
+      # rewritten to hashed chunk names during bundling, so a path grep can never fail.
+      - name: web bundle carries no desktop code
+        run: |
+          if grep -rl DesktopPlaceholderPage packages/web/dist/web/browser; then
+            echo "::error::desktop-only code leaked into the web bundle"; exit 1
+          fi
+      - name: electron bundle carries desktop code
+        run: |
+          grep -rl DesktopPlaceholderPage packages/web/dist/electron/browser \
+            || { echo "::error::fileReplacements did not swap in the electron routes"; exit 1; }

@@ -10,6 +10,13 @@ import type {
   UserDto,
 } from '@spm/contract/dtos.ts'
 import { AppError, type AppErrorCode } from '@spm/contract/errors.ts'
+import type {
+  CreateProjectInput,
+  CreateUserInput,
+  ProjectPatchInput,
+  SettingsPatchInput,
+  UpdateUserInput,
+} from '@spm/contract/schemas.ts'
 
 type FetchLike = (input: string, init?: RequestInit) => Promise<Response>
 
@@ -30,7 +37,14 @@ export class HttpApiClient implements ApiClient {
     })
     if (response.status === 204) return undefined as T
     if (!response.ok) throw await this.toError(response)
-    return (await response.json()) as T
+    try {
+      return (await response.json()) as T
+    } catch {
+      // A 200 that is not JSON is the static handler answering a path it did not recognise
+      // with index.html (spec 5.1). Every rejection this client produces must be an AppError,
+      // so callers only ever have one failure shape to handle.
+      throw new AppError('Internal', `the server returned an unparseable body`)
+    }
   }
 
   private async toError(response: Response): Promise<AppError> {
@@ -82,17 +96,17 @@ export class HttpApiClient implements ApiClient {
 
   readonly settings = {
     get: (): Promise<SettingsDto> => this.request('/api/account/settings'),
-    put: (patch: Partial<SettingsDto>): Promise<SettingsDto> =>
+    put: (patch: SettingsPatchInput): Promise<SettingsDto> =>
       this.request('/api/account/settings', this.json('PUT', patch)),
   }
 
   readonly users = {
     list: (): Promise<UserDto[]> => this.request('/api/users'),
-    create: (dto: unknown): Promise<{ user: UserDto; activationUrl: string }> =>
+    create: (dto: CreateUserInput): Promise<{ user: UserDto; activationUrl: string }> =>
       this.request('/api/users', this.json('POST', dto)),
     reissueInvite: (id: string): Promise<{ activationUrl: string }> =>
       this.request(`/api/users/${id}/invite`, { method: 'POST' }),
-    update: (id: string, patch: unknown): Promise<UserDto> =>
+    update: (id: string, patch: UpdateUserInput): Promise<UserDto> =>
       this.request(`/api/users/${id}`, this.json('PATCH', patch)),
     delete: (id: string): Promise<void> => this.request(`/api/users/${id}`, { method: 'DELETE' }),
   }
@@ -109,9 +123,9 @@ export class HttpApiClient implements ApiClient {
       return this.request(`/api/projects${suffix}`)
     },
     get: (id: string): Promise<ProjectDetailDto> => this.request(`/api/projects/${id}`),
-    create: (dto: unknown): Promise<ProjectDto> =>
+    create: (dto: CreateProjectInput): Promise<ProjectDto> =>
       this.request('/api/projects', this.json('POST', dto)),
-    update: (id: string, patch: unknown): Promise<ProjectDto> =>
+    update: (id: string, patch: ProjectPatchInput): Promise<ProjectDto> =>
       this.request(`/api/projects/${id}`, this.json('PATCH', patch)),
     delete: (id: string, opts: { deleteFiles: boolean }): Promise<void> =>
       this.request(`/api/projects/${id}?deleteFiles=${opts.deleteFiles}`, { method: 'DELETE' }),
@@ -124,17 +138,22 @@ export class HttpApiClient implements ApiClient {
   }
 
   readonly files = {
-    upload: (projectId: string, name: string, body: UploadBody): Promise<FileDto> =>
-      this.request(`/api/projects/${projectId}/files`, {
-        method: 'POST',
-        headers: {
-          'x-spm-file-name': encodeURIComponent(name),
-          'content-length': String(body.sizeBytes),
-        },
-        body: body.stream,
+    upload: (projectId: string, name: string, body: UploadBody): Promise<FileDto> => {
+      const headers: Record<string, string> = { 'x-spm-file-name': encodeURIComponent(name) }
+      const init: RequestInit & { duplex?: 'half' } = { method: 'POST', headers }
+      if ('blob' in body) {
+        // No content-length: it is a forbidden header name, so a script-set one is stripped
+        // and fetch derives the length from the Blob itself. No duplex either — that is only
+        // for a stream body, and it is Chromium-only.
+        init.body = body.blob
+      } else {
+        headers['content-length'] = String(body.sizeBytes)
+        init.body = body.stream
         // Required by fetch whenever the body is a stream rather than a buffer.
-        duplex: 'half',
-      } as RequestInit),
+        init.duplex = 'half'
+      }
+      return this.request(`/api/projects/${projectId}/files`, init)
+    },
     rename: (id: string, name: string): Promise<FileDto> =>
       this.request(`/api/files/${id}`, this.json('PATCH', { name })),
     delete: (id: string): Promise<void> => this.request(`/api/files/${id}`, { method: 'DELETE' }),

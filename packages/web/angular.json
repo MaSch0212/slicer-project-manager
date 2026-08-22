@@ -48,6 +48,7 @@
               "sourceMap": true
             },
             "electron": {
+              "outputPath": "dist/electron",
               "fileReplacements": [
                 {
                   "replace": "src/app/routes.ts",
