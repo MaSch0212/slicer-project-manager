@@ -231,6 +231,46 @@ test('a body that exceeds its declared size partway through a later chunk cancel
   })
 })
 
+test('a body stream that is already locked leaves no leaked handle or empty file', async () => {
+  await withLibrary(async (lib) => {
+    const ctx = seedUser(lib)
+    const project = createProject(lib, ctx, { name: 'Benchy' })
+    const { stream, sizeBytes } = streamOf('solid')
+    // Lock the stream ourselves so uploadFile's own getReader() call throws — this is what
+    // exercises the path where open() has already created the file but getReader() never
+    // returns a reader to cancel.
+    stream.getReader()
+
+    await assert.rejects(() => uploadFile(lib, ctx, project.id, 'a.stl', { stream, sizeBytes }))
+    assert.equal(existsSync(join(lib.dir, 'marc', 'Benchy', 'a.stl')), false)
+    assert.equal(getProject(lib, ctx, project.id).files.length, 0)
+  })
+})
+
+test('two uploads racing the same name: exactly one wins, the other is a Conflict', async () => {
+  await withLibrary(async (lib) => {
+    const ctx = seedUser(lib)
+    const project = createProject(lib, ctx, { name: 'Benchy' })
+
+    const results = await Promise.allSettled([
+      uploadFile(lib, ctx, project.id, 'a.stl', streamOf('solid one')),
+      uploadFile(lib, ctx, project.id, 'a.stl', streamOf('solid two')),
+    ])
+
+    const fulfilled = results.filter((r) => r.status === 'fulfilled')
+    const rejected = results.filter((r) => r.status === 'rejected')
+    assert.equal(fulfilled.length, 1)
+    assert.equal(rejected.length, 1)
+    assert.equal((rejected[0] as PromiseRejectedResult).reason.code, 'Conflict')
+
+    const onDisk = join(lib.dir, 'marc', 'Benchy', 'a.stl')
+    const winner = (fulfilled[0] as PromiseFulfilledResult<Awaited<ReturnType<typeof uploadFile>>>)
+      .value
+    assert.equal(winner.sizeBytes, readFileSync(onDisk, 'utf8').length)
+    assert.equal(getProject(lib, ctx, project.id).files.length, 1)
+  })
+})
+
 test('rename moves the file on disk and keeps its folder', async () => {
   await withLibrary(async (lib) => {
     const ctx = seedUser(lib)

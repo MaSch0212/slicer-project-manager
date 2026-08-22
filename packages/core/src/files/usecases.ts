@@ -106,8 +106,12 @@ export async function uploadFile(
     throw error
   }
 
-  const reader = body.stream.getReader()
+  // Declared before the try so a getReader() throw (the stream is already locked, say) still
+  // lands in the catch below with a defined-or-undefined reader, never an unhandled leak of
+  // the fd/empty file that open() just created.
+  let reader: ReadableStreamDefaultReader<Uint8Array> | undefined
   try {
+    reader = body.stream.getReader()
     let written = 0
     for (;;) {
       const { done, value } = await reader.read()
@@ -121,7 +125,7 @@ export async function uploadFile(
   } catch (error) {
     // A transport hands us its request body as this stream; leaving it undrained on a
     // rejection can hang the underlying connection, so cancel it before cleaning up.
-    await reader.cancel(error).catch(() => {})
+    await reader?.cancel(error).catch(() => {})
     await handle.close()
     rmSync(absPath, { force: true })
     throw error
