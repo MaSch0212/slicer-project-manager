@@ -214,6 +214,7 @@ users              id TEXT PK, username TEXT UNIQUE COLLATE NOCASE, display_name
                        -- all four NULL while status='pending'
                    is_admin INTEGER NOT NULL DEFAULT 0,
                    status TEXT NOT NULL,        -- 'pending' | 'active' | 'disabled'
+                   quota_bytes INTEGER,         -- NULL = unlimited (5.6)
                    created_at INTEGER NOT NULL, activated_at INTEGER
 
 activation_tokens  id TEXT PK, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -289,14 +290,14 @@ ordered rule list**, first match wins:
 |---|---|---|
 | 1 | any entry with a `Cura/` prefix | `cura` |
 | 2 | `Metadata/Slic3r_PE.config` exists | `prusaslicer` |
-| 3 | `Metadata/slice_info.config` contains an `X-ACNext-Client-Type` header item | `anycubic` |
-| 4 | `Metadata/project_settings.config` exists, Bambu-specific discriminator | `bambu` |
-| 5 | `Metadata/project_settings.config` exists | `orca` |
-| 6 | none of the above | `kind='model'` (a plain 3MF mesh) |
+| 3 | `Metadata/slice_info.config` header items match the **client registry** below | that slicer |
+| 4 | `Metadata/project_settings.config` exists | `orca` (generic Bambu-lineage fallback) |
+| 5 | none of the above | `kind='model'` (a plain 3MF mesh) |
 
-Rule 3 **must** precede rules 4 and 5: Anycubic Slicer Next is Bambu-lineage, so it very
-likely also ships `project_settings.config`, and checking that first would misclassify
-every Anycubic project. Confirmed Anycubic marker content:
+Rule 3 **must** precede rule 4. Every Bambu-lineage slicer ships
+`project_settings.config`, so matching on that first would collapse the whole family into
+one label. `slice_info.config` is where they actually identify themselves, via
+vendor-prefixed header items:
 
 ```xml
 <config>
@@ -307,8 +308,20 @@ every Anycubic project. Confirmed Anycubic marker content:
 </config>
 ```
 
-Matching is on the `X-ACNext-Client-Type` **key**, not the version value, so future
-Anycubic releases keep matching.
+**Client registry** — an ordered list of (header-item key, optional value predicate) to
+slicer id. Supporting another Orca derivative is one table row, not new code:
+
+| Header-item key | Value predicate | Slicer |
+|---|---|---|
+| `X-ACNext-Client-Type` | — | `anycubic` |
+| `X-BBL-Client-Type` | to confirm | `bambu` or `orca` |
+
+Matching is on the **key**, not the version value, so future releases keep matching.
+`X-ACNext-Client-Type` is confirmed from a real Anycubic Slicer Next 1.4.1.2 project.
+
+The residual unknown is only whether OrcaSlicer and Bambu Studio use *distinct* header
+keys, or share `X-BBL-*` and need a value predicate to separate them. Either way the
+structure holds and rule 4 catches anything unmatched.
 
 `.stl` and `.obj` are always `kind='model'`; anything that is neither a model nor a
 recognised slicer project is `kind='other'`.
@@ -327,7 +340,9 @@ A rescan walks each user's library root and reconciles disk against the database
   implicitly; an unmounted network drive must not destroy a thousand tags.
 - **File on disk with no `files` row → insert**, classified per 3.4, with a `previews`
   row seeded `state='pending'`.
-- **`files` row whose file is gone → delete** the row (and its preview).
+- **`files` row whose file is gone → delete** the row (and its preview) — but only within
+  a project whose folder is *present*. The files of a `state='missing'` project are left
+  intact, because the whole folder may simply be on an unmounted drive.
 - **`mtime_ms` or `size_bytes` changed → recompute `content_hash`**; if it differs from
   `previews.source_hash`, reset that preview to `'pending'`.
 - **Dot-folders are skipped** at every level.
@@ -390,7 +405,9 @@ interface ApiClient {
     list(): Promise<UserDto[]>
     create(dto): Promise<{ user: UserDto; activationUrl: string }>
     reissueInvite(id): Promise<{ activationUrl: string }>
-    update(id, patch: { isAdmin?: boolean; isDisabled?: boolean }): Promise<UserDto>
+    update(id, patch: { isAdmin?: boolean
+                        isDisabled?: boolean
+                        quotaBytes?: number | null }): Promise<UserDto>
     delete(id): Promise<void>
   }
 
@@ -425,6 +442,8 @@ UserDto {
   id, username, displayName,
   isAdmin: boolean,
   status: 'pending' | 'active' | 'disabled',
+  diskUsageBytes: number,             // derived, see 5.6
+  quotaBytes: number | null,          // null = unlimited
   createdAt, activatedAt?: number
 }
 
@@ -575,7 +594,47 @@ every account is somehow deleted.
 - Admins manage users but **cannot see other users' projects**. Ownership scoping in
   `core` applies to admins too.
 
-### 5.6 Assumption
+### 5.6 Disk usage and quotas
+
+Admins cannot see other users' *projects* (5.5), but they can see how much space each
+user consumes and cap it.
+
+**Usage is derived, never stored.** It is an aggregate over data the `files` index
+already holds, so there is nothing to backfill and nothing that can drift out of sync
+with reality:
+
+```sql
+SELECT p.owner_id, SUM(f.size_bytes)
+FROM files f JOIN projects p ON p.id = f.project_id
+WHERE p.state = 'ok'
+GROUP BY p.owner_id
+```
+
+`state = 'ok'` matters: a `missing` project keeps its file rows (3.5) because the folder
+may be on an unmounted drive, and those bytes are not currently occupying disk.
+
+Preview PNGs under `.spm/previews/` are application overhead rather than user data and
+are excluded from the quota.
+
+**Enforcement:**
+
+- `files.upload` checks projected usage against `quota_bytes` **before** writing and
+  fails with a typed `QuotaExceeded` error carrying usage, quota, and the incoming size,
+  so the UI can render a real message rather than a generic failure.
+- Downloads from the model browser (spec E) land through `files.upload`, so they inherit
+  the check with no extra code.
+- **Rescan never fails on quota.** Files already on disk are indexed regardless and the
+  user is simply reported over quota. Refusing to index existing files would hide a
+  user's own files from them without deleting anything — the worst available outcome.
+- `quota_bytes` is `NULL` by default, meaning unlimited. Lowering a quota below current
+  usage is allowed: it blocks further uploads without touching existing files.
+
+`/admin/users` shows usage, quota, and percentage per user.
+
+**Scope note:** this is an addition to subsystem A beyond the original brief, requested
+2026-08-22. It is small precisely because `files.size_bytes` was already indexed.
+
+### 5.7 Assumption
 
 No SMTP. `users.create` returns the activation link for the admin to copy, and the admin
 UI presents it with a copy button.
@@ -611,11 +670,22 @@ rendered by `jigErrors` into `jig-hint`, labels via `jig-input-field`.
 
 Desktop-only routes are referenced only from `routes.electron.ts` (2.5).
 
-### 6.4 Internationalisation — open question
+### 6.4 Internationalisation
 
-`@angular/localize` is build-time, producing one bundle per locale, which conflicts with
-the runtime language switch implied by `user_settings.language`. Proposal: a small
-signal-based translation service over JSON dictionaries. Flagged as open in section 10.
+**`@ngneers/signal-translate`.** `@angular/localize` was rejected because it is
+build-time, producing one bundle per locale, which cannot satisfy the runtime language
+switch implied by `user_settings.language`.
+
+signal-translate fits the rest of the stack directly: translations are signals rather
+than observables, so they compose with zoneless change detection with no bridging;
+`setLanguage(lang)` switches reactively at runtime; the `translations` signal is
+strongly typed with autocompletion, so a missing key is a compile error; and
+`loadTranslations(lang)` is implemented with a dynamic import, so locale JSON is
+lazy-loaded rather than bundled up front.
+
+Integration: a `TranslateService` extending `BaseTranslateService`, seeded from
+`user_settings.language` at bootstrap and writing back on change. `interpolate()` and
+`InterpolatePipe` cover parameterised strings.
 
 ## 7. Preview pipeline
 
@@ -706,14 +776,22 @@ That is consistent with `canBrowseModelSites` being false in the browser column 
 
 ## 10. Open questions
 
-1. **i18n mechanism** (6.4) — runtime signal-based translation service versus
-   `@angular/localize`. Proposal is the former; not yet decided.
-2. ~~**Anycubic Slicer Next 3MF marker**~~ — **resolved 2026-08-22**: an
-   `X-ACNext-Client-Type` header item inside `Metadata/slice_info.config` (3.4).
-3. **Bambu Studio versus OrcaSlicer discriminator** (3.4, rule 4) — the ordered rule list
-   is settled and Anycubic is pinned ahead of both, but the specific key that separates
-   Bambu from Orca inside `Metadata/project_settings.config` still needs confirming from
-   one real project file of each. Until then rule 4 falls through to rule 5, so
-   Bambu projects would be reported as `orca` — wrong label, no functional breakage.
-4. **Admin visibility** (5.5) — currently admins cannot see other users' projects.
-   Confirmed as the default; revisit if a god view is wanted.
+All four questions raised at design time were resolved on 2026-08-22. Recorded here with
+their answers, since the reasoning matters for implementation.
+
+1. ~~**i18n mechanism**~~ — **resolved**: `@ngneers/signal-translate` (6.4).
+   `@angular/localize` rejected as build-time-only.
+2. ~~**Anycubic Slicer Next 3MF marker**~~ — **resolved**: an `X-ACNext-Client-Type`
+   header item inside `Metadata/slice_info.config` (3.4).
+3. ~~**Bambu Studio versus OrcaSlicer discriminator**~~ — **resolved structurally**:
+   `slice_info.config` is the identifying file for the entire Orca/Bambu-lineage family,
+   read through the client registry in 3.4. One residual detail for implementation — do
+   Orca and Bambu use distinct header keys, or share `X-BBL-*` and need a value
+   predicate? Either answer is a registry row; unmatched files fall through to rule 4 and
+   are labelled `orca`, which is a wrong label with no functional consequence.
+4. ~~**Admin visibility**~~ — **resolved**: admins administer users only and never see
+   other users' projects. Per-user disk usage and quotas were added instead (5.6), which
+   gives admins the operational visibility they need without exposing project contents.
+
+Genuinely open items are now limited to that one registry detail in 3, which needs a real
+Bambu Studio and OrcaSlicer project file to settle.
