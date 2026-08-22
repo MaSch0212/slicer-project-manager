@@ -1,6 +1,7 @@
-import { readFileSync, readdirSync, renameSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync, renameSync } from 'node:fs'
 import { join } from 'node:path'
 import type { RescanResultDto } from '@spm/contract/dtos.ts'
+import { AppError } from '@spm/contract/errors.ts'
 import type { Ctx } from '../ctx.ts'
 import type { Library } from '../db/open.ts'
 import { userRoot } from '../files/paths.ts'
@@ -24,7 +25,7 @@ export function readCuraManagerSidecar(projectDirPath: string): CuraManagerSidec
     // Absent or malformed: migration continues without it rather than aborting.
     return null
   }
-  if (!parsed || typeof parsed !== 'object') return null
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null
 
   const rawTags = parsed.Tags ?? parsed.tags
   const rawWebsite = parsed.Website ?? parsed.website
@@ -52,14 +53,28 @@ export function moveFlatLibraryIntoUserFolder(lib: Library, ctx: Ctx): number {
     ),
   )
 
-  let moved = 0
-  for (const entry of readdirSync(lib.dir, { withFileTypes: true })) {
-    if (!entry.isDirectory() || entry.name.startsWith('.')) continue
-    if (reserved.has(entry.name)) continue
-    renameSync(join(lib.dir, entry.name), join(target, entry.name))
-    moved++
+  const toMove = readdirSync(lib.dir, { withFileTypes: true })
+    .filter(
+      (entry) => entry.isDirectory() && !entry.name.startsWith('.') && !reserved.has(entry.name),
+    )
+    .map((entry) => entry.name)
+
+  // Verify every destination is free before moving anything, so a collision aborts loudly
+  // and leaves the filesystem untouched -- on every platform. Catching the rename failure
+  // after the fact would not do: on POSIX, rename(2) onto an *empty* existing directory
+  // succeeds by silently replacing it, so the same input would abort on one OS and succeed
+  // on another. Checking first removes that divergence by never reaching renameSync at all.
+  const collisions = toMove.filter((name) => existsSync(join(target, name)))
+  if (collisions.length > 0) {
+    throw new AppError(
+      'Conflict',
+      `cannot import: already exists under the target user's folder: ${collisions.join(', ')}`,
+      { existing: collisions },
+    )
   }
-  return moved
+
+  for (const name of toMove) renameSync(join(lib.dir, name), join(target, name))
+  return toMove.length
 }
 
 export async function importCuraManagerLibrary(

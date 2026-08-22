@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import type { AppError } from '@spm/contract/errors.ts'
 import type { Ctx } from '../src/ctx.ts'
 import { newId } from '../src/db/ids.ts'
 import type { Library } from '../src/db/open.ts'
@@ -60,6 +61,14 @@ test('malformed sidecar json is ignored rather than fatal', async () => {
   })
 })
 
+test('a top-level JSON array is not a valid sidecar', async () => {
+  await withLibrary((lib) => {
+    mkdirSync(join(lib.dir, 'ArrayJson'))
+    writeFileSync(join(lib.dir, 'ArrayJson', 'metadata.json'), '[]')
+    assert.equal(readCuraManagerSidecar(join(lib.dir, 'ArrayJson')), null)
+  })
+})
+
 test('a flat CuraManager library imports into local mode with no restructuring', async () => {
   await withLibrary(async (lib) => {
     const ctx = seedUser(lib, 'local', '.')
@@ -104,6 +113,34 @@ test('importing into a server library moves each folder under the target user', 
       listProjects(lib, marc, {}).map((p) => p.name),
       ['Benchy'],
     )
+  })
+})
+
+test('a folder already present at the destination is a Conflict, and nothing is moved or adopted', async () => {
+  await withLibrary(async (lib) => {
+    const marc = seedUser(lib, 'marc', 'marc')
+    curaManagerProject(lib.dir, 'Benchy', { Tags: ['boat'] })
+    // The destination already holds a folder with the same name.
+    mkdirSync(join(lib.dir, 'marc', 'Benchy'), { recursive: true })
+    writeFileSync(join(lib.dir, 'marc', 'Benchy', 'preexisting.txt'), 'do not touch')
+
+    await assert.rejects(
+      importCuraManagerLibrary(lib, marc, { moveIntoUserFolder: true }),
+      (e: unknown) => {
+        const err = e as AppError
+        assert.equal(err.code, 'Conflict')
+        assert.ok(String(err.message).includes('Benchy'))
+        return true
+      },
+    )
+
+    // All-or-nothing: the source is untouched...
+    assert.ok(existsSync(join(lib.dir, 'Benchy', 'Benchy.stl')))
+    // ...the pre-existing destination folder is untouched...
+    assert.ok(existsSync(join(lib.dir, 'marc', 'Benchy', 'preexisting.txt')))
+    assert.equal(existsSync(join(lib.dir, 'marc', 'Benchy', 'Benchy.stl')), false)
+    // ...and no project rows were created at all.
+    assert.deepEqual(listProjects(lib, marc, {}), [])
   })
 })
 
