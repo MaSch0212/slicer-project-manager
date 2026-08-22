@@ -48,12 +48,19 @@ export async function consumeActivationToken(
   now: number = Date.now(),
 ): Promise<string> {
   const row = await findToken(db, token)
-  if (!row || row.consumedAt !== null)
-    throw new AppError('InvalidToken', 'activation token is not usable')
+  if (!row) throw new AppError('InvalidToken', 'activation token is not usable')
   if (row.expiresAt <= now) throw new AppError('TokenExpired', 'activation token has expired')
-  db.prepare('UPDATE activation_tokens SET consumed_at = ? WHERE token_hash = ?').run(
-    now,
-    await sha256Bytes(token),
-  )
+
+  // `consumed_at IS NULL` in the WHERE clause is the single source of truth for who owns
+  // this consumption: two concurrent calls can both pass the checks above, but only one
+  // UPDATE can match an unconsumed row, so `changes` — not the earlier read — decides.
+  const result = db
+    .prepare(
+      'UPDATE activation_tokens SET consumed_at = ? WHERE token_hash = ? AND consumed_at IS NULL',
+    )
+    .run(now, await sha256Bytes(token))
+  if (Number(result.changes) === 0) {
+    throw new AppError('InvalidToken', 'activation token is not usable')
+  }
   return row.userId
 }

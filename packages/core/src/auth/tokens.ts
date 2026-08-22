@@ -13,7 +13,7 @@ export async function sha256Bytes(input: string | Uint8Array): Promise<Uint8Arra
   const data = typeof input === 'string' ? new TextEncoder().encode(input) : input
   // Cast only: a plain `Uint8Array` widens to `ArrayBufferLike`, which the DOM lib's
   // `BufferSource` (correctly) does not accept; the bytes underneath are unchanged.
-  return new Uint8Array(await crypto.subtle.digest('SHA-256', data as BufferSource))
+  return new Uint8Array(await crypto.subtle.digest('SHA-256', data as Uint8Array<ArrayBuffer>))
 }
 
 /** Length-independent early exit, then constant time over the common length. */

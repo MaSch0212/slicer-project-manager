@@ -130,6 +130,27 @@ test('an activation token checks out once, then is consumed', async () => {
   })
 })
 
+// node:sqlite is synchronous and single-threaded, so a real concurrent race between two
+// consumeActivationToken calls can't be forced deterministically here. This instead pins
+// the observable contract the atomic UPDATE exists to guarantee: a second consume never
+// succeeds, and the token table never ends up with more than one consumed row for it.
+test('consuming an activation token twice never yields two consumptions', async () => {
+  await withLibrary(async ({ db }) => {
+    const userId = seedUser(db, { status: 'pending' })
+    const token = await issueActivationToken(db, userId)
+
+    assert.equal(await consumeActivationToken(db, token), userId)
+    await assert.rejects(() => consumeActivationToken(db, token))
+    await assert.rejects(() => consumeActivationToken(db, token))
+
+    const rows = db
+      .prepare('SELECT consumed_at FROM activation_tokens WHERE user_id = ?')
+      .all(userId) as { consumed_at: number | null }[]
+    assert.equal(rows.length, 1)
+    assert.equal(rows[0]!.consumed_at !== null, true)
+  })
+})
+
 test('an expired activation token is invalid', async () => {
   await withLibrary(async ({ db }) => {
     const userId = seedUser(db, { status: 'pending' })

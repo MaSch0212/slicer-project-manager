@@ -24,7 +24,7 @@ async function derive(password: string, salt: Uint8Array, iterations: number): P
   const bits = await crypto.subtle.deriveBits(
     // Cast only: a plain `Uint8Array` widens to `ArrayBufferLike`, which the DOM lib's
     // `BufferSource` (correctly) does not accept; the bytes underneath are unchanged.
-    { name: 'PBKDF2', salt: salt as BufferSource, iterations, hash: 'SHA-256' },
+    { name: 'PBKDF2', salt: salt as Uint8Array<ArrayBuffer>, iterations, hash: 'SHA-256' },
     key,
     PW_KEY_BITS,
   )

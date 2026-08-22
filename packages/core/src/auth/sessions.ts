@@ -41,14 +41,18 @@ export async function resolveSession(
   if (row.expiresAt <= now) return null
   if (row.status !== 'active') return null
 
+  // Write only when the expiry actually slides: with no WAL (default SQLite settings), a
+  // write takes a write lock that serialises concurrent readers, so a write on every
+  // authenticated request is exactly the per-request cost SESSION_SLIDE_MS exists to avoid.
+  // Consequence: `last_seen_at` now means "when this session was last extended", not
+  // literally every request — a later subsystem wanting true last-seen needs its own
+  // decision about that write cost.
   if (now - row.lastSeenAt > SESSION_SLIDE_MS) {
     db.prepare('UPDATE sessions SET last_seen_at = ?, expires_at = ? WHERE token_hash = ?').run(
       now,
       now + SESSION_TTL_MS,
       hash,
     )
-  } else {
-    db.prepare('UPDATE sessions SET last_seen_at = ? WHERE token_hash = ?').run(now, hash)
   }
 
   return { userId: row.userId, isAdmin: row.isAdmin === 1 }
