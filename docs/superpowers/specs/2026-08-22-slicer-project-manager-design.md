@@ -279,20 +279,43 @@ All five target slicers write `.3mf` project files, so a `.3mf` is ambiguous and
 disambiguated by inspecting its zip entries. This replaces CuraManager's single
 Cura-only check.
 
-| Slicer | Marker entry (to be verified during implementation) |
-|---|---|
-| Cura | `Cura/` prefix |
-| PrusaSlicer | `Metadata/Slic3r_PE.config` |
-| OrcaSlicer | `Metadata/project_settings.config` |
-| Bambu Studio | `Metadata/project_settings.config` plus Bambu-specific keys |
-| Anycubic Slicer Next | to be determined |
+**Markers are not mutually exclusive, and path existence alone is not enough.** Cura and
+PrusaSlicer have distinctive paths, but OrcaSlicer, Bambu Studio and Anycubic Slicer Next
+are all Bambu-lineage and write overlapping metadata — notably all three ship
+`Metadata/slice_info.config`. Detection is therefore **content sniffing against an
+ordered rule list**, first match wins:
 
-A `.3mf` matching no marker is classified `kind='model'` — a plain 3MF mesh. `.stl` and
-`.obj` are always `kind='model'`; everything else is `kind='other'`.
+| # | Rule | Result |
+|---|---|---|
+| 1 | any entry with a `Cura/` prefix | `cura` |
+| 2 | `Metadata/Slic3r_PE.config` exists | `prusaslicer` |
+| 3 | `Metadata/slice_info.config` contains an `X-ACNext-Client-Type` header item | `anycubic` |
+| 4 | `Metadata/project_settings.config` exists, Bambu-specific discriminator | `bambu` |
+| 5 | `Metadata/project_settings.config` exists | `orca` |
+| 6 | none of the above | `kind='model'` (a plain 3MF mesh) |
 
-Orca, Bambu Studio and Anycubic share PrusaSlicer/Bambu lineage, so their markers
-overlap. The detector must therefore return a best match with a defined precedence order
-rather than assuming markers are mutually exclusive.
+Rule 3 **must** precede rules 4 and 5: Anycubic Slicer Next is Bambu-lineage, so it very
+likely also ships `project_settings.config`, and checking that first would misclassify
+every Anycubic project. Confirmed Anycubic marker content:
+
+```xml
+<config>
+  <header>
+    <header_item key="X-ACNext-Client-Type" value="slicer"/>
+    <header_item key="X-ACNext-Client-Version" value="1.4.1.2 20260604104233"/>
+  </header>
+</config>
+```
+
+Matching is on the `X-ACNext-Client-Type` **key**, not the version value, so future
+Anycubic releases keep matching.
+
+`.stl` and `.obj` are always `kind='model'`; anything that is neither a model nor a
+recognised slicer project is `kind='other'`.
+
+Note that `slice_info.config` carries the producing application's version. Not stored in
+the schema today, but it is the natural source if a "made with an older slicer" warning
+is ever wanted.
 
 ### 3.5 Reconciliation (rescan)
 
@@ -685,8 +708,12 @@ That is consistent with `canBrowseModelSites` being false in the browser column 
 
 1. **i18n mechanism** (6.4) — runtime signal-based translation service versus
    `@angular/localize`. Proposal is the former; not yet decided.
-2. **Anycubic Slicer Next 3MF marker** (3.4) — needs determining from a real project file.
-3. **3MF marker overlap** between OrcaSlicer, Bambu Studio and Anycubic (3.4) —
-   precedence order needs defining once the markers are known.
+2. ~~**Anycubic Slicer Next 3MF marker**~~ — **resolved 2026-08-22**: an
+   `X-ACNext-Client-Type` header item inside `Metadata/slice_info.config` (3.4).
+3. **Bambu Studio versus OrcaSlicer discriminator** (3.4, rule 4) — the ordered rule list
+   is settled and Anycubic is pinned ahead of both, but the specific key that separates
+   Bambu from Orca inside `Metadata/project_settings.config` still needs confirming from
+   one real project file of each. Until then rule 4 falls through to rule 5, so
+   Bambu projects would be reported as `orca` — wrong label, no functional breakage.
 4. **Admin visibility** (5.5) — currently admins cannot see other users' projects.
    Confirmed as the default; revisit if a god view is wanted.
