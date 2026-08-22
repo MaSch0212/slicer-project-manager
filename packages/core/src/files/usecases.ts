@@ -94,9 +94,20 @@ export async function uploadFile(
 
   assertWithinQuota(lib, ctx, body.sizeBytes)
 
-  const handle = await open(absPath, 'wx')
+  let handle
   try {
-    const reader = body.stream.getReader()
+    // Exclusive create: the DB/disk check above is not atomic with this, so a name that wins
+    // the race still surfaces as the same Conflict rather than a raw EEXIST.
+    handle = await open(absPath, 'wx')
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
+      throw new AppError('Conflict', `"${name}" already exists`)
+    }
+    throw error
+  }
+
+  const reader = body.stream.getReader()
+  try {
     let written = 0
     for (;;) {
       const { done, value } = await reader.read()
@@ -108,6 +119,9 @@ export async function uploadFile(
       await handle.write(value)
     }
   } catch (error) {
+    // A transport hands us its request body as this stream; leaving it undrained on a
+    // rejection can hang the underlying connection, so cancel it before cleaning up.
+    await reader.cancel(error).catch(() => {})
     await handle.close()
     rmSync(absPath, { force: true })
     throw error

@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { AppError, QuotaExceededDetails } from '@spm/contract/errors.ts'
 import type { Ctx } from '../src/ctx.ts'
@@ -10,6 +10,7 @@ import {
   deleteFile,
   renameFile,
   resolveFilePath,
+  resolvePreviewPath,
   uploadFile,
 } from '../src/files/usecases.ts'
 import { createProject } from '../src/projects/usecases.ts'
@@ -36,6 +37,48 @@ function streamOf(text: string): { stream: ReadableStream<Uint8Array>; sizeBytes
       start(controller) {
         controller.enqueue(bytes)
         controller.close()
+      },
+    }),
+  }
+}
+
+/** Enqueues each string as its own chunk, so a consuming reader sees several `read()`s. */
+function streamOfChunks(chunks: string[]): {
+  stream: ReadableStream<Uint8Array>
+  sizeBytes: number
+} {
+  const encoded = chunks.map((chunk) => new TextEncoder().encode(chunk))
+  const sizeBytes = encoded.reduce((sum, bytes) => sum + bytes.byteLength, 0)
+  return {
+    sizeBytes,
+    stream: new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (const bytes of encoded) controller.enqueue(bytes)
+        controller.close()
+      },
+    }),
+  }
+}
+
+/** Same as streamOfChunks, but exposes whether the underlying source was ever cancelled. */
+function trackedStreamOfChunks(chunks: string[]): {
+  stream: ReadableStream<Uint8Array>
+  sizeBytes: number
+  wasCancelled: () => boolean
+} {
+  const encoded = chunks.map((chunk) => new TextEncoder().encode(chunk))
+  const sizeBytes = encoded.reduce((sum, bytes) => sum + bytes.byteLength, 0)
+  let cancelled = false
+  return {
+    sizeBytes,
+    wasCancelled: () => cancelled,
+    stream: new ReadableStream<Uint8Array>({
+      start(controller) {
+        for (const bytes of encoded) controller.enqueue(bytes)
+        controller.close()
+      },
+      cancel() {
+        cancelled = true
       },
     }),
   }
@@ -155,6 +198,39 @@ test('a body longer than its declared size is rejected and cleaned up', async ()
   })
 })
 
+test('upload accepts a body delivered across multiple chunks', async () => {
+  await withLibrary(async (lib) => {
+    const ctx = seedUser(lib)
+    const project = createProject(lib, ctx, { name: 'Benchy' })
+    const chunks = ['solid ', 'benchy ', 'in three parts']
+    const { stream, sizeBytes } = streamOfChunks(chunks)
+
+    const dto = await uploadFile(lib, ctx, project.id, 'benchy.stl', { stream, sizeBytes })
+    assert.equal(dto.sizeBytes, sizeBytes)
+
+    const onDisk = join(lib.dir, 'marc', 'Benchy', 'benchy.stl')
+    assert.equal(readFileSync(onDisk, 'utf8'), chunks.join(''))
+  })
+})
+
+test('a body that exceeds its declared size partway through a later chunk cancels the stream and cleans up', async () => {
+  await withLibrary(async (lib) => {
+    const ctx = seedUser(lib)
+    const project = createProject(lib, ctx, { name: 'Benchy' })
+    // 3 chunks of 5 bytes each; the declared size (8) is only exceeded on the second chunk,
+    // leaving the third unread — that unread remainder is what makes cancellation observable.
+    const { stream, wasCancelled } = trackedStreamOfChunks(['xxxxx', 'xxxxx', 'xxxxx'])
+
+    await assert.rejects(
+      () => uploadFile(lib, ctx, project.id, 'a.stl', { stream, sizeBytes: 8 }),
+      (e: unknown) => (e as AppError).code === 'Validation',
+    )
+    assert.equal(existsSync(join(lib.dir, 'marc', 'Benchy', 'a.stl')), false)
+    assert.equal(getProject(lib, ctx, project.id).files.length, 0)
+    assert.equal(wasCancelled(), true)
+  })
+})
+
 test('rename moves the file on disk and keeps its folder', async () => {
   await withLibrary(async (lib) => {
     const ctx = seedUser(lib)
@@ -165,6 +241,30 @@ test('rename moves the file on disk and keeps its folder', async () => {
     assert.equal(renamed.name, 'benchy-v2.stl')
     assert.ok(existsSync(join(lib.dir, 'marc', 'Benchy', 'benchy-v2.stl')))
     assert.equal(existsSync(join(lib.dir, 'marc', 'Benchy', 'benchy.stl')), false)
+  })
+})
+
+test('rename of a nested file changes only its last path segment', async () => {
+  await withLibrary(async (lib) => {
+    const ctx = seedUser(lib)
+    const project = createProject(lib, ctx, { name: 'Benchy' })
+    // Rescan is what actually produces nested rel_paths; recreate that shape by hand rather
+    // than pulling rescan into this test.
+    const subDir = join(lib.dir, 'marc', 'Benchy', 'sub')
+    mkdirSync(subDir, { recursive: true })
+    writeFileSync(join(subDir, 'a.stl'), 'solid')
+    const id = newId()
+    lib.db
+      .prepare(
+        `INSERT INTO files (id, project_id, rel_path, kind, size_bytes, mtime_ms)
+         VALUES (?, ?, 'sub/a.stl', 'model', 5, 0)`,
+      )
+      .run(id, project.id)
+
+    const renamed = renameFile(lib, ctx, id, 'b.stl')
+    assert.equal(renamed.name, 'sub/b.stl')
+    assert.ok(existsSync(join(subDir, 'b.stl')))
+    assert.equal(existsSync(join(subDir, 'a.stl')), false)
   })
 })
 
@@ -216,5 +316,48 @@ test('resolveFilePath is scoped to the owner', async () => {
       () => resolveFilePath(lib, anna, dto.id),
       (e: unknown) => (e as AppError).code === 'NotFound',
     )
+  })
+})
+
+test('resolvePreviewPath is null while the preview is still pending', async () => {
+  await withLibrary(async (lib) => {
+    const ctx = seedUser(lib)
+    const project = createProject(lib, ctx, { name: 'Benchy' })
+    const dto = await uploadFile(lib, ctx, project.id, 'benchy.stl', streamOf('solid'))
+
+    // uploadFile leaves a freshly-queued preview row in state 'pending'.
+    assert.equal(resolvePreviewPath(lib, ctx, dto.id), null)
+  })
+})
+
+test("resolvePreviewPath is null when a ready preview's png is missing from disk", async () => {
+  await withLibrary(async (lib) => {
+    const ctx = seedUser(lib)
+    const project = createProject(lib, ctx, { name: 'Benchy' })
+    const dto = await uploadFile(lib, ctx, project.id, 'benchy.stl', streamOf('solid'))
+
+    lib.db
+      .prepare("UPDATE previews SET state = 'ready', png_path = ? WHERE file_id = ?")
+      .run(`.spm/previews/${dto.id}.png`, dto.id)
+    // No file was ever written at that path.
+
+    assert.equal(resolvePreviewPath(lib, ctx, dto.id), null)
+  })
+})
+
+test('resolvePreviewPath returns the absolute path for a ready, present preview', async () => {
+  await withLibrary(async (lib) => {
+    const ctx = seedUser(lib)
+    const project = createProject(lib, ctx, { name: 'Benchy' })
+    const dto = await uploadFile(lib, ctx, project.id, 'benchy.stl', streamOf('solid'))
+
+    const png = join(lib.dir, '.spm', 'previews', `${dto.id}.png`)
+    writeFileSync(png, 'not really a png')
+    lib.db
+      .prepare("UPDATE previews SET state = 'ready', png_path = ? WHERE file_id = ?")
+      .run(`.spm/previews/${dto.id}.png`, dto.id)
+
+    const resolved = resolvePreviewPath(lib, ctx, dto.id)
+    assert.equal(resolved?.absPath, png)
   })
 })
