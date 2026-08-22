@@ -4,6 +4,7 @@
     "@spm/contract/errors.ts": "./packages/contract/src/errors.ts",
     "@spm/contract/dtos.ts": "./packages/contract/src/dtos.ts",
     "@spm/contract/schemas.ts": "./packages/contract/src/schemas.ts",
+    "@spm/contract/api-client.ts": "./packages/contract/src/api-client.ts",
     "@spm/core": "./packages/core/src/index.ts",
     "zod": "npm:zod@^4.0.0"
   },

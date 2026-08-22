@@ -7,7 +7,8 @@
     ".": "./src/index.ts",
     "./errors.ts": "./src/errors.ts",
     "./dtos.ts": "./src/dtos.ts",
-    "./schemas.ts": "./src/schemas.ts"
+    "./schemas.ts": "./src/schemas.ts",
+    "./api-client.ts": "./src/api-client.ts"
   },
   "dependencies": {
     "zod": "^4.0.0"

@@ -13,11 +13,12 @@
     "isolatedModules": true,
     "skipLibCheck": true,
     "noEmit": true,
-    "baseUrl": ".",
+    /* No baseUrl: it is deprecated as of TypeScript 6 (which packages/web uses), and the
+       mappings below resolve relative to this file without it. */
     "paths": {
-      "@spm/contract": ["packages/contract/src/index.ts"],
-      "@spm/contract/*": ["packages/contract/src/*"],
-      "@spm/core": ["packages/core/src/index.ts"]
+      "@spm/contract": ["./packages/contract/src/index.ts"],
+      "@spm/contract/*": ["./packages/contract/src/*"],
+      "@spm/core": ["./packages/core/src/index.ts"]
     }
   }
 }
