@@ -78,6 +78,8 @@ export const fileNameSchema = z
     'file name must not be a Windows-reserved device name',
   )
 
+export const fileRenameSchema = z.object({ name: fileNameSchema })
+
 export const settingsPatchSchema = z.object({
   theme: z.enum(['light', 'dark', 'system']).optional(),
   language: z.enum(['en', 'de']).optional(),
