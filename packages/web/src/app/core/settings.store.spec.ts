@@ -53,4 +53,69 @@ describe('SettingsStore', () => {
     await expect(store.patch({ theme: 'dark' })).rejects.toThrow()
     expect(store.settings().theme).toBe('light')
   })
+
+  it('keeps both values when two overlapping patches to different keys resolve out of order', async () => {
+    let resolveA!: (value: SettingsDto) => void
+    let resolveB!: (value: SettingsDto) => void
+    const put = vi
+      .fn<(patch: Partial<SettingsDto>) => Promise<SettingsDto>>()
+      .mockImplementationOnce(
+        () =>
+          new Promise<SettingsDto>((resolve) => {
+            resolveA = resolve
+          }),
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise<SettingsDto>((resolve) => {
+            resolveB = resolve
+          }),
+      )
+    const { store } = provide({}, put)
+    await store.load()
+
+    const patchA = store.patch({ theme: 'dark' })
+    const patchB = store.patch({ viewMode: 'list' })
+
+    // B is called second but its PUT settles first. Its response predates A's write, so it
+    // still carries the default theme — that must not leak back into A's key.
+    resolveB({ ...DEFAULT_SETTINGS, viewMode: 'list' })
+    await patchB
+    // A resolves last with a response that predates B's write (still the default viewMode).
+    // Under a whole-state overwrite this would stomp B's already-applied change.
+    resolveA({ ...DEFAULT_SETTINGS, theme: 'dark' })
+    await patchA
+
+    expect(store.settings().theme).toBe('dark')
+    expect(store.settings().viewMode).toBe('list')
+  })
+
+  it('only reverts the failing key when a failing patch overlaps a succeeding one on different keys', async () => {
+    let resolveB!: (value: SettingsDto) => void
+    const put = vi
+      .fn<(patch: Partial<SettingsDto>) => Promise<SettingsDto>>()
+      .mockImplementationOnce(() => Promise.reject(new Error('nope')))
+      .mockImplementationOnce(
+        () =>
+          new Promise<SettingsDto>((resolve) => {
+            resolveB = resolve
+          }),
+      )
+    const { store } = provide({ theme: 'light' }, put)
+    await store.load()
+
+    // Chained immediately so the rejection always has a handler attached (avoids an
+    // unhandled-rejection warning while we hold the assertion for later).
+    const failing = expect(store.patch({ theme: 'dark' })).rejects.toThrow()
+    const succeeding = store.patch({ viewMode: 'list' })
+    // Deliberately mismatched theme: a PUT that never mentioned theme still returns the
+    // full settings row, and that must not leak into the theme field either.
+    resolveB({ ...DEFAULT_SETTINGS, theme: 'system', viewMode: 'list' })
+
+    await failing
+    await succeeding
+
+    expect(store.settings().theme).toBe('light')
+    expect(store.settings().viewMode).toBe('list')
+  })
 })

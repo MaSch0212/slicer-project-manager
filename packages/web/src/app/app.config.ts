@@ -43,6 +43,11 @@ export const appConfig: ApplicationConfig = {
         // are loaded reactively, there is nothing further to await here.
         translate.setLanguage(settings.settings().language)
       }
+      // Structural, not incidental: bootstrap cannot finish, and no page can render, until
+      // translations() has been populated at least once (see TranslateService.ready). Without
+      // this, the guarantee would only hold by luck of the two real network calls above
+      // giving the base class's constructor-time effect enough ticks to flush first.
+      await translate.ready
     }),
   ],
 }
