@@ -58,7 +58,8 @@ export const projectPatchSchema = z.object({
   isArchived: z.boolean().optional(),
 })
 
-// Rejects path separators, the Windows-reserved set, and traversal.
+// Rejects path separators, the Windows-reserved character set, traversal, and Windows-reserved
+// device names (CON, PRN, AUX, NUL, COM1-9, LPT1-9), case-insensitively and with any extension.
 export const fileNameSchema = z
   .string()
   .min(1)
@@ -69,6 +70,10 @@ export const fileNameSchema = z
   .refine(
     (v) => v !== '.' && v !== '..' && !v.startsWith('.'),
     'file name must not start with a dot',
+  )
+  .refine(
+    (v) => !/^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\.|$)/i.test(v),
+    'file name must not be a Windows-reserved device name',
   )
 
 export const settingsPatchSchema = z.object({

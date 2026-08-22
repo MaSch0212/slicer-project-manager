@@ -40,6 +40,15 @@ test('fileNameSchema rejects separators, traversal and dotfiles', () => {
   assert.equal(fileNameSchema.safeParse('benchy.stl').success, true)
 })
 
+test('fileNameSchema rejects Windows-reserved device names but accepts look-alikes', () => {
+  for (const bad of ['NUL.stl', 'con.gcode', 'COM1', 'LPT9.txt', 'nul']) {
+    assert.equal(fileNameSchema.safeParse(bad).success, false, bad)
+  }
+  assert.equal(fileNameSchema.safeParse('console.stl').success, true)
+  assert.equal(fileNameSchema.safeParse('Gridfinity Bin.stl').success, true)
+  assert.equal(fileNameSchema.safeParse('benchy.stl').success, true)
+})
+
 test('projectPatchSchema allows clearing website with null but not with a bad url', () => {
   assert.equal(projectPatchSchema.safeParse({ website: null }).success, true)
   assert.equal(projectPatchSchema.safeParse({ website: 'not a url' }).success, false)
