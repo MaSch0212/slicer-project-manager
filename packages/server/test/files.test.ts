@@ -91,6 +91,21 @@ Deno.test('a traversal attempt in the name header is refused', async () => {
   })
 })
 
+Deno.test('a malformed percent-escape in the name header is a 400, not a 500', async () => {
+  await withServer(async (server) => {
+    const cookie = await loginAsAdmin(server)
+    const project = await newProject(server, cookie)
+    const bytes = new TextEncoder().encode('solid')
+    const response = await server.fetch(`/api/projects/${project.id}/files`, {
+      method: 'POST',
+      cookie,
+      headers: { 'x-spm-file-name': '%', 'content-length': String(bytes.byteLength) },
+      body: bytes,
+    })
+    assert.equal(response.status, 400)
+  })
+})
+
 Deno.test('exceeding the quota is a 413 carrying the numbers', async () => {
   await withServer(async (server) => {
     const cookie = await loginAsAdmin(server)

@@ -3,6 +3,7 @@ import { fileNameSchema, fileRenameSchema } from '@spm/contract/schemas.ts'
 import { deleteFile, renameFile, resolveFilePath, resolvePreviewPath, uploadFile } from '@spm/core'
 import { decorateFile } from '../decorate.ts'
 import { json, noContent, parseJson } from '../json.ts'
+import { decodeURIComponentOrThrow } from '../percent.ts'
 import type { Route } from '../router.ts'
 
 export const UPLOAD_NAME_HEADER = 'x-spm-file-name'
@@ -10,7 +11,7 @@ export const UPLOAD_NAME_HEADER = 'x-spm-file-name'
 function requireUploadName(req: Request): string {
   const raw = req.headers.get(UPLOAD_NAME_HEADER)
   if (!raw) throw new AppError('Validation', `${UPLOAD_NAME_HEADER} header is required`)
-  const decoded = decodeURIComponent(raw)
+  const decoded = decodeURIComponentOrThrow(raw, `${UPLOAD_NAME_HEADER} header`)
   const parsed = fileNameSchema.safeParse(decoded)
   if (!parsed.success) {
     throw new AppError('Validation', 'illegal file name', { issues: parsed.error.issues })

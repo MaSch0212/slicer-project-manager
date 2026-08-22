@@ -17,6 +17,7 @@ import {
 } from '@spm/core'
 import { decorateProject, decorateProjectDetail } from '../decorate.ts'
 import { json, noContent, parseJson } from '../json.ts'
+import { decodeURIComponentOrThrow } from '../percent.ts'
 import type { Route } from '../router.ts'
 
 /** Query strings are all text; coerce, then validate with the shared schema. */
@@ -101,7 +102,7 @@ export const projectRoutes: Route[] = [
     path: '/api/projects/:id/tags/:name',
     auth: 'session',
     handler: ({ params, env, ctx }) => {
-      removeTag(env.lib, ctx, params.id!, decodeURIComponent(params.name!))
+      removeTag(env.lib, ctx, params.id!, decodeURIComponentOrThrow(params.name!, 'tag name'))
       return noContent()
     },
   },

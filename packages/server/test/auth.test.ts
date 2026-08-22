@@ -33,6 +33,14 @@ Deno.test('a session route without a cookie is a 401', async () => {
   })
 })
 
+Deno.test('a malformed percent-escape in the session cookie is a 401, not a 500', async () => {
+  await withServer(async (server) => {
+    const response = await server.fetch('/api/account', { cookie: 'spm_session=%' })
+    assert.equal(response.status, 401)
+    assert.equal((await response.json()).error.code, 'Unauthorized')
+  })
+})
+
 Deno.test('the activation token can be checked before a password is typed', async () => {
   await withServer(async (server) => {
     const ok = await server.fetch(`/api/auth/activation/${server.bootstrapToken}`)

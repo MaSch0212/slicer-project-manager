@@ -1,3 +1,5 @@
+import { tryDecodeURIComponent } from './percent.ts'
+
 export const SESSION_COOKIE = 'spm_session'
 
 export function readSessionToken(req: Request): string | null {
@@ -5,7 +7,9 @@ export function readSessionToken(req: Request): string | null {
   if (!header) return null
   for (const part of header.split(';')) {
     const [name, ...rest] = part.trim().split('=')
-    if (name === SESSION_COOKIE) return decodeURIComponent(rest.join('='))
+    // A malformed escape means there is no usable token, not a validation error to report
+    // — falling through to null lets the router produce its normal 401.
+    if (name === SESSION_COOKIE) return tryDecodeURIComponent(rest.join('='))
   }
   return null
 }

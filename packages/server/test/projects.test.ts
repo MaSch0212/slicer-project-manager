@@ -172,6 +172,29 @@ Deno.test(
   },
 )
 
+Deno.test(
+  'a malformed percent-escape in the tag name path segment is a 400, not a 500',
+  async () => {
+    await withServer(async (server) => {
+      const cookie = await loginAsAdmin(server)
+      const project = await (
+        await server.fetch('/api/projects', {
+          method: 'POST',
+          cookie,
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ name: 'Benchy' }),
+        })
+      ).json()
+
+      const response = await server.fetch(`/api/projects/${project.id}/tags/%`, {
+        method: 'DELETE',
+        cookie,
+      })
+      assert.equal(response.status, 400)
+    })
+  },
+)
+
 Deno.test('rescan adopts folders and reports what it did', async () => {
   await withServer(async (server) => {
     const cookie = await loginAsAdmin(server)
