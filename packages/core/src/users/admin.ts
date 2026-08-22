@@ -80,6 +80,11 @@ export async function reissueInvite(
   requireAdmin(ctx)
   const row = requireUserRow(lib.db, id)
   if (row.status === 'active') throw new AppError('Conflict', 'account is already active')
+  // Disabled means revoked: a fresh invite would let activation resurrect it. Re-enable
+  // first, then re-invite.
+  if (row.status === 'disabled') {
+    throw new AppError('Conflict', 're-enable the account before issuing a new invite')
+  }
   return { token: await issueActivationToken(lib.db, row.id) }
 }
 

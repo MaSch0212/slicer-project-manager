@@ -3,7 +3,7 @@ import { AppError } from '@spm/contract/errors.ts'
 import type { Library } from '../db/open.ts'
 import { diskUsageBytes } from '../users/usage.ts'
 import { findUserByUsername, requireUserRow, toUserDto } from '../users/repo.ts'
-import { consumeActivationToken } from './activation.ts'
+import { checkActivationToken, consumeActivationToken } from './activation.ts'
 import { hashPassword, needsRehash, verifyPassword } from './password.ts'
 import { createSession } from './sessions.ts'
 
@@ -66,6 +66,16 @@ export async function activateAccount(
   userAgent: string | null,
   now: number = Date.now(),
 ): Promise<LoginResult> {
+  // Checked before consuming: a disabled account's link must not be silently burned by a
+  // rejected attempt, and disabled is the one status activation must never resurrect from
+  // (resolveSession already refuses non-active users, so this is the last door). The check
+  // is read-only, so an unconsumed-but-expired token still falls through to
+  // consumeActivationToken below and reports TokenExpired as before.
+  const check = await checkActivationToken(lib.db, token, now)
+  if (check.valid && check.userId && requireUserRow(lib.db, check.userId).status === 'disabled') {
+    throw new AppError('InvalidToken', 'activation token is not usable')
+  }
+
   const userId = await consumeActivationToken(lib.db, token, now)
   const pw = await hashPassword(newPassword)
   lib.db

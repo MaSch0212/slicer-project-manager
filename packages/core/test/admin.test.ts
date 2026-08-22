@@ -202,3 +202,39 @@ test('listUsers reports each user their own derived disk usage', async () => {
     assert.equal(byName.get('admin'), 0)
   })
 })
+
+test('a user disabled while pending cannot activate with their original token', async () => {
+  await withLibrary(async (lib) => {
+    const admin = await activeAdmin(lib)
+    const { user, token } = await createUser(lib, admin, {
+      username: 'anna',
+      displayName: 'Anna',
+      isAdmin: false,
+      quotaBytes: null,
+    })
+    updateUser(lib, admin, user.id, { isDisabled: true })
+
+    await assert.rejects(
+      () => activateAccount(lib, token, 'a good long password', null),
+      (e: unknown) => (e as AppError).code === 'InvalidToken',
+    )
+  })
+})
+
+test('reissueInvite refuses a disabled account', async () => {
+  await withLibrary(async (lib) => {
+    const admin = await activeAdmin(lib)
+    const { user } = await createUser(lib, admin, {
+      username: 'anna',
+      displayName: 'Anna',
+      isAdmin: false,
+      quotaBytes: null,
+    })
+    updateUser(lib, admin, user.id, { isDisabled: true })
+
+    await assert.rejects(
+      () => reissueInvite(lib, admin, user.id),
+      (e: unknown) => (e as AppError).code === 'Conflict',
+    )
+  })
+})
