@@ -12,6 +12,7 @@ export const STATUS_BY_CODE: Record<AppErrorCode, number> = {
   TokenExpired: 410,
   LengthRequired: 411,
   QuotaExceeded: 413,
+  TooManyRequests: 429,
   Internal: 500,
 }
 

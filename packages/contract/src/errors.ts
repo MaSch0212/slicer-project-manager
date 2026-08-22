@@ -9,6 +9,7 @@ export type AppErrorCode =
   | 'InvalidToken'
   | 'TokenExpired'
   | 'LastActiveAdmin'
+  | 'TooManyRequests'
   | 'Internal'
 
 export class AppError extends Error {

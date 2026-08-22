@@ -4,11 +4,16 @@ import { json, parseJson } from '../json.ts'
 import type { Route } from '../router.ts'
 import { readSessionToken, sessionClearCookie, sessionSetCookie } from '../session.ts'
 
+// Generous for a human typing a password, but it caps an attacker's sampling rate to
+// 600/hour — the mitigation for login's password-vs-username timing gap (see rate-limit.ts).
+const AUTH_RATE_LIMIT = { limit: 10, windowMs: 60_000 }
+
 export const authRoutes: Route[] = [
   {
     method: 'POST',
     path: '/api/auth/login',
     auth: 'public',
+    rateLimit: AUTH_RATE_LIMIT,
     handler: async ({ req, url, env }) => {
       const input = await parseJson(req, loginSchema)
       const result = await login(
@@ -46,6 +51,7 @@ export const authRoutes: Route[] = [
     method: 'POST',
     path: '/api/auth/activation/:token',
     auth: 'public',
+    rateLimit: AUTH_RATE_LIMIT,
     handler: async ({ req, url, params, env }) => {
       const input = await parseJson(req, activateSchema)
       const result = await activateAccount(
