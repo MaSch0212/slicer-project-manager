@@ -280,48 +280,67 @@ All five target slicers write `.3mf` project files, so a `.3mf` is ambiguous and
 disambiguated by inspecting its zip entries. This replaces CuraManager's single
 Cura-only check.
 
-**Markers are not mutually exclusive, and path existence alone is not enough.** Cura and
-PrusaSlicer have distinctive paths, but OrcaSlicer, Bambu Studio and Anycubic Slicer Next
-are all Bambu-lineage and write overlapping metadata — notably all three ship
-`Metadata/slice_info.config`. Detection is therefore **content sniffing against an
-ordered rule list**, first match wins:
+**Verified 2026-08-22 against real project files** produced by all five slicers. Zip
+entry lists:
 
-| # | Rule | Result |
-|---|---|---|
-| 1 | any entry with a `Cura/` prefix | `cura` |
-| 2 | `Metadata/Slic3r_PE.config` exists | `prusaslicer` |
-| 3 | `Metadata/slice_info.config` header items match the **client registry** below | that slicer |
-| 4 | `Metadata/project_settings.config` exists | `orca` (generic Bambu-lineage fallback) |
-| 5 | none of the above | `kind='model'` (a plain 3MF mesh) |
+| Slicer | Distinguishing entries |
+|---|---|
+| Cura | `Cura/*` (16 entries), `Metadata/thumbnail.png` |
+| PrusaSlicer | `Metadata/Slic3r_PE.config`, `Metadata/Slic3r_PE_model.config` |
+| Anycubic / Bambu / Orca | **identical layout** — `Metadata/project_settings.config`, `model_settings.config`, `slice_info.config`, `plate_*.png` |
 
-Rule 3 **must** precede rule 4. Every Bambu-lineage slicer ships
-`project_settings.config`, so matching on that first would collapse the whole family into
-one label. `slice_info.config` is where they actually identify themselves, via
-vendor-prefixed header items:
+Cura and PrusaSlicer are identifiable by path. The three Bambu-lineage slicers are not:
+their entry lists are effectively the same. They identify themselves only in the
+`slice_info.config` header.
 
-```xml
-<config>
-  <header>
-    <header_item key="X-ACNext-Client-Type" value="slicer"/>
-    <header_item key="X-ACNext-Client-Version" value="1.4.1.2 20260604104233"/>
-  </header>
-</config>
+**Measured headers:**
+
+| Slicer | `slice_info.config` header items |
+|---|---|
+| Anycubic Slicer Next 1.4.1.2 | `X-ACNext-Client-Type`, `X-ACNext-Client-Version` |
+| Bambu Studio 02.08.02.61 | `X-BBL-Client-Type`, `X-BBL-Client-Version` |
+| OrcaSlicer 2.4.2 | `X-BBL-Client-Type`, `X-BBL-Client-Version`, **`OrcaSlicer-Version`** |
+
+**OrcaSlicer's header is a superset of Bambu Studio's** — it keeps the `X-BBL-*` keys
+inherited from the fork and adds its own. So the registry order is load-bearing:
+`OrcaSlicer-Version` **must** be tested before `X-BBL-Client-Type`, or every Orca project
+is labelled `bambu`.
+
+**Detection algorithm** — first match wins:
+
+```
+1. any entry prefixed "Cura/"                 → cura
+2. Metadata/Slic3r_PE.config exists           → prusaslicer
+3. Metadata/slice_info.config exists
+     parse <header_item key="..."/>, first match in registry order:
+       a. X-ACNext-Client-Type   → anycubic
+       b. OrcaSlicer-Version     → orca      ← must precede (c)
+       c. X-BBL-Client-Type      → bambu
+       d. no match               → slicer_project, slicer = null
+4. Metadata/project_settings.config exists    → slicer_project, slicer = null
+5. otherwise                                  → kind='model'
 ```
 
-**Client registry** — an ordered list of (header-item key, optional value predicate) to
-slicer id. Supporting another Orca derivative is one table row, not new code:
+Matching is on the header-item **key**, never the version value, so future releases keep
+matching. Adding another Orca derivative is one registry row ahead of `X-BBL-Client-Type`.
 
-| Header-item key | Value predicate | Slicer |
-|---|---|---|
-| `X-ACNext-Client-Type` | — | `anycubic` |
-| `X-BBL-Client-Type` | to confirm | `bambu` or `orca` |
+**Rule 4 exists because `slice_info.config` appears to be written on slice, not on
+save.** An unsliced-but-saved project may therefore lack it. Such a file is still
+correctly classified as a slicer project; only the specific slicer is unknown. This is
+deliberately reported as `slicer = null` rather than guessed, so the UI can fall back to
+the user's default slicer instead of launching the wrong one. (My earlier draft defaulted
+this case to `orca`, which would have mislabelled Bambu projects.)
 
-Matching is on the **key**, not the version value, so future releases keep matching.
-`X-ACNext-Client-Type` is confirmed from a real Anycubic Slicer Next 1.4.1.2 project.
+**Two traps confirmed and rejected as discriminators:**
 
-The residual unknown is only whether OrcaSlicer and Bambu Studio use *distinct* header
-keys, or share `X-BBL-*` and need a value predicate to separate them. Either way the
-structure holds and rule 4 catches anything unmatched.
+- **`printer_model` is worthless.** The OrcaSlicer test project reports
+  `"printer_model": "Anycubic Kobra X"`. Printer identity says nothing about which slicer
+  wrote the file.
+- **`project_settings.config` has no usable marker.** Its `version` field mirrors the
+  client version, and Orca inherits Bambu's zero-padded format (`02.06.00.51` vs
+  `02.08.02.61`), so it separates Anycubic from the lineage but never Bambu from Orca.
+  Indentation differs (Orca uses tabs, the others spaces) but that is incidental
+  formatting and must not be relied on.
 
 `.stl` and `.obj` are always `kind='model'`; anything that is neither a model nor a
 recognised slicer project is `kind='other'`.
@@ -698,9 +717,31 @@ Implemented in `core/previews`, dependency-free and portable across both runtime
 - **3MF** — a zip. Streaming `inflateRaw` via `node:zlib`, then a pull-style XML parse of
   `3D/3dmodel.model`. This **must** stream: one file measured in the reference library
   was 54 MB uncompressed, so a DOM parse is not viable.
-- **3MF fast path** — extract `Metadata/thumbnail.png` where present and record
-  `source='embedded'`. Measured on the reference library: only 63 of 401 Cura 3MFs carry
-  one, so this is a fast path, not a solution.
+- **Embedded-thumbnail fast path** — verified 2026-08-22: **all five slicers embed a
+  usable thumbnail in their project files**, so a slicer project almost never needs
+  rendering at all. Extract, downscale, record `source='embedded'`:
+
+  | Slicer | Entry | Dimensions | Size |
+  |---|---|---|---|
+  | Cura | `Metadata/thumbnail.png` | 300×300 | 18.8 KB |
+  | PrusaSlicer | `Metadata/thumbnail.png` | 256×256 | 6.3 KB |
+  | Bambu / Orca / Anycubic | `Metadata/plate_1.png` | 512×512 | 3.6–6.1 KB |
+
+  For the Bambu lineage use `plate_1.png`, not its siblings: `plate_1_small.png` is
+  128×128 (below the 256 target), `plate_no_light_1.png` is unlit, `top_1.png` is a
+  top-down orthographic view, and `pick_1.png` is an object-picking mask rather than a
+  visual.
+
+  This reframes the pipeline. The earlier measurement — 63 of 401 Cura 3MFs carrying a
+  thumbnail — was a statement about **old Cura versions**, not about slicer projects
+  generally. In practice the extraction path covers essentially every project file from
+  the four non-Cura slicers plus recent Cura. **The rasterizer is therefore needed for
+  _model_ files, not _project_ files** — which is where the volume is anyway: 1,311 STLs
+  against 401 3MFs in the reference library.
+
+  Implementation order follows from that: extraction is cheap and covers all project
+  files, so it lands first; the rasterizer is the expensive component and is only ever
+  reached for `.stl`, `.obj`, and plain 3MF meshes.
 - **OBJ** — 12 files in the reference library; low priority, `kind='model'` regardless.
 
 ### 7.2 Rendering
@@ -783,15 +824,17 @@ their answers, since the reasoning matters for implementation.
    `@angular/localize` rejected as build-time-only.
 2. ~~**Anycubic Slicer Next 3MF marker**~~ — **resolved**: an `X-ACNext-Client-Type`
    header item inside `Metadata/slice_info.config` (3.4).
-3. ~~**Bambu Studio versus OrcaSlicer discriminator**~~ — **resolved structurally**:
-   `slice_info.config` is the identifying file for the entire Orca/Bambu-lineage family,
-   read through the client registry in 3.4. One residual detail for implementation — do
-   Orca and Bambu use distinct header keys, or share `X-BBL-*` and need a value
-   predicate? Either answer is a registry row; unmatched files fall through to rule 4 and
-   are labelled `orca`, which is a wrong label with no functional consequence.
+3. ~~**Bambu Studio versus OrcaSlicer discriminator**~~ — **resolved definitively** against
+   real project files from all five slicers (3.4). Orca's `slice_info.config` header is a
+   superset of Bambu's: both carry `X-BBL-Client-Type`, and Orca adds `OrcaSlicer-Version`,
+   so the registry must test the Orca key first. Unidentifiable files report
+   `slicer = null` rather than guessing.
 4. ~~**Admin visibility**~~ — **resolved**: admins administer users only and never see
    other users' projects. Per-user disk usage and quotas were added instead (5.6), which
    gives admins the operational visibility they need without exposing project contents.
 
-Genuinely open items are now limited to that one registry detail in 3, which needs a real
-Bambu Studio and OrcaSlicer project file to settle.
+**No open questions remain.** Every design-time unknown has been settled against measured
+evidence. The one residual assumption, flagged inline at 3.4 rather than here, is that
+`slice_info.config` is written on slice rather than on save — which only affects whether
+an unsliced project can name its slicer, and degrades to `slicer = null` rather than to a
+wrong answer.
