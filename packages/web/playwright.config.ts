@@ -10,6 +10,13 @@ process.env['SPM_E2E_LIBRARY'] = libraryDir
 
 export default defineConfig({
   testDir: './e2e',
+  // Every spec drives the same server against the same library on disk, so they are not
+  // independent: the import spec's rescan will adopt a folder the rescan spec is about to
+  // assert on, and that spec then sees "Adopted 0". CI defaults to a worker per core, which
+  // is what turned a latent sharing problem into a failure. Serial is also barely slower
+  // here -- the whole suite is a few seconds.
+  workers: 1,
+  fullyParallel: false,
   use: { baseURL: 'http://localhost:8123' },
   webServer: {
     // `--config ../../deno.json` is load-bearing, not belt-and-braces. Deno discovers its

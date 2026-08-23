@@ -11,8 +11,20 @@ import { requireUserRow } from '../users/repo.ts'
 import { applyCuraManagerSidecars, type ImportProgress } from './import-curamanager.ts'
 import { RELATIVE_PATH_SEPARATOR, rescan } from './rescan.ts'
 
-/** Zip paths always use forward slashes, whatever platform wrote the archive. */
+/** Zip paths are specified to use forward slashes, whatever platform wrote the archive. */
 const ZIP_SEPARATOR = '/'
+
+/**
+ * Splits on backslashes too, even though the format says not to use them.
+ *
+ * Some Windows tools write them anyway, and treating such a name as one opaque filename makes
+ * behaviour depend on the server's platform: on Windows `safeJoin` sees separators and refuses
+ * the entry, while on Linux the same archive silently produces a file literally called
+ * `sub....escape.txt`. Neither is an escape, but "refused here, accepted there" is not a
+ * property worth having in an importer. Splitting first makes every segment visible to the
+ * `..` rule below, so the same archive is judged the same way everywhere.
+ */
+const SEGMENT_SEPARATORS = /[/\\]/
 
 export type ZipPlan = {
   /** Entries that will be written, with the path each lands at under the user's root. */
@@ -27,7 +39,7 @@ export type ZipPlan = {
 }
 
 function segments(name: string): string[] {
-  return name.split(ZIP_SEPARATOR).filter((part) => part.length > 0)
+  return name.split(SEGMENT_SEPARATORS).filter((part) => part.length > 0)
 }
 
 function isDirectory(path: string): boolean {

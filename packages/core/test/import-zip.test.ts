@@ -254,20 +254,41 @@ test('the writes land inside the user own folder, never a sibling user', async (
   })
 })
 
-test('an entry that escapes only via backslashes is refused, and nothing is written', async () => {
-  await withLibrary(async (lib) => {
-    const ctx = seedUser(lib)
-    // planZipImport splits on '/' only, so a Windows-authored entry name arrives as one
-    // opaque segment that neither the dot rule nor the '..' rule matches. safeJoin is what
-    // catches it, and the pre-flight is what stops the good sibling being written first.
-    const zip = makeZip(lib, [
+test('a backslash-separated entry is judged the same way on every platform', () => {
+  // A Windows tool can write backslashes into an entry name even though the format says not
+  // to. Splitting on them lets the '..' rule see the traversal, so the archive is judged
+  // identically everywhere -- rather than being refused by safeJoin on Windows, where those
+  // really are separators, and quietly written as one absurd filename on Linux, where they
+  // are not.
+  const plan = planZipImport(
+    entriesOf([
       { name: 'Widget A/part.stl', data: 'solid a' },
       { name: 'Widget A/sub\\..\\..\\..\\escape.txt', data: 'nope' },
-    ])
+      { name: 'Widget A\\nested\\ok.stl', data: 'solid ok' },
+      // A second top-level folder, so the nesting above does not read as a wrapper to strip
+      // and this case stays about separators rather than about the wrapper heuristic.
+      { name: 'Bracket/model.3mf', data: 'x' },
+    ]),
+  )
 
-    await assert.rejects(() => importCuraManagerZip(lib, ctx, zip))
-    assert.ok(!existsSync(join(lib.dir, 'marc', 'Widget A', 'part.stl')), 'wrote a partial import')
-    assert.ok(!existsSync(join(lib.dir, 'escape.txt')))
-    assert.ok(!existsSync(join(lib.dir, 'marc', 'escape.txt')))
-  })
+  assert.equal(plan.strippedRoot, null)
+  assert.equal(plan.skipped, 1)
+  // The traversal is gone; the innocuous backslash path became real nested segments.
+  assert.deepEqual(plan.files.map((file) => file.relPath).sort(), [
+    'Bracket/model.3mf',
+    'Widget A/nested/ok.stl',
+    'Widget A/part.stl',
+  ])
+})
+
+test('an archive carrying a traversal never writes outside the user root', () => {
+  const plan = planZipImport(
+    entriesOf([
+      { name: 'Widget A/part.stl', data: 'solid a' },
+      { name: 'Widget A/sub\\..\\..\\..\\escape.txt', data: 'nope' },
+      { name: '../../escape2.txt', data: 'nope' },
+    ]),
+  )
+  assert.ok(!plan.files.some((file) => file.relPath.includes('..')))
+  assert.deepEqual(plan.projectDirs, ['Widget A'])
 })
