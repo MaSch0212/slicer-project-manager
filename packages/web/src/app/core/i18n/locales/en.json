@@ -1,5 +1,8 @@
 {
-  "app": { "title": "Slicer Project Manager", "signOut": "Sign out" },
+  "app": {
+    "title": "Slicer Project Manager",
+    "signOut": "Sign out"
+  },
   "auth": {
     "username": "Username",
     "password": "Password",
@@ -42,6 +45,21 @@
     "confirmDelete": "Delete this project? The project and its tags are removed; the files stay on disk.",
     "confirmDeleteWithFiles": "Delete this project and erase every one of its files from the disk? This cannot be undone.",
     "confirmDeleteAction": "Yes, delete"
+  },
+  "import": {
+    "title": "Import",
+    "heading": "Import a CuraManager library",
+    "intro": "Zip your CuraManager library folder and drop it here. Every project folder inside becomes a project, and each metadata.json contributes its tags, source URL and archived flag.",
+    "pick": "Choose a .zip archive",
+    "start": "Import",
+    "running": "Importing. Large libraries take a few minutes -- leave this page open.",
+    "doneTitle": "Import finished",
+    "done": "{{ projects }} projects and {{ files }} files imported, {{ tags }} tags applied.",
+    "strippedRoot": "The archive had a single top-level folder ({{ name }}); its contents were used as the library.",
+    "skipped": "{{ count }} entries were skipped (files outside a project folder, and hidden entries).",
+    "viewProjects": "View projects",
+    "failed": "The import failed and nothing was changed.",
+    "notZip": "That is not a .zip archive."
   },
   "settings": {
     "title": "Settings",

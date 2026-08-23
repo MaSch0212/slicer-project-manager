@@ -10,6 +10,7 @@ import {
   pruneExpiredSessions,
   runPreviewQueue,
 } from '@spm/core'
+import { denoDevProxy, resolveDevUiOrigin } from './src/dev-proxy.ts'
 import { makeHandler } from './src/router.ts'
 import { routes } from './src/routes/index.ts'
 
@@ -66,7 +67,16 @@ setInterval(() => {
   if (pruned) log.info('pruned expired sessions', { count: pruned })
 }, PRUNE_INTERVAL_MS)
 
-const handler = makeHandler(routes, { lib, log })
+// Development only: forward everything outside /api/ to a running `ng serve` so one
+// origin serves both halves of the app and the UI does not have to be rebuilt to be seen.
+const devUiOrigin = resolveDevUiOrigin(Deno.env.get('SPM_DEV_UI_ORIGIN'))
+if (devUiOrigin) log.warn('serving the UI from the dev server', { origin: devUiOrigin })
+
+const handler = makeHandler(routes, {
+  lib,
+  log,
+  serveUi: devUiOrigin ? denoDevProxy(devUiOrigin, log) : undefined,
+})
 const server = Deno.serve({ port, onListen: () => {} }, handler)
 
 Deno.addSignalListener('SIGINT', () => {

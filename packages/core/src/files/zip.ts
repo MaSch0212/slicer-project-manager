@@ -87,18 +87,7 @@ export function findZipEntry(entries: ZipEntry[], name: string): ZipEntry | unde
 export function readZipEntryBytes(path: string, entry: ZipEntry): Uint8Array {
   const fd = openSync(path, 'r')
   try {
-    const header = readAt(fd, entry.localHeaderOffset, 30)
-    const view = new DataView(header.buffer, header.byteOffset, header.byteLength)
-    if (view.getUint32(0, true) !== LOCAL_SIG) {
-      throw new AppError('Validation', 'corrupt zip local header')
-    }
-    const dataOffset =
-      entry.localHeaderOffset + 30 + view.getUint16(26, true) + view.getUint16(28, true)
-    const data = readAt(fd, dataOffset, entry.compressedSize)
-
-    if (entry.method === 0) return data
-    if (entry.method === 8) return new Uint8Array(inflateRawSync(data))
-    throw new AppError('Validation', `unsupported zip compression method ${entry.method}`)
+    return readEntryFrom(fd, entry)
   } finally {
     closeSync(fd)
   }
@@ -106,4 +95,51 @@ export function readZipEntryBytes(path: string, entry: ZipEntry): Uint8Array {
 
 export function readZipEntryText(path: string, entry: ZipEntry): string {
   return new TextDecoder().decode(readZipEntryBytes(path, entry))
+}
+
+/**
+ * A zip held open across many reads.
+ *
+ * `readZipEntryBytes` opens and closes the file for every entry, which is fine for the one
+ * or two entries a thumbnail lookup needs but is one syscall pair per file when extracting a
+ * whole archive. This keeps a single descriptor for the life of the extraction.
+ */
+export type OpenZip = {
+  entries: ZipEntry[]
+  read(entry: ZipEntry): Uint8Array
+  close(): void
+}
+
+export function openZip(path: string): OpenZip {
+  const entries = readZipEntries(path)
+  const fd = openSync(path, 'r')
+  let closed = false
+  return {
+    entries,
+    read(entry) {
+      if (closed) throw new AppError('Validation', 'zip is already closed')
+      return readEntryFrom(fd, entry)
+    },
+    close() {
+      if (closed) return
+      closed = true
+      closeSync(fd)
+    },
+  }
+}
+
+/** The body of readZipEntryBytes, against an already-open descriptor. */
+function readEntryFrom(fd: number, entry: ZipEntry): Uint8Array {
+  const header = readAt(fd, entry.localHeaderOffset, 30)
+  const view = new DataView(header.buffer, header.byteOffset, header.byteLength)
+  if (view.getUint32(0, true) !== LOCAL_SIG) {
+    throw new AppError('Validation', 'corrupt zip local header')
+  }
+  const dataOffset =
+    entry.localHeaderOffset + 30 + view.getUint16(26, true) + view.getUint16(28, true)
+  const data = readAt(fd, dataOffset, entry.compressedSize)
+
+  if (entry.method === 0) return data
+  if (entry.method === 8) return new Uint8Array(inflateRawSync(data))
+  throw new AppError('Validation', `unsupported zip compression method ${entry.method}`)
 }

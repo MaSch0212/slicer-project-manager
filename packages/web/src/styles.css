@@ -1,1 +1,455 @@
-/* You can add global styles to this file, and also import other style files */
+/*
+ * Global styles.
+ *
+ * The controls bring their own CSS: @awdlab/jig-themes is a runtime engine that injects the
+ * theme into <head> inside a `jig` cascade layer. Nothing here needs to import it, and
+ * because layered CSS always loses to unlayered CSS, every rule in this file wins over the
+ * theme regardless of specificity -- no !important, no ::ng-deep.
+ *
+ * What the theme does NOT provide is a font or a page layout, which is what this file is for.
+ * Everything below draws on the theme's own design tokens (--jig-color-*, --jig-size-*,
+ * --jig-font-*) so the app tracks the preset and the light/dark switch for free.
+ *
+ * Inter is self-hosted through @fontsource-variable/inter (wired up in angular.json) rather
+ * than linked from Google Fonts: the desktop build has to render correctly with no network
+ * at all (spec 2.5), and a webfont that 404s offline would fall back to a system font only
+ * after a visible reflow.
+ */
+
+:root {
+  --spm-page-max: 80rem;
+  --spm-gap: var(--jig-size-padding-lg);
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  min-height: 100dvh;
+  font-family:
+    'Inter Variable',
+    Inter,
+    system-ui,
+    -apple-system,
+    'Segoe UI',
+    sans-serif;
+  font-size: var(--jig-font-size-md);
+  background: var(--jig-color-background);
+  color: var(--jig-color-text);
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2,
+h3,
+h4 {
+  margin: 0;
+  font-weight: var(--jig-font-weight-semibold);
+  line-height: 1.25;
+}
+
+h1 {
+  font-size: var(--jig-font-size-2xl);
+}
+h2 {
+  font-size: var(--jig-font-size-xl);
+}
+h3 {
+  font-size: var(--jig-font-size-lg);
+}
+
+p {
+  margin: 0;
+}
+
+/* ---------------------------------------------------------------- app shell */
+
+.spm-shell {
+  display: flex;
+  min-height: 100dvh;
+  flex-direction: column;
+}
+
+.spm-header {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  border-bottom: 1px solid var(--jig-color-border);
+  background: var(--jig-color-background);
+}
+
+.spm-header-inner {
+  margin: 0 auto;
+  width: 100%;
+  max-width: var(--spm-page-max);
+  padding: var(--jig-size-padding-md) var(--jig-size-padding-lg);
+}
+
+.spm-brand {
+  font-size: var(--jig-font-size-lg);
+  font-weight: var(--jig-font-weight-bold);
+  color: var(--jig-color-text);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.spm-main {
+  margin: 0 auto;
+  width: 100%;
+  max-width: var(--spm-page-max);
+  flex: 1;
+  padding: var(--jig-size-padding-xl) var(--jig-size-padding-lg);
+}
+
+/* Centres the narrow, single-column pages: sign in, activate, upload. */
+.spm-main--narrow {
+  display: flex;
+  max-width: 30rem;
+  flex-direction: column;
+  justify-content: center;
+}
+
+/* ------------------------------------------------------------------ pieces */
+
+.spm-page-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spm-gap);
+  margin-bottom: var(--jig-size-padding-xl);
+}
+
+.spm-card {
+  border: 1px solid var(--jig-color-border);
+  border-radius: var(--jig-size-rounded-lg);
+  background: var(--jig-color-surface-50);
+  padding: var(--jig-size-padding-lg);
+}
+
+.spm-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spm-gap);
+}
+
+.spm-stack--tight {
+  gap: var(--jig-size-padding-sm);
+}
+
+.spm-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--jig-size-padding-md);
+}
+
+.spm-muted {
+  color: var(--jig-color-surface-600);
+  font-size: var(--jig-font-size-sm);
+}
+
+.spm-grow {
+  flex: 1;
+  min-width: 12rem;
+}
+
+/* --------------------------------------------------------------- empty state */
+
+.spm-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--jig-size-padding-md);
+  border: 1px dashed var(--jig-color-border);
+  border-radius: var(--jig-size-rounded-lg);
+  padding: calc(var(--jig-size-padding-xl) * 2) var(--jig-size-padding-lg);
+  text-align: center;
+  color: var(--jig-color-surface-600);
+}
+
+/* ------------------------------------------------------------- project grid */
+
+.spm-projects {
+  display: grid;
+  gap: var(--spm-gap);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* The two view modes the settings page persists (spec 4.2). */
+.spm-projects.grid {
+  grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr));
+}
+
+.spm-projects.list {
+  grid-template-columns: 1fr;
+}
+
+.spm-project {
+  display: flex;
+  overflow: hidden;
+  flex-direction: column;
+  border: 1px solid var(--jig-color-border);
+  border-radius: var(--jig-size-rounded-lg);
+  background: var(--jig-color-surface-50);
+  transition:
+    border-color 120ms ease,
+    box-shadow 120ms ease;
+}
+
+.spm-project:hover,
+.spm-project:focus-within {
+  border-color: var(--jig-color-primary-500);
+  box-shadow: var(--jig-shadow-md);
+}
+
+.spm-projects.list .spm-project {
+  flex-direction: row;
+  align-items: stretch;
+}
+
+.spm-project-link {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  color: inherit;
+  text-decoration: none;
+}
+
+.spm-projects.list .spm-project-link {
+  flex-direction: row;
+  align-items: center;
+  gap: var(--jig-size-padding-md);
+}
+
+.spm-thumb {
+  display: grid;
+  aspect-ratio: 1;
+  width: 100%;
+  place-items: center;
+  border-bottom: 1px solid var(--jig-color-border);
+  background: var(--jig-color-surface-100);
+  color: var(--jig-color-surface-500);
+  font-size: var(--jig-font-size-sm);
+}
+
+.spm-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.spm-projects.list .spm-thumb {
+  width: 4rem;
+  height: 4rem;
+  flex: 0 0 4rem;
+  border-right: 1px solid var(--jig-color-border);
+  border-bottom: none;
+}
+
+.spm-project-body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--jig-size-padding-sm);
+  padding: var(--jig-size-padding-md);
+}
+
+.spm-project-title {
+  overflow: hidden;
+  font-size: var(--jig-font-size-md);
+  font-weight: var(--jig-font-weight-semibold);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.spm-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--jig-size-padding-sm);
+}
+
+/* --------------------------------------------------------------------- table */
+
+.spm-table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--jig-color-border);
+  border-radius: var(--jig-size-rounded-lg);
+}
+
+.spm-table {
+  width: 100%;
+  border-collapse: collapse;
+  white-space: nowrap;
+}
+
+.spm-table th,
+.spm-table td {
+  padding: var(--jig-size-padding-md);
+  border-bottom: 1px solid var(--jig-color-border);
+  text-align: left;
+}
+
+.spm-table th {
+  background: var(--jig-color-surface-100);
+  font-size: var(--jig-font-size-sm);
+  font-weight: var(--jig-font-weight-semibold);
+}
+
+.spm-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+/* -------------------------------------------------------------- definitions */
+
+.spm-details {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--jig-size-padding-sm) var(--jig-size-padding-lg);
+  margin: 0;
+}
+
+.spm-details dt {
+  color: var(--jig-color-surface-600);
+  font-size: var(--jig-font-size-sm);
+}
+
+.spm-details dd {
+  margin: 0;
+}
+
+/* A field and its hint are siblings, and the hint must sit under the field rather than
+   inside it -- placing <jig-hint> inside <jig-input-field> makes it a projected suffix,
+   which renders it inside the input box. */
+.spm-field {
+  display: flex;
+  flex-direction: column;
+}
+
+.spm-field > jig-input-field {
+  display: block;
+}
+
+.spm-block {
+  display: block;
+}
+.spm-nav-active {
+  --spm-nav-active: 1;
+  font-weight: var(--jig-font-weight-semibold);
+}
+
+.spm-block-mb {
+  display: block;
+  margin-bottom: var(--jig-size-padding-lg);
+}
+
+.spm-filters,
+.spm-new-project {
+  margin-bottom: var(--jig-size-padding-lg);
+}
+
+.spm-new-project {
+  align-items: flex-start;
+}
+
+/* The filter row's fields must stretch, not sit at their intrinsic width. */
+.spm-filters jig-input-field,
+.spm-new-project jig-input-field {
+  display: block;
+}
+
+.spm-new-user {
+  align-items: flex-start;
+  margin-bottom: var(--jig-size-padding-lg);
+}
+
+.spm-code {
+  overflow-wrap: anywhere;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: var(--jig-font-size-sm);
+}
+
+.spm-quota {
+  gap: var(--jig-size-padding-sm);
+  flex-wrap: nowrap;
+}
+
+.spm-quota-field {
+  width: 7rem;
+}
+
+.spm-files {
+  display: flex;
+  flex-direction: column;
+  gap: var(--jig-size-padding-sm);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.spm-file {
+  display: flex;
+  align-items: center;
+  gap: var(--jig-size-padding-md);
+  border: 1px solid var(--jig-color-border);
+  border-radius: var(--jig-size-rounded-md);
+  padding: var(--jig-size-padding-sm);
+}
+
+.spm-file-thumb {
+  display: grid;
+  width: 3.5rem;
+  height: 3.5rem;
+  flex: 0 0 3.5rem;
+  place-items: center;
+  overflow: hidden;
+  border-radius: var(--jig-size-rounded-sm);
+  background: var(--jig-color-surface-100);
+  font-size: var(--jig-font-size-xs);
+  text-align: center;
+}
+
+.spm-file-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.spm-file-body {
+  display: flex;
+  flex: 1;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--jig-size-padding-sm);
+  min-width: 0;
+}
+
+.spm-tag-input {
+  display: block;
+  max-width: 20rem;
+}
+
+/* jig-checkbox renders no visible caption of its own — its `label` input becomes the inner
+   input's aria-label — so a visible one is a real <label> pointed at the control's inputId. */
+.spm-check {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--jig-size-padding-sm);
+}
+
+.spm-check label {
+  cursor: pointer;
+  user-select: none;
+}
+
+h2.spm-project-title {
+  margin: 0;
+  font-size: var(--jig-font-size-md);
+}

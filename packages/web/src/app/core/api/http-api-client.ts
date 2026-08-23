@@ -8,6 +8,7 @@ import type {
   RescanResultDto,
   SettingsDto,
   UserDto,
+  ZipImportResultDto,
 } from '@spm/contract/dtos.ts'
 import { AppError, type AppErrorCode } from '@spm/contract/errors.ts'
 import type {
@@ -135,6 +136,23 @@ export class HttpApiClient implements ApiClient {
       this.request(`/api/projects/${id}/tags/${encodeURIComponent(name)}`, { method: 'DELETE' }),
     rescan: (): Promise<RescanResultDto> =>
       this.request('/api/projects/rescan', { method: 'POST' }),
+  }
+
+  readonly importer = {
+    curaManagerZip: (body: UploadBody): Promise<ZipImportResultDto> => {
+      const init: RequestInit & { duplex?: 'half' } = { method: 'POST' }
+      if ('blob' in body) {
+        // A Blob lets fetch derive content-length itself; content-length is a forbidden
+        // header name, so a script-set one would be stripped and the server's precheck
+        // would 411 every time. This is the arm the UI uses -- a File already is a Blob.
+        init.body = body.blob
+      } else {
+        init.headers = { 'content-length': String(body.sizeBytes) }
+        init.body = body.stream
+        init.duplex = 'half'
+      }
+      return this.request('/api/import/curamanager', init)
+    },
   }
 
   readonly files = {

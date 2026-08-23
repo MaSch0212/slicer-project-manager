@@ -3,6 +3,7 @@ import { accountRoutes } from './account.ts'
 import { authRoutes } from './auth.ts'
 import { capabilityRoutes } from './capabilities.ts'
 import { fileRoutes } from './files.ts'
+import { importRoutes } from './import.ts'
 import { projectRoutes } from './projects.ts'
 import { userRoutes } from './users.ts'
 
@@ -13,4 +14,5 @@ export const routes: Route[] = [
   ...userRoutes,
   ...projectRoutes,
   ...fileRoutes,
+  ...importRoutes,
 ]

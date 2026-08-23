@@ -9,6 +9,11 @@ export type Env = {
   lib: Library
   /** Defaults to the library own logger, which is silent unless the host configured one. */
   log?: Logger
+  /**
+   * Development only: when set, everything outside /api/ is forwarded here instead of being
+   * read from the built bundle. main.ts supplies it from SPM_DEV_UI_ORIGIN.
+   */
+  serveUi?: (req: Request, url: URL) => Promise<Response>
   /** Injectable clock for the per-`makeHandler` rate limiter; tests override it to move
    *  time forward without sleeping. Defaults to `Date.now` inside `makeRateLimiter`. */
   now?: () => number
@@ -66,6 +71,7 @@ export function makeHandler(
   // has its own state and none bleed into one another.
   const limiter = makeRateLimiter(env.now)
   const log = env.log ?? env.lib.log ?? NOOP_LOGGER
+  const serveUi = env.serveUi ?? ((_req: Request, url: URL) => serveStatic(url))
 
   /** Everything under /api/. Split out so the caller can time and log every exit path once. */
   const handleApi = async (
@@ -128,7 +134,7 @@ export function makeHandler(
     // Static assets are a page load's worth of noise -- every chunk, style and thumbnail --
     // so they sit one level below the API: `debug` shows them, the default `info` does not.
     if (!url.pathname.startsWith('/api/')) {
-      const response = await serveStatic(url)
+      const response = await serveUi(req, url)
       log.debug('static', {
         method: req.method,
         path: url.pathname,

@@ -59,8 +59,16 @@ export {
   importCuraManagerLibrary,
   moveFlatLibraryIntoUserFolder,
   readCuraManagerSidecar,
+  applyCuraManagerSidecars,
   type ImportProgress,
 } from './projects/import-curamanager.ts'
+export {
+  importCuraManagerZip,
+  planZipImport,
+  type ZipImportProgress,
+  type ZipImportResult,
+  type ZipPlan,
+} from './projects/import-zip.ts'
 
 export { classifyFile, SLICER_HEADER_REGISTRY } from './files/classify.ts'
 export { safeJoin } from './files/paths.ts'

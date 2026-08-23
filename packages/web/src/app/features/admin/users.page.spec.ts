@@ -9,6 +9,7 @@ import { API_CLIENT } from '../../core/api/api-client.token'
 import en from '../../core/i18n/locales/en.json'
 import { TranslateService } from '../../core/i18n/translate.service'
 import { UsersPage } from './users.page'
+import { provideJigForTests } from '../../../testing/jig'
 
 function user(over: Partial<UserDto>): UserDto {
   return {
@@ -39,6 +40,7 @@ async function setup(list = vi.fn().mockResolvedValue([user({})])) {
   }
   TestBed.configureTestingModule({
     providers: [
+      ...provideJigForTests(),
       // The jig controls used by the template (jig-input-field, [jigInput], jigErrors) need
       // the app-level provider that app.config.ts installs — TestBed builds this component
       // in isolation, so it must be supplied here too (see login.page.spec.ts,
@@ -250,7 +252,7 @@ describe('UsersPage', () => {
     api.users.update.mockRejectedValueOnce(new AppError('LastActiveAdmin', 'nope'))
 
     const box = (fixture.nativeElement as HTMLElement).querySelector(
-      `input[type="checkbox"][aria-label="${en.admin.isAdmin}"]`,
+      `input[type="checkbox"][aria-label^="${en.admin.isAdmin}"]`,
     ) as HTMLInputElement
     expect(box.checked).toBe(true)
 
@@ -270,7 +272,7 @@ describe('UsersPage', () => {
     await settle()
 
     const box = (fixture.nativeElement as HTMLElement).querySelector(
-      `input[type="checkbox"][aria-label="${en.admin.isAdmin}"]`,
+      `input[type="checkbox"][aria-label^="${en.admin.isAdmin}"]`,
     ) as HTMLInputElement
     box.checked = false
     box.dispatchEvent(new Event('change'))

@@ -1,61 +1,111 @@
-import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core'
+import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core'
 import type { SettingsDto } from '@spm/contract/dtos.ts'
+import { JigInputField } from '@awdlab/jig/input-field'
+import { JigMessage } from '@awdlab/jig/message'
+import { JigSelect } from '@awdlab/jig/select'
 import { TranslateService } from '../../core/i18n/translate.service'
 import { SettingsStore } from '../../core/settings.store'
 
 @Component({
   selector: 'app-settings-page',
   changeDetection: ChangeDetectionStrategy.OnPush,
+  imports: [JigInputField, JigMessage, JigSelect],
   template: `
-    <h1>{{ t.translations().settings.title }}</h1>
+    <main class="spm-main spm-main--narrow">
+      <div class="spm-stack">
+        <h1>{{ t.translations().settings.title }}</h1>
 
-    @if (saveFailed()) {
-      <p role="alert">{{ t.translations().errors.generic }}</p>
-    }
+        @if (saveFailed()) {
+          <jig-message color="error" role="alert">{{
+            t.translations().errors.generic
+          }}</jig-message>
+        }
 
-    <label>
-      {{ t.translations().settings.language }}
-      <select [value]="settings.settings().language" (change)="onLanguage($event)">
-        <option value="en">English</option>
-        <option value="de">Deutsch</option>
-      </select>
-    </label>
+        <div class="spm-card spm-stack">
+          <jig-input-field
+            class="spm-block"
+            inputId="settings-language"
+            [label]="t.translations().settings.language"
+          >
+            <jig-select
+              inputId="settings-language"
+              [label]="t.translations().settings.language"
+              [options]="languageOptions()"
+              [value]="settings.settings().language"
+              (valueChange)="onLanguage($event)"
+            />
+          </jig-input-field>
 
-    <label>
-      {{ t.translations().settings.theme }}
-      <select [value]="settings.settings().theme" (change)="onPatch('theme', $event)">
-        <option value="system">{{ t.translations().settings.themeSystem }}</option>
-        <option value="light">{{ t.translations().settings.themeLight }}</option>
-        <option value="dark">{{ t.translations().settings.themeDark }}</option>
-      </select>
-    </label>
+          <jig-input-field
+            class="spm-block"
+            inputId="settings-theme"
+            [label]="t.translations().settings.theme"
+          >
+            <jig-select
+              inputId="settings-theme"
+              [label]="t.translations().settings.theme"
+              [options]="themeOptions()"
+              [value]="settings.settings().theme"
+              (valueChange)="onPatch('theme', $event)"
+            />
+          </jig-input-field>
 
-    <label>
-      {{ t.translations().settings.viewMode }}
-      <select [value]="settings.settings().viewMode" (change)="onPatch('viewMode', $event)">
-        <option value="grid">{{ t.translations().settings.viewModeGrid }}</option>
-        <option value="list">{{ t.translations().settings.viewModeList }}</option>
-      </select>
-    </label>
+          <jig-input-field
+            class="spm-block"
+            inputId="settings-view-mode"
+            [label]="t.translations().settings.viewMode"
+          >
+            <jig-select
+              inputId="settings-view-mode"
+              [label]="t.translations().settings.viewMode"
+              [options]="viewModeOptions()"
+              [value]="settings.settings().viewMode"
+              (valueChange)="onPatch('viewMode', $event)"
+            />
+          </jig-input-field>
+        </div>
+      </div>
+    </main>
   `,
 })
 export class SettingsPage {
   protected readonly settings = inject(SettingsStore)
   protected readonly t = inject(TranslateService)
 
+  // Computed, not constant: the labels are translated, so they have to rebuild when the
+  // language changes — which this very page is what changes.
+  protected readonly languageOptions = computed(() => [
+    { label: 'English', value: 'en' as const },
+    { label: 'Deutsch', value: 'de' as const },
+  ])
+  protected readonly themeOptions = computed(() => {
+    const s = this.t.translations().settings
+    return [
+      { label: s.themeSystem, value: 'system' as const },
+      { label: s.themeLight, value: 'light' as const },
+      { label: s.themeDark, value: 'dark' as const },
+    ]
+  })
+  protected readonly viewModeOptions = computed(() => {
+    const s = this.t.translations().settings
+    return [
+      { label: s.viewModeGrid, value: 'grid' as const },
+      { label: s.viewModeList, value: 'list' as const },
+    ]
+  })
+
   /**
    * SettingsStore.patch is optimistic and rethrows after rolling the key back. Without this
    * the page had no error handling at all: a failed save silently reverted the control with
-   * nothing said, and `onPatch` handed a rejecting promise straight to a template `(change)`
-   * binding, so the failure escaped as an unhandled rejection. Same convention as the six
-   * later pages: catch the network call, surface it in a `role="alert"`.
+   * nothing said, and `onPatch` handed a rejecting promise straight to a template binding,
+   * so the failure escaped as an unhandled rejection.
    */
   readonly saveFailed = signal(false)
 
   // Public, like ProjectsPage.onCreate/onRescan and the auth pages' onSubmit: the specs
   // drive these directly.
-  async onLanguage(event: Event): Promise<void> {
-    const language = (event.target as HTMLSelectElement).value as 'en' | 'de'
+  async onLanguage(language: SettingsDto['language'] | null): Promise<void> {
+    if (!language) return
     if (!(await this.save({ language }))) return
     // Reactive switch at runtime; no rebuild, no reload (spec 6.4). setLanguage is
     // synchronous — see TranslateService — the UI updates once the translations signal
@@ -64,8 +114,11 @@ export class SettingsPage {
     this.t.setLanguage(language)
   }
 
-  async onPatch<K extends 'theme' | 'viewMode'>(key: K, event: Event): Promise<void> {
-    const value = (event.target as HTMLSelectElement).value as SettingsDto[K]
+  async onPatch<K extends 'theme' | 'viewMode'>(
+    key: K,
+    value: SettingsDto[K] | null,
+  ): Promise<void> {
+    if (value === null) return
     // TypeScript cannot narrow an object literal keyed by a generic parameter back to
     // Partial<SettingsDto> (a known limitation around computed property types), so this
     // cast stands in for what is, at every call site, a genuine Pick<SettingsDto, K> — the

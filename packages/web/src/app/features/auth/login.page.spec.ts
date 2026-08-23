@@ -7,11 +7,13 @@ import { AppError } from '@spm/contract/errors.ts'
 import { API_CLIENT } from '../../core/api/api-client.token'
 import { AuthStore } from '../../core/auth.store'
 import { LoginPage } from './login.page'
+import { provideJigForTests } from '../../../testing/jig'
 
 function setup(login: ReturnType<typeof vi.fn>) {
   const navigate = vi.fn()
   TestBed.configureTestingModule({
     providers: [
+      ...provideJigForTests(),
       // The jig controls used by the template (jig-input-field, [jigInput], jigErrors) need
       // the app-level provider that app.config.ts installs — TestBed builds this component
       // in isolation, so it must be supplied here too.

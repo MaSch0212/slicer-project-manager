@@ -11,10 +11,21 @@ import {
 import { Router, RouterLink } from '@angular/router'
 import { FormField, form, submit, validateStandardSchema } from '@angular/forms/signals'
 import { interpolate } from '@ngneers/signal-translate'
+import { JigButton } from '@awdlab/jig/button'
+import { JigCheckbox } from '@awdlab/jig/checkbox'
+import { JigChip } from '@awdlab/jig/chip'
 import { JigErrors } from '@awdlab/jig/errors'
+import { JigIcon } from '@awdlab/jig/icon'
 import { JigHint } from '@awdlab/jig/hint'
 import { JigInput } from '@awdlab/jig/input'
 import { JigInputField } from '@awdlab/jig/input-field'
+import { JigMessage } from '@awdlab/jig/message'
+import { JigSpinner } from '@awdlab/jig/spinner'
+import { JigTag } from '@awdlab/jig/tag'
+import { JigTooltip } from '@awdlab/jig/tooltip'
+import tablerArrowLeft from '@iconify/icons-tabler/arrow-left'
+import tablerPencil from '@iconify/icons-tabler/pencil'
+import tablerTrash from '@iconify/icons-tabler/trash'
 import type { FileDto, ProjectDetailDto } from '@spm/contract/dtos.ts'
 import { isAppError, type QuotaExceededDetails } from '@spm/contract/errors.ts'
 import {
@@ -68,219 +79,313 @@ function sameEditModel(a: EditModel, b: EditModel): boolean {
 @Component({
   selector: 'spm-project-detail-page',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [RouterLink, FormField, JigInputField, JigInput, JigHint, JigErrors],
+  imports: [
+    FormField,
+    JigButton,
+    JigCheckbox,
+    JigChip,
+    JigErrors,
+    JigHint,
+    JigIcon,
+    JigInput,
+    JigInputField,
+    JigMessage,
+    JigSpinner,
+    JigTag,
+    JigTooltip,
+    RouterLink,
+  ],
   template: `
-    @if (loadFailed()) {
-      <!--
-        Ruling 62: reading project.value() after a settled failure throws a
-        ResourceValueError, so the error branch has to come first and must not touch it. A
-        404 (deleted project, stale bookmark, someone else's id) reads differently from a
-        transient failure, and either way there is a way back to the list.
-      -->
-      <p role="alert">{{ loadErrorMessage() }}</p>
-      <a [routerLink]="['/projects']">{{ t.translations().projects.backToProjects }}</a>
-    } @else {
-      @if (loaded(); as detail) {
-        <header>
-          <a [routerLink]="['/projects']">{{ t.translations().projects.backToProjects }}</a>
-          <h1>{{ detail.name }}</h1>
-          @if (detail.isArchived) {
-            <span>{{ t.translations().projects.archived }}</span>
-          }
-          @if (detail.state === 'missing') {
-            <p role="alert">{{ t.translations().projects.missing }}</p>
-          }
-          <!-- One alert for every mutation on the page (ruling 64). -->
-          @if (errorMessage()) {
-            <p role="alert">{{ errorMessage() }}</p>
-          }
-        </header>
-
-        <dl>
-          <dt>{{ t.translations().projects.website }}</dt>
-          <dd>
-            @if (detail.website) {
-              <a [href]="detail.website" target="_blank" rel="noreferrer noopener">
-                {{ detail.website }}
-              </a>
-            }
-          </dd>
-          <dt>{{ t.translations().projects.notes }}</dt>
-          <dd>{{ detail.notes }}</dd>
-        </dl>
-
+    <main class="spm-main">
+      @if (loadFailed()) {
         <!--
-          Ruling 66: without this form projects.update and projectPatchSchema were reachable
-          from nowhere in the web package — no way to rename a project, edit its notes or
-          website, or archive it, while the project list already filters and badges archived
-          projects. Deliberately plain: a form, not a dialog.
+          Ruling 62: reading project.value() after a settled failure throws a
+          ResourceValueError, so the error branch has to come first and must not touch it. A
+          404 (deleted project, stale bookmark, someone else's id) reads differently from a
+          transient failure, and either way there is a way back to the list.
         -->
-        <section>
-          <h2>{{ t.translations().projects.edit }}</h2>
-          <form (submit)="onSaveEdit(); $event.preventDefault()">
-            <jig-input-field [label]="t.translations().projects.name">
-              <input jigInput [formField]="editForm.name" jigErrors [jigErrorsHint]="nameHint" />
-              <jig-hint #nameHint />
-            </jig-input-field>
+        <div class="spm-stack">
+          <jig-message color="error" role="alert">{{ loadErrorMessage() }}</jig-message>
+          <a jigButton kind="secondary" [routerLink]="['/projects']">
+            <jig-icon [icon]="icons.back" />
+            {{ t.translations().projects.backToProjects }}
+          </a>
+        </div>
+      } @else if (loaded(); as detail) {
+        <div class="spm-stack">
+          <header class="spm-stack spm-stack--tight">
+            <a jigButton kind="link" [routerLink]="['/projects']">
+              <jig-icon [icon]="icons.back" />
+              {{ t.translations().projects.backToProjects }}
+            </a>
+            <div class="spm-row">
+              <h1>{{ detail.name }}</h1>
+              @if (detail.isArchived) {
+                <jig-tag color="surface">{{ t.translations().projects.archived }}</jig-tag>
+              }
+            </div>
+            @if (detail.state === 'missing') {
+              <jig-message color="warning" role="alert">
+                {{ t.translations().projects.missing }}
+              </jig-message>
+            }
+            <!-- One alert for every mutation on the page (ruling 64). -->
+            @if (errorMessage(); as message) {
+              <jig-message color="error" role="alert">{{ message }}</jig-message>
+            }
+          </header>
 
-            <jig-input-field [label]="t.translations().projects.website">
-              <input
-                jigInput
-                inputmode="url"
-                [formField]="editForm.website"
-                jigErrors
-                [jigErrorsHint]="websiteHint"
-              />
-              <jig-hint #websiteHint />
-            </jig-input-field>
+          <section class="spm-card">
+            <dl class="spm-details">
+              <dt>{{ t.translations().projects.website }}</dt>
+              <dd>
+                @if (detail.website) {
+                  <a [href]="detail.website" target="_blank" rel="noreferrer noopener">
+                    {{ detail.website }}
+                  </a>
+                }
+              </dd>
+              <dt>{{ t.translations().projects.notes }}</dt>
+              <dd>{{ detail.notes }}</dd>
+            </dl>
+          </section>
 
-            <jig-input-field [label]="t.translations().projects.notes">
-              <textarea
-                jigInput
-                [formField]="editForm.notes"
-                jigErrors
-                [jigErrorsHint]="notesHint"
-              ></textarea>
-              <jig-hint #notesHint />
-            </jig-input-field>
+          <!--
+            Ruling 66: without this form projects.update and projectPatchSchema were reachable
+            from nowhere in the web package — no way to rename a project, edit its notes or
+            website, or archive it, while the project list already filters and badges archived
+            projects. Deliberately plain: a form, not a dialog.
+          -->
+          <section class="spm-card spm-stack">
+            <h2>{{ t.translations().projects.edit }}</h2>
+            <form class="spm-stack" (submit)="onSaveEdit(); $event.preventDefault()">
+              <div class="spm-field">
+                <jig-input-field [label]="t.translations().projects.name">
+                  <input
+                    jigInput
+                    [formField]="editForm.name"
+                    jigErrors
+                    [jigErrorsHint]="nameHint"
+                  />
+                </jig-input-field>
+                <jig-hint #nameHint />
+              </div>
 
-            <label>
-              <input type="checkbox" [formField]="editForm.isArchived" />
+              <div class="spm-field">
+                <jig-input-field [label]="t.translations().projects.website">
+                  <input
+                    jigInput
+                    inputmode="url"
+                    [formField]="editForm.website"
+                    jigErrors
+                    [jigErrorsHint]="websiteHint"
+                  />
+                </jig-input-field>
+                <jig-hint #websiteHint />
+              </div>
+
+              <div class="spm-field">
+                <jig-input-field [label]="t.translations().projects.notes">
+                  <textarea
+                    jigInput
+                    rows="4"
+                    [formField]="editForm.notes"
+                    jigErrors
+                    [jigErrorsHint]="notesHint"
+                  ></textarea>
+                </jig-input-field>
+                <jig-hint #notesHint />
+              </div>
+
               <!--
                 Its own key, not the badge's: a non-archived project rendering the bare word
                 "Archived" beside a checkbox read as a state, not an action — and it made the
                 badge impossible to assert on, since the word was on the page either way.
               -->
-              {{ t.translations().projects.archive }}
-            </label>
+              <span class="spm-check">
+                <jig-checkbox #archiveBox [formField]="editForm.isArchived" />
+                <label [for]="archiveBox.inputId()">
+                  {{ t.translations().projects.archive }}
+                </label>
+              </span>
 
-            <button type="submit" [disabled]="editForm().submitting()">
-              {{ t.translations().projects.save }}
-            </button>
-          </form>
-        </section>
-
-        <section>
-          <h2>{{ t.translations().projects.tags }}</h2>
-          @for (tag of detail.tags; track tag) {
-            <span>
-              {{ tag }}
-              <button
-                type="button"
-                (click)="onRemoveTag(tag)"
-                [attr.aria-label]="t.translations().projects.removeTag + ' ' + tag"
-              >
-                x
-              </button>
-            </span>
-          }
-          <input
-            type="text"
-            [attr.aria-label]="t.translations().projects.addTag"
-            (keydown.enter)="onTagInput($event)"
-          />
-        </section>
-
-        <section>
-          <h2>{{ t.translations().projects.files }}</h2>
-          <input
-            type="file"
-            [attr.aria-label]="t.translations().projects.upload"
-            (change)="onFileInput($event)"
-          />
-
-          <ul>
-            @for (file of detail.files; track file.id) {
-              <li>
-                @if (file.thumbUrl) {
-                  <img [src]="file.thumbUrl" [alt]="file.name" width="128" height="128" />
-                } @else {
-                  <span>{{ t.translations().projects.previewPending }}</span>
-                }
-                <a [href]="file.rawUrl">{{ file.name }}</a>
-                <span>{{ formatBytes(file.sizeBytes) }}</span>
-                @if (file.slicer) {
-                  <span>{{ file.slicer }}</span>
-                }
-
-                <!-- Ruling 66: files.rename was unreachable from the whole web package. -->
-                @if (renamingId() === file.id) {
-                  <jig-input-field [label]="t.translations().projects.newName">
-                    <input
-                      jigInput
-                      [value]="renameDraft()"
-                      (valueChange)="renameDraft.set($event ?? '')"
-                    />
-                  </jig-input-field>
-                  <button type="button" (click)="onRenameFile(file, renameDraft())">
-                    {{ t.translations().projects.save }}
-                  </button>
-                  <button type="button" (click)="cancelRename()">
-                    {{ t.translations().projects.cancel }}
-                  </button>
-                } @else {
-                  <button type="button" (click)="startRename(file)">
-                    {{ t.translations().projects.rename }}
-                  </button>
-                }
-
-                <button
-                  type="button"
-                  (click)="onDeleteFile(file)"
-                  [attr.aria-label]="t.translations().projects.deleteFile + ' ' + file.name"
-                >
-                  x
+              <div class="spm-row">
+                <button jigButton kind="primary" type="submit" [disabled]="editForm().submitting()">
+                  {{ t.translations().projects.save }}
                 </button>
-              </li>
-            }
-          </ul>
-        </section>
+              </div>
+            </form>
+          </section>
 
-        <section>
-          <label>
+          <section class="spm-card spm-stack">
+            <h2>{{ t.translations().projects.tags }}</h2>
+            <div class="spm-row spm-tags">
+              @for (tag of detail.tags; track tag) {
+                <jig-chip
+                  removable
+                  color="primary"
+                  (remove)="onRemoveTag(tag)"
+                  [attr.aria-label]="t.translations().projects.removeTag + ' ' + tag"
+                >
+                  {{ tag }}
+                </jig-chip>
+              }
+            </div>
+            <jig-input-field class="spm-tag-input" [label]="t.translations().projects.addTag">
+              <input
+                jigInput
+                [attr.aria-label]="t.translations().projects.addTag"
+                (keydown.enter)="onTagInput($event)"
+              />
+            </jig-input-field>
+          </section>
+
+          <section class="spm-card spm-stack">
+            <h2>{{ t.translations().projects.files }}</h2>
             <input
-              type="checkbox"
-              [checked]="deleteFiles()"
-              (change)="deleteFiles.set($any($event.target).checked)"
+              type="file"
+              [attr.aria-label]="t.translations().projects.upload"
+              (change)="onFileInput($event)"
             />
-            {{ t.translations().projects.deleteFiles }}
-          </label>
 
-          <!--
-            Ruling 67: with the box ticked this erases every file of the project from disk,
-            irreversibly. The first press only arms it and states the real consequence; the
-            second one carries it out.
-          -->
-          @if (deleteArmed()) {
-            <p role="alert">
-              {{
-                deleteFiles()
-                  ? t.translations().projects.confirmDeleteWithFiles
-                  : t.translations().projects.confirmDelete
-              }}
-            </p>
-            <button type="button" (click)="onDeleteProject(deleteFiles())">
-              {{ t.translations().projects.confirmDeleteAction }}
-            </button>
-            <button type="button" (click)="cancelDelete()">
-              {{ t.translations().projects.cancel }}
-            </button>
-          } @else {
-            <button type="button" (click)="onDeleteProject(deleteFiles())">
-              {{ t.translations().projects.delete }}
-            </button>
-          }
-        </section>
+            <ul class="spm-files">
+              @for (file of detail.files; track file.id) {
+                <li class="spm-file">
+                  <span class="spm-file-thumb">
+                    @if (file.thumbUrl) {
+                      <img [src]="file.thumbUrl" [alt]="file.name" width="128" height="128" />
+                    } @else {
+                      <span class="spm-muted">{{ t.translations().projects.previewPending }}</span>
+                    }
+                  </span>
+
+                  <span class="spm-file-body">
+                    <a [href]="file.rawUrl">{{ file.name }}</a>
+                    <span class="spm-muted">{{ formatBytes(file.sizeBytes) }}</span>
+                    @if (file.slicer) {
+                      <jig-tag color="secondary">{{ file.slicer }}</jig-tag>
+                    }
+                  </span>
+
+                  <!-- Ruling 66: files.rename was unreachable from the whole web package. -->
+                  @if (renamingId() === file.id) {
+                    <span class="spm-row">
+                      <jig-input-field [label]="t.translations().projects.newName" labelKind="on">
+                        <input
+                          jigInput
+                          [value]="renameDraft()"
+                          (valueChange)="renameDraft.set($event ?? '')"
+                        />
+                      </jig-input-field>
+                      <button
+                        jigButton
+                        kind="primary"
+                        type="button"
+                        (click)="onRenameFile(file, renameDraft())"
+                      >
+                        {{ t.translations().projects.save }}
+                      </button>
+                      <button jigButton kind="text" type="button" (click)="cancelRename()">
+                        {{ t.translations().projects.cancel }}
+                      </button>
+                    </span>
+                  } @else {
+                    <span class="spm-row">
+                      <button
+                        jigButton
+                        kind="icon"
+                        type="button"
+                        [jigTooltip]="t.translations().projects.rename + ' ' + file.name"
+                        jigTooltipAutoAriaMode="label"
+                        (click)="startRename(file)"
+                      >
+                        <jig-icon [icon]="icons.rename" />
+                      </button>
+                      <button
+                        jigButton
+                        kind="icon"
+                        color="error"
+                        type="button"
+                        [jigTooltip]="t.translations().projects.deleteFile + ' ' + file.name"
+                        jigTooltipAutoAriaMode="label"
+                        (click)="onDeleteFile(file)"
+                      >
+                        <jig-icon [icon]="icons.delete" />
+                      </button>
+                    </span>
+                  }
+                </li>
+              }
+            </ul>
+          </section>
+
+          <section class="spm-card spm-stack">
+            <span class="spm-check">
+              <jig-checkbox
+                #deleteFilesBox
+                [value]="deleteFiles()"
+                (valueChange)="deleteFiles.set($event === true)"
+              />
+              <label [for]="deleteFilesBox.inputId()">
+                {{ t.translations().projects.deleteFiles }}
+              </label>
+            </span>
+
+            <!--
+              Ruling 67: with the box ticked this erases every file of the project from disk,
+              irreversibly. The first press only arms it and states the real consequence; the
+              second one carries it out.
+            -->
+            @if (deleteArmed()) {
+              <jig-message color="error" role="alert">
+                {{
+                  deleteFiles()
+                    ? t.translations().projects.confirmDeleteWithFiles
+                    : t.translations().projects.confirmDelete
+                }}
+              </jig-message>
+              <div class="spm-row">
+                <button
+                  jigButton
+                  kind="primary"
+                  color="error"
+                  type="button"
+                  (click)="onDeleteProject(deleteFiles())"
+                >
+                  {{ t.translations().projects.confirmDeleteAction }}
+                </button>
+                <button jigButton kind="text" type="button" (click)="cancelDelete()">
+                  {{ t.translations().projects.cancel }}
+                </button>
+              </div>
+            } @else {
+              <div class="spm-row">
+                <button
+                  jigButton
+                  kind="secondary"
+                  color="error"
+                  type="button"
+                  (click)="onDeleteProject(deleteFiles())"
+                >
+                  <jig-icon [icon]="icons.delete" />
+                  {{ t.translations().projects.delete }}
+                </button>
+              </div>
+            }
+          </section>
+        </div>
       } @else {
-        <p>...</p>
+        <jig-spinner centered [size]="40" />
       }
-    }
+    </main>
   `,
 })
 export class ProjectDetailPage {
   private readonly api = inject(API_CLIENT)
   private readonly router = inject(Router)
   protected readonly t = inject(TranslateService)
+
+  protected readonly icons = { back: tablerArrowLeft, rename: tablerPencil, delete: tablerTrash }
 
   readonly id = input.required<string>()
 

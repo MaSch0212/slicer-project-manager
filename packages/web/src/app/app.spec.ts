@@ -1,6 +1,7 @@
 import { TestBed } from '@angular/core/testing'
 import { Router, provideRouter } from '@angular/router'
 import { provideJigControls, withAutoColorScheme } from '@awdlab/jig/api/ng'
+import { withDefaultIcons } from '@awdlab/jig/default-icons'
 import { nova } from '@awdlab/jig-themes/nova'
 import { describe, expect, it, vi } from 'vitest'
 import { API_CLIENT } from './core/api/api-client.token'
@@ -36,7 +37,9 @@ async function setup(logout = vi.fn().mockResolvedValue(undefined)) {
         { path: 'projects', children: [] },
       ]),
       { provide: API_CLIENT, useValue: api },
-      ...provideJigControls({ theme: { preset: nova } }, withAutoColorScheme()),
+      // withDefaultIcons(): the shell renders jig-icon in its nav, and an icon slot with no
+      // registry throws at render rather than degrading.
+      ...provideJigControls({ theme: { preset: nova } }, withDefaultIcons(), withAutoColorScheme()),
     ],
   }).compileComponents()
 

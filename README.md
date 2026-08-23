@@ -29,11 +29,52 @@ password anywhere.
 | `SPM_WEB_ROOT`      | `packages/web/dist/web/browser`, found next to the server's own source rather than the process working directory — so the command above works from any directory | Where the built Angular bundle lives. When set explicitly it is resolved relative to the process working directory.                                                                                                                                                                                                                                                                                                                                                                |
 | `SPM_PUBLIC_ORIGIN` | the origin of the incoming request                                                                                                                               | The origin used to build activation links, e.g. `https://print.example.com`. Set this when a TLS-terminating reverse proxy sits in front: Deno only sees its own plain-HTTP listener, so without it the generated link is `http://…`, which also drops the `Secure` session cookie and leaves the user activated but not signed in. `X-Forwarded-Proto` is deliberately _not_ trusted — it is client-settable, the same reason the rate limiter keys on the TCP peer address only. |
 | `SPM_LOG_LEVEL`     | `info`                                                                                                                                                           | How much the server logs: `silent`, `error`, `warn`, `info`, `debug` or `trace`. `info` covers startup, one line per API request, preview batches, authentication and every create/update/delete. `debug` adds static-asset requests and per-job preview detail. An unrecognised value is refused at startup rather than ignored.                                                                                                                                                  |
+| `SPM_DEV_UI_ORIGIN` | _unset_                                                                                                                                                          | **Development only.** Forward every non-`/api/` request to a running Angular dev server, e.g. `http://localhost:4200`, live reload included. Without it the server reads the built bundle from `SPM_WEB_ROOT`, so the UI has to be rebuilt to be seen. An unusable value is refused at startup.                                                                                                                                                                                    |
+
+## Development
+
+Two processes: the Angular dev server owns the UI, the Deno server owns `/api`. Run them in
+two terminals and reach both through **http://localhost:8000** — the Deno server proxies
+everything outside `/api` to `ng serve`, so there is one origin, no CORS, and no rebuild
+between edits.
+
+    deno task dev:ui        # ng serve on :4200
+    deno task dev:server    # the API on :8000, proxying the UI
+
+`dev:server` needs `SPM_LIBRARY_DIR`; everything else it sets for you.
+
+`deno task` lists the rest: `build:ui`, `serve` (build the UI, then serve it for real),
+`import`, `check`, `lint`, `fmt`, `test`, `test:core`, `test:server`, `e2e`.
+
+### Editors
+
+Only `packages/server` is Deno code. `.vscode/settings.json` scopes the Deno extension to
+that folder with `deno.enablePaths` and leaves everything else — contract, core and the
+Angular app — to the normal TypeScript service. Enabling Deno for the whole workspace takes
+the Angular language service down with it.
+
+The Angular build itself is a Node toolchain (the Angular CLI, its compiler and Vite) and is
+not run under Deno; `deno task dev:ui` shells out to `ng serve` through pnpm.
 
 ## Migrating an existing CuraManager library
 
 A CuraManager library is flat: every project folder sits at the library root, each with an
 optional `metadata.json` sidecar carrying its tags, source URL and archived flag (spec 3.6).
+
+### Upload it (recommended)
+
+Sign in, open **Import**, and drop a zip of your CuraManager library onto the page. The server
+extracts it into your own library folder, indexes it and applies every sidecar — no shell
+access needed, and it works when the library lives on a different machine from the server.
+
+Zip either the library folder or its contents: a single wrapping folder is detected and
+stripped, unless it holds only files, in which case it is one project. Files sitting loose at
+the library root (CuraManager's own `metadata-cache.json`), hidden entries and `__MACOSX`
+noise are skipped. The whole import is refused before anything is written if a project folder
+name already exists in your library or the archive would exceed your quota.
+
+### Or run it against a library already on the server
+
 Create the account that should own it first (first run does this for the bootstrap admin),
 then:
 

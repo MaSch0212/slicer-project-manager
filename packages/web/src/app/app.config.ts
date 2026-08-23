@@ -7,6 +7,8 @@ import {
 } from '@angular/core'
 import { provideRouter, withComponentInputBinding } from '@angular/router'
 import { provideJigControls, withAutoColorScheme } from '@awdlab/jig/api/ng'
+import { withDefaultIcons } from '@awdlab/jig/default-icons'
+import { withToasts } from '@awdlab/jig/toast'
 import { nova } from '@awdlab/jig-themes/nova'
 import { AuthStore } from './core/auth.store'
 import { CapabilitiesStore } from './core/capabilities.store'
@@ -19,11 +21,20 @@ export const appConfig: ApplicationConfig = {
     provideZonelessChangeDetection(),
     provideBrowserGlobalErrorListeners(),
     provideRouter(routes, withComponentInputBinding()),
-    // Theming per Task 18: @awdlab/jig-themes is a runtime CSS engine, not a stylesheet
-    // to link — a preset is handed to provideJigControls, which injects its rules into
-    // <head>. withAutoColorScheme() registers ColorSchemeService, which App reads/drives
-    // for the light/dark/system toggle (see app.ts).
-    ...provideJigControls({ theme: { preset: nova } }, withAutoColorScheme()),
+    // Theming: @awdlab/jig-themes is a runtime CSS engine, not a stylesheet to link — a
+    // preset is handed to provideJigControls, which injects its rules into <head>.
+    //
+    // Every with*() below is opt-in and a control that needs a missing one throws at render
+    // rather than degrading: without withDefaultIcons() every icon slot in the library threw
+    // "No icon registry provided" on first paint, which is what the console error was.
+    // withAutoColorScheme() registers ColorSchemeService, which App reads/drives for the
+    // light/dark/system toggle (see app.ts).
+    ...provideJigControls(
+      { theme: { preset: nova } },
+      withDefaultIcons(),
+      withAutoColorScheme(),
+      withToasts(),
+    ),
     provideAppInitializer(async () => {
       // Every inject() is resolved before the first await: inject() only works synchronously
       // inside the injection context, and an await ends it (NG0203). TranslateService is

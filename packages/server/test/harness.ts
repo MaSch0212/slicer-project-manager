@@ -50,6 +50,14 @@ export async function withServer(
     const { cookie, ip, ...rest } = init
     const headers = new Headers(rest.headers)
     if (cookie) headers.set('cookie', cookie)
+    // The user agent adds content-length from the body when a request actually crosses the
+    // network; constructing a Request in-process does not, so a route that requires the
+    // header (uploads, the archive import) would see every test as a 411 while real browser
+    // traffic is fine. An explicit header always wins, so a test can still assert on a
+    // deliberately wrong one.
+    if (rest.body instanceof Blob && !headers.has('content-length')) {
+      headers.set('content-length', String(rest.body.size))
+    }
     const info: Deno.ServeHandlerInfo = {
       remoteAddr: { transport: 'tcp', hostname: ip ?? '127.0.0.1', port: 0 },
       // Real Deno.serve resolves this once the response finishes; nothing here awaits it.

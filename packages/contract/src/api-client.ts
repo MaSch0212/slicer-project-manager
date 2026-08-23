@@ -5,6 +5,7 @@ import type {
   ProjectQuery,
   FileDto,
   RescanResultDto,
+  ZipImportResultDto,
   SettingsDto,
   UserDto,
 } from './dtos.ts'
@@ -69,6 +70,15 @@ export interface ApiClient {
     addTag(id: string, name: string): Promise<void>
     removeTag(id: string, name: string): Promise<void>
     rescan(): Promise<RescanResultDto>
+  }
+
+  importer: {
+    /**
+     * Uploads a zipped CuraManager library and imports it server-side. The zip is read from
+     * its trailing central directory, so the whole archive has to arrive before anything can
+     * be validated -- there is no partial-progress variant of this call.
+     */
+    curaManagerZip(body: UploadBody): Promise<ZipImportResultDto>
   }
 
   files: {

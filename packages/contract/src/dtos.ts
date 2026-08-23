@@ -68,6 +68,20 @@ export type RescanResultDto = {
   previewsQueued: number
 }
 
+/** What POST /api/import/curamanager reports back after an archive import. */
+export type ZipImportResultDto = {
+  projectsExtracted: number
+  filesExtracted: number
+  bytesExtracted: number
+  /** The single wrapping folder the archive was stripped of, if it had one. */
+  strippedRoot: string | null
+  /** Entries deliberately not written: loose root files, dot-entries, __MACOSX noise. */
+  skipped: number
+  projectsUpdated: number
+  tagsApplied: number
+  rescan: RescanResultDto
+}
+
 export type SettingsDto = {
   theme: 'light' | 'dark' | 'system'
   language: 'en' | 'de'

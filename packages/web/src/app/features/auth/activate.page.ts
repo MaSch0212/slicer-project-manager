@@ -3,10 +3,13 @@ import { ActivatedRoute, Router } from '@angular/router'
 import { FormField, form, submit, validateStandardSchema } from '@angular/forms/signals'
 import { activateSchema } from '@spm/contract/schemas.ts'
 import { isAppError, type AppErrorCode } from '@spm/contract/errors.ts'
+import { JigButton } from '@awdlab/jig/button'
 import { JigErrors } from '@awdlab/jig/errors'
 import { JigHint } from '@awdlab/jig/hint'
 import { JigInput } from '@awdlab/jig/input'
 import { JigInputField } from '@awdlab/jig/input-field'
+import { JigMessage } from '@awdlab/jig/message'
+import { JigSpinner } from '@awdlab/jig/spinner'
 import { API_CLIENT } from '../../core/api/api-client.token'
 import { AuthStore } from '../../core/auth.store'
 import { TranslateService } from '../../core/i18n/translate.service'
@@ -23,53 +26,77 @@ const DEAD_TOKEN_CODES: ReadonlySet<AppErrorCode> = new Set([
 @Component({
   selector: 'spm-activate-page',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [FormField, JigInputField, JigInput, JigHint, JigErrors],
+  imports: [
+    FormField,
+    JigButton,
+    JigInputField,
+    JigInput,
+    JigHint,
+    JigErrors,
+    JigMessage,
+    JigSpinner,
+  ],
   template: `
-    @switch (state()) {
-      @case ('checking') {
-        <p>...</p>
-      }
-      @case ('invalid') {
-        <p role="alert">{{ t.translations().auth.activateInvalid }}</p>
-      }
-      @case ('ready') {
-        <h1>{{ t.translations().auth.activateTitle }}</h1>
-        <p>{{ username() }}</p>
-        <form (submit)="onSubmit(); $event.preventDefault()">
-          <jig-input-field [label]="t.translations().auth.password">
-            <input
-              type="password"
-              jigInput
-              [formField]="activateForm.password"
-              jigErrors
-              [jigErrorsHint]="passwordHint"
-              autocomplete="new-password"
-            />
-            <jig-hint #passwordHint />
-          </jig-input-field>
+    <main class="spm-main spm-main--narrow">
+      @switch (state()) {
+        @case ('checking') {
+          <jig-spinner centered [size]="40" />
+        }
+        @case ('invalid') {
+          <jig-message color="error" role="alert">
+            {{ t.translations().auth.activateInvalid }}
+          </jig-message>
+        }
+        @case ('ready') {
+          <form class="spm-card spm-stack" (submit)="onSubmit(); $event.preventDefault()">
+            <div class="spm-stack spm-stack--tight">
+              <h1>{{ t.translations().auth.activateTitle }}</h1>
+              @if (username(); as name) {
+                <p class="spm-muted">{{ name }}</p>
+              }
+            </div>
 
-          <jig-input-field [label]="t.translations().auth.confirmPassword">
-            <input
-              type="password"
-              jigInput
-              [formField]="activateForm.confirm"
-              jigErrors
-              [jigErrorsHint]="confirmHint"
-              autocomplete="new-password"
-            />
-            <jig-hint #confirmHint />
-          </jig-input-field>
+            <div class="spm-field">
+              <jig-input-field [label]="t.translations().auth.password">
+                <input
+                  type="password"
+                  jigInput
+                  [formField]="activateForm.password"
+                  jigErrors
+                  [jigErrorsHint]="passwordHint"
+                  autocomplete="new-password"
+                />
+              </jig-input-field>
+              <jig-hint #passwordHint />
+            </div>
 
-          @if (formError()) {
-            <p role="alert">{{ t.translations().errors.generic }}</p>
-          }
+            <div class="spm-field">
+              <jig-input-field [label]="t.translations().auth.confirmPassword">
+                <input
+                  type="password"
+                  jigInput
+                  [formField]="activateForm.confirm"
+                  jigErrors
+                  [jigErrorsHint]="confirmHint"
+                  autocomplete="new-password"
+                />
+              </jig-input-field>
+              <jig-hint #confirmHint />
+            </div>
 
-          <button type="submit" [disabled]="activateForm().submitting()">
-            {{ t.translations().auth.activateSubmit }}
-          </button>
-        </form>
+            @if (formError()) {
+              <jig-message color="error" role="alert">
+                {{ t.translations().errors.generic }}
+              </jig-message>
+            }
+
+            <button jigButton kind="primary" type="submit" [disabled]="activateForm().submitting()">
+              {{ t.translations().auth.activateSubmit }}
+            </button>
+          </form>
+        }
       }
-    }
+    </main>
   `,
 })
 export class ActivatePage {

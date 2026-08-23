@@ -8,11 +8,13 @@ import { AppError } from '@spm/contract/errors.ts'
 import { API_CLIENT } from '../../core/api/api-client.token'
 import { TranslateService } from '../../core/i18n/translate.service'
 import { ActivatePage } from './activate.page'
+import { provideJigForTests } from '../../../testing/jig'
 
 async function setup(fragment: string | null, checkToken = vi.fn()) {
   const api = { auth: { checkToken, activate: vi.fn() } }
   TestBed.configureTestingModule({
     providers: [
+      ...provideJigForTests(),
       // The jig controls used by the template (jig-input-field, [jigInput], jigErrors) need
       // the app-level provider that app.config.ts installs — TestBed builds this component
       // in isolation, so it must be supplied here too.

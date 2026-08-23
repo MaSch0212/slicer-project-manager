@@ -9,6 +9,25 @@
     "zod": "npm:zod@^4.0.0"
   },
   "nodeModulesDir": "auto",
-  "fmt": { "exclude": ["**"] },
-  "lint": { "exclude": ["**"] }
+  "fmt": {
+    "exclude": ["**"]
+  },
+  "lint": {
+    "exclude": ["**"]
+  },
+  "tasks": {
+    "dev": "echo \"Run two terminals: deno task dev:ui  |  deno task dev:server\"",
+    "dev:ui": "pnpm --filter @spm/web exec ng serve --port 4200",
+    "dev:server": "SPM_DEV_UI_ORIGIN=http://localhost:4200 SPM_LOG_LEVEL=debug deno run -A packages/server/main.ts",
+    "serve": "deno task build:ui && deno run -A packages/server/main.ts",
+    "build:ui": "pnpm --filter @spm/web exec ng build",
+    "import": "deno run -A packages/server/import-curamanager.ts",
+    "check": "pnpm typecheck",
+    "lint": "pnpm lint",
+    "fmt": "pnpm format",
+    "test": "pnpm verify",
+    "test:core": "deno test --allow-read --allow-write --allow-env packages/core/test/",
+    "test:server": "deno test --allow-all packages/server/test/",
+    "e2e": "pnpm e2e"
+  }
 }

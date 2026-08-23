@@ -1,5 +1,8 @@
 {
-  "app": { "title": "Slicer-Projektverwaltung", "signOut": "Abmelden" },
+  "app": {
+    "title": "Slicer-Projektverwaltung",
+    "signOut": "Abmelden"
+  },
   "auth": {
     "username": "Benutzername",
     "password": "Passwort",
@@ -42,6 +45,21 @@
     "confirmDelete": "Dieses Projekt löschen? Projekt und Schlagwörter werden entfernt; die Dateien bleiben auf der Festplatte.",
     "confirmDeleteWithFiles": "Dieses Projekt löschen und alle zugehörigen Dateien von der Festplatte entfernen? Das kann nicht rückgängig gemacht werden.",
     "confirmDeleteAction": "Ja, löschen"
+  },
+  "import": {
+    "title": "Import",
+    "heading": "CuraManager-Bibliothek importieren",
+    "intro": "Packe deinen CuraManager-Bibliotheksordner in ein ZIP und lege es hier ab. Jeder Projektordner darin wird zu einem Projekt, und jede metadata.json steuert Tags, Quell-URL und Archiv-Status bei.",
+    "pick": "ZIP-Archiv auswählen",
+    "start": "Importieren",
+    "running": "Import läuft. Große Bibliotheken dauern einige Minuten -- lass diese Seite offen.",
+    "doneTitle": "Import abgeschlossen",
+    "done": "{{ projects }} Projekte und {{ files }} Dateien importiert, {{ tags }} Tags übernommen.",
+    "strippedRoot": "Das Archiv hatte einen einzelnen obersten Ordner ({{ name }}); dessen Inhalt wurde als Bibliothek verwendet.",
+    "skipped": "{{ count }} Einträge wurden übersprungen (Dateien außerhalb eines Projektordners und versteckte Einträge).",
+    "viewProjects": "Projekte anzeigen",
+    "failed": "Der Import ist fehlgeschlagen; es wurde nichts geändert.",
+    "notZip": "Das ist kein ZIP-Archiv."
   },
   "settings": {
     "title": "Einstellungen",

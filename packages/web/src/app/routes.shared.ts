@@ -29,6 +29,11 @@ export const sharedRoutes: Routes = [
       import('./features/projects/project-detail.page').then((m) => m.ProjectDetailPage),
   },
   {
+    path: 'import',
+    canActivate: [authGuard],
+    loadComponent: () => import('./features/import/import.page').then((m) => m.ImportPage),
+  },
+  {
     path: 'settings',
     canActivate: [authGuard],
     loadComponent: () => import('./features/settings/settings.page').then((m) => m.SettingsPage),

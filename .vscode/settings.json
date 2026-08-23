@@ -1,0 +1,29 @@
+{
+  // The Deno and TypeScript language services cannot both own a file, so scope Deno to the
+  // only package that is Deno-only. `deno.enable: true` for the whole workspace was taking
+  // packages/web and packages/core with it, which is why Angular lost its language support.
+  //
+  // packages/server is the Deno half: it uses Deno.serve, Deno.env and URLPattern, and is
+  // type-checked by `deno check` rather than tsc. Everything else -- contract, core, web --
+  // is plain TypeScript checked by tsc/ngc, and gets the normal TS service including the
+  // Angular language service.
+  "deno.enable": false,
+  "deno.enablePaths": ["packages/server"],
+  "deno.config": "./deno.json",
+
+  "editor.formatOnSave": true,
+  "editor.defaultFormatter": "esbenp.prettier-vscode",
+  // Deno's own formatter is disabled repo-wide in deno.json (`fmt.exclude`), because
+  // Prettier formats every package including this one. Keep the editor consistent with that.
+  "[typescript]": { "editor.defaultFormatter": "esbenp.prettier-vscode" },
+  "[json]": { "editor.defaultFormatter": "esbenp.prettier-vscode" },
+  "[jsonc]": { "editor.defaultFormatter": "esbenp.prettier-vscode" },
+  "[html]": { "editor.defaultFormatter": "esbenp.prettier-vscode" },
+  "[css]": { "editor.defaultFormatter": "esbenp.prettier-vscode" },
+
+  "typescript.tsdk": "node_modules/typescript/lib",
+  "typescript.preferences.importModuleSpecifierEnding": "js",
+  "files.exclude": {
+    "**/.angular": true
+  }
+}

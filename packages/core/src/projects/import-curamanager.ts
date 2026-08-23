@@ -103,18 +103,45 @@ export async function importCuraManagerLibrary(
     onProgress: (progress) => opts.onProgress?.({ phase: 'indexing', ...progress }),
   })
 
+  const { projectsUpdated, tagsApplied } = applyCuraManagerSidecars(lib, ctx, opts.onProgress)
+
+  return { rescan: rescanResult, projectsUpdated, tagsApplied, moved }
+}
+
+/**
+ * Applies every project sidecar found on disk: its tags, website and archived flag.
+ *
+ * Split out of `importCuraManagerLibrary` so the zip upload path (`importCuraManagerZip`)
+ * runs the identical second half. The alternative was a second copy that would drift, and
+ * the two entry points differ only in how the folders arrive.
+ */
+export function applyCuraManagerSidecars(
+  lib: Library,
+  ctx: Ctx,
+  onProgress?: (progress: ImportProgress) => void,
+  /**
+   * Restricts the pass to these folder names. Omitted means every project the user owns,
+   * which is right for the one-shot CLI migration but wrong for the repeatable zip upload:
+   * a sidecar still sitting in an older project's folder would otherwise reset the website
+   * and archived flag that the user has since edited in the app, every time they import
+   * anything at all.
+   */
+  onlyDirNames?: readonly string[],
+): { projectsUpdated: number; tagsApplied: number } {
   const user = requireUserRow(lib.db, ctx.userId)
   const root = userRoot(lib, user.library_dir)
-  const projects = lib.db
+  const all = lib.db
     .prepare("SELECT id, dir_name FROM projects WHERE owner_id = ? AND state = 'ok'")
     .all(ctx.userId) as { id: string; dir_name: string }[]
+  const wanted = onlyDirNames ? new Set(onlyDirNames) : null
+  const projects = wanted ? all.filter((row) => wanted.has(row.dir_name)) : all
 
   let projectsUpdated = 0
   let tagsApplied = 0
   let projectIndex = 0
   for (const project of projects) {
     projectIndex++
-    opts.onProgress?.({
+    onProgress?.({
       phase: 'sidecars',
       projectIndex,
       projectCount: projects.length,
@@ -139,5 +166,6 @@ export async function importCuraManagerLibrary(
     projectsUpdated++
   }
 
-  return { rescan: rescanResult, projectsUpdated, tagsApplied, moved }
+  lib.log.info('applied curamanager sidecars', { userId: ctx.userId, projectsUpdated, tagsApplied })
+  return { projectsUpdated, tagsApplied }
 }

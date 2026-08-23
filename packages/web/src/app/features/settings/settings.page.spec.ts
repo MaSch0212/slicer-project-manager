@@ -4,6 +4,7 @@ import { DEFAULT_SETTINGS, type SettingsDto } from '@spm/contract/dtos.ts'
 import { API_CLIENT } from '../../core/api/api-client.token'
 import { TranslateService } from '../../core/i18n/translate.service'
 import { SettingsPage } from './settings.page'
+import { provideJigForTests } from '../../../testing/jig'
 
 type Setup = {
   fixture: ReturnType<typeof TestBed.createComponent<SettingsPage>>
@@ -18,7 +19,9 @@ async function setup(
   ),
 ): Promise<Setup> {
   const api = { settings: { get: vi.fn().mockResolvedValue(DEFAULT_SETTINGS), put } }
-  TestBed.configureTestingModule({ providers: [{ provide: API_CLIENT, useValue: api }] })
+  TestBed.configureTestingModule({
+    providers: [...provideJigForTests(), { provide: API_CLIENT, useValue: api }],
+  })
   const translate = TestBed.inject(TranslateService)
   // Awaited *before* the component exists: TestBed auto-detects changes, so creating it
   // first renders the template immediately, and the template reads t.translations()
@@ -37,33 +40,24 @@ function alertText(fixture: Setup['fixture']): string | null {
   )
 }
 
-function selectEvent(value: string): Event {
-  const select = document.createElement('select')
-  const option = document.createElement('option')
-  option.value = value
-  select.append(option)
-  select.value = value
-  return { target: select } as unknown as Event
-}
-
 describe('SettingsPage', () => {
   it('persists a theme change', async () => {
     const { page, api } = await setup()
-    await page.onPatch('theme', selectEvent('dark'))
+    await page.onPatch('theme', 'dark')
     expect(api.settings.put).toHaveBeenCalledWith({ theme: 'dark' })
     expect(page.saveFailed()).toBe(false)
   })
 
   it('persists a view-mode change', async () => {
     const { page, api } = await setup()
-    await page.onPatch('viewMode', selectEvent('list'))
+    await page.onPatch('viewMode', 'list')
     expect(api.settings.put).toHaveBeenCalledWith({ viewMode: 'list' })
   })
 
   it('persists a language change and switches the rendered language', async () => {
     const { page, api, translate } = await setup()
 
-    await page.onLanguage(selectEvent('de'))
+    await page.onLanguage('de')
 
     expect(api.settings.put).toHaveBeenCalledWith({ language: 'de' })
     expect(translate.language()).toBe('de')
@@ -75,7 +69,7 @@ describe('SettingsPage', () => {
   it('surfaces a failed theme save in a role="alert" instead of rejecting', async () => {
     const { fixture, page } = await setup(vi.fn().mockRejectedValue(new Error('boom')))
 
-    await expect(page.onPatch('theme', selectEvent('dark'))).resolves.toBeUndefined()
+    await expect(page.onPatch('theme', 'dark')).resolves.toBeUndefined()
 
     expect(page.saveFailed()).toBe(true)
     expect(alertText(fixture)).toBeTruthy()
@@ -84,7 +78,7 @@ describe('SettingsPage', () => {
   it('surfaces a failed language save in a role="alert" and does not switch language', async () => {
     const { fixture, page, translate } = await setup(vi.fn().mockRejectedValue(new Error('boom')))
 
-    await expect(page.onLanguage(selectEvent('de'))).resolves.toBeUndefined()
+    await expect(page.onLanguage('de')).resolves.toBeUndefined()
 
     expect(page.saveFailed()).toBe(true)
     expect(alertText(fixture)).toBeTruthy()
@@ -99,10 +93,10 @@ describe('SettingsPage', () => {
       .mockResolvedValueOnce({ ...DEFAULT_SETTINGS, theme: 'dark' })
     const { fixture, page } = await setup(put)
 
-    await page.onPatch('theme', selectEvent('dark'))
+    await page.onPatch('theme', 'dark')
     expect(page.saveFailed()).toBe(true)
 
-    await page.onPatch('theme', selectEvent('dark'))
+    await page.onPatch('theme', 'dark')
     expect(page.saveFailed()).toBe(false)
     expect(alertText(fixture)).toBeNull()
   })

@@ -1,135 +1,229 @@
-import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core'
+import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core'
 import { RouterLink } from '@angular/router'
 import { FormField, form, submit, validateStandardSchema } from '@angular/forms/signals'
 import { InterpolatePipe } from '@ngneers/signal-translate'
 import { createProjectSchema } from '@spm/contract/schemas.ts'
 import type { RescanResultDto } from '@spm/contract/dtos.ts'
+import { JigButton } from '@awdlab/jig/button'
+import { JigCheckbox } from '@awdlab/jig/checkbox'
 import { JigErrors } from '@awdlab/jig/errors'
 import { JigHint } from '@awdlab/jig/hint'
+import { JigIcon } from '@awdlab/jig/icon'
 import { JigInput } from '@awdlab/jig/input'
 import { JigInputField } from '@awdlab/jig/input-field'
+import { JigMessage } from '@awdlab/jig/message'
+import { JigSelect } from '@awdlab/jig/select'
+import { JigSpinner } from '@awdlab/jig/spinner'
+import { JigTag } from '@awdlab/jig/tag'
+import { JigToggleButton } from '@awdlab/jig/toggle-button'
+import tablerPlus from '@iconify/icons-tabler/plus'
+import tablerRefresh from '@iconify/icons-tabler/refresh'
+import tablerSearch from '@iconify/icons-tabler/search'
 import { SettingsStore } from '../../core/settings.store'
 import { TranslateService } from '../../core/i18n/translate.service'
 import { ProjectsStore } from './projects.store'
 
 @Component({
   selector: 'spm-projects-page',
-  imports: [RouterLink, FormField, JigInputField, JigInput, JigHint, JigErrors, InterpolatePipe],
+  imports: [
+    RouterLink,
+    FormField,
+    InterpolatePipe,
+    JigButton,
+    JigCheckbox,
+    JigErrors,
+    JigHint,
+    JigIcon,
+    JigInput,
+    JigInputField,
+    JigMessage,
+    JigSelect,
+    JigSpinner,
+    JigTag,
+    JigToggleButton,
+  ],
   providers: [ProjectsStore],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
-    <header>
-      <h1>{{ t.translations().projects.title }}</h1>
-      <button type="button" (click)="onRescan()">{{ t.translations().projects.rescan }}</button>
-      @if (rescanned()) {
-        <p role="status">
+    <main class="spm-main">
+      <div class="spm-page-head">
+        <h1>{{ t.translations().projects.title }}</h1>
+        <button jigButton kind="secondary" type="button" (click)="onRescan()">
+          <jig-icon [icon]="icons.rescan" />
+          {{ t.translations().projects.rescan }}
+        </button>
+      </div>
+
+      @if (rescanned(); as summary) {
+        <jig-message color="info" role="status" class="spm-block-mb">
           {{
             t.translations().projects.rescanned
-              | interpolate: { adopted: rescanned()!.adopted, filesAdded: rescanned()!.filesAdded }
+              | interpolate: { adopted: summary.adopted, filesAdded: summary.filesAdded }
           }}
-        </p>
+        </jig-message>
       }
       @if (rescanError()) {
-        <p role="alert">{{ t.translations().errors.generic }}</p>
-      }
-    </header>
-
-    <section>
-      <input
-        type="search"
-        [attr.aria-label]="t.translations().projects.search"
-        (input)="store.setSearch($any($event.target).value)"
-      />
-
-      <label>
-        <input
-          type="checkbox"
-          [checked]="store.query().includeArchived === true"
-          (change)="store.setIncludeArchived($any($event.target).checked)"
-        />
-        {{ t.translations().projects.includeArchived }}
-      </label>
-
-      <!-- [value] reflects the persisted choice, so revisiting the page shows the sort the
-           user actually saved rather than always the first option. -->
-      <select
-        [attr.aria-label]="t.translations().settings.sort"
-        [value]="store.query().sort + ':' + store.query().dir"
-        (change)="onSort($any($event.target).value)"
-      >
-        <option value="updatedAt:desc">{{ t.translations().settings.sortUpdated }}</option>
-        <option value="name:asc">{{ t.translations().settings.sortName }}</option>
-        <option value="createdAt:desc">{{ t.translations().settings.sortNewest }}</option>
-      </select>
-      @if (sortError()) {
-        <p role="alert">{{ t.translations().errors.generic }}</p>
+        <jig-message color="error" role="alert" class="spm-block-mb">
+          {{ t.translations().errors.generic }}
+        </jig-message>
       }
 
-      @for (tag of store.knownTags(); track tag) {
-        <button
-          type="button"
-          [attr.aria-pressed]="(store.query().tags ?? []).includes(tag)"
-          (click)="store.toggleTag(tag)"
-        >
-          {{ tag }}
-        </button>
-      }
-    </section>
+      <section class="spm-card spm-stack spm-filters">
+        <div class="spm-row">
+          <jig-input-field
+            class="spm-grow"
+            [label]="t.translations().projects.search"
+            labelKind="on"
+          >
+            <jig-icon [icon]="icons.search" />
+            <input jigInput [value]="store.query().search ?? ''" (input)="onSearch($event)" />
+          </jig-input-field>
 
-    <form (submit)="onCreate(); $event.preventDefault()">
-      <jig-input-field [label]="t.translations().projects.name">
-        <input jigInput [formField]="createForm.name" jigErrors [jigErrorsHint]="nameHint" />
-        <jig-hint #nameHint />
-      </jig-input-field>
-      <button type="submit" [disabled]="createForm().submitting()">
-        {{ t.translations().projects.newProject }}
-      </button>
-      @if (createError()) {
-        <p role="alert">{{ t.translations().errors.generic }}</p>
-      }
-    </form>
+          <jig-input-field
+            inputId="projects-sort"
+            [label]="t.translations().settings.sort"
+            labelKind="on"
+          >
+            <jig-select
+              inputId="projects-sort"
+              [label]="t.translations().settings.sort"
+              [options]="sortOptions()"
+              [value]="sortValue()"
+              (valueChange)="onSort($event)"
+            />
+          </jig-input-field>
 
-    @if (store.loadFailed()) {
-      <p role="alert">{{ t.translations().errors.generic }}</p>
-    } @else if (store.projects.isLoading()) {
-      <p>...</p>
-    } @else if (store.projects.value().length === 0) {
-      <p>{{ t.translations().projects.empty }}</p>
-    } @else {
-      <ul [class]="settings.settings().viewMode">
-        @for (project of store.projects.value(); track project.id) {
-          <li>
-            <a [routerLink]="['/projects', project.id]">
-              @if (project.coverThumbUrl) {
-                <img [src]="project.coverThumbUrl" [alt]="project.name" width="256" height="256" />
-              } @else {
-                <span>{{ t.translations().projects.previewPending }}</span>
-              }
-              <h2>{{ project.name }}</h2>
-            </a>
-            <p>
-              {{ project.fileCounts.model }} / {{ project.fileCounts.slicerProject }} /
-              {{ project.fileCounts.other }}
-            </p>
-            @if (project.isArchived) {
-              <span>{{ t.translations().projects.archived }}</span>
+          <span class="spm-check">
+            <jig-checkbox
+              #archivedBox
+              [value]="store.query().includeArchived === true"
+              (valueChange)="store.setIncludeArchived($event === true)"
+            />
+            <label [for]="archivedBox.inputId()">
+              {{ t.translations().projects.includeArchived }}
+            </label>
+          </span>
+        </div>
+
+        @if (store.knownTags().length > 0) {
+          <div class="spm-row spm-tags">
+            @for (tag of store.knownTags(); track tag) {
+              <jig-toggle-button
+                [label]="tag"
+                [value]="activeTags().has(tag)"
+                (valueChange)="store.toggleTag(tag)"
+              />
             }
-            @if (project.state === 'missing') {
-              <span role="alert">{{ t.translations().projects.missing }}</span>
-            }
-            @for (tag of project.tags; track tag) {
-              <span>{{ tag }}</span>
-            }
-          </li>
+          </div>
         }
-      </ul>
-    }
+        @if (sortError()) {
+          <jig-message color="error" role="alert">{{
+            t.translations().errors.generic
+          }}</jig-message>
+        }
+      </section>
+
+      <form class="spm-row spm-new-project" (submit)="onCreate(); $event.preventDefault()">
+        <div class="spm-field spm-grow">
+          <jig-input-field [label]="t.translations().projects.name" labelKind="on">
+            <input jigInput [formField]="createForm.name" jigErrors [jigErrorsHint]="nameHint" />
+          </jig-input-field>
+          <jig-hint #nameHint />
+        </div>
+        <button jigButton kind="primary" type="submit" [disabled]="createForm().submitting()">
+          <jig-icon [icon]="icons.add" />
+          {{ t.translations().projects.newProject }}
+        </button>
+      </form>
+      @if (createError()) {
+        <jig-message color="error" role="alert" class="spm-block-mb">
+          {{ t.translations().errors.generic }}
+        </jig-message>
+      }
+
+      @if (store.loadFailed()) {
+        <jig-message color="error" role="alert">{{ t.translations().errors.generic }}</jig-message>
+      } @else if (store.projects.isLoading()) {
+        <jig-spinner centered [size]="40" />
+      } @else if (store.projects.value().length === 0) {
+        <div class="spm-empty">
+          <jig-icon [icon]="icons.search" style="font-size: 2rem" />
+          <p>{{ t.translations().projects.empty }}</p>
+        </div>
+      } @else {
+        <ul class="spm-projects" [class]="settings.settings().viewMode">
+          @for (project of store.projects.value(); track project.id) {
+            <li class="spm-project">
+              <a class="spm-project-link" [routerLink]="['/projects', project.id]">
+                <span class="spm-thumb">
+                  @if (project.coverThumbUrl) {
+                    <img
+                      [src]="project.coverThumbUrl"
+                      [alt]="project.name"
+                      width="256"
+                      height="256"
+                    />
+                  } @else {
+                    <span>{{ t.translations().projects.previewPending }}</span>
+                  }
+                </span>
+                <span class="spm-project-body">
+                  <!-- A heading, not a styled span: the card grid is how the library is
+                       navigated, so each project has to be reachable by heading. -->
+                  <h2 class="spm-project-title">{{ project.name }}</h2>
+                  <span class="spm-muted">
+                    {{ project.fileCounts.model }} / {{ project.fileCounts.slicerProject }} /
+                    {{ project.fileCounts.other }}
+                  </span>
+                  <span class="spm-tags">
+                    @if (project.isArchived) {
+                      <jig-tag color="surface">{{ t.translations().projects.archived }}</jig-tag>
+                    }
+                    @if (project.state === 'missing') {
+                      <jig-tag color="error" role="alert">
+                        {{ t.translations().projects.missing }}
+                      </jig-tag>
+                    }
+                    @for (tag of project.tags; track tag) {
+                      <jig-tag color="primary">{{ tag }}</jig-tag>
+                    }
+                  </span>
+                </span>
+              </a>
+            </li>
+          }
+        </ul>
+      }
+    </main>
   `,
 })
 export class ProjectsPage {
   protected readonly store = inject(ProjectsStore)
   protected readonly settings = inject(SettingsStore)
   protected readonly t = inject(TranslateService)
+
+  protected readonly icons = { rescan: tablerRefresh, add: tablerPlus, search: tablerSearch }
+
+  // A Set rather than `.includes()` in the template: with N tags rendered and N in the
+  // filter that binding is O(N²) re-evaluated on every change detection pass.
+  protected readonly activeTags = computed(() => new Set(this.store.query().tags ?? []))
+
+  protected readonly sortOptions = computed(() => {
+    const s = this.t.translations().settings
+    return [
+      { label: s.sortUpdated, value: 'updatedAt:desc' },
+      { label: s.sortName, value: 'name:asc' },
+      { label: s.sortNewest, value: 'createdAt:desc' },
+    ]
+  })
+  /** Mirrors the persisted choice, so revisiting the page shows the sort actually saved. */
+  protected readonly sortValue = computed(
+    () => `${this.store.query().sort}:${this.store.query().dir}`,
+  )
+
+  onSearch(event: Event): void {
+    this.store.setSearch((event.target as HTMLInputElement).value)
+  }
 
   readonly rescanned = signal<RescanResultDto | null>(null)
   readonly rescanError = signal(false)
@@ -144,7 +238,8 @@ export class ProjectsPage {
   // Public, like onCreate/onRescan: the spec drives it directly. `setSort` now also persists
   // the choice, so the rejection needs catching — a template `(change)` binding cannot
   // handle one, and the sort itself has already been applied locally regardless.
-  async onSort(value: string): Promise<void> {
+  async onSort(value: string | null): Promise<void> {
+    if (!value) return
     this.sortError.set(false)
     const [sort, dir] = value.split(':')
     try {

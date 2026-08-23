@@ -60,14 +60,19 @@ test('the language switch takes effect without a reload', async ({ page }) => {
   await expect(page.getByRole('heading', { name: 'Projects' })).toBeVisible()
 
   await page.getByRole('link', { name: 'Settings' }).click()
-  await page.getByLabel('Language').selectOption('de')
+
+  // jig-select is a combobox over a listbox popover, not a native <select>, so this opens
+  // it and picks the option rather than calling selectOption.
+  await page.getByRole('combobox', { name: 'Language' }).click()
+  await page.getByRole('option', { name: 'Deutsch' }).click()
 
   await expect(page.getByRole('heading', { name: 'Einstellungen' })).toBeVisible()
 
   // The language is persisted server-side and re-applied on every bootstrap (app.config.ts),
   // so leaving it on German would rename the nav for every later test in the file. Switching
   // back is also the other half of the assertion: the swap is reactive in both directions.
-  await page.getByLabel('Sprache').selectOption('en')
+  await page.getByRole('combobox', { name: 'Sprache' }).click()
+  await page.getByRole('option', { name: 'English' }).click()
   await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible()
 })
 

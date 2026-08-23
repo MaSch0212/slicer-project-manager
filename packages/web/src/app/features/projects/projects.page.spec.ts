@@ -5,6 +5,7 @@ import { nova } from '@awdlab/jig-themes/nova'
 import { DEFAULT_SETTINGS, type SettingsDto } from '@spm/contract/dtos.ts'
 import { API_CLIENT } from '../../core/api/api-client.token'
 import { ProjectsPage } from './projects.page'
+import { provideJigForTests } from '../../../testing/jig'
 
 function setup(
   overrides: {
@@ -28,6 +29,7 @@ function setup(
   }
   TestBed.configureTestingModule({
     providers: [
+      ...provideJigForTests(),
       // The jig controls used by the template (jig-input-field, [jigInput], jigErrors) need
       // the app-level provider that app.config.ts installs — TestBed builds this component
       // in isolation, so it must be supplied here too.

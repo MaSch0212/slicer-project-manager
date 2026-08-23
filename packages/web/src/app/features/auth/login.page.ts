@@ -2,10 +2,12 @@ import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/cor
 import { Router } from '@angular/router'
 import { FormField, form, submit, validateStandardSchema } from '@angular/forms/signals'
 import { loginSchema } from '@spm/contract/schemas.ts'
+import { JigButton } from '@awdlab/jig/button'
 import { JigErrors } from '@awdlab/jig/errors'
 import { JigHint } from '@awdlab/jig/hint'
 import { JigInput } from '@awdlab/jig/input'
 import { JigInputField } from '@awdlab/jig/input-field'
+import { JigMessage } from '@awdlab/jig/message'
 import { API_CLIENT } from '../../core/api/api-client.token'
 import { AuthStore } from '../../core/auth.store'
 import { TranslateService } from '../../core/i18n/translate.service'
@@ -13,41 +15,53 @@ import { TranslateService } from '../../core/i18n/translate.service'
 @Component({
   selector: 'spm-login-page',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [FormField, JigInputField, JigInput, JigHint, JigErrors],
+  imports: [FormField, JigButton, JigInputField, JigInput, JigHint, JigErrors, JigMessage],
   template: `
-    <h1>{{ t.translations().auth.signIn }}</h1>
-    <form (submit)="onSubmit(); $event.preventDefault()">
-      <jig-input-field [label]="t.translations().auth.username">
-        <input
-          jigInput
-          [formField]="loginForm.username"
-          jigErrors
-          [jigErrorsHint]="usernameHint"
-          autocomplete="username"
-        />
-        <jig-hint #usernameHint />
-      </jig-input-field>
+    <main class="spm-main spm-main--narrow">
+      <form class="spm-card spm-stack" (submit)="onSubmit(); $event.preventDefault()">
+        <h1>{{ t.translations().auth.signIn }}</h1>
 
-      <jig-input-field [label]="t.translations().auth.password">
-        <input
-          type="password"
-          jigInput
-          [formField]="loginForm.password"
-          jigErrors
-          [jigErrorsHint]="passwordHint"
-          autocomplete="current-password"
-        />
-        <jig-hint #passwordHint />
-      </jig-input-field>
+        <!-- The hint is a SIBLING of the field, never a child: content projected into
+             <jig-input-field> becomes a prefix or suffix adornment, which renders the
+             validation message inside the input box. -->
+        <div class="spm-field">
+          <jig-input-field [label]="t.translations().auth.username">
+            <input
+              jigInput
+              [formField]="loginForm.username"
+              jigErrors
+              [jigErrorsHint]="usernameHint"
+              autocomplete="username"
+            />
+          </jig-input-field>
+          <jig-hint #usernameHint />
+        </div>
 
-      @if (errorKey()) {
-        <p role="alert">{{ t.translations().auth.signInFailed }}</p>
-      }
+        <div class="spm-field">
+          <jig-input-field [label]="t.translations().auth.password">
+            <input
+              type="password"
+              jigInput
+              [formField]="loginForm.password"
+              jigErrors
+              [jigErrorsHint]="passwordHint"
+              autocomplete="current-password"
+            />
+          </jig-input-field>
+          <jig-hint #passwordHint />
+        </div>
 
-      <button type="submit" [disabled]="loginForm().submitting()">
-        {{ t.translations().auth.signIn }}
-      </button>
-    </form>
+        @if (errorKey()) {
+          <jig-message color="error" role="alert">
+            {{ t.translations().auth.signInFailed }}
+          </jig-message>
+        }
+
+        <button jigButton kind="primary" type="submit" [disabled]="loginForm().submitting()">
+          {{ t.translations().auth.signIn }}
+        </button>
+      </form>
+    </main>
   `,
 })
 export class LoginPage {

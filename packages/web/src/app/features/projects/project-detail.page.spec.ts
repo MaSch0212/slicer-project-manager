@@ -9,6 +9,7 @@ import type { FileDto, ProjectDetailDto } from '@spm/contract/dtos.ts'
 import { API_CLIENT } from '../../core/api/api-client.token'
 import en from '../../core/i18n/locales/en.json'
 import { ProjectDetailPage } from './project-detail.page'
+import { provideJigForTests } from '../../../testing/jig'
 
 const file: FileDto = {
   id: 'f1',
@@ -75,6 +76,7 @@ function setup(
   }
   TestBed.configureTestingModule({
     providers: [
+      ...provideJigForTests(),
       // The jig controls used by the template (jig-input-field, [jigInput], jigErrors) need
       // the app-level provider that app.config.ts installs — TestBed builds this component
       // in isolation, so it must be supplied here too.
