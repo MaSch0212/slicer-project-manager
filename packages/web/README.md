@@ -16,6 +16,24 @@ target rewritten to point into `dist/`.
 a root `package.json` that carries its own `exports` field — at that point bump the dependency version
 and drop the corresponding patch file and `patchedDependencies` entry.
 
+`@awdlab/jig-playwright` needs no patch: its published root manifest carries `main` and `types`
+pointing into `dist/`.
+
+## Why `zod` is a dependency here
+
+Nothing under `src/` imports `zod` by name, but this package must declare it anyway.
+`@spm/contract`'s `exports` map points at **TypeScript source**, not built output, so every
+consumer inlines contract's source and has to resolve contract's own imports itself — `zod`
+included. Locally this can appear to work without the declaration, because Deno materialises a
+root `node_modules/zod` for the root `deno.json` import map (`nodeModulesDir: "auto"`) and Vite
+walks up and finds it. CI runs nothing but `pnpm install --frozen-lockfile` before the web job,
+so that directory does not exist there and the build fails with
+`Failed to resolve import "zod"`. The range is kept identical to contract's (`^4.0.0`) so both
+packages resolve to one copy.
+
+`packages/server` deliberately does **not** declare `zod`: it only ever runs under Deno, which
+resolves it through the root import map.
+
 ## Development server
 
 To start a local development server, run:
@@ -60,13 +78,22 @@ ng test
 
 ## Running end-to-end tests
 
-For end-to-end (e2e) testing, run:
+From the repository root:
 
 ```bash
-ng e2e
+pnpm e2e
 ```
 
-Angular CLI does not come with an end-to-end testing framework by default. You can choose one that suits your needs.
+`playwright.config.ts` builds the bundle, seeds a throw-away library in the system temp directory
+with a known-password admin (`e2e/seed.ts`, run under Deno) and serves both from the real Deno
+server on port 8123, so the suite exercises the deployed static-file path rather than `ng serve`.
+The browser binary is installed once with
+`pnpm --filter @spm/web exec playwright install chromium`.
+
+Both `deno run` invocations in that config pass `--config ../../deno.json` explicitly: Deno stops
+walking up at the first configuration it finds, which is this package's `package.json`, and that
+does not depend on `@spm/core` — without the flag the seed script fails with
+`Import "@spm/core" not a dependency`.
 
 ## Additional Resources
 

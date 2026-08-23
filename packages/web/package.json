@@ -21,12 +21,15 @@
     "@ngneers/signal-translate": "^22.0.0",
     "@spm/contract": "workspace:*",
     "rxjs": "~7.8.0",
-    "tslib": "^2.3.0"
+    "tslib": "^2.3.0",
+    "zod": "^4.0.0"
   },
   "devDependencies": {
     "@angular/build": "^22.1.5",
     "@angular/cli": "^22.1.5",
     "@angular/compiler-cli": "^22.1.0",
+    "@awdlab/jig-playwright": "^0.0.4",
+    "@playwright/test": "^1.56.0",
     "jsdom": "^28.0.0",
     "typescript": "~6.0.2",
     "vitest": "^4.0.8"

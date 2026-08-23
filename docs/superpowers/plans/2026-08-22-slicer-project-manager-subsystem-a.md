@@ -10273,7 +10273,14 @@ Subsystem A is complete when all of the following hold:
   covered by an integration test.
 - No authorisation decision exists outside `core`: grepping the server for `isAdmin` finds only
   the capability constant, and every project/file query is scoped by `ctx.userId`.
-- `grep -rl "features/desktop" packages/web/dist/web/browser` finds nothing.
+- The web bundle physically excludes the desktop-only code and the electron bundle keeps it:
+  `grep -rl DesktopPlaceholderPage packages/web/dist/web/browser` finds nothing and
+  `grep -rl DesktopPlaceholderPage packages/web/dist/electron/browser` finds a match. (Task 17
+  established that the original form of this item — grepping for the module path
+  `features/desktop` — is vacuous: the bundler rewrites module paths into hashed chunk names,
+  so that string never appears in the output whether the exclusion works or not. The exported
+  class name survives bundling because it is read across a chunk boundary, and the pair of
+  greps is bidirectional, so it can actually fail. Both are steps in the `web` CI job.)
 - The five slicer detection cases and the Orca-before-Bambu ordering are covered by tests
   against synthetic 3MFs matching the layouts measured on 2026-08-22.
 - Rescan has explicit tests for adopt, missing-folder, changed-file, and dot-folder skipping

@@ -16,6 +16,7 @@
     "test:core:deno": "deno test --allow-read --allow-write --allow-env packages/core/test/",
     "test:server": "deno test --allow-all packages/server/test/",
     "test:web": "pnpm --filter @spm/web test",
+    "e2e": "pnpm --filter @spm/web exec playwright test",
     "verify": "pnpm lint && pnpm format:check && pnpm typecheck && pnpm test:contract && pnpm test:core:node && pnpm test:core:deno && pnpm test:server && pnpm test:web"
   },
   "devDependencies": {

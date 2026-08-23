@@ -91,6 +91,9 @@ importers:
       tslib:
         specifier: ^2.3.0
         version: 2.8.1
+      zod:
+        specifier: ^4.0.0
+        version: 4.4.3
     devDependencies:
       '@angular/build':
         specifier: ^22.1.5
@@ -101,6 +104,12 @@ importers:
       '@angular/compiler-cli':
         specifier: ^22.1.0
         version: 22.1.3(@angular/compiler@22.1.3)(typescript@6.0.3)
+      '@awdlab/jig-playwright':
+        specifier: ^0.0.4
+        version: 0.0.4(@awdlab/jig-themes@0.0.4(patch_hash=04ab20ecdd42527d808e0ab32297a849bc3270e39a93ffd3535ee91fdbb77a35))(@awdlab/jig@0.0.4(patch_hash=66c7e7e7ef05e1e23375de1dbfb4fc1351d7701958488393519178bec0a72d70)(d0d5b521922d733473c4c5c3f5b9e36e))(@playwright/test@1.62.1)
+      '@playwright/test':
+        specifier: ^1.56.0
+        version: 1.62.1
       jsdom:
         specifier: ^28.0.0
         version: 28.1.0
@@ -275,6 +284,13 @@ packages:
 
   '@awdlab/jig-custom-types@0.0.1-next.1':
     resolution: {integrity: sha512-AkeVOVsOBCrddxS3hFh8je+f5RE8MFEjaNe0TqUMJcTAgJDOLMGcRDSEn3+Yqh28cliCJRQvvKWToem1IaSRvQ==}
+
+  '@awdlab/jig-playwright@0.0.4':
+    resolution: {integrity: sha512-/SqoXHC8Baznqt160B7/zt0GNTmVM9oX1xkhpMbG5bYAb0kS+G5mqYuvGDFXw3aJETzjT9RaViYQZdWpK3Xt7Q==}
+    peerDependencies:
+      '@awdlab/jig': 0.0.4
+      '@awdlab/jig-themes': 0.0.4
+      '@playwright/test': '>=1.55.0'
 
   '@awdlab/jig-themes@0.0.4':
     resolution: {integrity: sha512-Gq6+o2dRUrsYm7BHG7gjbV0/t8crzh1QSyERb61GxOt3NkenKlfnIV+90dxrVKW+52i462xzvc7nAprkYcarOg==}
@@ -1264,6 +1280,11 @@ packages:
     resolution: {integrity: sha512-7FNeNl8NCE7aINx7WXiKQrPYZWC/hvrTsmk6zmxbI7LTXE7hVek/n8AfVgpe2y82zl3w0HvCHN0bVKMBoJcC0w==}
     engines: {node: '>= 10.0.0'}
 
+  '@playwright/test@1.62.1':
+    resolution: {integrity: sha512-DTcUc8qii+cpHvtOwggMtBRMjKZHXYWdw8syRYu2vtzuq4Wxphqq4NfCs5Zt44L6mA8rfDfj+PHnxFc/FeK6mQ==}
+    engines: {node: '>=20'}
+    hasBin: true
+
   '@rolldown/binding-android-arm64@1.1.5':
     resolution: {integrity: sha512-lZg8fqIv2v7FF237bwMgzGZEJvGL79/s5knJ/i6FmsGF4XXlzccZ4jb+TrFIxtSSxFtIpdsgrPZeMk1I9AFcyQ==}
     engines: {node: ^20.19.0 || >=22.12.0}
@@ -2040,6 +2061,11 @@ packages:
     resolution: {integrity: sha512-Rx/WycZ60HOaqLKAi6cHRKKI7zxWbJ31MhntmtwMoaTeF7XFH9hhBp8vITaMidfljRQ6eYWCKkaTK+ykVJHP2A==}
     engines: {node: '>= 0.8'}
 
+  fsevents@2.3.2:
+    resolution: {integrity: sha512-xiqMQR4xAeHTuB9uWm+fFRcIOgKBMiOBP+eXiyT7jsgVCq1bkVygt00oASowB7EdtpOHaaPgKt812P9ab+DDKA==}
+    engines: {node: ^8.16.0 || ^10.6.0 || >=11.0.0}
+    os: [darwin]
+
   fsevents@2.3.3:
     resolution: {integrity: sha512-5xoDfX+fL7faATnagmWPpbFtwh/R77WmMMqqHGS65C3vvB0YHrgF+B1YmZ3441tMj5n63k0212XNoJwzlhffQw==}
     engines: {node: ^8.16.0 || ^10.6.0 || >=11.0.0}
@@ -2529,6 +2555,16 @@ packages:
   pkce-challenge@5.0.1:
     resolution: {integrity: sha512-wQ0b/W4Fr01qtpHlqSqspcj3EhBvimsdh0KlHhH8HRZnMsEa0ea2fTULOXOS9ccQr3om+GcGRk4e+isrZWV8qQ==}
     engines: {node: '>=16.20.0'}
+
+  playwright-core@1.62.1:
+    resolution: {integrity: sha512-wPYSwEBJY9GHraISXqyqtx0na0LpO3XEX7jNDhntbex7tzUS7kLnZsOlFruFJB4Hi/rhDMjXGqHewDZ68nYZVw==}
+    engines: {node: '>=20'}
+    hasBin: true
+
+  playwright@1.62.1:
+    resolution: {integrity: sha512-0M+L3LAD8/nm554LOla9Ayx0j0tmFZ0FBcoQ7F1VuVHpM/XpiC8RcDzBQB8W5+hA8L22THxELzeF+2WcUzvcLg==}
+    engines: {node: '>=20'}
+    hasBin: true
 
   postcss-media-query-parser@0.2.3:
     resolution: {integrity: sha512-3sOlxmbKcSHMjlUXQZKQ06jOswE7oVkXPxmZdoB1r5l0q6gTFTQSHxNxOrCccElbW7dxNytifNEo8qidX2Vsig==}
@@ -3189,6 +3225,12 @@ snapshots:
     dependencies:
       '@iconify/types': 2.0.0
       tslib: 2.8.1
+
+  '@awdlab/jig-playwright@0.0.4(@awdlab/jig-themes@0.0.4(patch_hash=04ab20ecdd42527d808e0ab32297a849bc3270e39a93ffd3535ee91fdbb77a35))(@awdlab/jig@0.0.4(patch_hash=66c7e7e7ef05e1e23375de1dbfb4fc1351d7701958488393519178bec0a72d70)(d0d5b521922d733473c4c5c3f5b9e36e))(@playwright/test@1.62.1)':
+    dependencies:
+      '@awdlab/jig': 0.0.4(patch_hash=66c7e7e7ef05e1e23375de1dbfb4fc1351d7701958488393519178bec0a72d70)(d0d5b521922d733473c4c5c3f5b9e36e)
+      '@awdlab/jig-themes': 0.0.4(patch_hash=04ab20ecdd42527d808e0ab32297a849bc3270e39a93ffd3535ee91fdbb77a35)
+      '@playwright/test': 1.62.1
 
   '@awdlab/jig-themes@0.0.4(patch_hash=04ab20ecdd42527d808e0ab32297a849bc3270e39a93ffd3535ee91fdbb77a35)':
     dependencies:
@@ -3966,6 +4008,10 @@ snapshots:
       '@parcel/watcher-win32-x64': 2.6.0
     optional: true
 
+  '@playwright/test@1.62.1':
+    dependencies:
+      playwright: 1.62.1
+
   '@rolldown/binding-android-arm64@1.1.5':
     optional: true
 
@@ -4730,6 +4776,9 @@ snapshots:
 
   fresh@2.0.0: {}
 
+  fsevents@2.3.2:
+    optional: true
+
   fsevents@2.3.3:
     optional: true
 
@@ -5225,6 +5274,14 @@ snapshots:
       '@napi-rs/nice': 1.1.1
 
   pkce-challenge@5.0.1: {}
+
+  playwright-core@1.62.1: {}
+
+  playwright@1.62.1:
+    dependencies:
+      playwright-core: 1.62.1
+    optionalDependencies:
+      fsevents: 2.3.2
 
   postcss-media-query-parser@0.2.3: {}
 
