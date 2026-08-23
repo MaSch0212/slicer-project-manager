@@ -53,8 +53,25 @@ that folder with `deno.enablePaths` and leaves everything else — contract, cor
 Angular app — to the normal TypeScript service. Enabling Deno for the whole workspace takes
 the Angular language service down with it.
 
-The Angular build itself is a Node toolchain (the Angular CLI, its compiler and Vite) and is
-not run under Deno; `deno task dev:ui` shells out to `ng serve` through pnpm.
+### How much of this runs on Deno
+
+The Angular CLI runs fine under Deno's Node compatibility layer, so the whole dev loop does:
+`deno task dev:ui`, `build:ui` and `test:web` invoke `ng` through `deno run`, not through
+pnpm or Node. Building, serving with live reload, and the 126 unit tests all work that way.
+
+**Installing** dependencies is the one part that still needs pnpm, for two reasons:
+
+- `deno install` reads the root `package.json` and Deno's own `workspace` field; it does not
+  read `pnpm-workspace.yaml`.
+- `@awdlab/jig@0.0.4` is published with pnpm's `catalog:` protocol left in its
+  `peerDependencies`. pnpm warns and carries on; Deno refuses the tree
+  (`parsing version requirement for dependency "@angular/router": "catalog:"`). The same
+  package also needs the `patchedDependencies` in `pnpm-workspace.yaml`, which Deno has no
+  equivalent of — see [patches/README.md](patches/README.md) and
+  [awdlab/jig#22](https://github.com/awdlab/jig/pull/22), which fixes both upstream.
+
+So: `pnpm install` once (also available as `deno task install`), Deno for everything after.
+A greenfield Angular app with no such dependency installs and builds under Deno alone.
 
 ## Migrating an existing CuraManager library
 

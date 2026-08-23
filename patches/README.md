@@ -14,6 +14,19 @@ manifest, with every target rewritten to point into `dist/`. They are wired up t
 
 They change packaging metadata only. No package source is touched.
 
+## Upstream
+
+The root cause is a one-line publishing mistake, not something wrong with the packages
+themselves: all three build-from-dist packages pack with awesome-publish's `publishFiles`
+instead of `publishDir`, so the tarball root gets the _source_ manifest and the correct
+generated one stays nested at `dist/package.json`. The same mistake is why their published
+`peerDependencies` still read `catalog:`, which pnpm merely warns about but `deno install`
+refuses outright.
+
+[awdlab/jig#22](https://github.com/awdlab/jig/pull/22) fixes it. Verified before opening:
+packing each package's existing `dist/` as the tarball root and installing that here with
+these patches removed resolves every import, type-checks, builds, and passes all web tests.
+
 ## The single condition for deleting them
 
 Delete a patch when a released version of that package ships a root `package.json` carrying
