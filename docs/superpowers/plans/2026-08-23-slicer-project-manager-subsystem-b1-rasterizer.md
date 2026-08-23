@@ -85,7 +85,19 @@ Recorded here because they deviate from, or resolve silence in, the spec.
 4. **OBJ is implemented**, though §7.1 calls it low priority. `classifyFile` already returns
    `kind='model'` for `.obj`, so without a parser every OBJ burns its three attempts and
    lands on `failed` — a worse outcome than the ~40 lines a minimal parser costs.
-5. **One handler, dispatching on extension.** `MESH_HANDLER` covers `kinds: ['model']` and
+5. **three.js is not used server-side**, though it is coming in B2 for the browser viewer.
+   It replaces the easy half of this plan and cannot run the hard half. There is no CPU
+   rasterizer in three.js: `WebGLRenderer` needs `headless-gl`, a Node-only native addon our
+   Deno server cannot load, leaving `WebGPURenderer` on Deno's `navigator.gpu`. That costs
+   determinism (GPU output varies by driver, so tests could assert only "an image appeared"),
+   breaks the dual-runtime rule (`navigator.gpu` does not exist in Node, so the renderer would
+   have to leave `packages/core`), and fails on exactly the headless GPU-less containers this
+   self-hosted app targets — silently, with every preview landing in `failed`. On the parsing
+   side `3MFLoader` needs `DOMParser`, which Deno does not have, and builds the DOM the 54 MB
+   file rules out; the STL and OBJ loaders would save ~150 lines and add ~1.2 MB to the
+   dual-runtime package. Confirmed by measurement on 2026-08-23, not assumed.
+
+6. **One handler, dispatching on extension.** `MESH_HANDLER` covers `kinds: ['model']` and
    picks a parser from the file's extension, because that is exactly what `classifyFile`
    keyed on to assign the kind.
 
