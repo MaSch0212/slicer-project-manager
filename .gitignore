@@ -11,3 +11,5 @@ test-tmp/
 # Playwright's own output directories.
 test-results/
 playwright-report/
+
+*.env

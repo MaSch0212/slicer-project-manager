@@ -41,6 +41,12 @@ between edits.
     deno task dev:ui        # ng serve on :4200
     deno task dev:server    # the API on :8000, proxying the UI
 
+Both halves reload on save. `dev:server` runs under `deno run --watch`, which watches the
+whole local module graph — so a change in `packages/core` or `packages/contract` restarts the
+server just as a change in `packages/server` does. Only source files are watched, so the
+library's own writes (the SQLite database, generated previews) never trigger a restart, even
+with the library inside the repo.
+
 `dev:server` needs `SPM_LIBRARY_DIR`; everything else it sets for you.
 
 `deno task` lists the rest: `build:ui`, `serve` (build the UI, then serve it for real),

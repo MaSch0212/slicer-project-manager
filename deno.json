@@ -18,10 +18,10 @@
   "tasks": {
     "dev": "echo \"Run two terminals: deno task dev:ui  |  deno task dev:server\"",
     "dev:ui": "cd packages/web && deno run -A node_modules/@angular/cli/bin/ng.js serve --port 4200",
-    "dev:server": "SPM_DEV_UI_ORIGIN=http://localhost:4200 SPM_LOG_LEVEL=debug deno run -A packages/server/main.ts",
-    "serve": "deno task build:ui && deno run -A packages/server/main.ts",
+    "dev:server": "SPM_DEV_UI_ORIGIN=http://localhost:4200 SPM_LOG_LEVEL=debug deno run --env-file -A --watch --no-clear-screen packages/server/main.ts",
+    "serve": "deno task build:ui && deno run --env-file -A packages/server/main.ts",
     "build:ui": "cd packages/web && deno run -A node_modules/@angular/cli/bin/ng.js build",
-    "import": "deno run -A packages/server/import-curamanager.ts",
+    "import": "deno run --env-file -A packages/server/import-curamanager.ts",
     "install": "pnpm install",
     "check": "pnpm typecheck",
     "lint": "pnpm lint",
