@@ -290,12 +290,18 @@ describe('UsersPage', () => {
   it('surfaces a clipboard failure instead of swallowing it', async () => {
     const { page } = await setup()
     await settle()
+    // Restored afterwards: an unrestored navigator.clipboard would bleed into any later test
+    // in this worker that copies successfully.
+    const original = navigator.clipboard
     Object.assign(navigator, {
       clipboard: { writeText: vi.fn().mockRejectedValue(new Error('denied')) },
     })
+    try {
+      await page['onCopy']('http://x/activate#tok')
 
-    await page['onCopy']('http://x/activate#tok')
-
-    expect(page.errorMessage()).toBe(en.errors.generic)
+      expect(page.errorMessage()).toBe(en.errors.generic)
+    } finally {
+      Object.assign(navigator, { clipboard: original })
+    }
   })
 })

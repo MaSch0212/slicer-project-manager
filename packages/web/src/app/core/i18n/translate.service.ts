@@ -28,7 +28,10 @@ export async function loadDeOrFallbackToEn(
 ): Promise<Translations> {
   try {
     return (await importDe()).default
-  } catch {
+  } catch (error) {
+    // Falling back silently would leave a genuinely broken de.json looking like a language
+    // that simply renders in English, so say so once — the fallback itself is deliberate.
+    console.warn('failed to load the German locale; falling back to English', error)
     return en
   }
 }
