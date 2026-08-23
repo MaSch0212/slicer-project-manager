@@ -42,9 +42,13 @@ the task text says.
    enforces this for `packages/core/src/**` — do not weaken those rules.
 2. **No new runtime dependencies.** The rasterizer and PNG writer are hand-written against
    `node:zlib`. If a task feels like it needs a package, it does not.
-3. **Deterministic output.** The same mesh must produce byte-identical PNGs on both
-   runtimes and across runs. No `Date.now()`, no `Math.random()`, no iteration over
-   unordered collections, no floating-point that depends on input order.
+3. **Deterministic output.** The same mesh must produce byte-identical PNGs **across runs
+   within one runtime**, and identical _pixels_ on both runtimes. No `Date.now()`, no
+   `Math.random()`, no iteration over unordered collections, no floating-point that depends
+   on input order. This originally demanded byte-identical PNGs across runtimes as well; that
+   is unachievable and was amended — see ruling B1-4 in the ledger. Node and Deno ship
+   different zlib bindings and emit different deflate streams for identical input, so across
+   runtimes only the decompressed scanlines, which are the actual image, can be compared.
 4. **Bounded memory.** A 54 MB uncompressed 3MF is a real file in the reference library
    (§7.1). Parsers stream or index; none may build a DOM or an array of per-triangle
    objects. Triangle data lives in typed arrays.

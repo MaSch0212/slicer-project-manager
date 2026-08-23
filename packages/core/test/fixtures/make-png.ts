@@ -14,7 +14,15 @@ function chunk(type: string, data: Uint8Array): Uint8Array {
   return out
 }
 
-/** A valid all-black 8-bit RGB PNG of the requested size. */
+/**
+ * A valid all-black 8-bit RGB PNG of the requested size.
+ *
+ * Deliberately not built on top of `encodePng`: this fixture predates it and is used by
+ * tests (`previews.test.ts`, `embedded.ts`'s tests) that exercise the *reading* side
+ * (`readPngSize`, zip/thumbnail extraction). Routing it through `encodePng` would make those
+ * tests pass or fail together with the encoder instead of independently of it, which is the
+ * opposite of what a fixture is for.
+ */
 export function makePng(width: number, height: number): Uint8Array {
   const ihdr = new Uint8Array(13)
   const view = new DataView(ihdr.buffer)
