@@ -154,6 +154,14 @@ export async function uploadFile(
     .prepare("INSERT INTO previews (file_id, state, updated_at) VALUES (?, 'pending', ?)")
     .run(id, Date.now())
   lib.db.prepare('UPDATE projects SET updated_at = ? WHERE id = ?').run(Date.now(), projectId)
+  lib.log.info('file uploaded', {
+    fileId: id,
+    projectId,
+    name,
+    sizeBytes: stat.size,
+    kind: classification.kind,
+    userId: ctx.userId,
+  })
 
   return toCoreFileDto({
     id,
@@ -186,6 +194,13 @@ export function renameFile(lib: Library, ctx: Ctx, id: string, name: string): Co
   lib.db.prepare('UPDATE files SET rel_path = ? WHERE id = ?').run(newRelPath, id)
   lib.db.prepare('UPDATE projects SET updated_at = ? WHERE id = ?').run(Date.now(), row.project_id)
 
+  lib.log.info('file renamed', {
+    fileId: id,
+    projectId: row.project_id,
+    from: row.rel_path,
+    to: newRelPath,
+    userId: ctx.userId,
+  })
   return toCoreFileDto({ ...row, rel_path: newRelPath })
 }
 
@@ -196,6 +211,12 @@ export function deleteFile(lib: Library, ctx: Ctx, id: string): void {
   rmSync(previewPath(lib, id), { force: true })
   lib.db.prepare('DELETE FROM files WHERE id = ?').run(id)
   lib.db.prepare('UPDATE projects SET updated_at = ? WHERE id = ?').run(Date.now(), row.project_id)
+  lib.log.info('file deleted', {
+    fileId: id,
+    projectId: row.project_id,
+    name: row.rel_path,
+    userId: ctx.userId,
+  })
 }
 
 export function resolveFilePath(

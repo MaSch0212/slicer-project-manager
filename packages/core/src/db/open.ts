@@ -2,9 +2,15 @@ import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { runMigrations } from './migrate.ts'
+import { NOOP_LOGGER, type Logger } from '../log.ts'
 
 export type Db = DatabaseSync
-export type Library = { dir: string; db: Db }
+/**
+ * The handle every core use case takes. The logger rides along here rather than being threaded
+ * through each function signature: anything holding a Library can already write to the
+ * library, so it may as well be able to say so.
+ */
+export type Library = { dir: string; db: Db; log: Logger }
 
 export const SPM_DIR = '.spm'
 export const PREVIEWS_DIR = 'previews'
@@ -26,7 +32,11 @@ export const DB_FILE = 'app.db'
  */
 export const BUSY_TIMEOUT_MS = 5000
 
-export type OpenOptions = { busyTimeoutMs?: number }
+export type OpenOptions = {
+  busyTimeoutMs?: number
+  /** Defaults to silence: importing core must not print anything the host did not ask for. */
+  logger?: Logger
+}
 
 /**
  * Opens (creating if needed) the library at `libraryDir`. The database lives inside the
@@ -41,7 +51,7 @@ export function openLibrary(libraryDir: string, opts: OpenOptions = {}): Library
   db.exec('PRAGMA foreign_keys = ON')
   db.exec(`PRAGMA busy_timeout = ${Math.trunc(opts.busyTimeoutMs ?? BUSY_TIMEOUT_MS)}`)
   runMigrations(db)
-  return { dir: libraryDir, db }
+  return { dir: libraryDir, db, log: opts.logger ?? NOOP_LOGGER }
 }
 
 export function closeLibrary(lib: Library): void {

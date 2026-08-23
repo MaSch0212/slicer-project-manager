@@ -28,6 +28,7 @@ export async function ensureBootstrapAdmin(
     .run(id, BOOTSTRAP_USERNAME, 'Administrator', BOOTSTRAP_USERNAME, now)
   mkdirSync(userRoot(lib, BOOTSTRAP_USERNAME), { recursive: true })
 
+  lib.log.info('bootstrap admin created', { userId: id, username: BOOTSTRAP_USERNAME })
   return { username: BOOTSTRAP_USERNAME, token: await issueActivationToken(lib.db, id, now) }
 }
 

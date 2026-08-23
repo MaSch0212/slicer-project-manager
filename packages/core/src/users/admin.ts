@@ -69,6 +69,14 @@ export async function createUser(
   mkdirSync(userRoot(lib, input.username), { recursive: true })
 
   const token = await issueActivationToken(lib.db, id, now)
+  // The token itself is never logged: the log is a lower-security artifact than the invite,
+  // and anything printed here would hand a reader the account.
+  lib.log.info('user created', {
+    userId: id,
+    username: input.username,
+    isAdmin: input.isAdmin === true,
+    by: ctx.userId,
+  })
   return { user: toUserDto(requireUserRow(lib.db, id), 0), token }
 }
 
@@ -89,6 +97,7 @@ export async function reissueInvite(
   // re-issuing is exactly when the previous one should stop working — leaving it live means
   // two usable links for one account, which is the thing single-use is meant to prevent.
   revokeActivationTokens(lib.db, row.id)
+  lib.log.info('invite reissued', { userId: row.id, username: row.username, by: ctx.userId })
   return { token: await issueActivationToken(lib.db, row.id) }
 }
 
@@ -111,6 +120,7 @@ export function updateUser(lib: Library, ctx: Ctx, id: string, patch: UpdateUser
     lib.db.prepare('UPDATE users SET quota_bytes = ? WHERE id = ?').run(patch.quotaBytes, id)
   }
 
+  lib.log.info('user updated', { userId: id, by: ctx.userId, ...patch })
   return toUserDto(requireUserRow(lib.db, id), diskUsageBytes(lib.db, id))
 }
 
@@ -120,4 +130,5 @@ export function deleteUser(lib: Library, ctx: Ctx, id: string): void {
   assertNotLastActiveAdmin(lib.db, row)
   // Cascades projects, files, previews, tags and sessions. The folder on disk is left alone.
   lib.db.prepare('DELETE FROM users WHERE id = ?').run(id)
+  lib.log.info('user deleted', { userId: id, username: row.username, by: ctx.userId })
 }

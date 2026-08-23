@@ -42,6 +42,7 @@ export function createProject(lib: Library, ctx: Ctx, input: CreateProjectInput)
     .run(id, ctx.userId, input.name, dirName, input.website ?? null, input.notes ?? null, now, now)
 
   for (const tag of input.tags ?? []) addTag(lib, ctx, id, tag)
+  lib.log.info('project created', { projectId: id, dirName, userId: ctx.userId })
   return getProject(lib, ctx, id)
 }
 
@@ -79,6 +80,11 @@ export function updateProject(
     lib.db
       .prepare(`UPDATE projects SET ${sets.join(', ')} WHERE id = ? AND owner_id = ?`)
       .run(...params)
+    lib.log.info('project updated', {
+      projectId: id,
+      userId: ctx.userId,
+      fields: Object.keys(patch).join(),
+    })
   }
   return getProject(lib, ctx, id)
 }
@@ -95,6 +101,12 @@ export function deleteProject(
     rmSync(projectDir(lib, user.library_dir, row.dir_name), { recursive: true, force: true })
   }
   lib.db.prepare('DELETE FROM projects WHERE id = ? AND owner_id = ?').run(id, ctx.userId)
+  lib.log.info('project deleted', {
+    projectId: id,
+    dirName: row.dir_name,
+    userId: ctx.userId,
+    deletedFiles: opts.deleteFiles,
+  })
 }
 
 export function addTag(lib: Library, ctx: Ctx, projectId: string, name: string): void {

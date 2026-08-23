@@ -31,6 +31,10 @@ export async function login(
   // that fixes both at once — rate limiting — belongs in the transport and is a
   // requirement carried into the task that builds the server's route table.
   if (!row || row.status !== 'active' || !row.pw_hash || !row.pw_salt || !row.pw_iterations) {
+    // The reason is logged even though the *response* deliberately does not distinguish
+    // them: the operator reading their own server log is not the attacker being denied
+    // enumeration. Never the password, and never any part of it.
+    lib.log.warn('login rejected', { username, reason: row ? row.status : 'no such user' })
     throw new AppError('Unauthorized', UNAUTHORIZED)
   }
 
@@ -40,9 +44,13 @@ export async function login(
     iterations: row.pw_iterations,
     algo: row.pw_algo ?? '',
   }
-  if (!(await verifyPassword(password, stored))) throw new AppError('Unauthorized', UNAUTHORIZED)
+  if (!(await verifyPassword(password, stored))) {
+    lib.log.warn('login rejected', { username, reason: 'bad password' })
+    throw new AppError('Unauthorized', UNAUTHORIZED)
+  }
 
   if (needsRehash(stored)) {
+    lib.log.info('rehashing password to current parameters', { userId: row.id })
     const upgraded = await hashPassword(password)
     lib.db
       .prepare(
@@ -52,6 +60,7 @@ export async function login(
   }
 
   const session = await createSession(lib.db, row.id, userAgent, now)
+  lib.log.info('login', { userId: row.id, username: row.username })
   return {
     user: toUserDto(requireUserRow(lib.db, row.id), diskUsageBytes(lib.db, row.id)),
     ...session,
@@ -87,6 +96,7 @@ export async function activateAccount(
     .run(pw.hash, pw.salt, pw.iterations, pw.algo, now, userId)
 
   const session = await createSession(lib.db, userId, userAgent, now)
+  lib.log.info('account activated', { userId })
   return {
     user: toUserDto(requireUserRow(lib.db, userId), diskUsageBytes(lib.db, userId)),
     ...session,

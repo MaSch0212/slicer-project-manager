@@ -7,7 +7,7 @@ import type { Library } from '../db/open.ts'
 import { userRoot } from '../files/paths.ts'
 import { requireUserRow } from '../users/repo.ts'
 import { addTag, updateProject } from './usecases.ts'
-import { rescan } from './rescan.ts'
+import { rescan, type RescanProgress } from './rescan.ts'
 
 export const SIDECAR_FILE = 'metadata.json'
 
@@ -77,10 +77,19 @@ export function moveFlatLibraryIntoUserFolder(lib: Library, ctx: Ctx): number {
   return toMove.length
 }
 
+/**
+ * The two phases take very different amounts of time -- indexing hashes every byte on disk,
+ * applying sidecars is a handful of queries per project -- so they are reported separately
+ * rather than folded into one percentage that would sit at 99% for the whole second half.
+ */
+export type ImportProgress =
+  | ({ phase: 'indexing' } & RescanProgress)
+  | { phase: 'sidecars'; projectIndex: number; projectCount: number; dirName: string }
+
 export async function importCuraManagerLibrary(
   lib: Library,
   ctx: Ctx,
-  opts: { moveIntoUserFolder: boolean },
+  opts: { moveIntoUserFolder: boolean; onProgress?: (progress: ImportProgress) => void },
 ): Promise<{
   rescan: RescanResultDto
   projectsUpdated: number
@@ -90,7 +99,9 @@ export async function importCuraManagerLibrary(
   const moved = opts.moveIntoUserFolder ? moveFlatLibraryIntoUserFolder(lib, ctx) : 0
 
   // Adopt every folder and index its files first (spec 3.6, step 2).
-  const rescanResult = await rescan(lib, ctx)
+  const rescanResult = await rescan(lib, ctx, {
+    onProgress: (progress) => opts.onProgress?.({ phase: 'indexing', ...progress }),
+  })
 
   const user = requireUserRow(lib.db, ctx.userId)
   const root = userRoot(lib, user.library_dir)
@@ -100,7 +111,15 @@ export async function importCuraManagerLibrary(
 
   let projectsUpdated = 0
   let tagsApplied = 0
+  let projectIndex = 0
   for (const project of projects) {
+    projectIndex++
+    opts.onProgress?.({
+      phase: 'sidecars',
+      projectIndex,
+      projectCount: projects.length,
+      dirName: project.dir_name,
+    })
     const sidecar = readCuraManagerSidecar(join(root, project.dir_name))
     if (!sidecar) continue
 

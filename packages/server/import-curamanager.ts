@@ -21,7 +21,18 @@
  * moved at that point, so the fix is to rename the collisions and run it again.
  */
 import { AppError } from '@spm/contract/errors.ts'
-import { closeLibrary, importCuraManagerLibrary, listUsers, openLibrary } from '@spm/core'
+import {
+  closeLibrary,
+  consoleSink,
+  createLogger,
+  importCuraManagerLibrary,
+  listUsers,
+  LOG_LEVELS,
+  openLibrary,
+  parseLogLevel,
+  type LogLevelSetting,
+} from '@spm/core'
+import { stdoutProgress } from './src/progress.ts'
 
 const USAGE =
   'usage: deno run -A packages/server/import-curamanager.ts <library-dir> <username> [--in-place]'
@@ -29,8 +40,37 @@ const USAGE =
 const inPlace = Deno.args.includes('--in-place')
 const [libraryDir, username, ...extra] = Deno.args.filter((arg) => arg !== '--in-place')
 
+// A big library spends minutes hashing with nothing on screen, so both are on by default
+// here: a live progress line, and 'info' logging for the events behind it.
+const rawLevel = Deno.env.get('SPM_LOG_LEVEL')
+const level = rawLevel === undefined ? 'info' : parseLogLevel(rawLevel)
+if (level === null) {
+  console.error(
+    `SPM_LOG_LEVEL="${rawLevel}" is not a log level. Use one of: silent, ${LOG_LEVELS.join(', ')}`,
+  )
+  Deno.exit(1)
+}
+// Re-bound with a non-nullable type: `run` is a hoisted function declaration, so TypeScript
+// will not carry the null check above into its body.
+const logLevel: LogLevelSetting = level
+
+const progress = stdoutProgress()
+
+function plural(n: number, one: string): string {
+  return `${n} ${one}${n === 1 ? '' : 's'}`
+}
+
 async function run(dir: string, name: string): Promise<void> {
-  const lib = openLibrary(dir)
+  // The progress line is written without a trailing newline, so a log record landing
+  // mid-draw would graft itself onto the end of it. Clearing first keeps both readable.
+  const log = createLogger({
+    level: logLevel,
+    sink: (record) => {
+      progress.clear()
+      consoleSink(record)
+    },
+  })
+  const lib = openLibrary(dir, { logger: log })
   try {
     // A local operator running this script is above any in-app role, so the ctx used to
     // look the account up is a synthetic admin. The ctx handed to the import itself is the
@@ -42,11 +82,28 @@ async function run(dir: string, name: string): Promise<void> {
       throw new AppError('NotFound', `no such user: ${name}. Create the account first.`)
     }
 
+    let phase = ''
     const result = await importCuraManagerLibrary(
       lib,
       { userId: target.id, isAdmin: target.isAdmin },
-      { moveIntoUserFolder: !inPlace },
+      {
+        moveIntoUserFolder: !inPlace,
+        onProgress: (event) => {
+          // Force a redraw when the phase changes, so the switch is never swallowed by the
+          // throttle and the last line of a phase always shows its final counts.
+          const changed = event.phase !== phase
+          phase = event.phase
+          const where = `[${event.projectIndex}/${event.projectCount}] ${event.dirName}`
+          progress.update(
+            event.phase === 'indexing'
+              ? `indexing ${where} -- ${plural(event.filesSeen, 'file')} seen, ${event.filesAdded} new`
+              : `applying sidecars ${where}`,
+            changed,
+          )
+        },
+      },
     )
+    progress.done()
 
     console.log(`imported into "${target.username}":`)
     console.log(`  folders moved:    ${result.moved}`)

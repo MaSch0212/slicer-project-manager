@@ -1,7 +1,14 @@
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { closeLibrary, ensureBootstrapAdmin, openLibrary, type Library } from '@spm/core'
+import {
+  closeLibrary,
+  createLogger,
+  ensureBootstrapAdmin,
+  openLibrary,
+  type Library,
+  type LogRecord,
+} from '@spm/core'
 import { makeHandler } from '../src/router.ts'
 import { routes } from '../src/routes/index.ts'
 
@@ -17,11 +24,22 @@ export type TestServer = {
   fetch: (path: string, init?: RequestInit & { cookie?: string; ip?: string }) => Promise<Response>
   bootstrapToken: string
   limiter: TestClock
+  /** Everything the server logged, at trace. Empty unless the test asked for logging. */
+  logs: LogRecord[]
 }
 
-export async function withServer(run: (server: TestServer) => Promise<void>): Promise<void> {
+export async function withServer(
+  run: (server: TestServer) => Promise<void>,
+  opts: { logging?: boolean } = {},
+): Promise<void> {
   const dir = mkdtempSync(join(tmpdir(), 'spm-server-'))
-  const lib = openLibrary(dir)
+  const logs: LogRecord[] = []
+  // Off by default: every other test in this suite would otherwise pay to build records
+  // nothing reads, and a stray console write would drown the runner output.
+  const logger = opts.logging
+    ? createLogger({ level: 'trace', sink: (record) => logs.push(record) })
+    : undefined
+  const lib = openLibrary(dir, { logger })
   const boot = await ensureBootstrapAdmin(lib)
 
   let now = Date.now()
@@ -41,7 +59,7 @@ export async function withServer(run: (server: TestServer) => Promise<void>): Pr
   }
 
   try {
-    await run({ lib, dir, fetch: fetchFn, bootstrapToken: boot!.token, limiter: clock })
+    await run({ lib, dir, fetch: fetchFn, bootstrapToken: boot!.token, limiter: clock, logs })
   } finally {
     closeLibrary(lib)
     rmSync(dir, { recursive: true, force: true })

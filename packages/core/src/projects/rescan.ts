@@ -13,6 +13,25 @@ export const RELATIVE_PATH_SEPARATOR = '/'
 
 type DiskFile = { relPath: string; absPath: string; size: number; mtimeMs: number }
 
+/**
+ * Emitted once per file examined. A first import of a real library hashes every byte of every
+ * model, which takes minutes with nothing to show for it, so the caller needs a way to render
+ * a live count. Core reports every file and does no throttling of its own: how often to
+ * actually redraw is a presentation decision, and only the caller knows whether it is talking
+ * to a terminal.
+ */
+export type RescanProgress = {
+  /** 1-based, over the projects this rescan will visit. */
+  projectIndex: number
+  projectCount: number
+  dirName: string
+  /** Cumulative across the whole rescan, not per project. */
+  filesSeen: number
+  filesAdded: number
+}
+
+export type RescanOptions = { onProgress?: (progress: RescanProgress) => void }
+
 function isHidden(name: string): boolean {
   return name.startsWith('.')
 }
@@ -54,7 +73,11 @@ function listProjectFolders(root: string): string[] {
   return entries.filter((e) => e.isDirectory() && !isHidden(e.name)).map((e) => e.name)
 }
 
-export async function rescan(lib: Library, ctx: Ctx): Promise<RescanResultDto> {
+export async function rescan(
+  lib: Library,
+  ctx: Ctx,
+  opts: RescanOptions = {},
+): Promise<RescanResultDto> {
   const user = requireUserRow(lib.db, ctx.userId)
   const root = userRoot(lib, user.library_dir)
   const now = Date.now()
@@ -83,6 +106,7 @@ export async function rescan(lib: Library, ctx: Ctx): Promise<RescanResultDto> {
       )
       .run(id, ctx.userId, dirName, dirName, now, now)
     byDirName.set(dirName, { id, dir_name: dirName, state: 'ok' })
+    lib.log.debug('adopted project folder', { projectId: id, dirName })
     result.adopted++
   }
 
@@ -100,7 +124,22 @@ export async function rescan(lib: Library, ctx: Ctx): Promise<RescanResultDto> {
      WHERE file_id = ?`,
   )
 
+  const projectCount = byDirName.size
+  let projectIndex = 0
+  let filesSeen = 0
+  const report = (dirName: string): void => {
+    opts.onProgress?.({
+      projectIndex,
+      projectCount,
+      dirName,
+      filesSeen,
+      filesAdded: result.filesAdded,
+    })
+  }
+
   for (const row of byDirName.values()) {
+    projectIndex++
+    report(row.dir_name)
     if (!onDisk.has(row.dir_name)) {
       // Never delete metadata implicitly; the drive may just be unmounted (3.5).
       if (row.state !== 'missing') {
@@ -128,6 +167,8 @@ export async function rescan(lib: Library, ctx: Ctx): Promise<RescanResultDto> {
     )
 
     for (const file of files) {
+      filesSeen++
+      report(row.dir_name)
       const known = existing.get(file.relPath)
       if (!known) {
         const id = newId()
@@ -181,5 +222,6 @@ export async function rescan(lib: Library, ctx: Ctx): Promise<RescanResultDto> {
     }
   }
 
+  lib.log.info('rescan complete', { userId: ctx.userId, ...result })
   return result
 }

@@ -2,6 +2,21 @@ export type { Ctx } from './ctx.ts'
 export { closeLibrary, openLibrary, type Db, type Library } from './db/open.ts'
 export { newId } from './db/ids.ts'
 export { runMigrations } from './db/migrate.ts'
+export {
+  consoleSink,
+  createLogger,
+  DEFAULT_LOG_LEVEL,
+  formatRecord,
+  LOG_LEVELS,
+  NOOP_LOGGER,
+  parseLogLevel,
+  type Logger,
+  type LogFields,
+  type LogLevel,
+  type LogLevelSetting,
+  type LogRecord,
+  type LogSink,
+} from './log.ts'
 
 export { activateAccount, login, type LoginResult } from './auth/login.ts'
 export { checkActivationToken, issueActivationToken } from './auth/activation.ts'
@@ -34,11 +49,17 @@ export {
   sanitizeDirName,
   updateProject,
 } from './projects/usecases.ts'
-export { rescan, RELATIVE_PATH_SEPARATOR } from './projects/rescan.ts'
+export {
+  rescan,
+  RELATIVE_PATH_SEPARATOR,
+  type RescanOptions,
+  type RescanProgress,
+} from './projects/rescan.ts'
 export {
   importCuraManagerLibrary,
   moveFlatLibraryIntoUserFolder,
   readCuraManagerSidecar,
+  type ImportProgress,
 } from './projects/import-curamanager.ts'
 
 export { classifyFile, SLICER_HEADER_REGISTRY } from './files/classify.ts'

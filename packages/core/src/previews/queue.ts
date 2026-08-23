@@ -110,6 +110,7 @@ export function claimPendingPreviews(
     'UPDATE previews SET claimed_at = ?, attempts = attempts + 1 WHERE file_id = ?',
   )
   for (const row of rows) claim.run(now, row.fileId)
+  lib.log.debug('claimed preview jobs', { count: rows.length })
 
   return rows.map((row) => ({
     fileId: row.fileId,
@@ -150,6 +151,7 @@ async function runOne(
            WHERE file_id = ?`,
         )
         .run(now, job.fileId)
+      lib.log.debug('preview unsupported', { fileId: job.fileId, kind: job.kind })
       counts.unsupported++
       return
     }
@@ -171,6 +173,12 @@ async function runOne(
         now,
         job.fileId,
       )
+    lib.log.debug('preview ready', {
+      fileId: job.fileId,
+      source: output.source,
+      width: output.width,
+      height: output.height,
+    })
     counts.ready++
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
@@ -183,6 +191,9 @@ async function runOne(
          WHERE file_id = ?`,
       )
       .run(message.slice(0, 500), now, job.fileId)
+    // warn, not error: a single malformed file is expected traffic for an importer, and
+    // MAX_PREVIEW_ATTEMPTS already bounds it. The path is what makes it actionable.
+    lib.log.warn('preview failed', { fileId: job.fileId, path: job.absPath, err: error })
     counts.failed++
   }
 }
@@ -207,5 +218,8 @@ export async function runPreviewQueue(
 
   const width = Math.max(1, Math.min(opts.concurrency ?? DEFAULT_CONCURRENCY, jobs.length))
   await Promise.all(Array.from({ length: width }, worker))
+  // Silent when there was nothing to do: this runs every 30 seconds and an idle library
+  // would otherwise fill the log with zeroes at the default level.
+  if (jobs.length > 0) lib.log.info('preview batch', { claimed: jobs.length, ...counts })
   return counts
 }

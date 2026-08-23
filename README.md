@@ -28,6 +28,7 @@ password anywhere.
 | `SPM_PORT`          | `8000`                                                                                                                                                           | Listen port.                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | `SPM_WEB_ROOT`      | `packages/web/dist/web/browser`, found next to the server's own source rather than the process working directory — so the command above works from any directory | Where the built Angular bundle lives. When set explicitly it is resolved relative to the process working directory.                                                                                                                                                                                                                                                                                                                                                                |
 | `SPM_PUBLIC_ORIGIN` | the origin of the incoming request                                                                                                                               | The origin used to build activation links, e.g. `https://print.example.com`. Set this when a TLS-terminating reverse proxy sits in front: Deno only sees its own plain-HTTP listener, so without it the generated link is `http://…`, which also drops the `Secure` session cookie and leaves the user activated but not signed in. `X-Forwarded-Proto` is deliberately _not_ trusted — it is client-settable, the same reason the rate limiter keys on the TCP peer address only. |
+| `SPM_LOG_LEVEL`     | `info`                                                                                                                                                           | How much the server logs: `silent`, `error`, `warn`, `info`, `debug` or `trace`. `info` covers startup, one line per API request, preview batches, authentication and every create/update/delete. `debug` adds static-asset requests and per-job preview detail. An unrecognised value is refused at startup rather than ignored.                                                                                                                                                  |
 
 ## Migrating an existing CuraManager library
 
@@ -46,6 +47,14 @@ The move is all-or-nothing. If any folder name already exists under the target u
 the import refuses before renaming anything, lists the colliding names and exits non-zero —
 rename them and run it again. Previews are queued, not generated: the running server picks
 them up on its next pass.
+
+Indexing hashes every byte of every file, so a large library takes minutes. The command shows
+a live progress line (`indexing [12/240] Widget Mk2 -- 812 files seen, 806 new`), which
+redraws in place on a terminal and falls back to a line every few seconds when redirected to a
+file. It logs at `info` by default; `SPM_LOG_LEVEL` works here too.
+
+The server may stay running during the import — both processes open the same SQLite file and
+wait for one another rather than failing.
 
 ## Layout
 

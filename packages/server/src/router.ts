@@ -1,5 +1,5 @@
 import { AppError } from '@spm/contract/errors.ts'
-import { resolveSession, type Ctx, type Library } from '@spm/core'
+import { NOOP_LOGGER, resolveSession, type Ctx, type Library, type Logger } from '@spm/core'
 import { errorResponse } from './errors.ts'
 import { makeRateLimiter, type RateLimitRule } from './rate-limit.ts'
 import { readSessionToken } from './session.ts'
@@ -7,6 +7,8 @@ import { serveStatic } from './static.ts'
 
 export type Env = {
   lib: Library
+  /** Defaults to the library own logger, which is silent unless the host configured one. */
+  log?: Logger
   /** Injectable clock for the per-`makeHandler` rate limiter; tests override it to move
    *  time forward without sleeping. Defaults to `Date.now` inside `makeRateLimiter`. */
   now?: () => number
@@ -63,12 +65,15 @@ export function makeHandler(
   // One limiter per makeHandler call, so each server instance (each `withServer` in tests)
   // has its own state and none bleed into one another.
   const limiter = makeRateLimiter(env.now)
+  const log = env.log ?? env.lib.log ?? NOOP_LOGGER
 
-  return async (req: Request, info?: Deno.ServeHandlerInfo): Promise<Response> => {
-    const url = new URL(req.url)
-
-    if (!url.pathname.startsWith('/api/')) return serveStatic(url)
-
+  /** Everything under /api/. Split out so the caller can time and log every exit path once. */
+  const handleApi = async (
+    req: Request,
+    url: URL,
+    info: Deno.ServeHandlerInfo | undefined,
+    seen: { ctx: Ctx },
+  ): Promise<Response> => {
     let pathMatched = false
     for (const route of compiled) {
       const match = route.pattern.exec({ pathname: url.pathname })
@@ -84,19 +89,18 @@ export function makeHandler(
           const key = `${clientAddress(info)}|${route.method} ${route.path}`
           limiter.check(key, route.rateLimit)
         }
-        let ctx = ANONYMOUS
         if (route.auth === 'session') {
           const token = readSessionToken(req)
           const resolved = token ? await resolveSession(env.lib.db, token) : null
           if (!resolved) throw new AppError('Unauthorized', 'a valid session is required')
-          ctx = resolved
+          seen.ctx = resolved
         }
         const params = Object.fromEntries(
           Object.entries(match.pathname.groups).map(([key, value]) => [key, value ?? '']),
         )
-        return await route.handler({ req, url, params, env, ctx })
+        return await route.handler({ req, url, params, env, ctx: seen.ctx })
       } catch (error) {
-        const response = errorResponse(error)
+        const response = errorResponse(error, log)
         if (error instanceof AppError && error.code === 'TooManyRequests') {
           const retryAfterSeconds = error.details?.retryAfterSeconds
           response.headers.set('retry-after', String(retryAfterSeconds ?? 0))
@@ -114,6 +118,41 @@ export function makeHandler(
         { status: 405, headers: { 'content-type': 'application/json; charset=utf-8' } },
       )
     }
-    return errorResponse(new AppError('NotFound', 'no such endpoint'))
+    return errorResponse(new AppError('NotFound', 'no such endpoint'), log)
+  }
+
+  return async (req: Request, info?: Deno.ServeHandlerInfo): Promise<Response> => {
+    const url = new URL(req.url)
+    const started = Date.now()
+
+    // Static assets are a page load's worth of noise -- every chunk, style and thumbnail --
+    // so they sit one level below the API: `debug` shows them, the default `info` does not.
+    if (!url.pathname.startsWith('/api/')) {
+      const response = await serveStatic(url)
+      log.debug('static', {
+        method: req.method,
+        path: url.pathname,
+        status: response.status,
+        ms: Date.now() - started,
+      })
+      return response
+    }
+
+    const seen = { ctx: ANONYMOUS }
+    const response = await handleApi(req, url, info, seen)
+    const fields: Record<string, unknown> = {
+      method: req.method,
+      path: url.pathname,
+      status: response.status,
+      ms: Date.now() - started,
+    }
+    // Only once a session resolved -- an anonymous userId is the empty string, which reads
+    // as a field whose value went missing rather than as "nobody was signed in".
+    if (seen.ctx.userId) fields.userId = seen.ctx.userId
+    // A 5xx is the server's own fault and belongs in the level an operator always has on.
+    // 4xx stays at `info`: a 401 on an expired cookie is routine, not a warning sign.
+    if (response.status >= 500) log.error('request failed', fields)
+    else log.info('request', fields)
+    return response
   }
 }
