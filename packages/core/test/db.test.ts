@@ -1,6 +1,9 @@
-import { existsSync } from 'node:fs'
+import { existsSync, mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
 import { newId } from '../src/db/ids.ts'
+import { BUSY_TIMEOUT_MS, closeLibrary, openLibrary } from '../src/db/open.ts'
 import { runMigrations } from '../src/db/migrate.ts'
 import { assert, test } from './harness.ts'
 import { withLibrary } from './tmp-library.ts'
@@ -102,4 +105,45 @@ test('a project folder name is unique per owner', async () => {
     insert.run(newId(), userId, 'Benchy', 'Benchy')
     assert.throws(() => insert.run(newId(), userId, 'Benchy again', 'Benchy'))
   })
+})
+
+// SPM is a multi-process design over one library file: the server, the desktop app and the
+// `import-curamanager` script all open the same `app.db`. SQLite's default `busy_timeout` is
+// 0 -- zero retries -- so the *first* moment two of them write at once, one dies outright
+// with "database is locked". These two tests pin the retry behaviour that makes concurrent
+// access work at all; see the comment on BUSY_TIMEOUT_MS.
+test('openLibrary sets a non-zero busy_timeout', async () => {
+  await withLibrary((lib) => {
+    const { timeout } = lib.db.prepare('PRAGMA busy_timeout').get() as { timeout: number }
+    assert.equal(timeout, BUSY_TIMEOUT_MS)
+    assert.ok(BUSY_TIMEOUT_MS > 0)
+  })
+})
+
+test('a write contending with another connection retries instead of failing instantly', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'spm-busy-'))
+  // 300ms rather than the 5s default purely so the test is quick; the behaviour under test
+  // -- that SQLite waits and retries at all -- is identical at either value.
+  const lib = openLibrary(dir, { busyTimeoutMs: 300 })
+  // Stands in for the running server holding a write lock. It never releases it, so the
+  // contending write below must still fail in the end -- what changes is *when*: instantly
+  // (the bug) versus after exhausting the retry budget (the fix).
+  const other = new DatabaseSync(join(dir, '.spm', 'app.db'))
+  try {
+    other.exec('BEGIN IMMEDIATE')
+    const started = Date.now()
+    let threw = false
+    try {
+      lib.db.exec('CREATE TABLE contended (x)')
+    } catch {
+      threw = true
+    }
+    const elapsed = Date.now() - started
+    assert.ok(threw, 'a permanently held lock must still surface as an error')
+    assert.ok(elapsed >= 250, `gave up after ${elapsed}ms; expected it to retry for ~300ms`)
+  } finally {
+    other.close()
+    closeLibrary(lib)
+    rmSync(dir, { recursive: true, force: true })
+  }
 })
