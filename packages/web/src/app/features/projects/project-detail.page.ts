@@ -24,9 +24,8 @@ import {
   type ProjectPatchInput,
 } from '@spm/contract/schemas.ts'
 import { API_CLIENT } from '../../core/api/api-client.token'
+import { formatBytes } from '../../core/format-bytes'
 import { TranslateService } from '../../core/i18n/translate.service'
-
-const UNITS = ['B', 'kB', 'MB', 'GB', 'TB']
 
 type EditModel = { name: string; website: string; notes: string; isArchived: boolean }
 
@@ -367,16 +366,9 @@ export class ProjectDetailPage {
     )
   })
 
-  formatBytes(bytes: number): string {
-    if (bytes < 1024) return `${bytes} B`
-    let value = bytes
-    let unit = 0
-    while (value >= 1024 && unit < UNITS.length - 1) {
-      value /= 1024
-      unit++
-    }
-    return `${value.toFixed(1)} ${UNITS[unit]}`
-  }
+  // Ruling 72.4: extracted to core/format-bytes.ts so admin/users.page.ts (disk usage and
+  // quotas) can render the same shape rather than reimplementing it.
+  protected readonly formatBytes = formatBytes
 
   protected async onFileInput(event: Event): Promise<void> {
     const element = event.target as HTMLInputElement

@@ -8,6 +8,32 @@ export type Language = 'en' | 'de'
 const AVAILABLE_LANGUAGES: readonly Language[] = ['en', 'de']
 
 /**
+ * Ruling 74: `en` is statically bundled and always present; `de` is a separate lazy chunk. If
+ * that chunk ever fails to load (offline, a stale deploy, a 404), the base class's
+ * `_translations` signal would never populate — and app.config.ts awaits `TranslateService.ready`
+ * before bootstrap finishes, so an unresolved promise here would hang the whole app on a blank
+ * screen. Falling back to `en` keeps "translations are always available" true rather than merely
+ * probable.
+ *
+ * `importDe` is a parameter (rather than a literal `import('./locales/de.json')` inline below)
+ * so this can be unit-tested with a rejecting stub: Angular's vitest integration refuses
+ * `vi.mock` on relative specifiers ("Please use Angular TestBed for mocking dependencies"), so
+ * mocking the dynamic import itself is not an option here.
+ *
+ * TODO(spec C, Electron): the desktop build must bundle the locale files directly (not fetch
+ * them as a dynamic import) so this works with no network at all.
+ */
+export async function loadDeOrFallbackToEn(
+  importDe: () => Promise<{ default: Translations }>,
+): Promise<Translations> {
+  try {
+    return (await importDe()).default
+  } catch {
+    return en
+  }
+}
+
+/**
  * The installed `BaseTranslateService<T>` takes a single type parameter (it hard-codes the
  * `_`-separated translation-key signal) and its constructor is
  * `(availableLanguages: readonly string[], initialLanguage: string | null)` — not the
@@ -45,7 +71,7 @@ export class TranslateService extends BaseTranslateService<Translations> {
   }
 
   protected override async loadTranslations(language: string): Promise<Translations> {
-    if (language === 'de') return (await import('./locales/de.json')).default
+    if (language === 'de') return loadDeOrFallbackToEn(() => import('./locales/de.json'))
     return en
   }
 }

@@ -63,7 +63,11 @@
     "reissue": "Einladung neu senden",
     "disable": "Deaktivieren",
     "enable": "Aktivieren",
-    "lastAdmin": "Der letzte aktive Administrator muss bestehen bleiben"
+    "lastAdmin": "Der letzte aktive Administrator muss bestehen bleiben",
+    "quotaMiB": "Kontingent (MiB)",
+    "invalidQuota": "Das Kontingent muss eine ganze Zahl von MiB größer als null sein",
+    "deleteUser": "Benutzer löschen",
+    "confirmDeleteUser": "Diesen Benutzer löschen? Projekte und Dateimetadaten werden entfernt, der Bibliotheksordner bleibt jedoch absichtlich auf der Festplatte erhalten und gibt keinen Speicherplatz frei."
   },
   "errors": {
     "quotaExceeded": "Dieser Upload würde das Kontingent überschreiten ({{ usage }} von {{ quota }} belegt)",

@@ -63,7 +63,11 @@
     "reissue": "Re-issue invite",
     "disable": "Disable",
     "enable": "Enable",
-    "lastAdmin": "The last active administrator must remain"
+    "lastAdmin": "The last active administrator must remain",
+    "quotaMiB": "Quota (MiB)",
+    "invalidQuota": "Quota must be a whole number of MiB, greater than zero",
+    "deleteUser": "Delete user",
+    "confirmDeleteUser": "Delete this user? Their projects and file metadata are removed, but their library folder is deliberately left on disk and does not free up any space."
   },
   "errors": {
     "quotaExceeded": "This upload would exceed your quota ({{ usage }} of {{ quota }} used)",

@@ -589,10 +589,6 @@ describe('ProjectDetailPage', () => {
     expect(text(fixture)).toContain(en.projects.archive)
   })
 
-  it('formats byte counts for humans', () => {
-    const { page } = setup()
-    expect(page.formatBytes(0)).toBe('0 B')
-    expect(page.formatBytes(2048)).toBe('2.0 kB')
-    expect(page.formatBytes(5 * 1024 * 1024)).toBe('5.0 MB')
-  })
+  // formatBytes itself moved to core/format-bytes.spec.ts (ruling 72.4) — it is now shared
+  // with admin/users.page.ts, so its tests live with the implementation, not one of its callers.
 })
