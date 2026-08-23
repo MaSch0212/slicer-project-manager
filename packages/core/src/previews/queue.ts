@@ -31,6 +31,13 @@ export type PreviewHandler = {
 export const MAX_PREVIEW_ATTEMPTS = 3
 export const DEFAULT_CONCURRENCY = 2
 
+/**
+ * How long a claim on a preview row is honoured. Well beyond any single job (subsystem B's
+ * rasterizer against a 54 MB 3MF, spec 7.1, is minutes at worst), so it never cuts a live
+ * job short; short enough that a killed process does not strand a row until the next rescan.
+ */
+export const PREVIEW_LEASE_MS = 15 * 60 * 1000
+
 export const EMBEDDED_HANDLER: PreviewHandler = {
   kinds: ['slicer_project'],
   run: (job) => {
@@ -43,10 +50,33 @@ function placeholders(n: number): string {
   return new Array(n).fill('?').join(', ')
 }
 
+/**
+ * Takes ownership of up to `limit` pending rows and returns them as jobs.
+ *
+ * This *claims*: it writes `claimed_at` (the lease) and increments `attempts` before the
+ * caller runs anything.
+ *
+ * - **Claiming, not just selecting.** The queue is fired on a fixed interval with no
+ *   guarantee a batch finishes inside it. Selecting on `state = 'pending'` alone let the
+ *   next tick re-select the identical rows and redo the whole batch, compounding every tick
+ *   once a job is slower than the interval — which subsystem B's rasterizer will be (spec
+ *   7.1). A row with a live lease is invisible here.
+ * - **Atomic without a transaction.** `DatabaseSync` is synchronous and there is exactly one
+ *   process, so nothing may `await` between the SELECT and the UPDATE below. That, not
+ *   locking, is what makes the claim indivisible: another `runPreviewQueue` can only observe
+ *   the rows before or after both statements, never between them.
+ * - **attempts moves here, not on failure.** Incrementing only in the caught-throw branch
+ *   meant a handler that hung or a process that died never counted, so the same malformed
+ *   file was retried forever across restarts — exactly what spec 7.3's retry budget exists
+ *   to bound.
+ * - **An expired lease is reclaimable**, so a crash costs one attempt rather than stranding
+ *   the row until the next rescan.
+ */
 export function claimPendingPreviews(
   lib: Library,
   handlers: readonly PreviewHandler[],
   limit: number,
+  now: number = Date.now(),
 ): PreviewJob[] {
   const kinds = [...new Set(handlers.flatMap((handler) => [...handler.kinds]))]
   if (kinds.length === 0) return []
@@ -60,11 +90,12 @@ export function claimPendingPreviews(
        JOIN projects p ON p.id = f.project_id
        JOIN users u ON u.id = p.owner_id
        WHERE pv.state = 'pending' AND pv.attempts < ? AND p.state = 'ok'
+         AND (pv.claimed_at IS NULL OR pv.claimed_at <= ?)
          AND f.kind IN (${placeholders(kinds.length)})
        ORDER BY pv.updated_at
        LIMIT ?`,
     )
-    .all(MAX_PREVIEW_ATTEMPTS, ...kinds, limit) as {
+    .all(MAX_PREVIEW_ATTEMPTS, now - PREVIEW_LEASE_MS, ...kinds, limit) as {
     fileId: string
     kind: FileKind
     relPath: string
@@ -72,6 +103,13 @@ export function claimPendingPreviews(
     dirName: string
     libraryDir: string
   }[]
+  if (rows.length === 0) return []
+
+  // No await between the SELECT above and this UPDATE: see the doc comment.
+  const claim = lib.db.prepare(
+    'UPDATE previews SET claimed_at = ?, attempts = attempts + 1 WHERE file_id = ?',
+  )
+  for (const row of rows) claim.run(now, row.fileId)
 
   return rows.map((row) => ({
     fileId: row.fileId,
@@ -93,7 +131,12 @@ async function runOne(
   counts: { ready: number; failed: number; unsupported: number },
 ): Promise<void> {
   const handler = handlers.find((candidate) => candidate.kinds.includes(job.kind))
-  if (!handler) return
+  if (!handler) {
+    // Unreachable via claimPendingPreviews, which only claims covered kinds; releasing the
+    // lease anyway keeps a hand-built job list from parking a row for PREVIEW_LEASE_MS.
+    lib.db.prepare('UPDATE previews SET claimed_at = NULL WHERE file_id = ?').run(job.fileId)
+    return
+  }
 
   const now = Date.now()
   try {
@@ -102,7 +145,9 @@ async function runOne(
       // Deterministic absence: never retried.
       lib.db
         .prepare(
-          "UPDATE previews SET state = 'unsupported', error = NULL, updated_at = ? WHERE file_id = ?",
+          `UPDATE previews SET state = 'unsupported', error = NULL, claimed_at = NULL,
+                               updated_at = ?
+           WHERE file_id = ?`,
         )
         .run(now, job.fileId)
       counts.unsupported++
@@ -114,7 +159,7 @@ async function runOne(
     lib.db
       .prepare(
         `UPDATE previews SET state = 'ready', source = ?, png_path = ?, width = ?, height = ?,
-                             source_hash = ?, error = NULL, updated_at = ?
+                             source_hash = ?, error = NULL, claimed_at = NULL, updated_at = ?
          WHERE file_id = ?`,
       )
       .run(
@@ -129,9 +174,12 @@ async function runOne(
     counts.ready++
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
+    // attempts is NOT incremented here: claimPendingPreviews already charged this attempt,
+    // so doing it again would halve the retry budget for the failures it is meant to bound.
+    // The lease is released, because this row has reached a terminal state.
     lib.db
       .prepare(
-        `UPDATE previews SET state = 'failed', error = ?, attempts = attempts + 1, updated_at = ?
+        `UPDATE previews SET state = 'failed', error = ?, claimed_at = NULL, updated_at = ?
          WHERE file_id = ?`,
       )
       .run(message.slice(0, 500), now, job.fileId)

@@ -3,6 +3,7 @@ import type { Db } from './open.ts'
 
 const MIGRATIONS: ReadonlyArray<{ version: number; file: string }> = [
   { version: 1, file: '001_init.sql' },
+  { version: 2, file: '002_preview_claim.sql' },
 ]
 
 /** Applies every migration newer than PRAGMA user_version. Returns the resulting version. */

@@ -105,7 +105,7 @@ const EMPTY_CREATE_MODEL: CreateModel = {
                 <input
                   type="checkbox"
                   [checked]="user.isAdmin"
-                  (change)="onToggleAdmin(user)"
+                  (change)="onToggleAdmin(user, $event)"
                   [attr.aria-label]="t.translations().admin.isAdmin"
                 />
               </td>
@@ -220,12 +220,15 @@ export class UsersPage {
       : this.t.translations().errors.generic
   }
 
-  private async guard(action: () => Promise<void>): Promise<void> {
+  /** Returns whether `action` landed, so a caller can undo an optimistic UI change. */
+  private async guard(action: () => Promise<void>): Promise<boolean> {
     this.errorMessage.set(null)
     try {
       await action()
+      return true
     } catch (error) {
       this.errorMessage.set(this.describe(error))
+      return false
     }
   }
 
@@ -252,24 +255,36 @@ export class UsersPage {
     })
   }
 
-  onReissue(user: UserDto): Promise<void> {
-    return this.guard(async () => {
+  async onReissue(user: UserDto): Promise<void> {
+    await this.guard(async () => {
       this.activationUrl.set((await this.api.users.reissueInvite(user.id)).activationUrl)
     })
   }
 
-  onToggleDisabled(user: UserDto): Promise<void> {
-    return this.guard(async () => {
+  async onToggleDisabled(user: UserDto): Promise<void> {
+    await this.guard(async () => {
       await this.api.users.update(user.id, { isDisabled: user.status !== 'disabled' })
       this.users.reload()
     })
   }
 
-  onToggleAdmin(user: UserDto): Promise<void> {
-    return this.guard(async () => {
+  /**
+   * `event` carries the checkbox the browser has already flipped. `[checked]` binds to
+   * `user.isAdmin`, which a refused toggle never changes — and Angular only writes a
+   * property binding when its value changes, so nothing puts the box back on its own.
+   * Reloading the list does not do it either: with `track user.id` the same input element is
+   * reused and the binding's value is identical. So a refusal (a `LastActiveAdmin` 409, most
+   * of all) used to leave the box visually demoted right beside the error explaining that it
+   * had not been. Restoring it by hand is what keeps the control honest.
+   */
+  async onToggleAdmin(user: UserDto, event?: Event): Promise<void> {
+    const ok = await this.guard(async () => {
       await this.api.users.update(user.id, { isAdmin: !user.isAdmin })
       this.users.reload()
     })
+    if (ok) return
+    const box = event?.target
+    if (box instanceof HTMLInputElement) box.checked = user.isAdmin
   }
 
   /**
@@ -282,15 +297,15 @@ export class UsersPage {
    * reject anyway. Refused, not reinterpreted: nothing here silently maps an invalid entry
    * onto some other meaning.
    */
-  onSetQuota(user: UserDto, megabytes: number | null): Promise<void> {
+  async onSetQuota(user: UserDto, megabytes: number | null): Promise<void> {
     if (megabytes !== null) {
       const bytes = megabytes * MIB
       if (!updateUserSchema.shape.quotaBytes.safeParse(bytes).success) {
         this.errorMessage.set(this.t.translations().admin.invalidQuota)
-        return Promise.resolve()
+        return
       }
     }
-    return this.guard(async () => {
+    await this.guard(async () => {
       await this.api.users.update(user.id, {
         quotaBytes: megabytes === null ? null : megabytes * MIB,
       })
@@ -325,8 +340,8 @@ export class UsersPage {
     return this.onDelete(user)
   }
 
-  onDelete(user: UserDto): Promise<void> {
-    return this.guard(async () => {
+  async onDelete(user: UserDto): Promise<void> {
+    await this.guard(async () => {
       await this.api.users.delete(user.id)
       this.users.reload()
     })

@@ -50,14 +50,20 @@ import { ProjectsStore } from './projects.store'
         {{ t.translations().projects.includeArchived }}
       </label>
 
+      <!-- [value] reflects the persisted choice, so revisiting the page shows the sort the
+           user actually saved rather than always the first option. -->
       <select
         [attr.aria-label]="t.translations().settings.sort"
+        [value]="store.query().sort + ':' + store.query().dir"
         (change)="onSort($any($event.target).value)"
       >
-        <option value="updatedAt:desc">{{ t.translations().settings.sort }}</option>
-        <option value="name:asc">A–Z</option>
-        <option value="createdAt:desc">Newest</option>
+        <option value="updatedAt:desc">{{ t.translations().settings.sortUpdated }}</option>
+        <option value="name:asc">{{ t.translations().settings.sortName }}</option>
+        <option value="createdAt:desc">{{ t.translations().settings.sortNewest }}</option>
       </select>
+      @if (sortError()) {
+        <p role="alert">{{ t.translations().errors.generic }}</p>
+      }
 
       @for (tag of store.knownTags(); track tag) {
         <button
@@ -127,6 +133,7 @@ export class ProjectsPage {
 
   readonly rescanned = signal<RescanResultDto | null>(null)
   readonly rescanError = signal(false)
+  readonly sortError = signal(false)
   readonly createModel = signal({ name: '' })
   readonly createError = signal(false)
   // The same schema the server validates with (spec 2.3).
@@ -134,9 +141,17 @@ export class ProjectsPage {
     validateStandardSchema(path, createProjectSchema)
   })
 
-  protected onSort(value: string): void {
+  // Public, like onCreate/onRescan: the spec drives it directly. `setSort` now also persists
+  // the choice, so the rejection needs catching — a template `(change)` binding cannot
+  // handle one, and the sort itself has already been applied locally regardless.
+  async onSort(value: string): Promise<void> {
+    this.sortError.set(false)
     const [sort, dir] = value.split(':')
-    this.store.setSort(sort as 'name' | 'createdAt' | 'updatedAt', dir as 'asc' | 'desc')
+    try {
+      await this.store.setSort(sort as 'name' | 'createdAt' | 'updatedAt', dir as 'asc' | 'desc')
+    } catch {
+      this.sortError.set(true)
+    }
   }
 
   // Public (like LoginPage.onSubmit / ActivatePage.onSubmit): the "does not call create when

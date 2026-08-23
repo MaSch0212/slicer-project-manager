@@ -95,7 +95,8 @@ export async function rescan(lib: Library, ctx: Ctx): Promise<RescanResultDto> {
   )
   const resetPreview = lib.db.prepare(
     `UPDATE previews SET state = 'pending', source = NULL, png_path = NULL, width = NULL,
-                         height = NULL, error = NULL, attempts = 0, updated_at = ?
+                         height = NULL, error = NULL, attempts = 0, claimed_at = NULL,
+                         updated_at = ?
      WHERE file_id = ?`,
   )
 

@@ -238,6 +238,48 @@ describe('UsersPage', () => {
     )
   })
 
+  // Final review, minor 4: [checked] binds to user.isAdmin, and a refused toggle never
+  // changes it — so Angular, which only writes a property binding when its value changes,
+  // never puts the box back. Reloading the list does not help either: with `track user.id`
+  // the same input element is reused and the binding's value is unchanged. The result was a
+  // checkbox showing "not an admin" right next to "the last active administrator must
+  // remain". (onToggleDisabled is immune: its label is derived from user.status.)
+  it('puts the admin checkbox back when the toggle is refused', async () => {
+    const { fixture, api } = await setup()
+    await settle()
+    api.users.update.mockRejectedValueOnce(new AppError('LastActiveAdmin', 'nope'))
+
+    const box = (fixture.nativeElement as HTMLElement).querySelector(
+      `input[type="checkbox"][aria-label="${en.admin.isAdmin}"]`,
+    ) as HTMLInputElement
+    expect(box.checked).toBe(true)
+
+    // The real interaction: the browser flips the box itself, then fires change.
+    box.checked = false
+    box.dispatchEvent(new Event('change'))
+    await settle()
+
+    expect(fixture.componentInstance.errorMessage()).toBe(
+      'The last active administrator must remain',
+    )
+    expect(box.checked).toBe(true)
+  })
+
+  it('leaves the admin checkbox where the user put it when the toggle succeeds', async () => {
+    const { fixture, api } = await setup()
+    await settle()
+
+    const box = (fixture.nativeElement as HTMLElement).querySelector(
+      `input[type="checkbox"][aria-label="${en.admin.isAdmin}"]`,
+    ) as HTMLInputElement
+    box.checked = false
+    box.dispatchEvent(new Event('change'))
+    await settle()
+
+    expect(api.users.update).toHaveBeenCalledWith('u1', { isAdmin: false })
+    expect(fixture.componentInstance.errorMessage()).toBeNull()
+  })
+
   // Ruling 73: deleting a user cascades all their project and file metadata with one click
   // today, and no confirmation. Match project-detail.page.ts's two-stage shape: arm, then
   // confirm.

@@ -48,7 +48,15 @@
     "theme": "Theme",
     "language": "Language",
     "viewMode": "Project view",
-    "sort": "Sort by"
+    "sort": "Sort by",
+    "themeSystem": "System",
+    "themeLight": "Light",
+    "themeDark": "Dark",
+    "viewModeGrid": "Grid",
+    "viewModeList": "List",
+    "sortUpdated": "Recently updated",
+    "sortName": "A–Z",
+    "sortNewest": "Newest"
   },
   "admin": {
     "title": "Users",

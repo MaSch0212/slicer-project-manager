@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { activationUrl, normalizePublicOrigin } from '../src/routes/users.ts'
 import { loginAsAdmin, withServer, type TestServer } from './harness.ts'
 
 async function createUser(
@@ -168,4 +169,41 @@ Deno.test('an unknown setting key is rejected rather than stored', async () => {
     })
     assert.equal(response.status, 400)
   })
+})
+
+// Final review, minor 6: activation links were built from `url.origin`, and Deno derives the
+// scheme from its own listener. Behind a TLS-terminating proxy that is plain `http://`, so
+// the link the admin hands over is `http://…` — which, being insecure, also drops the
+// `Secure` session cookie set on activation: the user activates but is not signed in.
+// X-Forwarded-Proto is deliberately NOT trusted (client-settable, exactly why the rate
+// limiter keys on the TCP peer address only), so this is an explicit opt-in instead.
+Deno.test('activation links use SPM_PUBLIC_ORIGIN when it is configured', () => {
+  const url = new URL('http://10.0.0.4:8000/api/users')
+
+  assert.equal(activationUrl(url, 'tok'), 'http://10.0.0.4:8000/activate#tok')
+  assert.equal(
+    activationUrl(url, 'tok', 'https://print.example.com'),
+    'https://print.example.com/activate#tok',
+  )
+})
+
+Deno.test('a configured public origin is normalised down to a bare origin', () => {
+  // A trailing slash or a stray path would otherwise produce '…//activate#tok'.
+  assert.equal(normalizePublicOrigin('https://print.example.com/'), 'https://print.example.com')
+  assert.equal(
+    normalizePublicOrigin('https://print.example.com/spm?x=1#y'),
+    'https://print.example.com',
+  )
+  assert.equal(
+    normalizePublicOrigin('https://print.example.com:8443'),
+    'https://print.example.com:8443',
+  )
+})
+
+Deno.test('a public origin that is not an http(s) URL is refused, not silently ignored', () => {
+  // Loud at startup beats quietly emitting http:// links nobody notices until activation
+  // fails.
+  assert.throws(() => normalizePublicOrigin('print.example.com'), /SPM_PUBLIC_ORIGIN/)
+  assert.throws(() => normalizePublicOrigin('ftp://print.example.com'), /SPM_PUBLIC_ORIGIN/)
+  assert.throws(() => normalizePublicOrigin('not a url at all'), /SPM_PUBLIC_ORIGIN/)
 })

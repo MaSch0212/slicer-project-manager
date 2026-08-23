@@ -104,9 +104,6 @@ importers:
       '@angular/compiler-cli':
         specifier: ^22.1.0
         version: 22.1.3(@angular/compiler@22.1.3)(typescript@6.0.3)
-      '@awdlab/jig-playwright':
-        specifier: ^0.0.4
-        version: 0.0.4(@awdlab/jig-themes@0.0.4(patch_hash=04ab20ecdd42527d808e0ab32297a849bc3270e39a93ffd3535ee91fdbb77a35))(@awdlab/jig@0.0.4(patch_hash=66c7e7e7ef05e1e23375de1dbfb4fc1351d7701958488393519178bec0a72d70)(d0d5b521922d733473c4c5c3f5b9e36e))(@playwright/test@1.62.1)
       '@playwright/test':
         specifier: ^1.56.0
         version: 1.62.1
@@ -284,13 +281,6 @@ packages:
 
   '@awdlab/jig-custom-types@0.0.1-next.1':
     resolution: {integrity: sha512-AkeVOVsOBCrddxS3hFh8je+f5RE8MFEjaNe0TqUMJcTAgJDOLMGcRDSEn3+Yqh28cliCJRQvvKWToem1IaSRvQ==}
-
-  '@awdlab/jig-playwright@0.0.4':
-    resolution: {integrity: sha512-/SqoXHC8Baznqt160B7/zt0GNTmVM9oX1xkhpMbG5bYAb0kS+G5mqYuvGDFXw3aJETzjT9RaViYQZdWpK3Xt7Q==}
-    peerDependencies:
-      '@awdlab/jig': 0.0.4
-      '@awdlab/jig-themes': 0.0.4
-      '@playwright/test': '>=1.55.0'
 
   '@awdlab/jig-themes@0.0.4':
     resolution: {integrity: sha512-Gq6+o2dRUrsYm7BHG7gjbV0/t8crzh1QSyERb61GxOt3NkenKlfnIV+90dxrVKW+52i462xzvc7nAprkYcarOg==}
@@ -3225,12 +3215,6 @@ snapshots:
     dependencies:
       '@iconify/types': 2.0.0
       tslib: 2.8.1
-
-  '@awdlab/jig-playwright@0.0.4(@awdlab/jig-themes@0.0.4(patch_hash=04ab20ecdd42527d808e0ab32297a849bc3270e39a93ffd3535ee91fdbb77a35))(@awdlab/jig@0.0.4(patch_hash=66c7e7e7ef05e1e23375de1dbfb4fc1351d7701958488393519178bec0a72d70)(d0d5b521922d733473c4c5c3f5b9e36e))(@playwright/test@1.62.1)':
-    dependencies:
-      '@awdlab/jig': 0.0.4(patch_hash=66c7e7e7ef05e1e23375de1dbfb4fc1351d7701958488393519178bec0a72d70)(d0d5b521922d733473c4c5c3f5b9e36e)
-      '@awdlab/jig-themes': 0.0.4(patch_hash=04ab20ecdd42527d808e0ab32297a849bc3270e39a93ffd3535ee91fdbb77a35)
-      '@playwright/test': 1.62.1
 
   '@awdlab/jig-themes@0.0.4(patch_hash=04ab20ecdd42527d808e0ab32297a849bc3270e39a93ffd3535ee91fdbb77a35)':
     dependencies:

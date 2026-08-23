@@ -16,8 +16,23 @@ target rewritten to point into `dist/`.
 a root `package.json` that carries its own `exports` field — at that point bump the dependency version
 and drop the corresponding patch file and `patchedDependencies` entry.
 
-`@awdlab/jig-playwright` needs no patch: its published root manifest carries `main` and `types`
-pointing into `dist/`.
+`patches/README.md` carries the same reasoning next to the patch files themselves, along with
+the exact steps for removing them.
+
+## Why `@awdlab/jig-playwright` is _not_ a dependency
+
+It was installed while task 23 was written and then deliberately dropped. Its page-object
+harnesses are addressed by a **CSS host locator** (`page.jigInput('jig-input-field#name')`
+and similar), which means the e2e suite would have to know each control's element id or
+class — coupling the tests to the component tree. Playwright's own `getByLabel` /
+`getByRole` address the same controls through their accessible name instead, which is both
+what the user sees and what `e2e/smoke.spec.ts` already asserts on everywhere else. Every
+harness the package offers had a shorter, more durable `getByRole` equivalent, so it earned
+nothing.
+
+It is recorded here rather than left installed-but-unimported: an unused dependency in
+`package.json` reads as an oversight and invites the next contributor to spend an afternoon
+rediscovering the same conclusion.
 
 ## Why `zod` is a dependency here
 

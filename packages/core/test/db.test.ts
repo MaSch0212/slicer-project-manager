@@ -34,14 +34,14 @@ test('migrations create every table and set user_version', async () => {
     const { user_version } = lib.db.prepare('PRAGMA user_version').get() as {
       user_version: number
     }
-    assert.equal(user_version, 1)
+    assert.equal(user_version, 2)
   })
 })
 
 test('runMigrations is idempotent', async () => {
   await withLibrary((lib) => {
-    assert.equal(runMigrations(lib.db), 1)
-    assert.equal(runMigrations(lib.db), 1)
+    assert.equal(runMigrations(lib.db), 2)
+    assert.equal(runMigrations(lib.db), 2)
   })
 })
 

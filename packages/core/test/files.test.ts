@@ -252,10 +252,16 @@ test('two uploads racing the same name: exactly one wins, the other is a Conflic
     const ctx = seedUser(lib)
     const project = createProject(lib, ctx, { name: 'Benchy' })
 
-    const results = await Promise.allSettled([
-      uploadFile(lib, ctx, project.id, 'a.stl', streamOf('solid one')),
-      uploadFile(lib, ctx, project.id, 'a.stl', streamOf('solid two')),
-    ])
+    // Deliberately different lengths, and asserted by content below. The two bodies used to
+    // be 'solid one' / 'solid two' — both 9 bytes — and the only disk assertion compared the
+    // winner's sizeBytes against the on-disk *length*, which the loser's bytes would have
+    // satisfied just as well. Nothing could tell the two apart.
+    const bodies = ['solid one', 'solid two, and appreciably longer than the first']
+    assert.notEqual(bodies[0]!.length, bodies[1]!.length)
+
+    const results = await Promise.allSettled(
+      bodies.map((body) => uploadFile(lib, ctx, project.id, 'a.stl', streamOf(body))),
+    )
 
     const fulfilled = results.filter((r) => r.status === 'fulfilled')
     const rejected = results.filter((r) => r.status === 'rejected')
@@ -266,7 +272,11 @@ test('two uploads racing the same name: exactly one wins, the other is a Conflic
     const onDisk = join(lib.dir, 'marc', 'Benchy', 'a.stl')
     const winner = (fulfilled[0] as PromiseFulfilledResult<Awaited<ReturnType<typeof uploadFile>>>)
       .value
-    assert.equal(winner.sizeBytes, readFileSync(onDisk, 'utf8').length)
+    // The distinct lengths identify which body won; the file must then be exactly that body,
+    // not a mixture and not the loser's.
+    const winningBody = bodies.find((body) => body.length === winner.sizeBytes)
+    assert.ok(winningBody, `no body matches the winner's sizeBytes ${winner.sizeBytes}`)
+    assert.equal(readFileSync(onDisk, 'utf8'), winningBody)
     assert.equal(getProject(lib, ctx, project.id).files.length, 1)
   })
 })

@@ -18,6 +18,29 @@ export async function issueActivationToken(
   return token
 }
 
+/**
+ * Marks every outstanding activation token for a user as consumed, and returns how many.
+ *
+ * `consumed_at` is the single "no longer usable" flag the whole module reads, so revoking
+ * writes it rather than adding a parallel column: `checkActivationToken` and
+ * `consumeActivationToken` already refuse a consumed row, and a revoked link therefore reads
+ * as "not valid" to the user without any new branch. The rows stay in the table — they are
+ * the record of who was invited and when.
+ *
+ * Spec 5.3 calls the activation token single-use, and re-issuing an invite is precisely the
+ * moment the previous link should die: the reason to re-issue is that the old link went
+ * somewhere it should not have, or is believed lost. Two live links for one account is the
+ * failure mode.
+ */
+export function revokeActivationTokens(db: Db, userId: string, now: number = Date.now()): number {
+  const result = db
+    .prepare(
+      'UPDATE activation_tokens SET consumed_at = ? WHERE user_id = ? AND consumed_at IS NULL',
+    )
+    .run(now, userId)
+  return Number(result.changes)
+}
+
 type TokenRow = { userId: string; username: string; expiresAt: number; consumedAt: number | null }
 
 async function findToken(db: Db, token: string): Promise<TokenRow | undefined> {

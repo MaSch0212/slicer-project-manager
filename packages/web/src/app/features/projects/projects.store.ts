@@ -1,12 +1,25 @@
 import { Injectable, computed, inject, resource, signal } from '@angular/core'
-import type { ProjectDto, ProjectQuery, RescanResultDto } from '@spm/contract/dtos.ts'
+import type { ProjectDto, ProjectQuery, RescanResultDto, SettingsDto } from '@spm/contract/dtos.ts'
 import type { CreateProjectInput } from '@spm/contract/schemas.ts'
 import { API_CLIENT } from '../../core/api/api-client.token'
+import { SettingsStore } from '../../core/settings.store'
 
 @Injectable()
 export class ProjectsStore {
   private readonly api = inject(API_CLIENT)
-  private readonly queryState = signal<ProjectQuery>({ sort: 'updatedAt', dir: 'desc' })
+  private readonly settings = inject(SettingsStore)
+  /**
+   * Seeded from the persisted settings rather than hard-coded. `SettingsDto.sort`/`.dir` are
+   * stored by the server, validated by the schema and defaulted in `DEFAULT_SETTINGS`
+   * (spec 3.3 lists `sort` among the `user_settings` keys), but nothing used to read or
+   * write them from the UI, so the project list's sort silently reset on every visit.
+   * app.config.ts's initializer awaits `SettingsStore.load()` before any route renders, so
+   * this signal's initial value is the user's own choice, not the defaults.
+   */
+  private readonly queryState = signal<ProjectQuery>({
+    sort: this.settings.settings().sort,
+    dir: this.settings.settings().dir,
+  })
 
   readonly query = this.queryState.asReadonly()
 
@@ -73,8 +86,14 @@ export class ProjectsStore {
     )
   }
 
-  setSort(sort: ProjectQuery['sort'], dir: ProjectQuery['dir']): void {
+  /**
+   * Applies the sort locally first, then persists it, so the list re-sorts even if the
+   * preference cannot be saved. `SettingsStore.patch` rethrows after rolling its own keys
+   * back; the rejection is deliberately propagated for the page to surface.
+   */
+  setSort(sort: SettingsDto['sort'], dir: SettingsDto['dir']): Promise<void> {
     this.queryState.update((query) => ({ ...query, sort, dir }))
+    return this.settings.patch({ sort, dir })
   }
 
   async create(input: CreateProjectInput): Promise<ProjectDto> {

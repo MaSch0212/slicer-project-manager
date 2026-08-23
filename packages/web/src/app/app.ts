@@ -1,5 +1,5 @@
-import { ChangeDetectionStrategy, Component, effect, inject } from '@angular/core'
-import { RouterLink, RouterOutlet } from '@angular/router'
+import { ChangeDetectionStrategy, Component, effect, inject, signal } from '@angular/core'
+import { Router, RouterLink, RouterOutlet } from '@angular/router'
 import { ColorSchemeService } from '@awdlab/jig/api/ng'
 import { AuthStore } from './core/auth.store'
 import { CapabilitiesStore } from './core/capabilities.store'
@@ -20,9 +20,12 @@ import { SettingsStore } from './core/settings.store'
           <a routerLink="/admin/users">{{ t.translations().admin.title }}</a>
         }
         @if (auth.isAuthenticated()) {
-          <button type="button" (click)="auth.logout()">{{ t.translations().app.signOut }}</button>
+          <button type="button" (click)="onSignOut()">{{ t.translations().app.signOut }}</button>
         }
       </nav>
+      @if (signOutFailed()) {
+        <p role="alert">{{ t.translations().errors.generic }}</p>
+      }
     </header>
     <main><router-outlet /></main>
   `,
@@ -38,10 +41,34 @@ export class App {
   // resolution here: ColorSchemeService itself resolves it against
   // `(prefers-color-scheme: dark)` and stays reactive to that media query changing.
   private readonly colorScheme = inject(ColorSchemeService)
+  private readonly router = inject(Router)
+
+  readonly signOutFailed = signal(false)
 
   constructor() {
     effect(() => {
       this.colorScheme.set(this.settings.settings().theme)
     })
+  }
+
+  /**
+   * The nav used to bind `(click)="auth.logout()"` straight through. Two defects in one:
+   * `AuthStore.logout` rethrows after clearing local state in its `finally`, so a failed
+   * logout escaped as an unhandled rejection with nothing shown; and nothing navigated, so
+   * a *successful* sign-out left the user on `/projects` with the grid still rendered.
+   */
+  async onSignOut(): Promise<void> {
+    this.signOutFailed.set(false)
+    try {
+      await this.auth.logout()
+    } catch {
+      // The local session is already gone (logout clears it in a `finally`); what may have
+      // survived is the server's own session row, which the user cannot fix from here — so
+      // this reports, it does not offer a retry.
+      this.signOutFailed.set(true)
+    }
+    // Outside the try on purpose: either way the user is signed out locally, so leaving
+    // them on an authenticated route would be the same bug in both branches.
+    await this.router.navigateByUrl('/login')
   }
 }

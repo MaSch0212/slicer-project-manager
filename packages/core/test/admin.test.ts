@@ -2,6 +2,7 @@ import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import type { AppError } from '@spm/contract/errors.ts'
 import { activateAccount } from '../src/auth/login.ts'
+import { checkActivationToken } from '../src/auth/activation.ts'
 import { ensureBootstrapAdmin } from '../src/users/bootstrap.ts'
 import { createUser, deleteUser, listUsers, reissueInvite, updateUser } from '../src/users/admin.ts'
 import type { Ctx } from '../src/ctx.ts'
@@ -80,7 +81,12 @@ test('a duplicate username is a conflict, case-insensitively', async () => {
   })
 })
 
-test('reissueInvite hands out a fresh token and invalidates nothing else', async () => {
+// Final review, minor 5: this test used to assert the *opposite* — that re-issuing left the
+// previous token live ("invalidates nothing else"). Spec 5.3 calls the activation token
+// single-use, and re-issuing an invite is exactly the moment the old link should stop
+// working: the reason to re-issue is that the first link went somewhere it should not have,
+// or is believed lost. Two live links for one account is the failure mode, not the feature.
+test('reissueInvite hands out a fresh token and kills the previous one', async () => {
   await withLibrary(async (lib) => {
     const admin = await activeAdmin(lib)
     const created = await createUser(lib, admin, {
@@ -89,13 +95,55 @@ test('reissueInvite hands out a fresh token and invalidates nothing else', async
       isAdmin: false,
       quotaBytes: null,
     })
+    assert.equal((await checkActivationToken(lib.db, created.token)).valid, true)
+
     const again = await reissueInvite(lib, admin, created.user.id)
     assert.notEqual(again.token, created.token)
 
+    assert.equal((await checkActivationToken(lib.db, created.token)).valid, false)
+    assert.equal((await checkActivationToken(lib.db, again.token)).valid, true)
+    // The old row is kept, consumed, rather than deleted: activation_tokens is the audit
+    // trail of who was invited and when.
     const { n } = lib.db
       .prepare('SELECT COUNT(*) AS n FROM activation_tokens WHERE user_id = ?')
       .get(created.user.id) as { n: number }
     assert.equal(n, 2)
+  })
+})
+
+test('the killed token cannot be used to activate, even before the new one is', async () => {
+  await withLibrary(async (lib) => {
+    const admin = await activeAdmin(lib)
+    const created = await createUser(lib, admin, {
+      username: 'anna',
+      displayName: 'Anna',
+      isAdmin: false,
+      quotaBytes: null,
+    })
+    await reissueInvite(lib, admin, created.user.id)
+
+    await assert.rejects(
+      () => activateAccount(lib, created.token, 'a good long password', null),
+      (e: unknown) => (e as AppError).code === 'InvalidToken',
+    )
+  })
+})
+
+test('re-issuing twice leaves exactly one usable token', async () => {
+  await withLibrary(async (lib) => {
+    const admin = await activeAdmin(lib)
+    const created = await createUser(lib, admin, {
+      username: 'anna',
+      displayName: 'Anna',
+      isAdmin: false,
+      quotaBytes: null,
+    })
+    const second = await reissueInvite(lib, admin, created.user.id)
+    const third = await reissueInvite(lib, admin, created.user.id)
+
+    assert.equal((await checkActivationToken(lib.db, created.token)).valid, false)
+    assert.equal((await checkActivationToken(lib.db, second.token)).valid, false)
+    assert.equal((await checkActivationToken(lib.db, third.token)).valid, true)
   })
 })
 

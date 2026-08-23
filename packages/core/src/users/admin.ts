@@ -2,7 +2,7 @@ import { mkdirSync } from 'node:fs'
 import type { UserDto } from '@spm/contract/dtos.ts'
 import { AppError } from '@spm/contract/errors.ts'
 import type { CreateUserInput, UpdateUserInput } from '@spm/contract/schemas.ts'
-import { issueActivationToken } from '../auth/activation.ts'
+import { issueActivationToken, revokeActivationTokens } from '../auth/activation.ts'
 import type { Ctx } from '../ctx.ts'
 import { newId } from '../db/ids.ts'
 import type { Db, Library } from '../db/open.ts'
@@ -85,6 +85,10 @@ export async function reissueInvite(
   if (row.status === 'disabled') {
     throw new AppError('Conflict', 're-enable the account before issuing a new invite')
   }
+  // The old link dies with the new one's birth: the token is single-use (spec 5.3), and
+  // re-issuing is exactly when the previous one should stop working — leaving it live means
+  // two usable links for one account, which is the thing single-use is meant to prevent.
+  revokeActivationTokens(lib.db, row.id)
   return { token: await issueActivationToken(lib.db, row.id) }
 }
 

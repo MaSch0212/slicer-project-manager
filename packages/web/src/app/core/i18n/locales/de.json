@@ -48,7 +48,15 @@
     "theme": "Erscheinungsbild",
     "language": "Sprache",
     "viewMode": "Projektansicht",
-    "sort": "Sortierung"
+    "sort": "Sortierung",
+    "themeSystem": "System",
+    "themeLight": "Hell",
+    "themeDark": "Dunkel",
+    "viewModeGrid": "Raster",
+    "viewModeList": "Liste",
+    "sortUpdated": "Zuletzt geändert",
+    "sortName": "A–Z",
+    "sortNewest": "Neueste"
   },
   "admin": {
     "title": "Benutzer",

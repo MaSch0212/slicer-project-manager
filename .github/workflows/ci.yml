@@ -11,9 +11,11 @@ jobs:
         with: { version: 10 }
       - uses: actions/setup-node@v4
         with: { node-version: '24', cache: pnpm }
-      # `pnpm typecheck` ends in `deno check packages/server/main.ts`: plain tsc cannot
+      # `pnpm typecheck` runs `deno check` over the server entry points: plain tsc cannot
       # type-check the server (it uses Deno globals), so this job needs Deno as much as
-      # core-deno and server do.
+      # core-deno and server do. It then runs `ngc --noEmit` over packages/web, which
+      # compiles the Angular templates too — the web job's `ng build` is no longer the only
+      # thing that proves the client compiles.
       - uses: denoland/setup-deno@v2
         with: { deno-version: v2.x }
       - run: pnpm install --frozen-lockfile

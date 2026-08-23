@@ -7,9 +7,11 @@ import { extractEmbeddedThumbnail } from '../src/previews/embedded.ts'
 import { readPngSize } from '../src/previews/png.ts'
 import {
   MAX_PREVIEW_ATTEMPTS,
+  PREVIEW_LEASE_MS,
   claimPendingPreviews,
   runPreviewQueue,
   EMBEDDED_HANDLER,
+  type PreviewHandler,
 } from '../src/previews/queue.ts'
 import { rescan } from '../src/projects/rescan.ts'
 import { getProject, listProjects } from '../src/projects/queries.ts'
@@ -227,5 +229,142 @@ test('the queue processes a batch larger than its concurrency', async () => {
       failed: 0,
       unsupported: 0,
     })
+  })
+})
+
+function previewRow(lib: Library): { state: string; attempts: number; claimedAt: number | null } {
+  const row = lib.db
+    .prepare('SELECT state, attempts, claimed_at AS claimedAt FROM previews')
+    .get() as { state: string; attempts: number; claimedAt: number | null }
+  // node:sqlite returns null-prototype rows, which deepEqual will not match a literal.
+  return { state: row.state, attempts: row.attempts, claimedAt: row.claimedAt }
+}
+
+/** Two 3mf files with embedded thumbnails, both queued pending. */
+async function seedTwoQueued(lib: Library): Promise<void> {
+  const ctx = seedUser(lib)
+  const dir = join(lib.dir, 'marc', 'Benchy')
+  mkdirSync(dir)
+  curaProject(join(dir, 'a.3mf'), makePng(300, 300))
+  curaProject(join(dir, 'b.3mf'), makePng(301, 300))
+  await rescan(lib, ctx)
+}
+
+test('a run in flight holds its rows: an overlapping tick claims nothing and redoes nothing', async () => {
+  await withLibrary(async (lib) => {
+    await seedTwoQueued(lib)
+
+    const seen: string[] = []
+    const slow: PreviewHandler = {
+      kinds: ['slicer_project'],
+      run: async (job) => {
+        seen.push(job.fileId)
+        // Stands in for a rasterizer run that outlives one queue interval. A macrotask, not
+        // a shared gate, so the pre-fix behaviour shows up as a wrong count rather than as
+        // a deadlock.
+        await new Promise((resolve) => setTimeout(resolve, 40))
+        return null
+      },
+    }
+
+    // main.ts fires runPreviewQueue on a fixed interval. Subsystem B's rasterizer will
+    // outlive one interval (spec 7.1), so the next tick must not re-select the same rows.
+    const first = runPreviewQueue(lib, { handlers: [slow], concurrency: 2 })
+    const overlapping = await runPreviewQueue(lib, { handlers: [slow] })
+    await first
+
+    assert.deepEqual(overlapping, { ready: 0, failed: 0, unsupported: 0 })
+    assert.equal(seen.length, 2)
+    assert.equal(new Set(seen).size, 2)
+  })
+})
+
+test('claiming a row increments attempts, so a crash mid-job still burns the budget', async () => {
+  await withLibrary(async (lib) => {
+    const ctx = seedUser(lib)
+    const dir = join(lib.dir, 'marc', 'Benchy')
+    mkdirSync(dir)
+    curaProject(join(dir, 'a.3mf'), makePng(300, 300))
+    await rescan(lib, ctx)
+
+    // A handler still running is the hung case; a killed process is the same thing from the
+    // row's point of view. Neither ever reaches the caught-throw branch, so attempts has to
+    // move at claim time or the file is retried forever (spec 7.3).
+    let release = (): void => {}
+    const gate = new Promise<void>((resolve) => (release = resolve))
+    const hanging: PreviewHandler = { kinds: ['slicer_project'], run: () => gate.then(() => null) }
+    const inFlight = runPreviewQueue(lib, { handlers: [hanging] })
+    assert.equal(previewRow(lib).attempts, 1)
+    assert.equal(previewRow(lib).state, 'pending')
+    release()
+    await inFlight
+
+    // Back to pending for the remaining budget, the way a restart would find it.
+    lib.db.prepare("UPDATE previews SET state = 'pending'").run()
+    for (let i = 1; i < MAX_PREVIEW_ATTEMPTS; i++) {
+      // A restart releases the abandoned lease; the retry budget is what bounds it.
+      lib.db.prepare('UPDATE previews SET claimed_at = NULL').run()
+      assert.equal(claimPendingPreviews(lib, [hanging], 10).length, 1)
+      assert.equal(previewRow(lib).attempts, i + 1)
+    }
+
+    lib.db.prepare('UPDATE previews SET claimed_at = NULL').run()
+    assert.equal(claimPendingPreviews(lib, [hanging], 10).length, 0)
+  })
+})
+
+test('an expired lease is reclaimable, so a crash does not strand the row forever', async () => {
+  await withLibrary(async (lib) => {
+    const ctx = seedUser(lib)
+    const dir = join(lib.dir, 'marc', 'Benchy')
+    mkdirSync(dir)
+    curaProject(join(dir, 'a.3mf'), makePng(300, 300))
+    await rescan(lib, ctx)
+
+    assert.equal(claimPendingPreviews(lib, [EMBEDDED_HANDLER], 10).length, 1)
+    // Still leased: nothing else may take it.
+    assert.equal(claimPendingPreviews(lib, [EMBEDDED_HANDLER], 10).length, 0)
+
+    lib.db.prepare('UPDATE previews SET claimed_at = ?').run(Date.now() - PREVIEW_LEASE_MS - 1_000)
+    assert.equal(claimPendingPreviews(lib, [EMBEDDED_HANDLER], 10).length, 1)
+    assert.equal(previewRow(lib).attempts, 2)
+  })
+})
+
+test('a failing handler does not double-count the attempt it was claimed with', async () => {
+  await withLibrary(async (lib) => {
+    const ctx = seedUser(lib)
+    const dir = join(lib.dir, 'marc', 'Benchy')
+    mkdirSync(dir)
+    curaProject(join(dir, 'a.3mf'), makePng(300, 300))
+    await rescan(lib, ctx)
+
+    const exploding: PreviewHandler = {
+      kinds: ['slicer_project'],
+      run: () => Promise.reject(new Error('boom')),
+    }
+    assert.deepEqual(await runPreviewQueue(lib, { handlers: [exploding] }), {
+      ready: 0,
+      failed: 1,
+      unsupported: 0,
+    })
+    assert.equal(previewRow(lib).attempts, 1)
+  })
+})
+
+test('rescan re-queueing a changed file releases any stale claim with the retry budget', async () => {
+  await withLibrary(async (lib) => {
+    const ctx = seedUser(lib)
+    const dir = join(lib.dir, 'marc', 'Benchy')
+    mkdirSync(dir)
+    curaProject(join(dir, 'a.3mf'), makePng(300, 300))
+    await rescan(lib, ctx)
+    await runPreviewQueue(lib)
+
+    // The file changes on disk, so rescan re-queues it: attempts AND the lease both reset,
+    // otherwise a file edited MAX_PREVIEW_ATTEMPTS times would stop previewing.
+    curaProject(join(dir, 'a.3mf'), makePng(320, 320))
+    await rescan(lib, ctx)
+    assert.deepEqual(previewRow(lib), { state: 'pending', attempts: 0, claimedAt: null })
   })
 })

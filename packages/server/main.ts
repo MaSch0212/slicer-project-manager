@@ -25,8 +25,17 @@ if (boot) {
 
 const PREVIEW_INTERVAL_MS = 30_000
 const PRUNE_INTERVAL_MS = 60 * 60 * 1000
+
+// Belt to claimPendingPreviews's braces. The claim in core is what makes an overlap
+// *harmless*; this is what stops one happening in the first place, so a batch that takes
+// longer than the interval does not pile up a tick's worth of no-op runs behind it.
+let previewRunInFlight = false
 setInterval(() => {
-  runPreviewQueue(lib, { limit: 20 }).catch((error) => console.error('preview queue', error))
+  if (previewRunInFlight) return
+  previewRunInFlight = true
+  runPreviewQueue(lib, { limit: 20 })
+    .catch((error) => console.error('preview queue', error))
+    .finally(() => (previewRunInFlight = false))
 }, PREVIEW_INTERVAL_MS)
 setInterval(() => pruneExpiredSessions(lib.db), PRUNE_INTERVAL_MS)
 

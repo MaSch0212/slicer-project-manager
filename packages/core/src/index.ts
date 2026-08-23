@@ -42,6 +42,7 @@ export {
 } from './projects/import-curamanager.ts'
 
 export { classifyFile, SLICER_HEADER_REGISTRY } from './files/classify.ts'
+export { safeJoin } from './files/paths.ts'
 export {
   assertWithinQuota,
   contentTypeFor,
@@ -55,6 +56,7 @@ export {
 export {
   EMBEDDED_HANDLER,
   MAX_PREVIEW_ATTEMPTS,
+  PREVIEW_LEASE_MS,
   runPreviewQueue,
   type PreviewHandler,
   type PreviewJob,

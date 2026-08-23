@@ -1,8 +1,9 @@
 import { ApplicationRef } from '@angular/core'
 import { TestBed } from '@angular/core/testing'
 import { describe, expect, it, vi } from 'vitest'
-import type { ProjectDto } from '@spm/contract/dtos.ts'
+import { DEFAULT_SETTINGS, type ProjectDto, type SettingsDto } from '@spm/contract/dtos.ts'
 import { API_CLIENT } from '../../core/api/api-client.token'
+import { SettingsStore } from '../../core/settings.store'
 import { ProjectsStore } from './projects.store'
 
 function project(over: Partial<ProjectDto>): ProjectDto {
@@ -22,6 +23,12 @@ function project(over: Partial<ProjectDto>): ProjectDto {
 function setup(list = vi.fn().mockResolvedValue([])) {
   const api = {
     projects: { list, create: vi.fn().mockResolvedValue(project({})), rescan: vi.fn() },
+    settings: {
+      get: vi.fn().mockResolvedValue(DEFAULT_SETTINGS),
+      put: vi.fn((patch: Partial<SettingsDto>) =>
+        Promise.resolve({ ...DEFAULT_SETTINGS, ...patch }),
+      ),
+    },
   }
   TestBed.configureTestingModule({
     providers: [ProjectsStore, { provide: API_CLIENT, useValue: api }],
@@ -29,14 +36,73 @@ function setup(list = vi.fn().mockResolvedValue([])) {
   return { store: TestBed.inject(ProjectsStore), api }
 }
 
+/**
+ * Loads the persisted settings before ProjectsStore is constructed, the way app.config.ts's
+ * initializer does (it awaits SettingsStore.load() before any route can render).
+ */
+async function setupWithSettings(
+  persisted: Partial<SettingsDto>,
+  list = vi.fn().mockResolvedValue([]),
+) {
+  const api = {
+    projects: { list, create: vi.fn().mockResolvedValue(project({})), rescan: vi.fn() },
+    settings: {
+      get: vi.fn().mockResolvedValue({ ...DEFAULT_SETTINGS, ...persisted }),
+      put: vi.fn((patch: Partial<SettingsDto>) =>
+        Promise.resolve({ ...DEFAULT_SETTINGS, ...persisted, ...patch }),
+      ),
+    },
+  }
+  TestBed.configureTestingModule({
+    providers: [ProjectsStore, { provide: API_CLIENT, useValue: api }],
+  })
+  await TestBed.inject(SettingsStore).load()
+  return { store: TestBed.inject(ProjectsStore), api }
+}
+
 const settle = () => TestBed.inject(ApplicationRef).whenStable()
 
 describe('ProjectsStore', () => {
-  it('starts sorted by most recently updated', async () => {
+  it('starts sorted by most recently updated when nothing else is persisted', async () => {
     const { store, api } = setup()
     await settle()
     expect(store.query()).toEqual({ sort: 'updatedAt', dir: 'desc' })
     expect(api.projects.list).toHaveBeenCalledWith({ sort: 'updatedAt', dir: 'desc' })
+  })
+
+  // Final review, minor 1: SettingsDto.sort/.dir are persisted by the server, validated by
+  // the schema and defaulted in DEFAULT_SETTINGS, but the store used to hard-code
+  // { sort: 'updatedAt', dir: 'desc' } — so the user's saved sort was written by no UI and
+  // read by no UI, and the list reset on every visit. Spec 3.3 lists `sort` among the
+  // user_settings keys.
+  it('seeds the initial query from the persisted settings', async () => {
+    const { store, api } = await setupWithSettings({ sort: 'name', dir: 'asc' })
+    await settle()
+    expect(store.query()).toEqual({ sort: 'name', dir: 'asc' })
+    expect(api.projects.list).toHaveBeenCalledWith({ sort: 'name', dir: 'asc' })
+  })
+
+  it('persists a sort change so the next visit keeps it', async () => {
+    const { store, api } = await setupWithSettings({})
+    await settle()
+
+    await store.setSort('name', 'asc')
+    await settle()
+
+    expect(api.settings.put).toHaveBeenCalledWith({ sort: 'name', dir: 'asc' })
+    expect(api.projects.list).toHaveBeenLastCalledWith({ sort: 'name', dir: 'asc' })
+  })
+
+  // The list must still re-sort even if the preference cannot be saved: the local query is
+  // what drives the request, and the rejection is the page's to report.
+  it('applies a sort change locally and rethrows when persisting it fails', async () => {
+    const { store, api } = await setupWithSettings({})
+    api.settings.put.mockRejectedValueOnce(new Error('boom'))
+    await settle()
+
+    await expect(store.setSort('createdAt', 'desc')).rejects.toThrow()
+
+    expect(store.query()).toEqual({ sort: 'createdAt', dir: 'desc' })
   })
 
   it('reloads when the search term changes', async () => {
