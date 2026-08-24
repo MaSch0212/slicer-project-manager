@@ -36,9 +36,13 @@ task text says.
    builtins only. No `process`, `Deno`, `Buffer`, `require`, `__dirname` in
    `packages/core/src/**`. ESLint enforces this — do not weaken those rules.
 2. **No new runtime dependencies.**
-3. **Bounded memory.** The library's largest model is 3,295,832 triangles in a 164 MB STL, and
-   at least three 3MFs exceed 512 MB of model XML. Nothing may hold a whole document as a
-   string, and nothing may allocate per triangle.
+3. **Bounded memory, to a measured budget.** The deployment target is a NAS with **2 GB of
+   RAM**, and the whole preview queue must peak **under 500 MB**. That is a hard number, not
+   an aspiration: measured peak RSS today is 0.65-1.15 GB on large models and 1.55-1.69 GB on
+   the three that hit the V8 string cap. The library's largest model is 3,295,832 triangles in
+   a 164 MB STL. Nothing may hold a whole document as a string, and nothing may allocate per
+   triangle. Where a model cannot be previewed inside the budget, it is skipped with a reason
+   the user can read - never at the cost of the budget.
 4. **Malformed input fails as `AppError('Validation', …)`** and never escapes as a bare
    `RangeError`/`TypeError`. A blank thumbnail reported as success is the worst outcome
    available and is never acceptable.
@@ -105,11 +109,55 @@ task text says.
       `writeZip`), an archive with a zip64 EOCD but 32-bit-safe values, and a truncated
       locator. A non-zip64 archive must still parse byte-identically to today.
 
+### Task 5 — Keep the whole queue under 500 MB, and skip what will not fit
+
+The deployment target is a 2 GB NAS. Tasks 3 and 4 reduce memory; this one bounds it.
+
+- [ ] **Measure first, then choose the limit.** For each format, chart peak RSS against input
+      size using real files from `D:\SPM Library\marc` (which spans 636 triangles to
+      3,295,832). Derive the cap from the measurement and record the table in the report - do
+      not guess a round number and hope.
+- [ ] **Refuse oversized models before reading them.** Check the file size, and for 3MF the
+      entry's uncompressed size, _before_ allocating anything. A model that cannot be rendered
+      inside the budget must cost nothing to reject.
+- [ ] The refusal must carry a **user-facing reason** naming the actual and permitted sizes -
+      "model is too large to preview (210 MB; the limit is 64 MB)". A silent skip is the one
+      outcome this project has consistently refused.
+- [ ] **Make the limit configurable**, so a machine with room can raise it. Same treatment as
+      the other environment variables: a tested pure resolver in `packages/server/src/env.ts`,
+      print-and-exit at the call site, documented in the README.
+- [ ] **Make preview concurrency configurable too**, defaulting so that the _product_ of
+      concurrency and the per-render ceiling stays inside the budget. `DEFAULT_CONCURRENCY` is
+      2 today; if the measurement says two large renders cannot coexist under 500 MB, the
+      default changes and the comment says why.
+- [ ] Tests: a file over the limit is refused without being read (assert the reason, and that
+      no large allocation happens); a file just under it still renders; the resolver's accept
+      and reject cases; and a memory assertion over the largest fixture that would catch a
+      regression reintroducing a whole-file read.
+- [ ] Report the projected outcome across the real library: how many models render, how many
+      are skipped as too large, and the peak RSS observed for the worst case that still runs.
+
+---
+
+## Not in this plan
+
+- **Streaming rasterization.** Parsing triangles in chunks and rasterizing in two passes
+  straight from disk would make memory independent of model size and remove the cap entirely,
+  but it redesigns the parser-to-renderer interface (`Mesh` becomes an iterator) and needs
+  `zip.ts` rebuilt around `DecompressionStream` for 3MF. Worth doing if the cap turns out to
+  exclude models people care about; not worth blocking a deployment on.
+- **The viewer's own size prompt.** Subsystem B2 opens models in three.js in the browser,
+  where the same "this one is enormous" question arises and the honest answer is to ask the
+  user before loading. Same judgement, different layer; it belongs with B2.
+
 ---
 
 ## Definition of done
 
 - `pnpm verify` green; `pnpm e2e` green; CI green on `main` after push.
 - A survey of the reference library shows every `.3mf` classified as `slicer_project`, and
-  every model file either `ready` or `failed` for a stated reason — none `unsupported`.
+  every model file either `ready` or skipped for a stated, readable reason — none `unsupported`,
+  none failing with a bare runtime error.
+- **Peak RSS for the whole preview queue stays under 500 MB** while backfilling the real
+  library, measured, not assumed.
 - No new dependency in any `package.json`.
