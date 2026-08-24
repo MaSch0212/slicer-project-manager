@@ -6,6 +6,29 @@ function mesh(values: number[]): Mesh {
   return { positions: Float32Array.from(values), triangleCount: values.length / 9 }
 }
 
+/**
+ * Serialises a mesh as a binary STL, so a test can put a real, parseable model file on disk.
+ *
+ * Binary rather than ASCII because it is the encoding a file this size actually ships in, and
+ * because its length is a function of the triangle count — which is what `parseStl` keys its
+ * format detection on, so a fixture written this way exercises the same branch a real file does.
+ */
+export function binaryStl(source: Mesh): Uint8Array {
+  const out = new Uint8Array(84 + source.triangleCount * 50)
+  const view = new DataView(out.buffer)
+  view.setUint32(80, source.triangleCount, true)
+  let offset = 84
+  for (let t = 0; t < source.triangleCount; t++) {
+    offset += 12 // facet normal left zero; the rasterizer recomputes shading from the geometry
+    for (let i = 0; i < 9; i++) {
+      view.setFloat32(offset, source.positions[t * 9 + i]!, true)
+      offset += 4
+    }
+    offset += 2 // attribute byte count
+  }
+  return out
+}
+
 /** Applies a uniform scale, for the "renders the same at any absolute size" tests. */
 export function scaleMesh(source: Mesh, factor: number): Mesh {
   const positions = new Float32Array(source.positions.length)

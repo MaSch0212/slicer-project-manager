@@ -147,3 +147,28 @@ export function plainMesh3mf(path: string): void {
     { name: '3D/3dmodel.model', data: MODEL_XML, deflate: true },
   ])
 }
+
+const TETRAHEDRON_MODEL_XML =
+  '<?xml version="1.0" encoding="UTF-8"?><model unit="millimeter"><resources>' +
+  '<object id="1" type="model"><mesh><vertices>' +
+  '<vertex x="0" y="0" z="0"/><vertex x="10" y="0" z="0"/>' +
+  '<vertex x="0" y="10" z="0"/><vertex x="0" y="0" z="10"/>' +
+  '</vertices><triangles>' +
+  '<triangle v1="0" v2="2" v3="1"/><triangle v1="0" v2="1" v3="3"/>' +
+  '<triangle v1="1" v2="2" v3="3"/><triangle v1="2" v2="0" v3="3"/>' +
+  '</triangles></mesh></object></resources><build><item objectid="1"/></build></model>'
+
+/**
+ * A plain-mesh 3MF that actually contains geometry: a tetrahedron, four triangles with four
+ * distinct normals, so a rasterized thumbnail of it is a shape rather than a flat blob.
+ *
+ * Kept separate from `plainMesh3mf` rather than folded into it. That one has an empty
+ * `<resources/>` on purpose — it exists to prove classification, and classification is exactly
+ * the question of what a 3MF is when it has no slicer metadata, geometry or not.
+ */
+export function meshGeometry3mf(path: string): void {
+  writeZip(path, [
+    { name: '[Content_Types].xml', data: '<Types/>' },
+    { name: '3D/3dmodel.model', data: TETRAHEDRON_MODEL_XML, deflate: true },
+  ])
+}

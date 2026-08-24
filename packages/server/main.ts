@@ -3,8 +3,10 @@ import {
   consoleSink,
   createLogger,
   DEFAULT_LOG_LEVEL,
+  EMBEDDED_HANDLER,
   ensureBootstrapAdmin,
   LOG_LEVELS,
+  MESH_HANDLER,
   openLibrary,
   parseLogLevel,
   pruneExpiredSessions,
@@ -33,6 +35,21 @@ if (level === null) {
   Deno.exit(1)
 }
 
+const DEFAULT_PREVIEW_INTERVAL_MS = 30_000
+
+// Refused rather than clamped, for the same reason as the log level above. Overridable mainly
+// because 30 seconds is a bad edit-refresh loop for anyone working on previews, and because the
+// e2e suite has to watch a thumbnail actually appear rather than sit out a tick to do it.
+const rawPreviewInterval = Deno.env.get('SPM_PREVIEW_INTERVAL_MS')
+const previewIntervalMs =
+  rawPreviewInterval === undefined ? DEFAULT_PREVIEW_INTERVAL_MS : Number(rawPreviewInterval)
+if (!Number.isInteger(previewIntervalMs) || previewIntervalMs < 1) {
+  console.error(
+    `SPM_PREVIEW_INTERVAL_MS="${rawPreviewInterval}" is not a whole number of milliseconds above zero`,
+  )
+  Deno.exit(1)
+}
+
 const log = createLogger({ level, sink: consoleSink })
 const lib = openLibrary(libraryDir, { logger: log })
 log.info('library opened', { dir: lib.dir, logLevel: level })
@@ -45,7 +62,6 @@ if (boot) {
   console.log(`First run: activate "${boot.username}" at /activate#${boot.token}`)
 }
 
-const PREVIEW_INTERVAL_MS = 30_000
 const PRUNE_INTERVAL_MS = 60 * 60 * 1000
 
 // Belt to claimPendingPreviews's braces. The claim in core is what makes an overlap
@@ -58,10 +74,13 @@ setInterval(() => {
     return
   }
   previewRunInFlight = true
-  runPreviewQueue(lib, { limit: 20 })
+  // Both handlers passed explicitly rather than leaning on the core default, which stays
+  // "only what needs no rendering": deciding to spend CPU on rasterizing belongs to whoever
+  // runs the library, not to core.
+  runPreviewQueue(lib, { limit: 20, handlers: [EMBEDDED_HANDLER, MESH_HANDLER] })
     .catch((error) => log.error('preview queue run failed', { err: error }))
     .finally(() => (previewRunInFlight = false))
-}, PREVIEW_INTERVAL_MS)
+}, previewIntervalMs)
 setInterval(() => {
   const pruned = pruneExpiredSessions(lib.db)
   if (pruned) log.info('pruned expired sessions', { count: pruned })

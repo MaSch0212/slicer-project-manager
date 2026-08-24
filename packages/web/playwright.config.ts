@@ -37,6 +37,10 @@ export default defineConfig({
       SPM_LIBRARY_DIR: libraryDir,
       SPM_PORT: '8123',
       SPM_WEB_ROOT: 'dist/web/browser',
+      // preview.spec.ts watches a thumbnail appear on a card. At the 30-second production
+      // default that single assertion would dominate the suite's runtime, so the queue ticks
+      // once a second here instead.
+      SPM_PREVIEW_INTERVAL_MS: '1000',
     },
   },
 })

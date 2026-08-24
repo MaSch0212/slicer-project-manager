@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict'
-import { rmSync } from 'node:fs'
-import { runPreviewQueue } from '@spm/core'
+import { rmSync, writeFileSync } from 'node:fs'
+import { EMBEDDED_HANDLER, MESH_HANDLER, runPreviewQueue } from '@spm/core'
 import { loginAsAdmin, withServer, type TestServer } from './harness.ts'
 import { curaProject } from '../../core/test/fixtures/make-3mf.ts'
+import { binaryStl, cubeMesh } from '../../core/test/fixtures/make-mesh.ts'
 import { makePng } from '../../core/test/fixtures/make-png.ts'
+import { readPngSize } from '../../core/src/previews/png.ts'
 import { join } from 'node:path'
 
 async function newProject(server: TestServer, cookie: string, name = 'Benchy') {
@@ -165,6 +167,30 @@ Deno.test('thumb is a 404 while pending and a png once ready', async () => {
     const thumb = await server.fetch(ready.thumbUrl, { cookie })
     assert.equal(thumb.status, 200)
     assert.equal(thumb.headers.get('content-type'), 'image/png')
+  })
+})
+
+// The wiring main.ts does, end to end through the API: an STL carries no thumbnail of its own,
+// so the only thing that can put one behind this route is MESH_HANDLER actually rendering it.
+Deno.test('thumb serves the rasterized png for a plain stl model', async () => {
+  await withServer(async (server) => {
+    const cookie = await loginAsAdmin(server)
+    const project = await newProject(server, cookie)
+    writeFileSync(join(server.dir, 'admin', 'Benchy', 'cube.stl'), binaryStl(cubeMesh()))
+    await server.fetch('/api/projects/rescan', { method: 'POST', cookie })
+
+    await runPreviewQueue(server.lib, { handlers: [EMBEDDED_HANDLER, MESH_HANDLER] })
+    const ready = (
+      await (await server.fetch(`/api/projects/${project.id}`, { cookie })).json()
+    ).files.find((f: { name: string }) => f.name === 'cube.stl')
+    assert.equal(ready.previewState, 'ready')
+
+    const thumb = await server.fetch(ready.thumbUrl, { cookie })
+    assert.equal(thumb.status, 200)
+    assert.equal(thumb.headers.get('content-type'), 'image/png')
+    // The bytes the client receives, not just the row: a 256px png is what was rendered.
+    const bytes = new Uint8Array(await thumb.arrayBuffer())
+    assert.deepEqual(readPngSize(bytes), { width: 256, height: 256 })
   })
 })
 

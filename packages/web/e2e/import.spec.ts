@@ -87,6 +87,12 @@ test('a zipped CuraManager library is uploaded, imported and shows up as project
     name: 'curamanager.zip',
     mimeType: 'application/zip',
     buffer: zip([
+      // `solid alpha` is not a real STL, and since a rasterizer was wired into the preview
+      // queue this file is now attempted and correctly fails — so the server log for this
+      // suite carries `WARN preview failed … STL file has zero triangles`. Expected, bounded
+      // by MAX_PREVIEW_ATTEMPTS, and free coverage of the failed path. Kept as a string on
+      // purpose: making it a real mesh would mean widening `zip()` from strings to bytes for
+      // a spec that is about importing an archive, not about rendering.
       { name: 'CuraLibrary/Zip Import Alpha/part.stl', body: 'solid alpha' },
       {
         name: 'CuraLibrary/Zip Import Alpha/metadata.json',
