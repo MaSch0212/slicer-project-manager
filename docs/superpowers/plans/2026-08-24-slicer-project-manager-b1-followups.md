@@ -81,8 +81,8 @@ task text says.
 
 - [ ] `packages/core/src/previews/mesh/threemf.ts:164` does
       `new TextDecoder().decode(readZipEntryBytes(...))`. Three real files exceed V8's
-      ~512 MB string cap and die with `Cannot create a string longer than 0x1fffffe8
-    characters` — a `RangeError`, so they also violate constraint 4.
+      ~512 MB string cap and die with a `RangeError` about the maximum string length, so they
+      also violate constraint 4.
 - [ ] Scan the `Uint8Array` directly. The existing cursor walk already only needs to find
       `<vertex`, `<triangle` and comment markers and read a handful of attributes; decode
       only the bounded tag slices, never the document.
