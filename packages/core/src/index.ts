@@ -92,3 +92,4 @@ export {
   type PreviewOutput,
 } from './previews/queue.ts'
 export { MESH_HANDLER } from './previews/mesh-handler.ts'
+export { PREVIEW_HANDLERS } from './previews/handlers.ts'

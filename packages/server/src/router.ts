@@ -3,7 +3,7 @@ import { NOOP_LOGGER, resolveSession, type Ctx, type Library, type Logger } from
 import { errorResponse } from './errors.ts'
 import { makeRateLimiter, type RateLimitRule } from './rate-limit.ts'
 import { readSessionToken } from './session.ts'
-import { serveStatic } from './static.ts'
+import { resolveWebRoot, serveStatic } from './static.ts'
 
 export type Env = {
   lib: Library
@@ -14,6 +14,14 @@ export type Env = {
    * read from the built bundle. main.ts supplies it from SPM_DEV_UI_ORIGIN.
    */
   serveUi?: (req: Request, url: URL) => Promise<Response>
+  /**
+   * The origin activation links are built on, from SPM_PUBLIC_ORIGIN, already normalised by
+   * `readServerEnv`. Undefined means "use the request's own origin".
+   */
+  publicOrigin?: string
+  /** Where the built Angular bundle lives, from SPM_WEB_ROOT. Undefined takes the default
+   *  resolved against `src/static.ts`'s own directory. */
+  webRoot?: string
   /** Injectable clock for the per-`makeHandler` rate limiter; tests override it to move
    *  time forward without sleeping. Defaults to `Date.now` inside `makeRateLimiter`. */
   now?: () => number
@@ -71,7 +79,10 @@ export function makeHandler(
   // has its own state and none bleed into one another.
   const limiter = makeRateLimiter(env.now)
   const log = env.log ?? env.lib.log ?? NOOP_LOGGER
-  const serveUi = env.serveUi ?? ((_req: Request, url: URL) => serveStatic(url))
+  // Resolved once per handler rather than per request, and once in total: this is the only
+  // place the static root's default is applied.
+  const webRoot = env.webRoot ?? resolveWebRoot(undefined)
+  const serveUi = env.serveUi ?? ((_req: Request, url: URL) => serveStatic(url, webRoot))
 
   /** Everything under /api/. Split out so the caller can time and log every exit path once. */
   const handleApi = async (

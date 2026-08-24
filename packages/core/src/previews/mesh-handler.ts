@@ -50,23 +50,36 @@ function readMesh(absPath: string): Mesh | null {
 }
 
 /**
- * Renders a 256px isometric thumbnail for a `model` file that carries no thumbnail of its own.
+ * Renders a 256px isometric thumbnail for a file that carries no thumbnail of its own.
  *
  * Not part of the queue's default handler list: rasterizing is the expensive path, so a library
  * consumer opts into it (see `packages/server/main.ts`) rather than getting it by accident.
  *
+ * **`slicer_project` is covered as well as `model`**, because a project saved but never sliced
+ * embeds no thumbnail, and 326 of the 374 slicer projects in the reference library are in that
+ * state — every one of them blank, because `unsupported` was the only outcome available to them
+ * and nothing re-queues a row whose bytes have not changed. Widening the kind is safe rather
+ * than merely convenient: `classifyFile` only ever reaches `classify3mf`, the sole producer of
+ * `slicer_project`, for a path ending `.3mf`, so every job of that kind lands on the `.3mf` arm
+ * of `readMesh` below. It is second in `PREVIEW_HANDLERS`, so a project that *does* carry a
+ * thumbnail still uses it — cheaper, and closer to what the slicer showed the user.
+ *
  * **`null` and a throw are different outcomes, and the difference is the point.** `null` is
- * "there is deterministically nothing to render here" and the queue records `unsupported`,
- * never retrying — the right answer for a `model` file in a format this handler cannot read,
- * because reading it again will not change that. A throw is "this file should have rendered and
- * did not", which the queue records as `failed` against the retry budget that
- * `MAX_PREVIEW_ATTEMPTS` bounds. So an exotic extension that somehow reached `kind: 'model'`
- * returns `null`, while a `.stl` whose bytes are corrupt lets the parser's
- * `AppError('Validation', …)` propagate. Catching that here would bury a real problem as a
- * permanent, unretried "unsupported" and lose the error message with it.
+ * "there is deterministically nothing to render here" and the queue records `unsupported` — the
+ * right answer for a `model` file in a format this handler cannot read, because reading the same
+ * bytes again will not change that. A throw is "this file should have rendered and did not",
+ * which the queue records as `failed`.
+ *
+ * Neither state is retried by the queue itself (`claimPendingPreviews` selects only `pending`),
+ * and both come back if `rescan` sees the file's content hash change. What actually separates
+ * them is the row they leave behind: `failed` carries the error message, `unsupported` writes
+ * `error = NULL`. So an exotic extension that somehow reached `kind: 'model'` returns `null`,
+ * while a `.stl` whose bytes are corrupt lets the parser's `AppError('Validation', …)`
+ * propagate — catching it here would file a real defect under the same blank, message-less row
+ * as a file there was never anything to draw from.
  */
 export const MESH_HANDLER: PreviewHandler = {
-  kinds: ['model'],
+  kinds: ['model', 'slicer_project'],
   run: (job: PreviewJob): Promise<PreviewOutput | null> => {
     const mesh = readMesh(job.absPath)
     if (!mesh) return Promise.resolve(null)

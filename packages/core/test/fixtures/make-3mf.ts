@@ -172,3 +172,24 @@ export function meshGeometry3mf(path: string): void {
     { name: '3D/3dmodel.model', data: TETRAHEDRON_MODEL_XML, deflate: true },
   ])
 }
+
+/**
+ * A slicer project (`kind: 'slicer_project'`, by rule 3 of `classify3mf`) that holds real
+ * geometry, with an embedded thumbnail only if one is passed.
+ *
+ * This is the common shape in the reference library and the reason the handler chain exists:
+ * 326 of its 374 projects were saved but never sliced, so the slicer wrote no plate render.
+ * `bambuLineageProject` cannot stand in — its model part is deliberately empty, which makes it
+ * useful for classification and useless for rasterizing.
+ */
+export function slicerProjectWithMesh(path: string, thumbnail?: Uint8Array): void {
+  writeZip(path, [
+    // Not read by anything under test, but every real 3MF is an OPC package and has one.
+    { name: '[Content_Types].xml', data: '<Types/>' },
+    { name: '3D/3dmodel.model', data: TETRAHEDRON_MODEL_XML, deflate: true },
+    { name: 'Metadata/project_settings.config', data: '{"version": "02.08.02.61"}' },
+    { name: 'Metadata/model_settings.config', data: '<config/>' },
+    { name: 'Metadata/slice_info.config', data: sliceInfo(['X-BBL-Client-Type']) },
+    ...(thumbnail ? [{ name: 'Metadata/plate_1.png', data: thumbnail }] : []),
+  ])
+}

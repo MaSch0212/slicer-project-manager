@@ -9,7 +9,7 @@ import {
   type Library,
   type LogRecord,
 } from '@spm/core'
-import { makeHandler } from '../src/router.ts'
+import { makeHandler, type Env } from '../src/router.ts'
 import { routes } from '../src/routes/index.ts'
 
 /** A manually-advanced clock, so the rate-limit window-expiry test can move time forward
@@ -30,7 +30,12 @@ export type TestServer = {
 
 export async function withServer(
   run: (server: TestServer) => Promise<void>,
-  opts: { logging?: boolean } = {},
+  /**
+   * `env` merges into what `makeHandler` receives. It exists for the settings `main.ts` now
+   * resolves from the environment and injects — `publicOrigin`, `webRoot` — which used to be
+   * module-level constants no test could vary, and so no test could pin the wiring of.
+   */
+  opts: { logging?: boolean; env?: Partial<Env> } = {},
 ): Promise<void> {
   const dir = mkdtempSync(join(tmpdir(), 'spm-server-'))
   const logs: LogRecord[] = []
@@ -44,7 +49,7 @@ export async function withServer(
 
   let now = Date.now()
   const clock: TestClock = { advance: (ms) => (now += ms) }
-  const handler = makeHandler(routes, { lib, now: () => now })
+  const handler = makeHandler(routes, { lib, now: () => now, ...opts.env })
 
   const fetchFn: TestServer['fetch'] = (path, init = {}) => {
     const { cookie, ip, ...rest } = init

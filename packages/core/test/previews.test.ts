@@ -216,6 +216,134 @@ test('a handler that throws fails the row and stops after MAX_PREVIEW_ATTEMPTS',
   })
 })
 
+/** A handler over `slicer_project` that records the call and answers however `answer` says. */
+function spyHandler(
+  seen: string[],
+  name: string,
+  answer: 'decline' | 'throw' | 'render',
+): PreviewHandler {
+  return {
+    kinds: ['slicer_project'],
+    run: () => {
+      seen.push(name)
+      if (answer === 'throw') return Promise.reject(new Error(`boom from ${name}`))
+      if (answer === 'decline') return Promise.resolve(null)
+      return Promise.resolve({
+        bytes: makePng(64, 64),
+        width: 64,
+        height: 64,
+        source: 'rasterized',
+      })
+    },
+  }
+}
+
+test('a declining handler falls through to the next, and the first non-null answer wins', async () => {
+  await withLibrary(async (lib) => {
+    const ctx = seedUser(lib)
+    const dir = join(lib.dir, 'marc', 'Benchy')
+    mkdirSync(dir)
+    curaProject(join(dir, 'a.3mf'), makePng(300, 300))
+    await rescan(lib, ctx)
+
+    // Before the chain existed the first matching handler's `null` ended the job as
+    // `unsupported`, which is terminal — so a later handler that could have rendered the file
+    // never got the chance and no rescan ever gave it one.
+    const seen: string[] = []
+    const handlers = [
+      spyHandler(seen, 'first', 'decline'),
+      spyHandler(seen, 'second', 'render'),
+      spyHandler(seen, 'third', 'render'),
+    ]
+    assert.deepEqual(await runPreviewQueue(lib, { handlers }), {
+      ready: 1,
+      failed: 0,
+      unsupported: 0,
+    })
+    // Third never ran: the chain stops at the first handler that produces something.
+    assert.deepEqual(seen, ['first', 'second'])
+    const row = lib.db.prepare('SELECT state, source, width FROM previews').get() as {
+      state: string
+      source: string
+      width: number
+    }
+    assert.deepEqual(
+      { state: row.state, source: row.source, width: row.width },
+      {
+        state: 'ready',
+        source: 'rasterized',
+        width: 64,
+      },
+    )
+  })
+})
+
+test('a throw fails the row immediately; the handlers after it never run', async () => {
+  await withLibrary(async (lib) => {
+    const ctx = seedUser(lib)
+    const dir = join(lib.dir, 'marc', 'Benchy')
+    mkdirSync(dir)
+    curaProject(join(dir, 'a.3mf'), makePng(300, 300))
+    await rescan(lib, ctx)
+
+    // The distinction the chain must not blur: `null` is "not my job", a throw is "this file is
+    // broken". Wrapping each handler call so an exception fell through to the next one would
+    // turn a corrupt model into a silent, never-retried `unsupported` — and here it would be
+    // masked completely, because the handler after the throwing one would have rendered it.
+    const seen: string[] = []
+    const handlers = [
+      spyHandler(seen, 'first', 'decline'),
+      spyHandler(seen, 'second', 'throw'),
+      spyHandler(seen, 'third', 'render'),
+    ]
+    assert.deepEqual(await runPreviewQueue(lib, { handlers }), {
+      ready: 0,
+      failed: 1,
+      unsupported: 0,
+    })
+    assert.deepEqual(seen, ['first', 'second'])
+    const row = lib.db.prepare('SELECT file_id, state, error FROM previews').get() as {
+      file_id: string
+      state: string
+      error: string
+    }
+    assert.equal(row.state, 'failed')
+    // The message survives, so the file is diagnosable from the row alone.
+    assert.match(row.error, /boom from second/)
+    assert.equal(existsSync(join(lib.dir, '.spm', 'previews', `${row.file_id}.png`)), false)
+  })
+})
+
+test('only when every matching handler declines is the job unsupported', async () => {
+  await withLibrary(async (lib) => {
+    const ctx = seedUser(lib)
+    const dir = join(lib.dir, 'marc', 'Benchy')
+    mkdirSync(dir)
+    curaProject(join(dir, 'a.3mf'), makePng(300, 300))
+    await rescan(lib, ctx)
+
+    const seen: string[] = []
+    const handlers = [
+      spyHandler(seen, 'first', 'decline'),
+      spyHandler(seen, 'second', 'decline'),
+      // Covers a different kind, so it is not part of this job's chain at all.
+      { kinds: ['model'] as const, run: () => Promise.reject(new Error('wrong kind')) },
+    ]
+    assert.deepEqual(await runPreviewQueue(lib, { handlers }), {
+      ready: 0,
+      failed: 0,
+      unsupported: 1,
+    })
+    assert.deepEqual(seen, ['first', 'second'])
+    const row = lib.db.prepare('SELECT state, error FROM previews').get() as {
+      state: string
+      error: string | null
+    }
+    assert.equal(row.state, 'unsupported')
+    assert.equal(row.error, null)
+  })
+})
+
 test('the queue processes a batch larger than its concurrency', async () => {
   await withLibrary(async (lib) => {
     const ctx = seedUser(lib)

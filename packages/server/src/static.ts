@@ -18,14 +18,16 @@ const DEFAULT_WEB_ROOT_FROM_HERE = '../../web/dist/web/browser'
  *
  * An explicit `SPM_WEB_ROOT` keeps its old meaning and stays relative to the process cwd
  * (that is the form playwright.config.ts uses: `dist/web/browser` with cwd `packages/web`).
+ *
+ * Takes the raw value rather than reading `SPM_WEB_ROOT` itself: the read belongs with every
+ * other environment read, in `readServerEnv`, and a module-level one here would run at import
+ * time — before `main.ts` can turn a bad value into a sentence.
  */
 export function resolveWebRoot(override: string | undefined): string {
   if (override) return resolve(override)
   // import.meta.dirname is undefined only for non-file: module URLs, which this never is.
   return resolve(import.meta.dirname ?? '.', DEFAULT_WEB_ROOT_FROM_HERE)
 }
-
-const WEB_ROOT = resolveWebRoot(Deno.env.get('SPM_WEB_ROOT'))
 
 /**
  * Joins a request-derived candidate under the web root, refusing anything that escapes it.
@@ -39,8 +41,10 @@ export function staticFilePath(root: string, candidate: string): string {
   return safeJoin(root, ...candidate.split('/'))
 }
 
-/** Serves the Angular bundle, falling back to index.html so client routes deep-link. */
-export async function serveStatic(url: URL, root: string = WEB_ROOT): Promise<Response> {
+/** Serves the Angular bundle, falling back to index.html so client routes deep-link. The root
+ *  is required rather than defaulted, so there is nowhere for a second copy of the default to
+ *  hide: `makeHandler` resolves it once from `Env`. */
+export async function serveStatic(url: URL, root: string): Promise<Response> {
   const relative = url.pathname === '/' ? 'index.html' : url.pathname.slice(1)
   for (const candidate of [relative, 'index.html']) {
     try {

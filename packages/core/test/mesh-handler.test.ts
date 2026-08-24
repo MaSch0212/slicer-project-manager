@@ -3,22 +3,30 @@ import { join } from 'node:path'
 import type { Ctx } from '../src/ctx.ts'
 import { newId } from '../src/db/ids.ts'
 import type { Library } from '../src/db/open.ts'
-import { MESH_HANDLER } from '../src/previews/mesh-handler.ts'
+import { PREVIEW_HANDLERS } from '../src/previews/handlers.ts'
 import type { Mesh } from '../src/previews/mesh/mesh.ts'
 import { readPngSize } from '../src/previews/png.ts'
 import {
   claimPendingPreviews,
-  EMBEDDED_HANDLER,
   MAX_PREVIEW_ATTEMPTS,
   runPreviewQueue,
 } from '../src/previews/queue.ts'
 import { rescan } from '../src/projects/rescan.ts'
 import { assert, test } from './harness.ts'
 import { withLibrary } from './tmp-library.ts'
-import { meshGeometry3mf } from './fixtures/make-3mf.ts'
+import { bambuLineageProject, meshGeometry3mf, slicerProjectWithMesh } from './fixtures/make-3mf.ts'
 import { binaryStl, cubeMesh } from './fixtures/make-mesh.ts'
+import { makePng } from './fixtures/make-png.ts'
 
-const HANDLERS = [EMBEDDED_HANDLER, MESH_HANDLER]
+/**
+ * The production chain itself, not a local array spelling out the same two handlers.
+ *
+ * Rebuilding an equivalent array here is what made the order untested: inverting the one
+ * `main.ts` used left core, server and e2e all green, because every order assertion was checking
+ * a copy. `preview.spec.ts` cannot cover it either -- its fixture is a `.stl`, a kind
+ * `EMBEDDED_HANDLER` does not claim, so the order never comes up.
+ */
+const HANDLERS = PREVIEW_HANDLERS
 
 function seedUser(lib: Library, username = 'marc'): Ctx {
   const id = newId()
@@ -117,10 +125,10 @@ test('obj, 3mf and an UPPERCASE extension are rasterized too, not just lowercase
     meshGeometry3mf(join(dir, 'tetra.3mf'))
     // Uppercase is not a curiosity: the reference library contains `.STL` files, and
     // `classifyFile` lowercases before matching, so they arrive here as `kind: 'model'`.
-    // Pinned by a test because getting it wrong is silent *and* unrecoverable — a
-    // case-sensitive match returns null, `unsupported` is terminal (queue.ts:147-155), and no
-    // later fix re-queues the rows. Every uppercase model in the library would go permanently
-    // blank with CI green.
+    // Pinned by a test because getting it wrong is silent *and* self-concealing — a
+    // case-sensitive match returns null, the queue records `unsupported`, and it re-claims only
+    // `pending` rows, so shipping the fix would not revisit a single one of them. Every
+    // uppercase model in the library stays blank, with CI green, until its bytes change.
     writeFileSync(join(dir, 'CUBE.STL'), binaryStl(cubeMesh()))
     await rescan(lib, ctx)
 
@@ -210,6 +218,92 @@ test('a model the handler cannot read is unsupported, not failed', async () => {
     assert.equal(row.error, null)
     // Unsupported is terminal: the row is not re-queued and burns no further budget.
     assert.equal(row.attempts, 1)
+  })
+})
+
+/** The kind classification actually gave each file, so a fixture drifting shows up here. */
+function fileKinds(lib: Library): { relPath: string; kind: string }[] {
+  const rows = lib.db
+    .prepare('SELECT rel_path AS relPath, kind FROM files ORDER BY rel_path')
+    .all() as { relPath: string; kind: string }[]
+  // node:sqlite returns null-prototype rows, which deepEqual will not match a literal.
+  return rows.map((row) => ({ relPath: row.relPath, kind: row.kind }))
+}
+
+test('a slicer project with no embedded thumbnail is rasterized rather than left unsupported', async () => {
+  await withLibrary(async (lib) => {
+    const { ctx, dir } = seedProjectDir(lib)
+    slicerProjectWithMesh(join(dir, 'unsliced.3mf'))
+    await rescan(lib, ctx)
+
+    // Pinned, because the whole point is the *slicer_project* path: if the fixture ever stopped
+    // classifying as a project this test would silently become another `model` rasterizer test
+    // and cover nothing new.
+    assert.deepEqual(fileKinds(lib), [{ relPath: 'unsliced.3mf', kind: 'slicer_project' }])
+
+    // 326 of the reference library's 374 projects look exactly like this. Before the handler
+    // chain, EMBEDDED_HANDLER's `null` ended the job as `unsupported`, which is terminal — the
+    // rows were permanently blank and no rescan would revisit them.
+    assert.deepEqual(await runPreviewQueue(lib, { handlers: HANDLERS }), {
+      ready: 1,
+      failed: 0,
+      unsupported: 0,
+    })
+
+    const row = previewRows(lib)[0]!
+    assert.equal(row.state, 'ready')
+    assert.equal(row.source, 'rasterized')
+    assert.deepEqual(
+      readPngSize(readFileSync(join(lib.dir, '.spm', 'previews', `${row.file_id}.png`))),
+      { width: 256, height: 256 },
+    )
+  })
+})
+
+test('a slicer project that has an embedded thumbnail still uses it, not the rasterizer', async () => {
+  await withLibrary(async (lib) => {
+    const { ctx, dir } = seedProjectDir(lib)
+    // Geometry *and* a plate render, so both handlers could answer and only the order decides.
+    // 311x233 is nothing the rasterizer can produce (it always writes 256x256), which is what
+    // makes the size assertion below able to tell the two sources apart on the bytes alone.
+    slicerProjectWithMesh(join(dir, 'sliced.3mf'), makePng(311, 233))
+    await rescan(lib, ctx)
+
+    assert.deepEqual(await runPreviewQueue(lib, { handlers: HANDLERS }), {
+      ready: 1,
+      failed: 0,
+      unsupported: 0,
+    })
+
+    const row = previewRows(lib)[0]!
+    // Asserting `source`, not merely that a png exists: with the handler order inverted a png
+    // would still be written and a file-exists check would stay green.
+    assert.equal(row.source, 'embedded')
+    assert.deepEqual({ width: row.width, height: row.height }, { width: 311, height: 233 })
+    assert.deepEqual(
+      readPngSize(readFileSync(join(lib.dir, '.spm', 'previews', `${row.file_id}.png`))),
+      { width: 311, height: 233 },
+    )
+  })
+})
+
+test('a slicer project whose model part holds no geometry fails, and is not silently unsupported', async () => {
+  await withLibrary(async (lib) => {
+    const { ctx, dir } = seedProjectDir(lib)
+    // Every handler in the chain is out of answers, but for two different reasons: no embedded
+    // thumbnail (`null`) and a model part with nothing in it (`AppError`). The throw has to win,
+    // or a broken project becomes a permanent `unsupported` with no message to debug it from.
+    bambuLineageProject(join(dir, 'empty.3mf'), ['X-BBL-Client-Type'])
+    await rescan(lib, ctx)
+
+    assert.deepEqual(await runPreviewQueue(lib, { handlers: HANDLERS }), {
+      ready: 0,
+      failed: 1,
+      unsupported: 0,
+    })
+    const row = previewRows(lib)[0]!
+    assert.equal(row.state, 'failed')
+    assert.match(row.error!, /no triangles/)
   })
 })
 

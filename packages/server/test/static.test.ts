@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { join, resolve } from 'node:path'
 import { resolveWebRoot, serveStatic, staticFilePath } from '../src/static.ts'
+import { withServer } from './harness.ts'
 
 const repoRoot = resolve(fileURLToPath(import.meta.url), '../../../..')
 
@@ -99,5 +100,26 @@ Deno.test('serveStatic serves files and falls back to index.html for client rout
   } finally {
     rmSync(root, { recursive: true, force: true })
     rmSync(secret, { force: true })
+  }
+})
+
+Deno.test('makeHandler serves non-API requests from the web root it was given', async () => {
+  // `SPM_WEB_ROOT` used to be read at module load in static.ts and baked into serveStatic's
+  // default parameter, so no test could vary it and the path from the variable to a served byte
+  // was never exercised. main.ts resolves it now and passes it through Env; this covers the
+  // handoff.
+  const root = mkdtempSync(join(tmpdir(), 'spm-webroot-'))
+  try {
+    writeFileSync(join(root, 'index.html'), '<!doctype html>from the configured root')
+    await withServer(
+      async (server) => {
+        const response = await server.fetch('/projects/abc')
+        assert.equal(response.status, 200)
+        assert.equal(await response.text(), '<!doctype html>from the configured root')
+      },
+      { env: { webRoot: root } },
+    )
+  } finally {
+    rmSync(root, { recursive: true, force: true })
   }
 })

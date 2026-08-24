@@ -45,6 +45,30 @@ Deno.test(
   },
 )
 
+Deno.test('a configured public origin reaches the links both routes hand out', async () => {
+  // Through the real routes, not `activationUrl` in isolation. The origin used to arrive as a
+  // module-level constant read straight from `Deno.env`, so nothing had to pass it and nothing
+  // could check that it was: now `main.ts` resolves it and injects it, and dropping
+  // `env.publicOrigin` at either call site has to be visible from outside.
+  await withServer(
+    async (server) => {
+      const cookie = await loginAsAdmin(server)
+      const created = await (
+        await createUser(server, cookie, { username: 'anna', displayName: 'Anna' })
+      ).json()
+      assert.match(created.activationUrl, /^https:\/\/print\.example\.com\/activate#/)
+
+      const id = created.user.id
+      const reissued = await server.fetch(`/api/users/${id}/invite`, { method: 'POST', cookie })
+      assert.match(
+        (await reissued.json()).activationUrl,
+        /^https:\/\/print\.example\.com\/activate#/,
+      )
+    },
+    { env: { publicOrigin: 'https://print.example.com' } },
+  )
+})
+
 Deno.test('a non-admin is refused every users route', async () => {
   await withServer(async (server) => {
     const adminCookie = await loginAsAdmin(server)

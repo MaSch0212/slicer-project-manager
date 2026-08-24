@@ -27,7 +27,19 @@ export type PreviewHandler = {
   run(job: PreviewJob): Promise<PreviewOutput | null>
 }
 
-/** Bounds a malformed mesh to a fixed number of attempts instead of looping forever (7.3). */
+/**
+ * Bounds how often one row may be *claimed* while it is still `pending` (spec 7.3).
+ *
+ * Narrower than it sounds, and worth being exact about. A handler that returns or throws moves
+ * the row to a terminal state in the same tick, and `claimPendingPreviews` selects only
+ * `state = 'pending'`, so an ordinary failure is not what this bounds — reaching the terminal
+ * state is. What this bounds is the row that never gets one: a job that hangs, or a process
+ * killed mid-run, leaves `pending` with a lease that later expires and is re-claimed. Without a
+ * ceiling that file is picked up again on every restart, forever.
+ *
+ * A rescan that sees the file's content hash change resets `attempts` to 0 along with the state,
+ * so the budget is per unchanged-bytes, not per file for all time.
+ */
 export const MAX_PREVIEW_ATTEMPTS = 3
 export const DEFAULT_CONCURRENCY = 2
 
@@ -131,8 +143,8 @@ async function runOne(
   handlers: readonly PreviewHandler[],
   counts: { ready: number; failed: number; unsupported: number },
 ): Promise<void> {
-  const handler = handlers.find((candidate) => candidate.kinds.includes(job.kind))
-  if (!handler) {
+  const matching = handlers.filter((candidate) => candidate.kinds.includes(job.kind))
+  if (matching.length === 0) {
     // Unreachable via claimPendingPreviews, which only claims covered kinds; releasing the
     // lease anyway keeps a hand-built job list from parking a row for PREVIEW_LEASE_MS.
     lib.db.prepare('UPDATE previews SET claimed_at = NULL WHERE file_id = ?').run(job.fileId)
@@ -141,9 +153,28 @@ async function runOne(
 
   const now = Date.now()
   try {
-    const output = await handler.run(job)
+    // Every matching handler in order, first non-null wins. `null` means "not my job, ask the
+    // next one", so a slicer project whose slicer embedded no thumbnail falls through from
+    // EMBEDDED_HANDLER to the rasterizer instead of ending `unsupported` — which the queue
+    // never revisits, so the 326 unsliced projects in the reference library stayed blank until
+    // something edited them on disk.
+    //
+    // A throw is the *other* answer: "this file is broken". It leaves this loop immediately and
+    // lands in the catch below as `failed`. That is why there is no try/catch inside the loop:
+    // catching here to try the next handler would record the corrupt model as `unsupported`,
+    // which writes `error = NULL` — the same row a genuinely unrenderable file gets, with
+    // nothing left to say which it was or why.
+    let output: PreviewOutput | null = null
+    for (const handler of matching) {
+      output = await handler.run(job)
+      if (output) break
+    }
     if (!output) {
-      // Deterministic absence: never retried.
+      // Deterministic absence. Like `failed`, this leaves the queue for good: claimPendingPreviews
+      // selects `state = 'pending'` only, so neither is ever re-claimed on its own. What does
+      // bring a row back is `rescan`, which re-pends it — from any state, attempts reset — when
+      // the file's content hash changes. So this is "nothing to render from these bytes", not
+      // "nothing to render, ever".
       lib.db
         .prepare(
           `UPDATE previews SET state = 'unsupported', error = NULL, claimed_at = NULL,
