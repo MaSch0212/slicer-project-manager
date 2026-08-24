@@ -113,58 +113,76 @@ task text says.
       information extra field for sizes and offsets that are `0xffffffff` in the base record.
 - [ ] Keep the reader streaming: entries are still read by offset, never by inflating the
       archive.
+- [ ] **A chunked reader, for task 5.** Add a way to read an entry as a stream of bounded
+      chunks rather than one buffer — `DecompressionStream('deflate-raw')` is available on both
+      runtimes and needs no dependency. Keep `readZipEntryBytes` for callers that genuinely
+      want the whole thing; the point is that a 674 MB model part no longer has to be one
+      allocation. Verify the chunked path produces byte-identical output to the buffered one
+      across the real library.
 - [ ] Tests: a hand-built zip64 fixture (extend `packages/core/test/fixtures/make-3mf.ts`'s
       `writeZip`), an archive with a zip64 EOCD but 32-bit-safe values, and a truncated
       locator. A non-zip64 archive must still parse byte-identically to today.
 
-### Task 5 — Keep the whole queue under 500 MB, and skip what will not fit
+### Task 5 — Stream the reads, so nothing has to be skipped
 
-The deployment target is a 2 GB NAS. Tasks 3 and 4 reduce memory; this one bounds it.
+The deployment target is a NAS with 2 GB of RAM and the queue must peak under 500 MB. Tasks 3
+and 4 cut the peak roughly in half, but the model document is still held whole, so the biggest
+files remain far over budget. This task removes the document from the peak entirely.
 
-- [ ] **Measure first, then choose the limit.** For each format, chart peak RSS against input
-      size using real files from `D:\SPM Library\marc` (which spans 636 triangles to
-      3,295,832). Derive the cap from the measurement and record the table in the report - do
-      not guess a round number and hope.
-- [ ] **Refuse oversized models before reading them.** Check the file size, and for 3MF the
-      entry's uncompressed size, _before_ allocating anything. A model that cannot be rendered
-      inside the budget must cost nothing to reject.
-- [ ] The refusal must carry a **user-facing reason** naming the actual and permitted sizes -
-      "model is too large to preview (210 MB; the limit is 64 MB)". A silent skip is the one
-      outcome this project has consistently refused.
-- [ ] **Make the limit configurable**, so a machine with room can raise it. Same treatment as
-      the other environment variables: a tested pure resolver in `packages/server/src/env.ts`,
-      print-and-exit at the call site, documented in the README.
-- [ ] **Make preview concurrency configurable too**, defaulting so that the _product_ of
-      concurrency and the per-render ceiling stays inside the budget. `DEFAULT_CONCURRENCY` is
-      2 today; if the measurement says two large renders cannot coexist under 500 MB, the
-      default changes and the comment says why.
-- [ ] Tests: a file over the limit is refused without being read (assert the reason, and that
-      no large allocation happens); a file just under it still renders; the resolver's accept
-      and reject cases; and a memory assertion over the largest fixture that would catch a
-      regression reintroducing a whole-file read.
-- [ ] Report the projected outcome across the real library: how many models render, how many
-      are skipped as too large, and the peak RSS observed for the worst case that still runs.
-- [ ] **Defaults target the 2 GB NAS; raising them must be one obvious edit.** The same server
-      may be deployed to a Mac mini with far more headroom, so the README needs a worked
-      example — the two variables to set for a larger machine, and what the measured table says
-      that buys in models covered. Someone with room should not have to read the source to
-      work out which knob to turn, and someone without room should be safe having turned
-      nothing.
+The alternative considered and rejected: cap the input size and skip anything larger. That was
+the original plan and the user asked for it, but the measurement changed the answer — see the
+note below on why decimation and capping both miss.
 
----
+- [ ] **3MF: consume the chunked reader from task 4** instead of one inflated buffer. The
+      parser already walks bytes with monotonic cursors, so it needs a sliding window over the
+      chunk stream rather than random access — a tag never spans more than a few hundred bytes,
+      so a window of a few tens of KB with carry-over is enough. Keep the two passes sharing
+      one traversal; a second pass means a second stream, not a retained buffer.
+- [ ] **STL and OBJ: read in chunks too.** `readFileSync` currently holds the whole file. A
+      164 MB STL is the library's largest and costs a needless 164 MB on top of its positions.
+      Binary STL is fixed-size records, so this is mechanical; ASCII STL and OBJ need
+      line-boundary carry-over.
+- [ ] **The expected outcome, to be confirmed by measurement, not assumed:** peak becomes the
+      `positions` array plus the window, i.e. roughly `triangleCount * 36` bytes. For the
+      library's worst cases that is about 110 MB (Köln Pokal, 2 899 850 triangles) and about
+      120 MB (Baby Groot, 3 295 832). Both are comfortably inside the budget with concurrency 2.
+- [ ] **Keep a cap, as a backstop rather than as the mechanism.** Something pathological — a
+      zip bomb, a model with a billion degenerate triangles — must still be refused rather than
+      allowed to allocate without limit. Derive it from the measured relationship between
+      triangle count and peak, refuse before allocating, and carry a user-facing reason naming
+      the actual and permitted sizes.
+- [ ] **Make the cap and preview concurrency configurable**, tested resolvers in
+      `packages/server/src/env.ts`, print-and-exit at the call site, documented in the README.
+      Defaults target the 2 GB NAS.
+- [ ] **Defaults for the NAS, one obvious edit to raise them.** The same server may run on a
+      Mac mini with far more headroom. The README needs the two variables and what the measured
+      table says raising them buys, so nobody has to read the source to work it out and nobody
+      who changes nothing is unsafe.
+- [ ] Tests: a fixture larger than any buffer the parser is allowed to hold still parses; peak
+      allocation stays proportional to triangle count and not to file size (assert on
+      allocation shape, not wall clock); the cap refuses before reading; the resolvers' accept
+      and reject cases; the existing 3MF, STL and OBJ suites pass unchanged.
+- [ ] Report the outcome across the real library: peak RSS for the worst file that runs, how
+      many are refused by the backstop, and the wall-time delta from streaming.
 
 ## Not in this plan
 
-- **Streaming rasterization.** Parsing triangles in chunks and rasterizing in two passes
-  straight from disk would make memory independent of model size and remove the cap entirely,
-  but it redesigns the parser-to-renderer interface (`Mesh` becomes an iterator) and needs
-  `zip.ts` rebuilt around `DecompressionStream` for 3MF. Worth doing if the cap turns out to
-  exclude models people care about; not worth blocking a deployment on.
-- **The viewer's own size prompt.** Subsystem B2 opens models in three.js in the browser,
-  where the same "this one is enormous" question arises and the honest answer is to ask the
-  user before loading. Same judgement, different layer; it belongs with B2.
-
----
+- **Streaming rasterization.** Task 5 streams the _read_, so the document leaves the peak but
+  the `positions` array stays. Going further — rasterizing straight from a triangle iterator
+  in two passes and never materialising `positions` at all — would make memory independent of
+  model size, but it turns `Mesh` into an iterator and rewrites the renderer's contract for a
+  saving of about 110 MB on the worst file in the library. Not worth it while task 5's numbers
+  hold.
+- **Decimation before rendering.** Converting to a low-poly model first sounds like it should
+  help and does not: decimation happens _after_ parsing, so the full document and the full
+  `positions` array have both already been allocated by the time it could run. On the worst
+  file it would shrink 104 MB out of a 2163 MB peak, at the cost of an extra pass over data
+  that is rendered exactly once. Rendering is not the bottleneck — 3.3M triangles rasterize in
+  about 700 ms while parsing takes seconds.
+- **Decimation for the viewer, though, is a real feature** and belongs with B2. Shipping a
+  164 MB STL to a browser is bad regardless of server memory, and a decimated mesh cached
+  beside the thumbnail is the right fix — it also largely removes the need to ask the user
+  whether to load a large model, since there would no longer be a large model to load.
 
 ## Definition of done
 
@@ -173,5 +191,6 @@ The deployment target is a 2 GB NAS. Tasks 3 and 4 reduce memory; this one bound
   every model file either `ready` or skipped for a stated, readable reason — none `unsupported`,
   none failing with a bare runtime error.
 - **Peak RSS for the whole preview queue stays under 500 MB** while backfilling the real
-  library, measured, not assumed.
+  library, measured, not assumed — and reached by streaming the reads, so no model in the
+  library is refused for being large. The cap exists, but nothing normal should meet it.
 - No new dependency in any `package.json`.
