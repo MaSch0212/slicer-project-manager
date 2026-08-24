@@ -15,12 +15,12 @@ rebuilt here.
 
 374 `.3mf` files under one user's library, plus 28 more that fail to classify:
 
-| Group | Count | Today |
-| --- | --- | --- |
-| `slicer_project` with an embedded thumbnail | 48 | works |
-| `slicer_project` with **no** embedded thumbnail | 326 | **`unsupported`, terminal, no thumbnail ever** |
-| unreadable as zip (zip64) | 28 | **classified `other`, invisible to previews** |
-| model XML over the V8 string cap | 3 | **`failed`** |
+| Group                                           | Count | Today                                          |
+| ----------------------------------------------- | ----- | ---------------------------------------------- |
+| `slicer_project` with an embedded thumbnail     | 48    | works                                          |
+| `slicer_project` with **no** embedded thumbnail | 326   | **`unsupported`, terminal, no thumbnail ever** |
+| unreadable as zip (zip64)                       | 28    | **classified `other`, invisible to previews**  |
+| model XML over the V8 string cap                | 3     | **`failed`**                                   |
 
 323 of the 354 thumbnail-less files parse cleanly with `parse3mfMesh` today. The geometry is
 right there; nothing asks for it.
@@ -82,7 +82,7 @@ task text says.
 - [ ] `packages/core/src/previews/mesh/threemf.ts:164` does
       `new TextDecoder().decode(readZipEntryBytes(...))`. Three real files exceed V8's
       ~512 MB string cap and die with `Cannot create a string longer than 0x1fffffe8
-      characters` — a `RangeError`, so they also violate constraint 4.
+    characters` — a `RangeError`, so they also violate constraint 4.
 - [ ] Scan the `Uint8Array` directly. The existing cursor walk already only needs to find
       `<vertex`, `<triangle` and comment markers and read a handful of attributes; decode
       only the bounded tag slices, never the document.
@@ -96,7 +96,7 @@ task text says.
 
 - [ ] `packages/core/src/files/zip.ts:55` throws `zip64 archives are not supported` when the
       central-directory offset is `0xffffffff`. 28 real files hit this. They fail
-      *classification*, so they are not merely thumbnail-less — they are the wrong `kind`.
+      _classification_, so they are not merely thumbnail-less — they are the wrong `kind`.
 - [ ] Support the zip64 end-of-central-directory locator and record, and the zip64 extended
       information extra field for sizes and offsets that are `0xffffffff` in the base record.
 - [ ] Keep the reader streaming: entries are still read by offset, never by inflating the
