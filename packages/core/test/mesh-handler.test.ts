@@ -307,6 +307,48 @@ test('a slicer project whose model part holds no geometry fails, and is not sile
   })
 })
 
+test('a model-kind 3MF with an embedded thumbnail uses it rather than being rasterized', async () => {
+  await withLibrary(async (lib) => {
+    const { ctx, dir } = seedProjectDir(lib)
+    // `meshGeometry3mf` has no slicer metadata, so `classify3mf` calls it a plain `model` — the
+    // same kind the 28 zip64 files in the reference library get. Before EMBEDDED_HANDLER covered
+    // `model`, all 28 were rasterized to 256² while 16 of them carried a 512²/1024² picture that
+    // nothing ever read. 311x233 is a size the rasterizer cannot produce, so the assertion below
+    // can tell the two sources apart from the bytes alone.
+    meshGeometry3mf(join(dir, 'plain.3mf'), makePng(311, 233))
+    await rescan(lib, ctx)
+
+    assert.deepEqual(await runPreviewQueue(lib, { handlers: HANDLERS }), {
+      ready: 1,
+      failed: 0,
+      unsupported: 0,
+    })
+    const row = previewRows(lib)[0]!
+    assert.equal(row.source, 'embedded')
+    assert.deepEqual({ width: row.width, height: row.height }, { width: 311, height: 233 })
+  })
+})
+
+test('an stl still rasterizes: EMBEDDED_HANDLER covering model declines rather than claims', async () => {
+  await withLibrary(async (lib) => {
+    const { ctx, dir } = seedProjectDir(lib)
+    // The risk in widening EMBEDDED_HANDLER to `model`: a kind it cannot read must fall through,
+    // not end the chain. An STL is not a zip at all, so `extractEmbeddedThumbnail` returns null
+    // and the rasterizer behind it still gets the job.
+    writeFileSync(join(dir, 'cube.stl'), binaryStl(cubeMesh()))
+    await rescan(lib, ctx)
+
+    assert.deepEqual(await runPreviewQueue(lib, { handlers: HANDLERS }), {
+      ready: 1,
+      failed: 0,
+      unsupported: 0,
+    })
+    const row = previewRows(lib)[0]!
+    assert.equal(row.source, 'rasterized')
+    assert.deepEqual({ width: row.width, height: row.height }, { width: 256, height: 256 })
+  })
+})
+
 test('the default handler list still leaves models pending, so rasterizing is opt-in', async () => {
   await withLibrary(async (lib) => {
     const { ctx, dir } = seedProjectDir(lib)

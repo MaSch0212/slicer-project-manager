@@ -50,6 +50,19 @@ export const DEFAULT_CONCURRENCY = 2
  */
 export const PREVIEW_LEASE_MS = 15 * 60 * 1000
 
+/**
+ * The queue's default handler, and deliberately the *narrow* one: `slicer_project` only.
+ *
+ * A plain `model` 3MF can carry a thumbnail too, and one should be used when it is there — but
+ * covering `model` here would be wrong, because coverage is a claim and a claim that comes back
+ * `null` is recorded as `unsupported`, which is terminal. Alone in the default list this handler
+ * has nothing behind it, so every `.stl` and `.obj` — not a zip, no thumbnail, nothing this can
+ * ever answer — would go permanently blank instead of staying `pending` for an operator who
+ * enables the rasterizer later. Nothing re-queues a row whose bytes have not changed.
+ *
+ * `model` coverage therefore lives in `handlers.ts`, which spreads this handler and adds the kind
+ * on the chain that has a rasterizer behind it and can afford the fall-through.
+ */
 export const EMBEDDED_HANDLER: PreviewHandler = {
   kinds: ['slicer_project'],
   run: (job) => {
