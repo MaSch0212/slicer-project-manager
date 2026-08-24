@@ -136,6 +136,12 @@ The deployment target is a 2 GB NAS. Tasks 3 and 4 reduce memory; this one bound
       regression reintroducing a whole-file read.
 - [ ] Report the projected outcome across the real library: how many models render, how many
       are skipped as too large, and the peak RSS observed for the worst case that still runs.
+- [ ] **Defaults target the 2 GB NAS; raising them must be one obvious edit.** The same server
+      may be deployed to a Mac mini with far more headroom, so the README needs a worked
+      example — the two variables to set for a larger machine, and what the measured table says
+      that buys in models covered. Someone with room should not have to read the source to
+      work out which knob to turn, and someone without room should be safe having turned
+      nothing.
 
 ---
 
