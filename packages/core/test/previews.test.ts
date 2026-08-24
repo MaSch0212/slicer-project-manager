@@ -6,6 +6,7 @@ import type { Library } from '../src/db/open.ts'
 import { extractEmbeddedThumbnail } from '../src/previews/embedded.ts'
 import { readPngSize } from '../src/previews/png.ts'
 import {
+  DEFAULT_CONCURRENCY,
   MAX_PREVIEW_ATTEMPTS,
   PREVIEW_LEASE_MS,
   claimPendingPreviews,
@@ -342,6 +343,14 @@ test('only when every matching handler declines is the job unsupported', async (
     assert.equal(row.state, 'unsupported')
     assert.equal(row.error, null)
   })
+})
+
+test('the default concurrency is one worker, which is a memory decision', () => {
+  // Pinned where the constant lives, beside the doc comment carrying the measurement that chose
+  // it: backfilling the reference library on Deno peaks at 400-410 MB with one worker and
+  // 620-621 MB with two, against a 500 MB budget on the deployment target. Raising it is a
+  // deliberate act that has to redo that arithmetic and the README table, so it fails here first.
+  assert.equal(DEFAULT_CONCURRENCY, 1)
 })
 
 test('the queue processes a batch larger than its concurrency', async () => {

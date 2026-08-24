@@ -3,7 +3,7 @@ import { join } from 'node:path'
 import type { Ctx } from '../src/ctx.ts'
 import { newId } from '../src/db/ids.ts'
 import type { Library } from '../src/db/open.ts'
-import { PREVIEW_HANDLERS } from '../src/previews/handlers.ts'
+import { makePreviewHandlers, PREVIEW_HANDLERS } from '../src/previews/handlers.ts'
 import type { Mesh } from '../src/previews/mesh/mesh.ts'
 import { readPngSize } from '../src/previews/png.ts'
 import {
@@ -346,6 +346,33 @@ test('an stl still rasterizes: EMBEDDED_HANDLER covering model declines rather t
     const row = previewRows(lib)[0]!
     assert.equal(row.source, 'rasterized')
     assert.deepEqual({ width: row.width, height: row.height }, { width: 256, height: 256 })
+  })
+})
+
+test('a model over the configured mesh ceiling fails with a message naming both sizes', async () => {
+  await withLibrary(async (lib) => {
+    const { ctx, dir } = seedProjectDir(lib)
+    writeFileSync(join(dir, 'cube.stl'), binaryStl(cubeMesh()))
+    slicerProjectWithMesh(join(dir, 'project.3mf'))
+    await rescan(lib, ctx)
+
+    // Through `makePreviewHandlers`, not by calling a parser directly: what is being pinned is
+    // that the operator's ceiling reaches the rasterizer at all, across the whole chain the
+    // server builds. A ceiling of 1 byte refuses everything, which is the point -- the ceiling's
+    // *value* is a deployment decision and belongs in the README, not in an assertion here.
+    const handlers = makePreviewHandlers({ maxMeshBytes: 1 })
+    assert.deepEqual(await runPreviewQueue(lib, { handlers }), {
+      ready: 0,
+      failed: 2,
+      unsupported: 0,
+    })
+
+    for (const row of previewRows(lib)) {
+      // `failed`, not `unsupported`: a refusal carries a reason, and `unsupported` writes
+      // `error = NULL`, which would leave an operator with a blank thumbnail and nothing to read.
+      assert.equal(row.state, 'failed')
+      assert.match(row.error!, /needs .* MB .* more than the .* MB this server permits/)
+    }
   })
 })
 

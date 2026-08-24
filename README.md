@@ -31,16 +31,66 @@ password anywhere.
 | `SPM_LOG_LEVEL`           | `info`                                                                                                                                                           | How much the server logs: `silent`, `error`, `warn`, `info`, `debug` or `trace`. `info` covers startup, one line per API request, preview batches, authentication and every create/update/delete. `debug` adds static-asset requests and per-job preview detail. An unrecognised value is refused at startup rather than ignored.                                                                                                                                                  |
 | `SPM_DEV_UI_ORIGIN`       | _unset_                                                                                                                                                          | **Development only.** Forward every non-`/api/` request to a running Angular dev server, e.g. `http://localhost:4200`, live reload included. Without it the server reads the built bundle from `SPM_WEB_ROOT`, so the UI has to be rebuilt to be seen. An unusable value is refused at startup.                                                                                                                                                                                    |
 | `SPM_PREVIEW_INTERVAL_MS` | `30000`                                                                                                                                                          | How often, in milliseconds, the preview queue runs. Mainly a development affordance: at the default a model that has just been indexed waits up to 30 seconds for its thumbnail, which is a slow loop to work against, and the e2e suite sets it low so it can watch one appear rather than sit out a tick. A whole number from 1 to 2147483647; past that ceiling `setInterval` silently clamps the delay to 1 ms and the queue would run flat out, so it is refused instead.     |
+| `SPM_PREVIEW_CONCURRENCY` | `1`                                                                                                                                                              | How many thumbnails are rendered at once. Each worker may hold one whole mesh, so this multiplies the memory the queue uses. A whole number from 1 to 64. See **Preview memory** below before raising it.                                                                                                                                                                                                                                                                          |
+| `SPM_MAX_MESH_MB`         | `256`                                                                                                                                                            | The largest mesh, in megabytes, the rasterizer will allocate for one model. A backstop against pathological input, not a filter on real files: the largest model in the reference library needs 209 MB and nothing normal comes near the default. A model over the ceiling fails its preview with a message naming its size and the permitted one. A whole number from 1 to 2048 — past that a single mesh no longer fits in one `Float32Array`.                                   |
 
 Every one of these is validated before the server binds its port. A value it cannot use produces
 one line naming the variable and what it wanted, and exit status 1 — never a stack trace.
 
 Note one deliberate asymmetry. `SPM_LOG_LEVEL` trims and ignores case, because it is a word an
-operator types from memory. The two numeric variables accept **only** a plain run of digits, so
+operator types from memory. The numeric variables accept **only** a plain run of digits, so
 `""`, `" 8000 "`, `"1e3"`, `"0x1f"`, `"1.5"`, `"-1"` and `"+8000"` are all refused — every one of
 them is a spelling JavaScript's `Number()` quietly accepts, and a value that happens to work is
 worse than one that fails, because nothing tells the operator their config does not say what they
 think it says. The error message quotes the raw value, so a stray space is visible in it.
+
+### Preview memory
+
+Rendering a thumbnail is the only thing this server does whose memory is a function of the file
+rather than of the request. Nothing is read whole any more — a 164 MB STL and a 3MF whose model
+part inflates to 674 MB both pass through a fixed 256 KB window — so what is left in the peak is
+the mesh itself, at 36 bytes per triangle plus 12 per distinct vertex, and about 80 MB of
+decompressor beside it.
+
+Two variables set the ceiling, and they multiply: **`SPM_PREVIEW_CONCURRENCY` × one mesh**. The
+defaults are sized for a 2 GB NAS with a 500 MB budget for the whole queue. Measured on Deno,
+backfilling a reference library of 1 725 models (402 3MF, 1 311 STL, 12 OBJ; largest mesh 209 MB,
+largest file a 164 MB STL, largest inflated model part 674 MB):
+
+| `SPM_PREVIEW_CONCURRENCY` | peak RSS   | wall time for the whole library |
+| ------------------------- | ---------- | ------------------------------- |
+| `1` (default)             | 400–410 MB | baseline                        |
+| `2`                       | 620–621 MB | 0–1.5% faster                   |
+
+Raising it to `2` costs 212 MB and saves nothing worth having: 1.5% on the machine measured here,
+0% on a second one. That is a bad trade here and would be a bad trade on a larger machine too —
+parsing and rasterizing are CPU-bound JavaScript on one thread, so a second worker mostly
+interleaves with the first rather than running beside it. Raise it when the queue is waiting on
+I/O — a network-mounted library, or spinning disks — not to use more cores.
+
+As a rule of thumb, budget **`concurrency × (SPM_MAX_MESH_MB + 80) + 120` megabytes**. The 80 is
+the decompressor; the 120 is Deno's own ~46 MB plus the heap V8 has touched and not returned. It
+is meant to bound the configuration from above, so it uses the _ceiling_ rather than the model you
+actually have: at the shipped defaults it predicts 456 MB, against 400–410 MB measured on a
+library whose largest mesh is 209 MB rather than the permitted 256 — and substituting that real
+209 gives 409 MB, which is the measurement. At concurrency 2 it predicts 792 MB against 621 MB
+measured, so it stays conservative as the worker count grows.
+
+**Moving to a bigger machine.** Say a Mac mini where you are happy to give the preview queue 2 GB.
+Solving `2000 = c × (m + 80) + 120` leaves you a choice, and the table above says which way to
+spend it: extra workers buy almost nothing, extra ceiling buys headroom for models you do not have
+yet. So `SPM_MAX_MESH_MB=1024` on its own comes to 1 224 MB and lets through a 28-million-triangle
+STL, or a 14-million-triangle 3MF whose vertex table doubles the cost per triangle — either way
+several times anything in a normal library — while `SPM_PREVIEW_CONCURRENCY=3` with
+`SPM_MAX_MESH_MB=512` comes to 1 896 MB for a backfill that finishes at about the same time.
+Prefer the first. Nothing goes wrong if you change neither: the defaults are safe everywhere, they
+are merely cautious off the NAS.
+
+`SPM_MAX_MESH_MB` is a backstop rather than a tuning knob: it exists so that a corrupt or hostile
+file declaring a billion triangles is refused instead of allocating 36 GB. Leave it alone unless a
+real model of yours is refused — the failure message names the size it needed, so the new value is
+the number in that message rounded up. Its own ceiling is 2 048, which is where a single mesh stops
+fitting in one `Float32Array` at all.
 
 ## Development
 

@@ -61,17 +61,17 @@ function write3mf(path: string, modelXml: string): void {
   ])
 }
 
-function withTmpDir(run: (dir: string) => void): void {
+async function withTmpDir(run: (dir: string) => Promise<void>): Promise<void> {
   const dir = mkdtempSync(join(tmpdir(), 'spm-test-'))
   try {
-    run(dir)
+    await run(dir)
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
 }
 
-test('a hand-built 3MF with a single triangle parses to that triangle', () => {
-  withTmpDir((dir) => {
+test('a hand-built 3MF with a single triangle parses to that triangle', async () => {
+  await withTmpDir(async (dir) => {
     const path = join(dir, 'a.3mf')
     write3mf(
       path,
@@ -86,14 +86,14 @@ test('a hand-built 3MF with a single triangle parses to that triangle', () => {
         },
       ]),
     )
-    const mesh = parse3mfMesh(path)
+    const mesh = await parse3mfMesh(path)
     assert.equal(mesh.triangleCount, 1)
     assert.deepEqual(Array.from(mesh.positions), [0, 0, 0, 1, 0, 0, 1, 1, 0])
   })
 })
 
-test('a two-object 3MF concatenates both meshes, each with its own local vertex indices', () => {
-  withTmpDir((dir) => {
+test('a two-object 3MF concatenates both meshes, each with its own local vertex indices', async () => {
+  await withTmpDir(async (dir) => {
     const path = join(dir, 'two.3mf')
     write3mf(
       path,
@@ -118,7 +118,7 @@ test('a two-object 3MF concatenates both meshes, each with its own local vertex 
         },
       ]),
     )
-    const mesh = parse3mfMesh(path)
+    const mesh = await parse3mfMesh(path)
     assert.equal(mesh.triangleCount, 2)
     assert.deepEqual(
       Array.from(mesh.positions),
@@ -127,8 +127,8 @@ test('a two-object 3MF concatenates both meshes, each with its own local vertex 
   })
 })
 
-test('an out-of-range triangle vertex index is rejected', () => {
-  withTmpDir((dir) => {
+test('an out-of-range triangle vertex index is rejected', async () => {
+  await withTmpDir(async (dir) => {
     const path = join(dir, 'bad-index.3mf')
     write3mf(
       path,
@@ -142,12 +142,12 @@ test('an out-of-range triangle vertex index is rejected', () => {
         },
       ]),
     )
-    assert.throws(() => parse3mfMesh(path), validation)
+    await assert.rejects(parse3mfMesh(path), validation)
   })
 })
 
-test('a 3MF with vertices but no triangles is rejected', () => {
-  withTmpDir((dir) => {
+test('a 3MF with vertices but no triangles is rejected', async () => {
+  await withTmpDir(async (dir) => {
     const path = join(dir, 'no-triangles.3mf')
     write3mf(
       path,
@@ -162,20 +162,20 @@ test('a 3MF with vertices but no triangles is rejected', () => {
         },
       ]),
     )
-    assert.throws(() => parse3mfMesh(path), validation)
+    await assert.rejects(parse3mfMesh(path), validation)
   })
 })
 
-test('a 3MF with no 3D/3dmodel.model entry is rejected', () => {
-  withTmpDir((dir) => {
+test('a 3MF with no 3D/3dmodel.model entry is rejected', async () => {
+  await withTmpDir(async (dir) => {
     const path = join(dir, 'no-model.3mf')
     writeZip(path, [{ name: '[Content_Types].xml', data: '<Types/>' }])
-    assert.throws(() => parse3mfMesh(path), validation)
+    await assert.rejects(parse3mfMesh(path), validation)
   })
 })
 
-test('a vertex with a non-finite coordinate is rejected', () => {
-  withTmpDir((dir) => {
+test('a vertex with a non-finite coordinate is rejected', async () => {
+  await withTmpDir(async (dir) => {
     const path = join(dir, 'nan.3mf')
     const xml = buildModelXml([
       {
@@ -188,12 +188,12 @@ test('a vertex with a non-finite coordinate is rejected', () => {
       },
     ]).replace('x="1" y="0" z="0"', 'x="nan" y="0" z="0"')
     write3mf(path, xml)
-    assert.throws(() => parse3mfMesh(path), validation)
+    await assert.rejects(parse3mfMesh(path), validation)
   })
 })
 
-test('the scanner does not go quadratic on a mesh with many vertices and triangles', () => {
-  withTmpDir((dir) => {
+test('the scanner does not go quadratic on a mesh with many vertices and triangles', async () => {
+  await withTmpDir(async (dir) => {
     const smallPath = join(dir, 'small.3mf')
     const largePath = join(dir, 'large.3mf')
     const SMALL_N = 3000
@@ -203,9 +203,9 @@ test('the scanner does not go quadratic on a mesh with many vertices and triangl
     write3mf(largePath, buildGridModelXml(LARGE_N))
 
     const t0 = performance.now()
-    const small = parse3mfMesh(smallPath)
+    const small = await parse3mfMesh(smallPath)
     const t1 = performance.now()
-    const large = parse3mfMesh(largePath)
+    const large = await parse3mfMesh(largePath)
     const t2 = performance.now()
 
     assert.equal(small.triangleCount, SMALL_N)
@@ -228,15 +228,15 @@ test('the scanner does not go quadratic on a mesh with many vertices and triangl
   })
 })
 
-test('a large fan produces the exact expected geometry under the two-pass rewrite', () => {
+test('a large fan produces the exact expected geometry under the two-pass rewrite', async () => {
   // Exercises the counting pass and the filling pass agreeing on size/order at a scale where
   // a bookkeeping bug in vertexWrite/positionWrite/vertexBase would show up as wrong data
   // rather than merely a wrong count.
-  withTmpDir((dir) => {
+  await withTmpDir(async (dir) => {
     const path = join(dir, 'large-fan.3mf')
     const n = 2000
     write3mf(path, buildGridModelXml(n))
-    const mesh = parse3mfMesh(path)
+    const mesh = await parse3mfMesh(path)
 
     assert.equal(mesh.triangleCount, n)
     const expected = new Float32Array(n * 9)
@@ -252,8 +252,8 @@ test('a large fan produces the exact expected geometry under the two-pass rewrit
   })
 })
 
-test('a <vertex> or <triangle> inside an XML comment is ignored, not ingested as geometry', () => {
-  withTmpDir((dir) => {
+test('a <vertex> or <triangle> inside an XML comment is ignored, not ingested as geometry', async () => {
+  await withTmpDir(async (dir) => {
     const path = join(dir, 'commented.3mf')
     const xml =
       '<?xml version="1.0"?><model unit="millimeter"><resources>' +
@@ -271,14 +271,14 @@ test('a <vertex> or <triangle> inside an XML comment is ignored, not ingested as
       '</triangles></mesh></object>' +
       '</resources><build><item objectid="1"/></build></model>'
     write3mf(path, xml)
-    const mesh = parse3mfMesh(path)
+    const mesh = await parse3mfMesh(path)
     assert.equal(mesh.triangleCount, 1)
     assert.deepEqual(Array.from(mesh.positions), [0, 0, 0, 1, 0, 0, 1, 1, 0])
   })
 })
 
-test('single-quoted attribute values parse the same as double-quoted ones', () => {
-  withTmpDir((dir) => {
+test('single-quoted attribute values parse the same as double-quoted ones', async () => {
+  await withTmpDir(async (dir) => {
     const path = join(dir, 'single-quotes.3mf')
     const xml =
       "<?xml version='1.0'?><model unit='millimeter'><resources>" +
@@ -287,14 +287,14 @@ test('single-quoted attribute values parse the same as double-quoted ones', () =
       "</vertices><triangles><triangle v1='0' v2='1' v3='2'/></triangles></mesh></object>" +
       "</resources><build><item objectid='1'/></build></model>"
     write3mf(path, xml)
-    const mesh = parse3mfMesh(path)
+    const mesh = await parse3mfMesh(path)
     assert.equal(mesh.triangleCount, 1)
     assert.deepEqual(Array.from(mesh.positions), [0, 0, 0, 1, 0, 0, 1, 1, 0])
   })
 })
 
-test('a newline or tab after the element name (pretty-printed XML) still parses', () => {
-  withTmpDir((dir) => {
+test('a newline or tab after the element name (pretty-printed XML) still parses', async () => {
+  await withTmpDir(async (dir) => {
     const path = join(dir, 'pretty.3mf')
     const xml =
       '<?xml version="1.0"?><model unit="millimeter"><resources>' +
@@ -307,14 +307,14 @@ test('a newline or tab after the element name (pretty-printed XML) still parses'
       '  </triangles>\n</mesh></object>' +
       '</resources><build><item objectid="1"/></build></model>'
     write3mf(path, xml)
-    const mesh = parse3mfMesh(path)
+    const mesh = await parse3mfMesh(path)
     assert.equal(mesh.triangleCount, 1)
     assert.deepEqual(Array.from(mesh.positions), [0, 0, 0, 1, 0, 0, 1, 1, 0])
   })
 })
 
-test('an empty or whitespace-only attribute value is rejected, not coerced to 0', () => {
-  withTmpDir((dir) => {
+test('an empty or whitespace-only attribute value is rejected, not coerced to 0', async () => {
+  await withTmpDir(async (dir) => {
     const emptyX = join(dir, 'empty-x.3mf')
     write3mf(
       emptyX,
@@ -324,7 +324,7 @@ test('an empty or whitespace-only attribute value is rejected, not coerced to 0'
         '</vertices><triangles><triangle v1="0" v2="1" v3="2"/></triangles></mesh></object>' +
         '</resources><build><item objectid="1"/></build></model>',
     )
-    assert.throws(() => parse3mfMesh(emptyX), validation)
+    await assert.rejects(parse3mfMesh(emptyX), validation)
 
     const whitespaceX = join(dir, 'whitespace-x.3mf')
     write3mf(
@@ -335,7 +335,7 @@ test('an empty or whitespace-only attribute value is rejected, not coerced to 0'
         '</vertices><triangles><triangle v1="0" v2="1" v3="2"/></triangles></mesh></object>' +
         '</resources><build><item objectid="1"/></build></model>',
     )
-    assert.throws(() => parse3mfMesh(whitespaceX), validation)
+    await assert.rejects(parse3mfMesh(whitespaceX), validation)
 
     const emptyV1 = join(dir, 'empty-v1.3mf')
     write3mf(
@@ -346,12 +346,12 @@ test('an empty or whitespace-only attribute value is rejected, not coerced to 0'
         '</vertices><triangles><triangle v1="" v2="1" v3="2"/></triangles></mesh></object>' +
         '</resources><build><item objectid="1"/></build></model>',
     )
-    assert.throws(() => parse3mfMesh(emptyV1), validation)
+    await assert.rejects(parse3mfMesh(emptyV1), validation)
   })
 })
 
-test('a hyphenated decoy attribute does not leak into the real one (anchored, not \\b)', () => {
-  withTmpDir((dir) => {
+test('a hyphenated decoy attribute does not leak into the real one (anchored, not \\b)', async () => {
+  await withTmpDir(async (dir) => {
     const path = join(dir, 'decoy.3mf')
     const xml =
       '<?xml version="1.0"?><model unit="millimeter"><resources>' +
@@ -361,7 +361,7 @@ test('a hyphenated decoy attribute does not leak into the real one (anchored, no
       '</vertices><triangles><triangle v1="0" v2="1" v3="2"/></triangles></mesh></object>' +
       '</resources><build><item objectid="1"/></build></model>'
     write3mf(path, xml)
-    const mesh = parse3mfMesh(path)
+    const mesh = await parse3mfMesh(path)
     assert.equal(mesh.triangleCount, 1)
     // If `\b` (rather than the whitespace anchor) matched the attribute name, the decoy
     // `p-x="77"` would win and the first vertex would come out at x=77, not x=0.
@@ -369,8 +369,8 @@ test('a hyphenated decoy attribute does not leak into the real one (anchored, no
   })
 })
 
-test('a 3MF whose objects are only <components> (no inline <mesh> anywhere) is rejected', () => {
-  withTmpDir((dir) => {
+test('a 3MF whose objects are only <components> (no inline <mesh> anywhere) is rejected', async () => {
+  await withTmpDir(async (dir) => {
     const path = join(dir, 'components-only.3mf')
     const xml =
       '<?xml version="1.0"?><model unit="millimeter"><resources>' +
@@ -380,17 +380,17 @@ test('a 3MF whose objects are only <components> (no inline <mesh> anywhere) is r
     write3mf(path, xml)
     // Must fail loudly (a blank/partial thumbnail reported as success is worse than a failed
     // preview), not return an empty or partial mesh.
-    assert.throws(() => parse3mfMesh(path), validation)
+    await assert.rejects(parse3mfMesh(path), validation)
   })
 })
 
-test('multi-byte UTF-8 around and inside the geometry does not shift the byte cursors', () => {
+test('multi-byte UTF-8 around and inside the geometry does not shift the byte cursors', async () => {
   // The scan walks raw UTF-8 bytes, so anything that makes a character wider than one byte is
   // where a byte/character confusion would surface: a decoded slice that starts or ends
   // mid-character, or a marker offset read as a character index. Umlauts (2 bytes), a CJK
   // quotation mark (3) and an emoji (4) are placed in a comment, in element text, in a
   // non-geometry attribute, and inside a <vertex> tag's own slice.
-  withTmpDir((dir) => {
+  await withTmpDir(async (dir) => {
     const path = join(dir, 'utf8.3mf')
     const xml =
       '<?xml version="1.0" encoding="UTF-8"?><model unit="millimeter">' +
@@ -403,7 +403,7 @@ test('multi-byte UTF-8 around and inside the geometry does not shift the byte cu
       '</vertices><triangles><triangle v1="0" v2="1" v3="2"/></triangles>' +
       '</mesh></object></resources><build><item objectid="1"/></build></model>'
     write3mf(path, xml)
-    const mesh = parse3mfMesh(path)
+    const mesh = await parse3mfMesh(path)
     assert.equal(mesh.triangleCount, 1)
     assert.deepEqual(Array.from(mesh.positions), [0, 0, 0, 1, 0, 0, 1, 1, 0])
   })
@@ -414,7 +414,9 @@ test('multi-byte UTF-8 around and inside the geometry does not shift the byte cu
  * any single decode was handed. Patched on the prototype because the parser holds its own decoder
  * instance; restored in a `finally` so a throwing parse cannot leak the patch into another test.
  */
-function largestDecodeDuringParse(path: string): { largest: number; calls: number; tris: number } {
+async function largestDecodeDuringParse(
+  path: string,
+): Promise<{ largest: number; calls: number; tris: number }> {
   const proto = TextDecoder.prototype as unknown as {
     decode: (input?: unknown, options?: unknown) => string
   }
@@ -435,14 +437,14 @@ function largestDecodeDuringParse(path: string): { largest: number; calls: numbe
   try {
     // Parsed into a local first: in an object literal, `largest` and `calls` would be read
     // before the `parse3mfMesh` call that fills them, and both would come back 0.
-    tris = parse3mfMesh(path).triangleCount
+    tris = (await parse3mfMesh(path)).triangleCount
   } finally {
     proto.decode = original
   }
   return { largest, calls, tris }
 }
 
-test('no single decode grows with the document — the parse never materializes it', () => {
+test('no single decode grows with the document — the parse never materializes it', async () => {
   // The point of the byte scan. A whole-document `TextDecoder().decode()` is not merely
   // wasteful: the three "Köln Pokal" files in the reference library inflate to a 674 MB model
   // part, past V8's 0x1fffffe8-character cap, and died with a bare "Cannot create a string
@@ -454,7 +456,7 @@ test('no single decode grows with the document — the parse never materializes 
   // against a hard-coded ceiling that would silently become meaningless if the fixture or the
   // window size were retuned: what has to hold is that the largest decode is a constant, so
   // quadrupling the document must not move it at all.
-  withTmpDir((dir) => {
+  await withTmpDir(async (dir) => {
     const small = join(dir, 'small.3mf')
     const large = join(dir, 'large.3mf')
     const n = 6000
@@ -463,8 +465,8 @@ test('no single decode grows with the document — the parse never materializes 
     write3mf(large, buildGridModelXml(n * 4))
     const smallBytes = new TextEncoder().encode(smallXml).length
 
-    const s = largestDecodeDuringParse(small)
-    const l = largestDecodeDuringParse(large)
+    const s = await largestDecodeDuringParse(small)
+    const l = await largestDecodeDuringParse(large)
 
     assert.equal(s.tris, n)
     assert.equal(l.tris, n * 4)
@@ -486,12 +488,12 @@ test('no single decode grows with the document — the parse never materializes 
   })
 })
 
-test('a document spanning many decode windows with a multi-byte character parses exactly', () => {
+test('a document spanning many decode windows with a multi-byte character parses exactly', async () => {
   // The windowed reader decodes a fixed span at a time and slices tags out of it by byte offset,
   // which is only valid while every code unit in that window came from exactly one byte. This
   // fixture is far larger than one window and puts a 4-byte character in the middle of it, so the
   // run crosses many aligned windows, one that is not, and the transitions in both directions.
-  withTmpDir((dir) => {
+  await withTmpDir(async (dir) => {
     const path = join(dir, 'windows.3mf')
     const n = 2000
     const marked = 1200
@@ -520,7 +522,7 @@ test('a document spanning many decode windows with a multi-byte character parses
         '</mesh></object></resources><build><item objectid="1"/></build></model>',
     )
 
-    const mesh = parse3mfMesh(path)
+    const mesh = await parse3mfMesh(path)
     assert.equal(mesh.triangleCount, n)
     const expected = new Float32Array(n * 9)
     let w = 0
@@ -535,12 +537,12 @@ test('a document spanning many decode windows with a multi-byte character parses
   })
 })
 
-test('a tag wider than one decode window parses, and the tags after it still do', () => {
+test('a tag wider than one decode window parses, and the tags after it still do', async () => {
   // The windowed reader cannot serve a tag that does not fit in a window, so it decodes that one
   // tag on its own. What has to hold is that it decodes the *whole* tag rather than the part that
   // would have fit — here the padding pushes `x` past the window edge, so a clipped slice loses
   // the attribute entirely — and that the tags after it are still read correctly.
-  withTmpDir((dir) => {
+  await withTmpDir(async (dir) => {
     const path = join(dir, 'wide-tag.3mf')
     const padding = 'p'.repeat(9000)
     write3mf(
@@ -552,14 +554,14 @@ test('a tag wider than one decode window parses, and the tags after it still do'
         '</vertices><triangles><triangle v1="0" v2="1" v3="2"/></triangles></mesh></object>' +
         '</resources><build><item objectid="1"/></build></model>',
     )
-    const mesh = parse3mfMesh(path)
+    const mesh = await parse3mfMesh(path)
     assert.equal(mesh.triangleCount, 1)
     assert.deepEqual(Array.from(mesh.positions), [0, 0, 0, 1, 0, 0, 1, 1, 0])
   })
 })
 
-test('an unterminated <vertex> tag or XML comment fails as a validation error', () => {
-  withTmpDir((dir) => {
+test('an unterminated <vertex> tag or XML comment fails as a validation error', async () => {
+  await withTmpDir(async (dir) => {
     // Both markers are found, then the search for their terminator runs off the end of the
     // buffer. Without the explicit guards this would slice to a negative index and surface as
     // a confusing attribute error, or loop, rather than as an AppError.
@@ -569,7 +571,7 @@ test('an unterminated <vertex> tag or XML comment fails as a validation error', 
       '<?xml version="1.0"?><model unit="millimeter"><resources>' +
         '<object id="1" type="model"><mesh><vertices><vertex x="0" y="0" z="0"',
     )
-    assert.throws(() => parse3mfMesh(cutTag), validation)
+    await assert.rejects(parse3mfMesh(cutTag), validation)
 
     const cutComment = join(dir, 'cut-comment.3mf')
     write3mf(
@@ -577,12 +579,12 @@ test('an unterminated <vertex> tag or XML comment fails as a validation error', 
       '<?xml version="1.0"?><model unit="millimeter"><resources>' +
         '<object id="1" type="model"><mesh><vertices><!-- never closed',
     )
-    assert.throws(() => parse3mfMesh(cutComment), validation)
+    await assert.rejects(parse3mfMesh(cutComment), validation)
   })
 })
 
-test('a namespace-prefixed tag (<m:vertex>) yields no geometry and fails cleanly', () => {
-  withTmpDir((dir) => {
+test('a namespace-prefixed tag (<m:vertex>) yields no geometry and fails cleanly', async () => {
+  await withTmpDir(async (dir) => {
     const path = join(dir, 'namespaced.3mf')
     const xml =
       '<?xml version="1.0"?><model unit="millimeter"><resources>' +
@@ -591,6 +593,6 @@ test('a namespace-prefixed tag (<m:vertex>) yields no geometry and fails cleanly
       '</vertices><triangles><m:triangle v1="0" v2="1" v3="2"/></triangles></mesh></object>' +
       '</resources><build><item objectid="1"/></build></model>'
     write3mf(path, xml)
-    assert.throws(() => parse3mfMesh(path), validation)
+    await assert.rejects(parse3mfMesh(path), validation)
   })
 })

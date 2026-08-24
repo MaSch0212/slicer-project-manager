@@ -1,14 +1,19 @@
 import assert from 'node:assert/strict'
 import { join, resolve } from 'node:path'
 import { AppError } from '@spm/contract/errors.ts'
+import { DEFAULT_CONCURRENCY } from '@spm/core'
 import {
+  DEFAULT_MAX_MESH_MB,
   DEFAULT_PORT,
   DEFAULT_PREVIEW_INTERVAL_MS,
   MAX_INTERVAL_MS,
+  MAX_MESH_MB,
   readServerEnv,
   resolveLibraryDir,
   resolveLogLevel,
+  resolveMaxMeshBytes,
   resolvePort,
+  resolvePreviewConcurrency,
   resolvePreviewIntervalMs,
   resolvePublicOrigin,
 } from '../src/env.ts'
@@ -121,6 +126,47 @@ Deno.test(
   },
 )
 
+Deno.test('SPM_PREVIEW_CONCURRENCY accepts a worker count and refuses the rest', () => {
+  // Against core's constant, not against the literal 1. The number itself is core's to decide and
+  // is pinned in `previews.test.ts` beside the measurement that chose it; what this pins is the
+  // *coupling* -- that the server reads it rather than keeping its own copy. A literal here would
+  // stay green while core moved, which is precisely the drift worth catching.
+  assert.equal(resolvePreviewConcurrency(undefined), DEFAULT_CONCURRENCY)
+  assert.equal(resolvePreviewConcurrency('2'), 2)
+  assert.equal(resolvePreviewConcurrency('64'), 64)
+
+  refuses('SPM_PREVIEW_CONCURRENCY', '', () => resolvePreviewConcurrency(''))
+  refuses('SPM_PREVIEW_CONCURRENCY', ' 2 ', () => resolvePreviewConcurrency(' 2 '))
+  refuses('SPM_PREVIEW_CONCURRENCY', '2.5', () => resolvePreviewConcurrency('2.5'))
+  refuses('SPM_PREVIEW_CONCURRENCY', '-1', () => resolvePreviewConcurrency('-1'))
+  // Zero workers is not "pause the queue", it is a queue that silently never runs. And 65 is
+  // 65 meshes in memory at once, which no machine this ships to survives.
+  refuses('SPM_PREVIEW_CONCURRENCY', '0', () => resolvePreviewConcurrency('0'))
+  refuses('SPM_PREVIEW_CONCURRENCY', '65', () => resolvePreviewConcurrency('65'))
+})
+
+Deno.test('SPM_MAX_MESH_MB accepts whole megabytes and converts them to bytes', () => {
+  assert.equal(resolveMaxMeshBytes(undefined), DEFAULT_MAX_MESH_MB * 1_000_000)
+  // The measured default: the largest mesh in the reference library needs 208.8 MB, so a
+  // default below that would refuse a file the user owns. Pinned for the same reason as above.
+  assert.equal(DEFAULT_MAX_MESH_MB, 256)
+  assert.equal(resolveMaxMeshBytes('300'), 300_000_000)
+  assert.equal(resolveMaxMeshBytes('1'), 1_000_000)
+  // 2 GB, and the bound is structural: past it a single `Float32Array` for `positions` would
+  // exceed what V8 can construct, so a larger ceiling would be a promise the engine cannot keep.
+  assert.equal(MAX_MESH_MB, 2_048)
+  assert.equal(resolveMaxMeshBytes('2048'), 2_048_000_000)
+
+  refuses('SPM_MAX_MESH_MB', '', () => resolveMaxMeshBytes(''))
+  refuses('SPM_MAX_MESH_MB', ' 300 ', () => resolveMaxMeshBytes(' 300 '))
+  refuses('SPM_MAX_MESH_MB', '256MB', () => resolveMaxMeshBytes('256MB'))
+  refuses('SPM_MAX_MESH_MB', '2.5', () => resolveMaxMeshBytes('2.5'))
+  refuses('SPM_MAX_MESH_MB', '-1', () => resolveMaxMeshBytes('-1'))
+  // Zero permits no mesh at all, which would fail every preview with a message about sizes.
+  refuses('SPM_MAX_MESH_MB', '0', () => resolveMaxMeshBytes('0'))
+  refuses('SPM_MAX_MESH_MB', '2049', () => resolveMaxMeshBytes('2049'))
+})
+
 Deno.test('SPM_PUBLIC_ORIGIN is normalised to a bare origin, and blank means unset', () => {
   assert.equal(
     resolvePublicOrigin('https://print.example.com/spm?x=1'),
@@ -160,6 +206,8 @@ Deno.test('readServerEnv resolves every variable, defaulting the optional ones',
       level: 'info',
       port: DEFAULT_PORT,
       previewIntervalMs: DEFAULT_PREVIEW_INTERVAL_MS,
+      previewConcurrency: DEFAULT_CONCURRENCY,
+      maxMeshBytes: DEFAULT_MAX_MESH_MB * 1_000_000,
       devUiOrigin: null,
       publicOrigin: undefined,
       webRoot: bundled,
@@ -175,6 +223,8 @@ Deno.test('readServerEnv resolves every variable, defaulting the optional ones',
     SPM_LOG_LEVEL: 'debug',
     SPM_PORT: '9001',
     SPM_PREVIEW_INTERVAL_MS: '250',
+    SPM_PREVIEW_CONCURRENCY: '4',
+    SPM_MAX_MESH_MB: '512',
     SPM_DEV_UI_ORIGIN: 'http://localhost:4200/ignored/path',
     SPM_PUBLIC_ORIGIN: 'https://print.example.com/ignored/path',
     SPM_WEB_ROOT: 'dist/web/browser',
@@ -186,6 +236,8 @@ Deno.test('readServerEnv resolves every variable, defaulting the optional ones',
       level: 'debug',
       port: 9001,
       previewIntervalMs: 250,
+      previewConcurrency: 4,
+      maxMeshBytes: 512_000_000,
       // Each of these three proves the variable is routed through its own validator rather than
       // passed raw: a stray path is dropped, and a relative web root becomes absolute.
       devUiOrigin: 'http://localhost:4200',

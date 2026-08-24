@@ -41,7 +41,21 @@ export type PreviewHandler = {
  * so the budget is per unchanged-bytes, not per file for all time.
  */
 export const MAX_PREVIEW_ATTEMPTS = 3
-export const DEFAULT_CONCURRENCY = 2
+
+/**
+ * How many preview jobs run at once by default.
+ *
+ * **One, and that is a memory decision rather than a throughput one.** A rasterizing job's peak is
+ * its mesh plus a fixed reader window, and the reference library's largest mesh is 208.8 MB
+ * (2 899 850 triangles over 8 699 550 unshared vertices, the Köln Pokal 3MF), so a worker is worth
+ * about 290 MB at the worst. Measured backfilling the whole library on Deno: 400–410 MB of peak RSS
+ * at one worker across nine runs on two machines, 620–621 MB at two — and the deployment target is
+ * a 2 GB NAS with a 500 MB budget. The second worker is not even paying for itself in time: 1.5%
+ * faster here, 0% on the second machine, because parsing and rasterizing are CPU-bound JavaScript
+ * on one thread. `SPM_PREVIEW_CONCURRENCY` raises it for a library that waits on I/O instead; the
+ * README carries the table.
+ */
+export const DEFAULT_CONCURRENCY = 1
 
 /**
  * How long a claim on a preview row is honoured. Well beyond any single job (subsystem B's

@@ -1,5 +1,12 @@
 import { AppError } from '@spm/contract/errors.ts'
-import { DEFAULT_LOG_LEVEL, LOG_LEVELS, parseLogLevel, type LogLevelSetting } from '@spm/core'
+import {
+  DEFAULT_CONCURRENCY,
+  DEFAULT_LOG_LEVEL,
+  DEFAULT_MAX_MESH_BYTES,
+  LOG_LEVELS,
+  parseLogLevel,
+  type LogLevelSetting,
+} from '@spm/core'
 import { resolveDevUiOrigin } from './dev-proxy.ts'
 import { normalizePublicOrigin } from './routes/users.ts'
 import { resolveWebRoot } from './static.ts'
@@ -124,6 +131,67 @@ export function resolvePreviewIntervalMs(raw: string | undefined): number {
 }
 
 /**
+ * How many preview jobs run at once, and therefore how many meshes may be in memory at once.
+ *
+ * This and `SPM_MAX_MESH_MB` are the two halves of one number: a worker's peak is one mesh plus a
+ * fixed reader window, so the queue's peak is roughly `concurrency × (mesh + 80 MB) + 120 MB` —
+ * about 46 MB of that constant is Deno's own baseline and the rest is V8 heap the allocator has
+ * touched and not given back. The README carries the measured table the formula is fitted to.
+ *
+ * The default is core's `DEFAULT_CONCURRENCY` read directly, not copied: a server-side constant
+ * holding the same number is a second place for it to live and a place for it to drift, and there
+ * is no test that can see the drift while the two agree. The ceiling of 64 is not a memory
+ * judgement — it is where "a whole number of workers" stops being plausible and starts being a
+ * typo.
+ */
+export function resolvePreviewConcurrency(raw: string | undefined): number {
+  if (raw === undefined) return DEFAULT_CONCURRENCY
+  return requireWholeNumber(
+    'SPM_PREVIEW_CONCURRENCY',
+    raw,
+    'a worker count. Expected a whole number from 1 to 64',
+    64,
+  )
+}
+
+/**
+ * The ceiling on one model's geometry arrays, in megabytes of 1 000 000 bytes.
+ *
+ * A backstop, not a filter: every read is streamed, so the biggest file in the reference library
+ * needs 208.8 MB and the default permits 256. What this refuses is input whose size is a function
+ * of an attacker rather than of a printer — a model declaring a billion degenerate triangles asks
+ * for 36 GB, and asking is all it takes.
+ *
+ * Megabytes rather than bytes because the number an operator arrives at is "about 300 MB", and
+ * `SPM_MAX_MESH_MB=300` is a value they can check at a glance where `300000000` is not. A megabyte
+ * is 1 000 000 bytes here, which is the same reading the refusal message prints, so the number in
+ * the message and the number to write into the variable are directly comparable.
+ *
+ * **`MAX_MESH_MB` is 2 048, and the number is structural rather than a taste judgement.** A
+ * ceiling is a promise that a mesh under it will be *allocated*, and `positions` is one
+ * `Float32Array`: at 2 GB it is 512 million elements, comfortably inside V8's 2³²−1 element limit,
+ * where a ceiling in the tens of gigabytes would let a file ask for an array the engine cannot
+ * construct at all. The allocation is guarded regardless — `allocateMesh` turns a failed
+ * `new Float32Array` into an `AppError` rather than letting a bare `RangeError` escape the queue's
+ * failure contract — but offering an operator a ceiling that cannot be honoured is not a ceiling.
+ * 2 GB is also eight times the default and four times the reference library's worst model, so
+ * nothing real is anywhere near it.
+ */
+export const MAX_MESH_MB = 2_048
+export const DEFAULT_MAX_MESH_MB = DEFAULT_MAX_MESH_BYTES / 1_000_000
+
+export function resolveMaxMeshBytes(raw: string | undefined): number {
+  if (raw === undefined) return DEFAULT_MAX_MESH_BYTES
+  const mb = requireWholeNumber(
+    'SPM_MAX_MESH_MB',
+    raw,
+    `a size. Expected a whole number of megabytes from 1 to ${MAX_MESH_MB}`,
+    MAX_MESH_MB,
+  )
+  return mb * 1_000_000
+}
+
+/**
  * The origin activation links are built on, normalised to a bare origin, or `undefined` to use
  * the origin of the request that asked for the link.
  *
@@ -141,6 +209,8 @@ export type ServerEnv = {
   level: LogLevelSetting
   port: number
   previewIntervalMs: number
+  previewConcurrency: number
+  maxMeshBytes: number
   devUiOrigin: string | null
   publicOrigin: string | undefined
   webRoot: string
@@ -159,6 +229,8 @@ export function readServerEnv(get: (name: string) => string | undefined): Server
     level: resolveLogLevel(get('SPM_LOG_LEVEL')),
     port: resolvePort(get('SPM_PORT')),
     previewIntervalMs: resolvePreviewIntervalMs(get('SPM_PREVIEW_INTERVAL_MS')),
+    previewConcurrency: resolvePreviewConcurrency(get('SPM_PREVIEW_CONCURRENCY')),
+    maxMeshBytes: resolveMaxMeshBytes(get('SPM_MAX_MESH_MB')),
     // These three already had validators of their own, next to the features they configure.
     // Called from here so that one function is the answer to "what does this server read from
     // the environment", without moving code that is happier where it is.

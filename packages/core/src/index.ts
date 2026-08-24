@@ -83,6 +83,7 @@ export {
 } from './files/usecases.ts'
 
 export {
+  DEFAULT_CONCURRENCY,
   EMBEDDED_HANDLER,
   MAX_PREVIEW_ATTEMPTS,
   PREVIEW_LEASE_MS,
@@ -91,5 +92,6 @@ export {
   type PreviewJob,
   type PreviewOutput,
 } from './previews/queue.ts'
-export { MESH_HANDLER } from './previews/mesh-handler.ts'
-export { PREVIEW_HANDLERS } from './previews/handlers.ts'
+export { MESH_HANDLER, makeMeshHandler } from './previews/mesh-handler.ts'
+export { PREVIEW_HANDLERS, makePreviewHandlers } from './previews/handlers.ts'
+export { DEFAULT_MAX_MESH_BYTES, type MeshLimits } from './previews/mesh/limits.ts'

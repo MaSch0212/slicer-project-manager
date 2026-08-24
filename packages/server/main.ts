@@ -3,8 +3,8 @@ import {
   consoleSink,
   createLogger,
   ensureBootstrapAdmin,
+  makePreviewHandlers,
   openLibrary,
-  PREVIEW_HANDLERS,
   pruneExpiredSessions,
   runPreviewQueue,
 } from '@spm/core'
@@ -29,9 +29,17 @@ function orExit<T>(read: () => T): T {
   }
 }
 
-const { libraryDir, level, port, previewIntervalMs, devUiOrigin, publicOrigin, webRoot } = orExit(
-  () => readServerEnv((name) => Deno.env.get(name)),
-)
+const {
+  libraryDir,
+  level,
+  port,
+  previewIntervalMs,
+  previewConcurrency,
+  maxMeshBytes,
+  devUiOrigin,
+  publicOrigin,
+  webRoot,
+} = orExit(() => readServerEnv((name) => Deno.env.get(name)))
 
 const log = createLogger({ level, sink: consoleSink })
 const lib = openLibrary(libraryDir, { logger: log })
@@ -51,6 +59,9 @@ const PRUNE_INTERVAL_MS = 60 * 60 * 1000
 // *harmless*; this is what stops one happening in the first place, so a batch that takes
 // longer than the interval does not pile up a tick's worth of no-op runs behind it.
 let previewRunInFlight = false
+// Built once rather than per tick: the chain is stateless, and the only thing the environment
+// contributes to it is the mesh ceiling read above.
+const previewHandlers = makePreviewHandlers({ maxMeshBytes })
 setInterval(() => {
   if (previewRunInFlight) {
     log.debug('preview tick skipped, previous run still in flight')
@@ -60,8 +71,11 @@ setInterval(() => {
   // The chain passed explicitly rather than leaning on the core default, which stays "only what
   // needs no rendering": deciding to spend CPU on rasterizing belongs to whoever runs the
   // library, not to core. Its *order* is core's, and is not respelled here -- see
-  // PREVIEW_HANDLERS, which is the one place it exists and the one place a test can pin it.
-  runPreviewQueue(lib, { limit: 20, handlers: PREVIEW_HANDLERS })
+  // makePreviewHandlers, which is the one place it exists and the one place a test can pin it.
+  //
+  // `concurrency` is the other half of the memory budget: each worker may hold one mesh of up to
+  // `maxMeshBytes`, so these two variables multiply. See the README.
+  runPreviewQueue(lib, { limit: 20, concurrency: previewConcurrency, handlers: previewHandlers })
     .catch((error) => log.error('preview queue run failed', { err: error }))
     .finally(() => (previewRunInFlight = false))
 }, previewIntervalMs)

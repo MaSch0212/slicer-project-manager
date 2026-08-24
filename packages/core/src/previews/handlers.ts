@@ -1,4 +1,5 @@
-import { MESH_HANDLER } from './mesh-handler.ts'
+import type { MeshLimits } from './mesh/limits.ts'
+import { makeMeshHandler } from './mesh-handler.ts'
 import { EMBEDDED_HANDLER, type PreviewHandler } from './queue.ts'
 
 /**
@@ -45,8 +46,14 @@ const EMBEDDED_HANDLER_WITH_MODELS: PreviewHandler = {
  * owns only the question of what order to try things in once you have opted in. That is also why
  * the `model`-covering variant above is defined here and not exported from `queue.ts`: its wider
  * claim is only correct with a rasterizer behind it, which is exactly what this array is.
+ *
+ * A function, because the rasterizer's memory ceiling is an operator's setting (`SPM_MAX_MESH_MB`)
+ * and the order is not. `main.ts` calls this with the ceiling it read; everything else takes
+ * `PREVIEW_HANDLERS` below and gets the same order with the default.
  */
-export const PREVIEW_HANDLERS: readonly PreviewHandler[] = [
-  EMBEDDED_HANDLER_WITH_MODELS,
-  MESH_HANDLER,
-]
+export function makePreviewHandlers(limits?: MeshLimits): readonly PreviewHandler[] {
+  return [EMBEDDED_HANDLER_WITH_MODELS, makeMeshHandler(limits)]
+}
+
+/** The chain at its default mesh ceiling. */
+export const PREVIEW_HANDLERS: readonly PreviewHandler[] = makePreviewHandlers()
