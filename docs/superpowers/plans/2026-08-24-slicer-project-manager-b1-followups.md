@@ -96,8 +96,16 @@ task text says.
       string is gone (assert on memory or on parsing a document beyond the cap, whichever is
       not flaky); the scaling test must still catch a quadratic scan.
 
-### Task 4 — Read zip64 archives
+### Task 4 — Fix the zip reader: stop double-copying, and read zip64
 
+- [ ] **First, the double copy.** `zip.ts:143` does `new Uint8Array(inflateRawSync(data))`,
+      which holds two full-size copies of every inflated entry at once. Measured on the real
+      library: RSS is already 1083 MB immediately after reading a 466 MB model part. A scratch
+      patch passing `{ chunkSize: entry.uncompressedSize }` and dropping the re-copy took the
+      worst file from 2162 MB to **934 MB** and a 466 MB part from 1551 MB to **664 MB** —
+      roughly as much again as task 3 bought, from one line. Verify that measurement before
+      trusting it, and check what `inflateRawSync` actually returns on both runtimes.
+- [ ] Then zip64.
 - [ ] `packages/core/src/files/zip.ts:55` throws `zip64 archives are not supported` when the
       central-directory offset is `0xffffffff`. 28 real files hit this. They fail
       _classification_, so they are not merely thumbnail-less — they are the wrong `kind`.
