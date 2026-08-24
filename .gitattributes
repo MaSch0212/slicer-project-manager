@@ -1,0 +1,9 @@
+# Keep line endings LF in the working tree, not just in the repo.
+#
+# Without this, core.autocrlf=true on Windows rewrites files to CRLF on checkout, and
+# prettier (endOfLine: "lf", the default) then fails format:check on files nobody edited.
+# That happened: a single `git checkout -- package.json` was enough to break `pnpm verify`
+# locally while CI, which checks out on Linux, stayed green.
+#
+# No tracked file in this repo is binary, so text=auto is unambiguous here.
+* text=auto eol=lf
