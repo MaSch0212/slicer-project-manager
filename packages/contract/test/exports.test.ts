@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { test } from 'node:test'
 
 /**
@@ -9,7 +10,9 @@ import { test } from 'node:test'
  * `exports` entirely, so a subpath missing from either map is invisible from the other side —
  * which is how `./api-client.ts` stayed unexported for weeks: nothing outside Deno imported it.
  */
-const contractDir = join(import.meta.dirname, '..')
+// `import.meta.dirname` is typed for Node but not for a Deno workspace member; this form
+// resolves identically under both, and is what core/src/db/migrate.ts already uses.
+const contractDir = fileURLToPath(new URL('..', import.meta.url))
 const repoRoot = join(contractDir, '..', '..')
 
 function readJson(path: string): Record<string, unknown> {

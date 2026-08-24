@@ -2,22 +2,16 @@
 
 This project was generated using [Angular CLI](https://github.com/angular/angular-cli) version 22.1.5.
 
-## `@awdlab/jig` / `@awdlab/jig-themes` local patches
+## `@awdlab/jig` / `@awdlab/jig-themes`
 
-Both packages are published with their **source** `package.json` at the package root (`files:
-["dist", "README.md"]`, no `exports`/`main`/`module`/`typings`) instead of the built manifest that
-actually lives at `dist/package.json`. As published, neither package is importable by Node, `tsc`,
-vitest, or Angular's esbuild bundler. `patches/@awdlab__jig@<version>.patch` and
-`patches/@awdlab__jig-themes@<version>.patch` (wired up via `patchedDependencies` in
-`pnpm-workspace.yaml`) splice the real `dist/package.json` fields into the root manifest, with every
-target rewritten to point into `dist/`.
+Both packages used to need a local patch: they were published with their **source**
+`package.json` at the package root, with no `exports`/`main`/`module`/`typings`, while the real
+manifest sat at `dist/package.json`. As published, neither was importable by Node, `tsc`,
+vitest, or Angular's esbuild bundler, so `patches/` spliced the built manifest into the root
+one via pnpm's `patchedDependencies`.
 
-**Delete these patches** once a released version of `@awdlab/jig` (and/or `@awdlab/jig-themes`) ships
-a root `package.json` that carries its own `exports` field — at that point bump the dependency version
-and drop the corresponding patch file and `patchedDependencies` entry.
-
-`patches/README.md` carries the same reasoning next to the patch files themselves, along with
-the exact steps for removing them.
+`0.0.5` ships a proper root `exports` map and the patches are gone, along with the `patches/`
+directory and pnpm itself — that patch mechanism was the last thing keeping pnpm in the repo.
 
 ## Why `@awdlab/jig-playwright` is _not_ a dependency
 
@@ -41,7 +35,7 @@ Nothing under `src/` imports `zod` by name, but this package must declare it any
 consumer inlines contract's source and has to resolve contract's own imports itself — `zod`
 included. Locally this can appear to work without the declaration, because Deno materialises a
 root `node_modules/zod` for the root `deno.json` import map (`nodeModulesDir: "auto"`) and Vite
-walks up and finds it. CI runs nothing but `pnpm install --frozen-lockfile` before the web job,
+walks up and finds it. CI runs nothing but `deno install --allow-scripts --frozen` before the web job,
 so that directory does not exist there and the build fails with
 `Failed to resolve import "zod"`. The range is kept identical to contract's (`^4.0.0`) so both
 packages resolve to one copy.
@@ -96,14 +90,14 @@ ng test
 From the repository root:
 
 ```bash
-pnpm e2e
+deno task e2e
 ```
 
 `playwright.config.ts` builds the bundle, seeds a throw-away library in the system temp directory
 with a known-password admin (`e2e/seed.ts`, run under Deno) and serves both from the real Deno
 server on port 8123, so the suite exercises the deployed static-file path rather than `ng serve`.
 The browser binary is installed once with
-`pnpm --filter @spm/web exec playwright install chromium`.
+`cd packages/web && deno run -A node_modules/@playwright/test/cli.js install chromium`.
 
 Both `deno run` invocations in that config pass `--config ../../deno.json` explicitly: Deno stops
 walking up at the first configuration it finds, which is this package's `package.json`, and that

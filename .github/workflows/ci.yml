@@ -2,76 +2,66 @@ name: ci
 on:
   push: { branches: [main] }
   pull_request:
+
+# Deno owns installation and every task; there is no package manager beside it. Node is still
+# installed wherever a job runs something under Node — `packages/core` is required to work on
+# both runtimes, and `node --test` reads the same node_modules `deno install` produces.
 jobs:
   checks:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-        with: { version: 10 }
-      - uses: actions/setup-node@v4
-        with: { node-version: '24', cache: pnpm }
-      # `pnpm typecheck` runs `deno check` over the server entry points: plain tsc cannot
-      # type-check the server (it uses Deno globals), so this job needs Deno as much as
-      # core-deno and server do. It then runs `ngc --noEmit` over packages/web, which
-      # compiles the Angular templates too — the web job's `ng build` is no longer the only
-      # thing that proves the client compiles.
       - uses: denoland/setup-deno@v2
         with: { deno-version: v2.x }
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm lint
-      - run: pnpm format:check
-      - run: pnpm typecheck
+      # `deno task typecheck` runs `deno check` over the server entry points — plain tsc cannot
+      # type-check the server, which uses Deno globals — and then `ngc --noEmit` over
+      # packages/web, which compiles the Angular templates too, so the web job's `ng build` is
+      # no longer the only thing that proves the client compiles.
+      - run: deno install --allow-scripts --frozen
+      - run: deno task lint
+      - run: deno task fmt:check
+      - run: deno task typecheck
 
   core-node:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-        with: { version: 10 }
+      - uses: denoland/setup-deno@v2
+        with: { deno-version: v2.x }
       - uses: actions/setup-node@v4
-        with: { node-version: '24', cache: pnpm }
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm test:core:node
+        with: { node-version: '24' }
+      - run: deno install --allow-scripts --frozen
+      - run: deno task test:contract
+      - run: deno task test:core:node
 
   core-deno:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-        with: { version: 10 }
-      - uses: actions/setup-node@v4
-        with: { node-version: '24', cache: pnpm }
       - uses: denoland/setup-deno@v2
         with: { deno-version: v2.x }
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm test:core:deno
+      - run: deno install --allow-scripts --frozen
+      - run: deno task test:core:deno
 
   server:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-        with: { version: 10 }
-      - uses: actions/setup-node@v4
-        with: { node-version: '24', cache: pnpm }
       - uses: denoland/setup-deno@v2
         with: { deno-version: v2.x }
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm test:server
+      - run: deno install --allow-scripts --frozen
+      - run: deno task test:server
 
   web:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-        with: { version: 10 }
-      - uses: actions/setup-node@v4
-        with: { node-version: '24', cache: pnpm }
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm test:web
-      - run: pnpm --filter @spm/web exec ng build
-      - run: pnpm --filter @spm/web exec ng build --configuration=electron
+      - uses: denoland/setup-deno@v2
+        with: { deno-version: v2.x }
+      - run: deno install --allow-scripts --frozen
+      - run: deno task test:web
+      - run: deno task build:ui
+      - run: cd packages/web && deno run -A node_modules/@angular/cli/bin/ng.js build --configuration=electron
       # The web build must physically exclude desktop-only code (spec 2.5), and the electron
       # build must keep it. Grepping the exported class name, not the module path: paths are
       # rewritten to hashed chunk names during bundling, so a path grep can never fail.
@@ -91,12 +81,8 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-        with: { version: 10 }
-      - uses: actions/setup-node@v4
-        with: { node-version: '24', cache: pnpm }
       - uses: denoland/setup-deno@v2
         with: { deno-version: v2.x }
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter @spm/web exec playwright install --with-deps chromium
-      - run: pnpm e2e
+      - run: deno install --allow-scripts --frozen
+      - run: cd packages/web && deno run -A node_modules/@playwright/test/cli.js install --with-deps chromium
+      - run: deno task e2e

@@ -7,13 +7,15 @@ for the design and
 
 ## Requirements
 
-Node >= 24.4, Deno >= 2.5, pnpm >= 10.
+Deno >= 2.9. Node >= 24.4 as well, but only to run the `core` and `contract` suites under
+Node — `core` is required to work on both runtimes. Deno installs the dependencies and runs
+everything else; there is no second package manager.
 
 ## Running the server
 
     export SPM_LIBRARY_DIR="/path/to/your/print files"
-    pnpm install
-    pnpm --filter @spm/web exec ng build
+    deno task install
+    deno task build:ui
     deno run -A packages/server/main.ts
 
 On first run against an empty library the server creates a `pending` admin account and prints
@@ -120,25 +122,32 @@ that folder with `deno.enablePaths` and leaves everything else — contract, cor
 Angular app — to the normal TypeScript service. Enabling Deno for the whole workspace takes
 the Angular language service down with it.
 
-### How much of this runs on Deno
+### Deno owns the toolchain
 
-The Angular CLI runs fine under Deno's Node compatibility layer, so the whole dev loop does:
-`deno task dev:ui`, `build:ui` and `test:web` invoke `ng` through `deno run`, not through
-pnpm or Node. Building, serving with live reload, and the 126 unit tests all work that way.
+There is no pnpm. `deno install` resolves everything, including the Angular toolchain, and
+writes a normal `node_modules` (`nodeModulesDir: "auto"`) that `ng`, `tsc`, `vitest`,
+Playwright and `node --test` all read. The four packages are a **Deno workspace** — the
+`workspace` field in `deno.json` — and `contract`, `core` and `web` are linked into
+`node_modules/@spm/` so Angular's bundler resolves them exactly as it did before.
 
-**Installing** dependencies is the one part that still needs pnpm, for two reasons:
+All four packages are members. `packages/server` needs one extra line the others do not:
+`"compilerOptions": { "lib": ["deno.window"] }` in its `deno.json`. A workspace member gets
+its own compiler options, and without them it inherits a Node-flavoured `lib` where the `Deno`
+global has no types, so every `Deno.serve`/`Deno.env` in the package fails to type-check.
+Do **not** add `dom` alongside it: that resolves the global but re-types `WebSocket`, and
+`WebSocket.CLOSED` stops being assignable to `readyState` in the dev-proxy tests. `deno.window`
+already carries the web APIs the server uses.
 
-- `deno install` reads the root `package.json` and Deno's own `workspace` field; it does not
-  read `pnpm-workspace.yaml`.
-- `@awdlab/jig@0.0.4` is published with pnpm's `catalog:` protocol left in its
-  `peerDependencies`. pnpm warns and carries on; Deno refuses the tree
-  (`parsing version requirement for dependency "@angular/router": "catalog:"`). The same
-  package also needs the `patchedDependencies` in `pnpm-workspace.yaml`, which Deno has no
-  equivalent of — see [patches/README.md](patches/README.md) and
-  [awdlab/jig#22](https://github.com/awdlab/jig/pull/22), which fixes both upstream.
+The Angular CLI runs under Deno's Node compatibility layer, so the whole dev loop does:
+`deno task dev:ui`, `build:ui` and `test:web` invoke `ng` through `deno run`. Building,
+serving with live reload, and the 126 unit tests all work that way.
 
-So: `pnpm install` once (also available as `deno task install`), Deno for everything after.
-A greenfield Angular app with no such dependency installs and builds under Deno alone.
+One policy worth knowing: Deno refuses npm packages published within the last day, as a
+supply-chain measure. `minimumDependencyAge` in `deno.json` sets that window and exempts the
+three `@awdlab/jig*` packages, so a same-day jig release installs without disabling the
+quarantine for everything else. The exemption is matched on the **package name** — a version
+cannot be named, and the transitive `@awdlab/jig-custom-types` has to be listed explicitly or
+the install still refuses.
 
 ## Migrating an existing CuraManager library
 
@@ -192,14 +201,14 @@ wait for one another rather than failing.
 
 ## Tests
 
-    pnpm verify   # lint, format, typecheck (tsc + deno check), contract, core on Node,
-                  # core on Deno, server, web
-    pnpm e2e      # Playwright smoke suite; not part of verify
+    deno task verify   # lint, format, typecheck (tsc + deno check + ngc), contract,
+                       # core on Node, core on Deno, server, web
+    deno task e2e      # Playwright smoke suite; not part of verify
 
 `core` runs under both runtimes on purpose: that is what keeps the same code usable from the
 Electron main process (subsystem C).
 
-`pnpm e2e` builds the web bundle, seeds a throw-away library in the system temp directory and
+`deno task e2e` builds the web bundle, seeds a throw-away library in the system temp directory and
 serves both from the real Deno server, so it exercises the static-file path the deployed server
 uses. It needs a browser binary once:
-`pnpm --filter @spm/web exec playwright install chromium`.
+`cd packages/web && deno run -A node_modules/@playwright/test/cli.js install chromium`.

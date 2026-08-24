@@ -1,0 +1,6 @@
+{
+  "name": "@spm/server",
+  "version": "0.0.0",
+  "exports": "./main.ts",
+  "compilerOptions": { "lib": ["deno.window"] }
+}
