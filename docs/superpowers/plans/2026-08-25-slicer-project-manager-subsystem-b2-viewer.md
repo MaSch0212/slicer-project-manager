@@ -147,8 +147,10 @@ A reviewer should treat a violation as a defect regardless of what a task says.
 - [ ] A grid or ground plane if it helps orientation, and only if it does.
 - [ ] The canvas needs an accessible name, and the orbit controls need a keyboard path or an
       honest statement that they have none.
-- [ ] **Look at it.** Render several real models — `D:\SPM Library\marc` has 1,311 STLs, 374
-      3MFs, a 3DBenchy and a Batman bust — take screenshots, open them, and report what you see.
+- [ ] **Look at it.** Render several real models — `D:\SPM Library\marc` has 1,311 STLs and 402
+      `.3mf` files, of which 374 are slicer projects and only **28** are plain meshes the viewer
+      can open, plus a 3DBenchy and a Batman bust — take screenshots, open them, and report what
+      you see.
       Compare against the thumbnail of the same model: they should read as the same object.
 
 ### Task 5 — Proving it, and keeping three.js out of the initial bundle
