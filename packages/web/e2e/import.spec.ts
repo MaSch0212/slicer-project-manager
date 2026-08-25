@@ -1,7 +1,6 @@
-import { expect, test, type Page } from '@playwright/test'
+import { expect, test } from '@playwright/test'
 import { deflateRawSync } from 'node:zlib'
-
-const PASSWORD = 'e2e test password'
+import { signIn } from './fixtures'
 
 /**
  * A real zip, built here rather than checked in as a binary fixture, so what the test uploads
@@ -64,14 +63,6 @@ function zip(files: { name: string; body: string }[]): Buffer {
   end.writeUInt32LE(offset, 16)
 
   return Buffer.concat([...local, centralBytes, end])
-}
-
-async function signIn(page: Page): Promise<void> {
-  await page.goto('/login')
-  await page.getByLabel('Username').fill('admin')
-  await page.getByLabel('Password').fill(PASSWORD)
-  await page.getByRole('button', { name: 'Sign in' }).click()
-  await expect(page.getByRole('heading', { name: 'Projects' })).toBeVisible()
 }
 
 test('a zipped CuraManager library is uploaded, imported and shows up as projects', async ({

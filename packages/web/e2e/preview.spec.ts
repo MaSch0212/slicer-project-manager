@@ -1,8 +1,5 @@
-import { expect, test, type Page } from '@playwright/test'
-import { mkdirSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
-
-const PASSWORD = 'e2e test password'
+import { expect, test } from '@playwright/test'
+import { binaryStlCube, dropModelIntoLibrary, signIn } from './fixtures'
 
 /**
  * Names nothing else in the suite uses. Every spec drives the same server against the same
@@ -10,74 +7,6 @@ const PASSWORD = 'e2e test password'
  * specs' assertions depend on the order they happen to run in.
  */
 const PROJECT = 'Rasterized Cube'
-
-const CORNERS: [number, number, number][] = [
-  [-10, -10, -10],
-  [10, -10, -10],
-  [10, 10, -10],
-  [-10, 10, -10],
-  [-10, -10, 10],
-  [10, -10, 10],
-  [10, 10, 10],
-  [-10, 10, 10],
-]
-
-const FACES: [number, number, number, number][] = [
-  [0, 3, 2, 1],
-  [4, 5, 6, 7],
-  [0, 1, 5, 4],
-  [2, 3, 7, 6],
-  [1, 2, 6, 5],
-  [3, 0, 4, 7],
-]
-
-/**
- * A real binary STL of a cube, built here rather than checked in as a binary fixture, for the
- * same reason `import.spec.ts` builds its zip inline: what the test puts on disk is readable in
- * the diff. It has to be genuinely parseable — the whole point of this spec is that the server
- * renders it, and a placeholder like `solid cube` would only prove the queue can fail.
- */
-function binaryStlCube(): Uint8Array {
-  const triangles: number[][] = []
-  for (const [a, b, c, d] of FACES) {
-    for (const face of [
-      [a, b, c],
-      [a, c, d],
-    ]) {
-      triangles.push(face.flatMap((i) => CORNERS[i]!))
-    }
-  }
-  const out = new Uint8Array(84 + triangles.length * 50)
-  const view = new DataView(out.buffer)
-  view.setUint32(80, triangles.length, true)
-  let offset = 84
-  for (const triangle of triangles) {
-    offset += 12 // facet normal left zero; the rasterizer recomputes shading from the geometry
-    for (const value of triangle) {
-      view.setFloat32(offset, value, true)
-      offset += 4
-    }
-    offset += 2 // attribute byte count
-  }
-  return out
-}
-
-/** Drops a project folder holding one model file into the library, as a file manager would. */
-function dropModelIntoLibrary(project: string, fileName: string, bytes: Uint8Array): void {
-  const libraryDir = process.env['SPM_E2E_LIBRARY']
-  if (!libraryDir) throw new Error('SPM_E2E_LIBRARY is not set; playwright.config.ts sets it')
-  const dir = join(libraryDir, 'admin', project)
-  mkdirSync(dir, { recursive: true })
-  writeFileSync(join(dir, fileName), bytes)
-}
-
-async function signIn(page: Page): Promise<void> {
-  await page.goto('/login')
-  await page.getByLabel('Username').fill('admin')
-  await page.getByLabel('Password').fill(PASSWORD)
-  await page.getByRole('button', { name: 'Sign in' }).click()
-  await expect(page.getByRole('heading', { name: 'Projects' })).toBeVisible()
-}
 
 /**
  * The end of the chain the whole rasterizer subsystem exists for, and the plan's definition of
