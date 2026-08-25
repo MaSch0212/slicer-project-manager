@@ -102,6 +102,12 @@ jobs:
       # A marker that matches nothing anywhere fails just as loudly as one in an initial chunk:
       # task 1 shipped two markers that matched nothing at all, and a marker that can never be
       # found cannot detect a leak.
+      #
+      # What green means, exactly: none of these nine strings is in an initial chunk. That is the
+      # property we want only because three.js does not tree-shake here, so any import of it drags
+      # all nine in — a future three.js with working side-effect annotations, or a hand-copied
+      # fragment of its maths, would pass this and still be in the first payload. A tripwire on
+      # the failure mode that actually happens, not a proof of the general property.
       - name: three.js stays out of the initial bundle
         run: |
           markers='THREE.WebGLRenderer THREE.WebGLProgram THREE.Object3D WebGLShadowMap:'
@@ -122,8 +128,10 @@ jobs:
               status=1; continue
             fi
             for marker in $markers; do
-              # `|| true` because grep exits 1 on no match and this step runs under `bash -e`,
-              # where that would kill the job before the error below could be printed.
+              # `|| true` so this survives `pipefail` being turned on. It is a no-op under the
+              # default `bash -e {0}`, where a pipeline's status is the last command's and `sed`
+              # always succeeds; adding `shell: bash` here would set `pipefail`, and without this
+              # the no-match case would kill the step before the error below could be printed.
               hits=$(cd "$root" && grep -lF -- "$marker" ./*.js | sed 's|^\./||') || true
               if [ -z "$hits" ]; then
                 echo "::error::three.js marker '$marker' is in no chunk of $root; three.js has renamed or dropped it, so it can no longer detect a leak -- pick another string from the same module"

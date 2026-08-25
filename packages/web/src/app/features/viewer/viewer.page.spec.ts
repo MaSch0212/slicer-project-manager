@@ -1572,28 +1572,40 @@ describe('ViewerPage', () => {
 
     it('gates every real library file that is measured over the budget', () => {
       // The files fix round 1 was opened for. Each is a real file in the reference library, each
-      // passed the round-0 gate, and each was *measured* — a Node harness running the app's own
-      // three.js 0.185 loader, one file per process, peak RSS above an idle baseline — to blow
-      // through the 256 MB budget. This is the only test that pins the `peakCost` numbers to
-      // anything outside the code: every other test in this block derives its sizes from
-      // `sizeLimitFor` and therefore moves with whatever the costs happen to be.
+      // passed the round-0 gate, and each was *measured* to blow through the 256 MB budget. This
+      // is the only test that pins the `peakCost` numbers to anything outside the code: every
+      // other test in this block derives its sizes from `sizeLimitFor` and therefore moves with
+      // whatever the costs happen to be.
       //
-      //   name                        bytes on disk   measured peak
-      const overBudget: [string, number, number][] = [
-        ['Waving_Groot_15.5cm.stl', 100_050_000, 321], // binary, COLOR= header
-        ['Head_with_brim_high_detail.stl', 99_520_000, 319], // binary, COLOR= header
-        ['Octopus_full_v5.5.stl', 62_900_000, 419], // ASCII
-        ['iron-man-base-2.stl', 46_550_000, 284], // ASCII
-        ['left.3mf', 7_750_000, 278], // plain mesh, not a slicer project
-        ['right.3mf', 7_650_000, 274], // plain mesh, not a slicer project
+      // The peaks are in this comment and not in the table, because a measurement is not an
+      // assertion and putting one in the compared object only made it look like one — it was
+      // being compared against itself, so the row could never fail on the number. Two harnesses,
+      // both reported as peak RSS over an idle baseline:
+      //
+      //   name                             on disk   Node    Chromium
+      //   Waving_Groot_15.5cm.stl         100.05 MB   321 MB   321 MB   binary, COLOR= header
+      //   Head_with_brim_high_detail.stl   99.52 MB   319 MB     —      binary, COLOR= header
+      //   Octopus_full_v5.5.stl            62.90 MB   419 MB   331 MB   ASCII
+      //   iron-man-base-2.stl              46.55 MB   284 MB   220 MB   ASCII
+      //   left.3mf                          7.75 MB   278 MB   746 MB   plain mesh
+      //   right.3mf                         7.65 MB   274 MB     —      plain mesh
+      //
+      // Node was `process.resourceUsage().maxRSS` per process; Chromium is WorkingSet64 sampled
+      // every 20 ms across the browser's processes while the parse runs, which is the same
+      // quantity in the engine that will actually run it. The binary STL reproduces exactly,
+      // which is what makes the two columns comparable. The 3MF rows do not, by a factor of 2.7,
+      // because Node never built the DOM — see the `.3mf` row in `viewer.page.ts`.
+      const overBudget: [string, number][] = [
+        ['Waving_Groot_15.5cm.stl', 100_050_000],
+        ['Head_with_brim_high_detail.stl', 99_520_000],
+        ['Octopus_full_v5.5.stl', 62_900_000],
+        ['iron-man-base-2.stl', 46_550_000],
+        ['left.3mf', 7_750_000],
+        ['right.3mf', 7_650_000],
       ]
 
-      for (const [name, sizeBytes, measuredPeakMb] of overBudget) {
-        expect({ name, gated: sizeBytes > limitFor(name), measuredPeakMb }).toEqual({
-          name,
-          gated: true,
-          measuredPeakMb,
-        })
+      for (const [name, sizeBytes] of overBudget) {
+        expect({ name, gated: sizeBytes > limitFor(name) }).toEqual({ name, gated: true })
       }
     })
 

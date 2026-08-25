@@ -292,14 +292,26 @@ test('the stage, its border and the model read the same in both themes', async (
   await openProject(page)
   const stage = await openInViewer(page, MODEL)
 
-  await page.emulateMedia({ colorScheme: 'light' })
-  const light = { ...(await readPanelColours(stage)), frame: await readFrame(page, stage) }
-
+  // Dark is read first, and the order is the whole of what makes the waiting sound.
+  //
+  // The class jig toggles on `<html>` is what carries the theme, so each read waits for that
+  // rather than for the media query — the two are a JavaScript hop apart. But an absence is only
+  // worth waiting on if it starts out present: with the page already light, `toHaveCount(0)` is
+  // satisfied by the very first poll and returns before the switch has been processed at all,
+  // which is not a wait. Going dark first makes the light wait a real transition, so both reads
+  // are pinned to a state the app has actually reached.
+  //
+  // It matters more here than it looks, because every quantity this test asserts is
+  // theme-invariant by design: a read that raced its switch would come back with the *other*
+  // theme's figures, and the comparison would pass. This is the one failure mode that cannot be
+  // caught by asserting harder, only by waiting correctly.
   await page.emulateMedia({ colorScheme: 'dark' })
-  // The class jig toggles on <html> is what carries the theme, so wait for it rather than for
-  // the media query: the two are a JavaScript hop apart.
   await expect(page.locator('html.dark')).toHaveCount(1)
   const dark = { ...(await readPanelColours(stage)), frame: await readFrame(page, stage) }
+
+  await page.emulateMedia({ colorScheme: 'light' })
+  await expect(page.locator('html.dark')).toHaveCount(0)
+  const light = { ...(await readPanelColours(stage)), frame: await readFrame(page, stage) }
 
   // Identical, which is the design: a WebGL material cannot follow a CSS theme, so the stage
   // does not move under it.
