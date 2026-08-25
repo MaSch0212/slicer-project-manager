@@ -456,8 +456,9 @@ h2.spm-project-title {
 
 /* ------------------------------------------------------------------ viewer */
 
-/* The viewer wants the height, not the width: the shared page cap would otherwise leave the
-   model in a narrow column with the rest of the viewport unused. */
+/* A column that hands its leftover height down to .spm-viewport. `.spm-main` keeps its
+   80rem cap and its padding: the viewer sits in the same measure as every other page, and
+   only the vertical axis is redistributed. */
 .spm-main--viewer {
   display: flex;
   min-height: 0;
@@ -475,16 +476,24 @@ h2.spm-project-title {
  *
  * `min-height` rather than a fixed one: the element is what the ResizeObserver watches, and a
  * height that collapses to zero would ask three.js for a 0x0 drawing buffer.
+ *
+ * `max-height` is the scroll escape. OrbitControls sets `touch-action: none` on the canvas
+ * itself, so a swipe that starts inside the viewer orbits instead of scrolling; capping the
+ * panel at three quarters of the viewport leaves page around it to swipe on instead. (Below
+ * about 384px of viewport height the min-height wins and the cap stops applying -- CSS
+ * resolves min over max -- but that is a landscape phone, not a layout worth bending for.)
+ * No `touch-action` is set here: that would extend the trap to the panel's own padding and
+ * border for no gain, since the canvas already covers the rest.
  */
 .spm-viewport {
   position: relative;
   overflow: hidden;
-  min-height: 24rem;
+  min-height: 18rem;
+  max-height: 75vh;
   flex: 1;
   border: 1px solid var(--jig-color-border);
   border-radius: var(--jig-size-rounded-lg);
   background: var(--jig-color-surface-100);
-  touch-action: none;
 }
 
 /* three.js is told not to size the canvas itself (see ViewerPage.resize), so CSS does it.

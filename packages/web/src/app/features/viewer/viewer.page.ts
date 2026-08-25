@@ -3,6 +3,7 @@ import {
   Component,
   DOCUMENT,
   InjectionToken,
+  effect,
   inject,
   input,
   signal,
@@ -120,14 +121,18 @@ function checkerTexture(): DataTexture {
   template: `
     <main class="spm-main spm-main--viewer">
       <div class="spm-stack">
-        <a jigButton kind="link" [routerLink]="['/projects', id()]">
-          <jig-icon [icon]="icons.back" />
-          {{ t.translations().viewer.back }}
-        </a>
+        <header class="spm-stack spm-stack--tight">
+          <a jigButton kind="link" [routerLink]="['/projects', id()]">
+            <jig-icon [icon]="icons.back" />
+            {{ t.translations().viewer.back }}
+          </a>
+          <h1>{{ t.translations().viewer.title }}</h1>
+        </header>
 
         <!--
           A canvas that never draws looks identical to a model that has not arrived yet, so a
-          context that cannot be created has to be said out loud rather than left blank.
+          context that cannot be created — or one the browser has taken back — has to be said
+          out loud rather than left blank.
         -->
         @if (initError(); as message) {
           <jig-message color="error" role="alert">{{ message }}</jig-message>
@@ -140,12 +145,14 @@ function checkerTexture(): DataTexture {
 
           role/aria-label sit on the container, not on the canvas, so the label stays bound
           and follows a language change; the canvas itself carries no accessible content.
+          Both are dropped once initError is set: announcing "3D view of the model" beside an
+          alert saying there is no 3D view tells a screen-reader user two opposite things.
         -->
         <div
           #viewport
           class="spm-viewport"
-          role="img"
-          [attr.aria-label]="t.translations().viewer.canvasLabel"
+          [attr.role]="initError() ? null : 'img'"
+          [attr.aria-label]="initError() ? null : t.translations().viewer.canvasLabel"
         ></div>
       </div>
     </main>
@@ -177,6 +184,31 @@ export class ViewerPage implements AfterViewInit, OnDestroy {
   private camera: PerspectiveCamera | null = null
   /** The single node everything drawable hangs off. See `setContent`. */
   private content: Object3D | null = null
+  /** Which `fileId` the current content was built from, so `syncContent` is idempotent. */
+  private loadedFileId: string | null = null
+
+  constructor() {
+    // The router reuses this one instance across a `:fileId` change — it only swaps the
+    // input, the same trap project-detail.page.ts documents at length for `:id`. So
+    // ngAfterViewInit does not re-run, and without this the viewer would keep showing the
+    // previous model after a "next file" navigation.
+    effect(() => this.syncContent())
+  }
+
+  /**
+   * The browser took the context back. Chrome caps live contexts at about 16 and evicts the
+   * *oldest* rather than refusing a new one, so this — not a constructor failure — is what
+   * the "too many 3D views are already open" half of the message actually looks like.
+   *
+   * three.js registers its own internal `onContextLost` but never tells the application, so
+   * without this the page is a frozen canvas with no words on it and a `render()` that throws
+   * on every frame. `preventDefault()` is deliberately not called: that is what asks for a
+   * `webglcontextrestored` event, and restoring would mean rebuilding the whole scene.
+   */
+  private readonly onContextLost = (): void => {
+    this.renderer?.setAnimationLoop(null)
+    this.initError.set(this.t.translations().viewer.noWebgl)
+  }
 
   ngAfterViewInit(): void {
     const host = this.viewport().nativeElement
@@ -195,6 +227,7 @@ export class ViewerPage implements AfterViewInit, OnDestroy {
     host.appendChild(canvas)
     this.canvas = canvas
     this.renderer = renderer
+    canvas.addEventListener('webglcontextlost', this.onContextLost)
 
     // Transparent clear. The background is `.spm-viewport`'s CSS, which is a jig theme token,
     // so the viewer is legible in both themes and follows a light/dark switch with no JS at
@@ -221,7 +254,9 @@ export class ViewerPage implements AfterViewInit, OnDestroy {
     controls.enableDamping = true
     this.controls = controls
 
-    this.setContent(this.createContent())
+    // The first load. The effect in the constructor may already have run — before the view
+    // existed, so it did nothing but subscribe — which is why syncContent is idempotent.
+    this.syncContent()
 
     renderer.setAnimationLoop(() => {
       // enableDamping only advances while update() is called, so the loop is not optional.
@@ -274,8 +309,25 @@ export class ViewerPage implements AfterViewInit, OnDestroy {
     this.renderer?.forceContextLoss()
     this.renderer = null
 
+    this.canvas?.removeEventListener('webglcontextlost', this.onContextLost)
     this.canvas?.remove()
     this.canvas = null
+  }
+
+  /**
+   * Builds the content for the current `fileId` unless it is already on screen.
+   *
+   * Idempotent on purpose: it is called both from `ngAfterViewInit` and from an effect, and
+   * which of the two runs first is Angular's business, not this component's.
+   */
+  private syncContent(): void {
+    // Read first and unconditionally — this is what subscribes the effect to the input. An
+    // early return above it would leave the effect subscribed to nothing, and a later
+    // `:fileId` change would go unnoticed.
+    const fileId = this.fileId()
+    if (!this.scene || this.loadedFileId === fileId) return
+    this.loadedFileId = fileId
+    this.setContent(this.createContent())
   }
 
   /**
@@ -299,7 +351,14 @@ export class ViewerPage implements AfterViewInit, OnDestroy {
    */
   private setContent(next: Object3D | null): void {
     const scene = this.scene
-    if (!scene) return
+    if (!scene) {
+      // There is nothing to put it in, so nothing will ever release it either. Task 2 makes
+      // `createContent` async, at which point navigating away mid-fetch lands here with a
+      // fully parsed model in hand — dropping it on the floor would strand its geometry,
+      // material and textures on the GPU, which is the exact leak this task exists to stop.
+      if (next) disposeSubtree(next)
+      return
+    }
     if (this.content) {
       scene.remove(this.content)
       disposeSubtree(this.content)
