@@ -156,6 +156,31 @@ quarantine for everything else. The exemption is matched on the **package name**
 cannot be named, and the transitive `@awdlab/jig-custom-types` has to be listed explicitly or
 the install still refuses.
 
+### Bundle size
+
+`deno task build:ui` prints every chunk it writes. Two of those numbers are worth keeping here,
+so that a dependency bump which doubles one of them shows up in a diff of this file rather than
+in someone's first paint:
+
+| Chunk               | Raw size  | What is in it                                        |
+| ------------------- | --------- | ---------------------------------------------------- |
+| initial total       | 656.52 kB | Angular, jig, the shell and every eager route        |
+| `viewer-page`, lazy | 603.27 kB | almost entirely three.js 0.185 and its three loaders |
+
+The viewer chunk is nearly as large as the whole rest of the application, which is why it is
+lazy: the 3D viewer is one route out of nine, and nobody who never opens a model should pay for
+it. `routes.shared.ts` loads it with `loadComponent`, and that route boundary is the only thing
+keeping three.js out of the first payload — an `import … from 'three'` anywhere eagerly reachable
+pulls in the whole library, because it does not tree-shake here in any useful way. Measured: one
+such import takes the initial total to 1.20 MB, which is over the 1 MB budget in `angular.json`
+and does not build at all.
+
+CI checks it rather than trusting it. The `web` job greps the built bundle for nine strings out
+of three's own source — error messages and shader chunk names, which survive minification where
+identifiers and paths do not — and fails if any of them is in a chunk `index.html` loads before
+the router runs. It fails just as loudly if a marker matches nothing anywhere, since a marker
+that can never be found cannot detect a leak.
+
 ## Migrating an existing CuraManager library
 
 A CuraManager library is flat: every project folder sits at the library root, each with an

@@ -83,6 +83,62 @@ jobs:
           grep -rl DesktopPlaceholderPage packages/web/dist/electron/browser \
             || { echo "::error::fileReplacements did not swap in the electron routes"; exit 1; }
 
+      # three.js is 600 kB of the viewer chunk and the only thing keeping it out of the first
+      # payload is the lazy route boundary in routes.shared.ts. An ordinary-looking `import
+      # { Vector3 } from 'three'` in any eagerly-loaded file pulls in the whole of it -- it is
+      # effectively not tree-shakeable here, measured: the initial total goes from 656 kB to
+      # 1.20 MB, which does not even build under the 1 MB budget.
+      #
+      # Same shape as the two checks above -- grep the built bundle for strings the bundler
+      # cannot rename -- with one difference that is the whole of the design. three.js is
+      # *expected* in the lazy viewer chunk, so absence from the build is not the property;
+      # absence from the chunks index.html loads before any route is. Those are read out of
+      # index.html rather than listed here, because their names are content-hashed.
+      #
+      # The markers are error and shader strings from three's own source — five from the core
+      # and one from each of the four addons the viewer imports, so a leak through any single
+      # import is caught. Strings and not identifiers or paths: the minifier mangles the first
+      # and bundling rewrites the second into hashed chunk names, while these survive verbatim.
+      # A marker that matches nothing anywhere fails just as loudly as one in an initial chunk:
+      # task 1 shipped two markers that matched nothing at all, and a marker that can never be
+      # found cannot detect a leak.
+      - name: three.js stays out of the initial bundle
+        run: |
+          markers='THREE.WebGLRenderer THREE.WebGLProgram THREE.Object3D WebGLShadowMap:'
+          markers="$markers colorspace_fragment OrbitControls.js"
+          markers="$markers THREE.STLLoader THREE.OBJLoader THREE.3MFLoader"
+          status=0
+          for root in packages/web/dist/web/browser packages/web/dist/electron/browser; do
+            # ng deletes the output path before it builds, so a build that failed its budget
+            # leaves nothing behind. An absent index.html therefore means this step has no
+            # build to look at -- never that it looked and found nothing.
+            if [ ! -f "$root/index.html" ]; then
+              echo "::error::$root/index.html is missing; there is no build to check"
+              status=1; continue
+            fi
+            initial=$(grep -oE '(src|href)="[^"]+\.js"' "$root/index.html" | cut -d'"' -f2)
+            if [ -z "$initial" ]; then
+              echo "::error::$root/index.html loads no scripts; cannot tell which chunks are initial"
+              status=1; continue
+            fi
+            for marker in $markers; do
+              # `|| true` because grep exits 1 on no match and this step runs under `bash -e`,
+              # where that would kill the job before the error below could be printed.
+              hits=$(cd "$root" && grep -lF -- "$marker" ./*.js | sed 's|^\./||') || true
+              if [ -z "$hits" ]; then
+                echo "::error::three.js marker '$marker' is in no chunk of $root; three.js has renamed or dropped it, so it can no longer detect a leak -- pick another string from the same module"
+                status=1; continue
+              fi
+              for chunk in $initial; do
+                if printf '%s\n' "$hits" | grep -qxF "$chunk"; then
+                  echo "::error::three.js reached an initial chunk: '$marker' is in $root/$chunk, which index.html loads before any route. Something outside the viewer's lazy route imports three."
+                  status=1
+                fi
+              done
+            done
+          done
+          exit $status
+
   e2e:
     runs-on: ubuntu-latest
     # A hung webServer would otherwise sit on the runner default of six hours.
