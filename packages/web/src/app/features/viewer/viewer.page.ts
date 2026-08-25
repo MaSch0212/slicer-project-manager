@@ -26,12 +26,13 @@ import { JigProgress } from '@awdlab/jig/progress'
 import tablerArrowLeft from '@iconify/icons-tabler/arrow-left'
 import type { FileDto } from '@spm/contract/dtos.ts'
 import {
+  AmbientLight,
   Box3,
   DirectionalLight,
-  HemisphereLight,
+  DoubleSide,
   MathUtils,
   Mesh,
-  MeshStandardMaterial,
+  MeshLambertMaterial,
   PerspectiveCamera,
   Scene,
   Vector3,
@@ -104,20 +105,134 @@ const LOADING: ViewerState = { status: 'loading', progress: null }
  * The same 6 % the thumbnail rasterizer leaves — `MARGIN_FRACTION` in
  * `packages/core/src/previews/raster.ts` — so the two pictures are framed to the same house
  * rule. Only the margin is shared, not the whole fit: the rasterizer scales the model's
- * *projected extent* to the frame, where `frame()` below fits its bounding sphere, which for an
- * elongated part is markedly more conservative. The viewer will open somewhat smaller than the
- * thumbnail, and deliberately so (see `frame`).
+ * *projected extent* to the frame, where `frame()` below fits its bounding sphere. The viewer
+ * therefore opens smaller than the thumbnail, and deliberately so (see `frame`).
  */
 const MARGIN_FRACTION = 0.06
 
 /**
  * Where the camera sits, as a direction only — the distance along it is the fit.
  *
- * The same direction task 1 hard-coded as a position, kept so the viewer still opens on the
- * three-quarter view it always did. Task 4 owns which direction it should be; this task owns
- * only how far along it the camera goes.
+ * **Copied, not re-derived.** These are `VIEW_X`/`VIEW_Y`/`VIEW_Z` from
+ * `packages/core/src/previews/raster.ts`, the basis the server's thumbnail rasterizer renders
+ * with: azimuth -58° (32° round from the model's front) at the isometric elevation
+ * `atan(1/√2)` ≈ 35.264°, in a **Z-up** world, because that is how a slicer and a printer
+ * treat a model. Transcribed rather than imported because `packages/web` must not reach into
+ * `packages/core`, and re-derived by nobody because that camera cost subsystem B1 several
+ * rounds of argument and is pinned there by a test. If those literals ever move, move these.
+ *
+ * Task 1's `(2.5, 2, 3)` was a plausible three-quarter view and nothing more. It differs from
+ * the thumbnail's by about 20° of azimuth *and* — far more visibly — assumes three.js's
+ * default Y-up, so every printable model opened lying on its side. A 3DBenchy came up as an
+ * unrecognisable bracket next to a thumbnail of a boat.
  */
-const VIEW_DIRECTION = new Vector3(2.5, 2, 3).normalize()
+const VIEW_DIRECTION = new Vector3(
+  0.4326772674141481,
+  -0.6924283709739895,
+  0.5773502691896256,
+).normalize()
+
+/**
+ * Which way is up, for the camera and therefore for the orbit pole.
+ *
+ * `+Z`, matching the rasterizer's world. With `VIEW_DIRECTION` above and three's `lookAt`
+ * convention this reproduces the rasterizer's `CAMERA_BASIS` exactly — `right` comes out as
+ * (0.8480, 0.5299, 0) and `up` as (-0.3059, 0.4896, 0.8165), which are its `RIGHT_*` and
+ * `UP_*` literals to every digit they publish. So the opening frame is the thumbnail's frame,
+ * not merely a similar one.
+ *
+ * It also fixes the orbit. `OrbitControls` reads `camera.up` **in its constructor** to build
+ * the quaternion its whole spherical model is expressed in, so this has to be set before the
+ * controls exist; with it, dragging sideways spins the model about the bed normal, which is
+ * the gesture every slicer has trained the user on.
+ */
+const WORLD_UP = new Vector3(0, 0, 1)
+
+/**
+ * The direction the key light comes from, and how much light reaches a face that is edge-on
+ * to it.
+ *
+ * Copied from `raster.ts` in the same spirit as the camera: `LIGHT_X/Y/Z` there is
+ * `normalize(-0.3, -0.55, 0.78)`, above and to the viewer's front-left, and fixed in **world**
+ * space rather than carried around with the camera. World-fixed is what keeps a box's top,
+ * front and right on three separate tones — a light welded to the camera renders two of them
+ * within a couple of levels of each other, which the rasterizer's own note records having
+ * tried and rejected.
+ *
+ * The shading model is the rasterizer's — `AMBIENT + (1 - AMBIENT) * |N·L|` — and the
+ * absolute-value part matters more here than it does there, because it is what stops a face
+ * going black when the user orbits behind the model. It is reproduced with **two opposed
+ * directional lights**, since exactly one of a pair can have a positive `N·L` and their sum
+ * is `|N·L|`.
+ *
+ * ## Why the floor is 0.20 and not the rasterizer's 0.28
+ *
+ * This is the one number here that is *not* copied, and it is a trade with one knob and two
+ * properties pulling against each other. The rasterizer multiplies its base colour by `shade`
+ * in **sRGB** space; three.js multiplies in **linear** space and encodes on the way out, so the
+ * same floor buys a much darker shadow here and a much flatter set of lit faces.
+ *
+ * Concretely, for the three faces of an axis-aligned box under this light —
+ * `|N·L|` is 0.7797 on the top, 0.5497 on the front and 0.2999 on the right end — the WCAG
+ * contrast between two lit faces is bounded above by their shade ratio, which depends only on
+ * the floor. Measured on the built page against the same figures computed:
+ *
+ *     floor   top : front   front : right   darkest face vs stage
+ *     0.28      1.22 : 1       1.32 : 1          4.32 : 1
+ *     0.20      1.26 : 1       1.39 : 1          3.32 : 1
+ *     0.00      1.42 : 1       1.75 : 1          1.00 : 1  (black)
+ *
+ * The thumbnail's own tile measures 1.39–1.45 : 1 on the same pair, which is roughly what a
+ * *zero* floor gives here — so matching it exactly is not available while any floor remains,
+ * and chasing it would trade a readable shadow side for a slightly crisper box. 0.20 takes most
+ * of the separation that is on offer and leaves the darkest face at 3.32 : 1, clear of the 3 : 1
+ * non-text threshold with room to spare. Below about 0.17 the floor stops clearing it.
+ *
+ * The other half of why the viewer can afford a lower floor than a 256 px tile: `raster.ts`
+ * raised its own to 0.28 because at that size "the silhouette carries more information than the
+ * shading does". In a panel this size the shading is what the user is reading.
+ */
+const KEY_LIGHT_DIRECTION = new Vector3(-0.3, -0.55, 0.78).normalize()
+const AMBIENT_SHARE = 0.2
+
+/**
+ * The one colour every model is drawn in, whatever file it arrived in. See `materialise`.
+ *
+ * The thumbnail's hue family — its `BASE_R/G/B` is filament amber `#E08A3C` — carried up to a
+ * light tint. Not the amber itself: against this panel's `rgb(21,25,30)` stage, full amber
+ * reaches only 6.75:1 and at the 0.20 floor falls to **2.04:1**, under the 3:1 non-text
+ * threshold, and no floor that leaves the shading intact lifts it clear. The light warm neutral
+ * keeps the cast that ties the two pictures together and measures 13.22:1 lit against 3.32:1
+ * shadowed — both measured off the canvas. Value contrast beat hue identity, and the
+ * screenshots in the task report are the argument.
+ */
+const MODEL_COLOUR = 0xefdcc6
+
+/**
+ * How far one arrow-key press turns the model, and how far one `+`/`-` press zooms.
+ *
+ * 5° is a compromise measured against the two ends it has to serve: at 1° a quarter turn is
+ * 90 presses, and at 15° a model with a feature on one face can be stepped straight past it.
+ * 72 presses for a full revolution, and a face-on view of a box is four presses from the
+ * opening three-quarter view.
+ *
+ * A constant angle, not a constant screen distance — unlike the drag gesture, which scales with
+ * the panel because a drag is measured in pixels. A key press is not.
+ */
+const ORBIT_STEP = MathUtils.degToRad(5)
+
+/**
+ * The factor `dollyIn` multiplies the orbit radius by, so **below one is closer**.
+ *
+ * Below one despite the name, and that is not a guess: `_dollyIn` does `_scale *= dollyScale`
+ * and `update()` does `radius = clamp(radius * _scale)` (`OrbitControls.js:1038` and `:776`),
+ * so a factor above one pushes the camera away. The wheel path settles it — scrolling towards
+ * the model calls `_dollyIn(pow(0.95, …))`, which is always less than one.
+ *
+ * Caught by driving the real page: `-` made the model bigger. 1/1.1 is about eight presses to
+ * halve the distance, which matches a few notches of a wheel.
+ */
+const DOLLY_STEP = 1 / 1.1
 
 /**
  * The lowercased extension including its dot, or `''` when the name has no dot at all.
@@ -191,10 +306,10 @@ export type ModelFormat = {
  */
 const FORMATS: Readonly<Record<string, ModelFormat>> = {
   '.stl': {
-    // STL carries geometry and nothing else — no materials, no colours — so the one material in
-    // the app is applied here. OBJ and 3MF bring their own and keep them.
-    parse: (bytes) =>
-      new Mesh(new STLLoader().parse(bytes), new MeshStandardMaterial({ roughness: 0.55 })),
+    // No material here, and none in the other two arms either: `materialise` gives every mesh
+    // the same one. The `Mesh` constructor's default `MeshBasicMaterial` is replaced before the
+    // content is ever added to the scene.
+    parse: (bytes) => new Mesh(new STLLoader().parse(bytes)),
     // Three different code paths hide behind one extension, and `sizeBytes` cannot tell them
     // apart — `isBinary` and the `COLOR=` sniff both need the first 84 bytes, which the gate
     // does not have and must not fetch. So the cost is the dearest of the three:
@@ -402,6 +517,58 @@ function disposeSubtree(root: Object3D): void {
 }
 
 /**
+ * Gives every mesh under `root` the viewer's own material, whatever the loader put there.
+ *
+ * **The same object must not look different because of the file it arrived in**, and before
+ * this it did — measured in a real browser on three real files:
+ *
+ * - `.stl` — the app built a `MeshStandardMaterial`: matte, white.
+ * - `.obj` with no `.mtl` beside it — `OBJLoader` falls back to three's default
+ *   `MeshPhongMaterial`: white, and *shiny*, so the bottle opener came up with specular
+ *   streaks down every edge that the same part in STL does not have.
+ * - `.3mf` — `ThreeMFLoader`'s own default: a mid grey, noticeably darker than either.
+ *
+ * Three formats, three looks, one object. So one material wins, and it is the app's.
+ *
+ * **What that throws away, counted rather than guessed.** Of the 28 plain-mesh `.3mf` in the
+ * reference library — the only files of any format that carry authored colour the loaders would
+ * otherwise honour — 25 have no `displaycolor` at all (their `<basematerials>` is empty of one,
+ * which is exactly why they render as that default grey), two name a single colour, and
+ * **one** names two. So the whole cost of this decision is one file in 1,351 losing a
+ * two-colour distinction, against every other file gaining a look that matches its thumbnail.
+ * If real multi-material 3MFs ever become common here, the answer is a toggle, not a default.
+ *
+ * **Why the replaced materials are not disposed.** Nothing under `root` has been rendered yet:
+ * `createContent` calls this before returning, and `load` only reaches `setContent` — the one
+ * place anything joins the scene — afterwards. A `Material` or `Texture` that no renderer has
+ * drawn with holds no GPU allocation and has no dispose listener attached, because three.js
+ * registers both on first use. Disposing them would free nothing and dispatch an event nobody
+ * is listening for. They are plain JS objects at this point, and the collector takes them.
+ *
+ * One material instance per mesh rather than one shared across all of them, so `disposeSubtree`
+ * stays exactly one dispose per mesh. The cost is nil: three keys its shader programs by the
+ * material's cache key, so N identical materials still compile one program.
+ */
+function materialise(root: Object3D): void {
+  root.traverse((node) => {
+    if ((node as Partial<Mesh>).isMesh !== true) return
+    ;(node as Mesh).material = new MeshLambertMaterial({
+      color: MODEL_COLOUR,
+      // Both sides drawn. A printable STL is a closed solid and back faces should never show,
+      // but plenty in the reference library are not closed, and a hole in a wall reading as a
+      // hole in the *model* is the wrong report. The rasterizer takes the same view — it has
+      // no back-face cull either, only a depth buffer.
+      side: DoubleSide,
+      // Per-face normals, so the same object is faceted whichever loader produced it. STL is
+      // flat by construction (no shared vertices), `ThreeMFLoader` computes smooth vertex
+      // normals, and OBJ is whichever the exporter wrote — three different surfaces for one
+      // shape. Flat also matches the thumbnail, which shades per triangle.
+      flatShading: true,
+    })
+  })
+}
+
+/**
  * How many triangles under `root` would actually be drawn.
  *
  * A file can parse cleanly and hold nothing to look at: an OBJ with vertices but no faces, an
@@ -437,7 +604,24 @@ function triangleCount(root: Object3D): number {
             <jig-icon [icon]="icons.back" />
             {{ t.translations().viewer.back }}
           </a>
-          <h1>{{ t.translations().viewer.title }}</h1>
+          <!--
+            The reset control sits on the title's row rather than over the canvas: floated on
+            the stage it would have to be given a background of its own to stay legible over
+            whatever the model happens to be, and it would cover part of the picture it exists
+            to restore.
+
+            Only while a model is on screen. There is no view to reset before one arrives, and
+            a permanently visible control that does nothing for most of a load is worse than
+            one that appears when it means something.
+          -->
+          <div class="spm-row spm-viewer-title">
+            <h1>{{ t.translations().viewer.title }}</h1>
+            @if (showsModel()) {
+              <button jigButton kind="secondary" type="button" (click)="resetView()">
+                {{ t.translations().viewer.resetView }}
+              </button>
+            }
+          </div>
         </header>
 
         <!--
@@ -511,15 +695,20 @@ function triangleCount(root: Object3D): number {
 
           role/aria-label sit on the container, not on the canvas, so the label stays bound
           and follows a language change; the canvas itself carries no accessible content.
-          Both are dropped whenever there is no model on screen: announcing "3D view of the
-          model" beside an alert saying there is no model tells a screen-reader user two
-          opposite things, and so does announcing it while the bytes are still arriving.
+          All three attributes are dropped whenever there is no model on screen: announcing
+          "3D view of the model" beside an alert saying there is no model tells a screen-reader
+          user two opposite things, and so does announcing it while the bytes are still
+          arriving. tabindex goes with them because a focus stop that does nothing is worse
+          than no focus stop -- there is nothing to orbit until there is a model.
         -->
         <div
           #viewport
           class="spm-viewport"
+          [class.spm-viewport--collapsed]="!showsStage()"
           [attr.role]="showsModel() ? 'img' : null"
           [attr.aria-label]="showsModel() ? t.translations().viewer.canvasLabel : null"
+          [attr.tabindex]="showsModel() ? 0 : null"
+          (keydown)="onViewportKey($event)"
         ></div>
       </div>
     </main>
@@ -626,6 +815,24 @@ export class ViewerPage implements AfterViewInit, OnDestroy {
   )
 
   /**
+   * Whether the stage is worth the room it takes.
+   *
+   * Looked at in a browser this was the size gate's loudest defect, and it belonged to every
+   * other outcome too: below the "this model is 74.2 MB" prompt sat an empty panel three
+   * quarters of the viewport tall, in both themes, reading as a viewer that had failed to draw
+   * rather than as one that had deliberately not started. The gate's own message is the answer
+   * to "why is nothing here", and it cannot be read as such with a blank slab under it.
+   *
+   * 'loading' keeps the stage: the bytes are on their way and that is where they will land, so
+   * collapsing and re-expanding the panel mid-download would be the page jumping for no reason.
+   */
+  protected readonly showsStage = computed(() => {
+    if (this.initError() !== null) return false
+    const status = this.state().status
+    return status === 'ready' || status === 'loading'
+  })
+
+  /**
    * Everything below is imperative, nullable state rather than signals, and deliberately so:
    * these are handles to resources outside Angular's world, each of which has to be released
    * exactly once and in a fixed order. Null means "not created, or already released".
@@ -721,15 +928,34 @@ export class ViewerPage implements AfterViewInit, OnDestroy {
 
     // Near and far are placeholders until a model is framed; `frame()` sizes them to it.
     const camera = new PerspectiveCamera(50, 1, 0.1, 1000)
+    // Before the position and before the controls, in that order and for two different
+    // reasons: `lookAt` derives the whole basis from it, and `OrbitControls` snapshots it in
+    // its constructor to build the quaternion its spherical model lives in.
+    camera.up.copy(WORLD_UP)
     camera.position.copy(VIEW_DIRECTION).multiplyScalar(4)
     this.camera = camera
 
-    // Two lights, not one: with a single directional light every face turned away from it
-    // renders black, which against a light theme reads as a hole rather than as a shadow.
-    scene.add(new HemisphereLight(0xffffff, 0x404040, 2))
-    const key = new DirectionalLight(0xffffff, 1.5)
-    key.position.set(4, 8, 6)
-    scene.add(key)
+    // `AMBIENT + (1 - AMBIENT) * |N·L|`, the rasterizer's shading model, in three's terms.
+    //
+    // Three lights rather than the obvious one, and the count is the whole point. A single
+    // directional light leaves every face turned away from it black, which orbiting to the far
+    // side of a model does immediately. The pair below is opposed, so exactly one of them ever
+    // has a positive `N·L` and the two together give `|N·L|` — the absolute value the
+    // rasterizer takes — while the ambient term sets the floor a face edge-on to both lands on.
+    //
+    // `π` is not decoration. three.js divides irradiance by π in `BRDF_Lambert`, so an
+    // intensity of `share * π` is what makes `share` mean the fraction of the base colour that
+    // reaches the surface. Verified by reading pixels back off the canvas rather than trusted:
+    // a face square-on to the key measures sRGB (239, 220, 198), which is `MODEL_COLOUR` exactly
+    // — no clipping, no tone mapping in between.
+    scene.add(new AmbientLight(0xffffff, AMBIENT_SHARE * Math.PI))
+    for (const sign of [1, -1]) {
+      const light = new DirectionalLight(0xffffff, (1 - AMBIENT_SHARE) * Math.PI)
+      // A DirectionalLight shines from its position towards its target, and the target defaults
+      // to the origin — so the position *is* the direction, and only its sign matters here.
+      light.position.copy(KEY_LIGHT_DIRECTION).multiplyScalar(sign)
+      scene.add(light)
+    }
 
     canvas.addEventListener('pointerdown', this.onUserInput)
     canvas.addEventListener('wheel', this.onUserInput)
@@ -882,6 +1108,91 @@ export class ViewerPage implements AfterViewInit, OnDestroy {
   }
 
   /**
+   * Puts the camera back where the model opened.
+   *
+   * There was no way back before this. `resize` re-fits only while `userMovedCamera` is false,
+   * which is correct — nobody wants their view undone because the window moved — but it meant
+   * one drag past the edge of the model left a blank canvas with no error, no control and
+   * nothing to try except reloading the page. The fit is the one view guaranteed to contain the
+   * model, so it is the one thing worth offering.
+   *
+   * Clearing the flag as well as re-framing, so the automatic re-fit on resize is handed back
+   * too: after a reset the camera is this component's again, exactly as it was on load.
+   *
+   * `frame` is idempotent here — it re-centres a model already centred on the origin, which
+   * subtracts a zero — so pressing this twice is the same as pressing it once.
+   */
+  protected resetView(): void {
+    const content = this.content
+    if (!content) return
+    this.userMovedCamera = false
+    this.frame(content)
+  }
+
+  /**
+   * The keyboard path for the camera: arrows orbit, `+`/`-` zoom, `0` resets.
+   *
+   * Written here rather than through `OrbitControls.listenToKeyEvents`, which does exist, for
+   * two reasons that both come from reading its source. Its arrow keys **pan** and require a
+   * modifier to rotate, which is backwards for a viewer whose primary gesture is rotate; and
+   * its rotation step is `2π · keyRotateSpeed / clientHeight`, which at the shipped
+   * `keyRotateSpeed` of 1 and this panel's height is 0.57° a press — 630 presses for one turn.
+   * `rotateLeft`, `rotateUp`, `dollyIn` and `dollyOut` are public API and each calls `update()`
+   * itself, so this is the supported surface, not a reach inside.
+   *
+   * **The honest part.** This is a keyboard path for a sighted keyboard user, and that is who
+   * it is for. It is not one for a screen-reader user in browse mode, where the reader claims
+   * the arrow keys before the page sees them; the container is `role="img"`, which is what it
+   * is, and no role short of `application` changes that. Nothing is lost by it: rotating a
+   * picture you cannot see buys nothing, and "Reset view" — a real, labelled button — is the
+   * one camera control that stays reachable however the keys are being routed.
+   */
+  protected onViewportKey(event: KeyboardEvent): void {
+    const controls = this.controls
+    if (!controls) return
+    // Chords belong to the browser and to assistive technology; only bare presses are ours.
+    if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return
+
+    switch (event.key) {
+      case 'ArrowLeft':
+        controls.rotateLeft(-ORBIT_STEP)
+        break
+      case 'ArrowRight':
+        controls.rotateLeft(ORBIT_STEP)
+        break
+      case 'ArrowUp':
+        controls.rotateUp(ORBIT_STEP)
+        break
+      case 'ArrowDown':
+        controls.rotateUp(-ORBIT_STEP)
+        break
+      // '=' is the unshifted key '+' lives on, on the layouts this ships to.
+      case '+':
+      case '=':
+        controls.dollyIn(DOLLY_STEP)
+        break
+      case '-':
+        controls.dollyOut(DOLLY_STEP)
+        break
+      case '0':
+        // Returns without setting the flag: resetView clears it, and setting it after would
+        // leave the camera "the user's" at the exact position the component chose.
+        this.resetView()
+        event.preventDefault()
+        return
+      default:
+        return
+    }
+
+    // The same flag a drag or a wheel sets. Without it the next resize would re-fit and throw
+    // away everything the user had just typed their way to.
+    this.userMovedCamera = true
+    // Only for the keys handled above, and only once one of them matched: an unconditional
+    // preventDefault here would eat Tab and every browser shortcut that reaches this element.
+    event.preventDefault()
+  }
+
+  /**
    * One load, start to finish: decide, fetch, parse, frame, swap — and put the page into
    * exactly one of the states on the way out.
    *
@@ -1025,6 +1336,10 @@ export class ViewerPage implements AfterViewInit, OnDestroy {
       disposeSubtree(content)
       throw new ModelLoadError('empty')
     }
+
+    // Before the return, so nothing the loader chose can reach the scene — which is also what
+    // makes it safe not to dispose what it replaces. See `materialise`.
+    materialise(content)
     return content
   }
 
@@ -1127,10 +1442,20 @@ export class ViewerPage implements AfterViewInit, OnDestroy {
    * The fit is to the model's bounding *sphere*, not to its projected outline: the user can
    * orbit, and the sphere is the only bound that still holds after they do — fitting the
    * silhouette, as the thumbnail rasterizer does, would put a long, flat model half off-screen
-   * the moment it turned. The cost is that an elongated part opens somewhat smaller here than
-   * its thumbnail looks, which is the right trade for a view that moves. It is
-   * computed against both the vertical and the horizontal field of view and the wider distance
-   * wins, so a tall model in a wide viewport is framed by its height and not cropped by it.
+   * the moment it turned. It is computed against both the vertical and the horizontal field of
+   * view and the wider distance wins, so a tall model in a wide viewport is framed by its
+   * height and not cropped by it.
+   *
+   * The cost is that the model always opens smaller here than its thumbnail looks, and **which**
+   * models lose most is the opposite of what an earlier version of this comment claimed.
+   * Measured as on-screen height over the tile's, in a 1254x627 panel: 3DBenchy 0.63, Batman
+   * bust 0.75, UBO 0.72, miniCube 0.83, and a 22x11x3 mm box **0.92**. The elongated flat part
+   * is the *best* case, not the worst — the rasterizer normalises by the larger projected
+   * dimension, so a long part is squat in the tile too, and both fits penalise it together.
+   * What actually drives the gap is how much bigger the bounding sphere is than the projected
+   * outline, which is worst for a chunky model that fills its own silhouette. That is the right
+   * trade for a view that moves, but it is not small: on a Benchy the viewer opens at under
+   * two thirds of the tile's size.
    *
    * Task 1's fixed `(2.5, 2, 3)` was right for a unit cube and useless for anything else. A
    * printable STL is tens to hundreds of millimetres across and sits wherever its exporter left

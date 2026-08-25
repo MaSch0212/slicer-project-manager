@@ -7,6 +7,7 @@ import {
   BoxGeometry,
   BufferGeometry,
   DataTexture,
+  DoubleSide,
   Frustum,
   Material,
   Matrix4,
@@ -15,11 +16,17 @@ import {
   PerspectiveCamera,
   Texture,
   Vector3,
+  type AmbientLight,
+  type DirectionalLight,
+  type Light,
+  type MeshLambertMaterial,
   type Object3D,
   type Scene,
   type WebGLRenderer,
 } from 'three'
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+import { ThreeMFLoader } from 'three/addons/loaders/3MFLoader.js'
+import { OBJLoader } from 'three/addons/loaders/OBJLoader.js'
 import { STLLoader } from 'three/addons/loaders/STLLoader.js'
 import { strToU8, zipSync } from 'three/addons/libs/fflate.module.js'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -634,6 +641,91 @@ function gateButton(host: HTMLElement): HTMLButtonElement | null {
 }
 
 /** Everything under the scene that would actually be drawn as triangles. */
+/**
+ * The camera's own right / up / view axes, read out of its world matrix.
+ *
+ * Columns 0, 1 and 2 of a three.js camera's `matrixWorld` are exactly those three vectors, and
+ * `view` points from the target towards the camera — the same convention `CAMERA_BASIS` uses.
+ */
+function cameraBasis(camera: PerspectiveCamera): [Vector3, Vector3, Vector3] {
+  const m = camera.matrixWorld.elements
+  return [
+    new Vector3(m[0]!, m[1]!, m[2]!),
+    new Vector3(m[4]!, m[5]!, m[6]!),
+    new Vector3(m[8]!, m[9]!, m[10]!),
+  ]
+}
+
+/**
+ * `CAMERA_BASIS` from `packages/core/src/previews/raster.ts`, transcribed.
+ *
+ * Transcribed and not imported, deliberately: `packages/web` must not reach into
+ * `packages/core`, and the component transcribes the same numbers for the same reason. Two
+ * independent copies of a published constant is exactly what makes this test worth running —
+ * it is checking that the component's copy still agrees with the source of truth, so it has to
+ * hold its own.
+ */
+const RASTER_BASIS = {
+  right: new Vector3(0.8480480961564261, 0.5299192642332049, 0),
+  up: new Vector3(-0.3059490298538092, 0.4896207966016621, 0.8164965809277261),
+  view: new Vector3(0.4326772674141481, -0.6924283709739895, 0.5773502691896256),
+}
+
+function expectVectorClose(actual: Vector3, expected: Vector3): void {
+  // Component by component rather than by distance: a single flipped axis is a mirrored basis,
+  // and `distanceTo` reports it as one number that reads like rounding until it does not.
+  expect(actual.x).toBeCloseTo(expected.x, 9)
+  expect(actual.y).toBeCloseTo(expected.y, 9)
+  expect(actual.z).toBeCloseTo(expected.z, 9)
+}
+
+/**
+ * The real `OrbitControls` the component built, reached past `private` the way `seam` does.
+ *
+ * A stand-in would defeat the purpose. What these tests are about is how the camera behaves
+ * under three's own spherical model — which axis it orbits about, and which direction its
+ * confusingly named dolly moves — and only the real object can answer that.
+ */
+function controlsOf(page: ViewerPage): OrbitControls {
+  const controls = (page as unknown as { controls: OrbitControls | null }).controls
+  if (!controls) throw new Error('the page has no OrbitControls')
+  return controls
+}
+
+/**
+ * Runs the render loop until `OrbitControls`' damping has spent itself.
+ *
+ * `enableDamping` means a rotate or a dolly is applied a fraction at a time — 5 % per frame at
+ * the default factor — and the rest arrives only on the frames the animation loop drives. In a
+ * browser that is a smooth glide over about a second; here nothing drives the loop but the
+ * test. 500 frames leaves 0.95^500, about 7e-12 of the original delta, so an assertion at 1e-6
+ * is measuring the camera and not the easing.
+ */
+function settleCamera(renderer: FakeRenderer): void {
+  for (let index = 0; index < 500; index++) renderer.tick()
+}
+
+/**
+ * Tears the TestBed down so one test can build a second page.
+ *
+ * Angular refuses a second `configureTestingModule` once the module has been instantiated, and
+ * several assertions here are only worth having with their control case in the same test —
+ * "the reset button is absent, *and* this same query finds it when there is a model" says
+ * something that two separate tests do not.
+ */
+function restart(): void {
+  TestBed.resetTestingModule()
+}
+
+/** The "Reset view" control, found by the label a user reads. */
+function resetButton(host: HTMLElement): HTMLButtonElement | null {
+  return (
+    [...host.querySelectorAll('button')].find(
+      (button) => button.textContent?.trim() === en.viewer.resetView,
+    ) ?? null
+  )
+}
+
 function meshesIn(scene: Scene): Mesh[] {
   const found: Mesh[] = []
   scene.traverse((node) => {
@@ -1594,6 +1686,508 @@ describe('ViewerPage', () => {
       // download half a gigabyte of in order to fail on.
       expect(page.state()).toEqual({ status: 'unsupported', extension: '.gcode' })
       expect(gateButton(host)).toBeNull()
+    })
+  })
+
+  describe('opening on the thumbnail’s camera', () => {
+    it('builds exactly the basis the server rasterizes with', async () => {
+      const made: FakeRenderer[] = []
+      const { host, observer } = await setup({ create: recording(made) })
+      observer?.emit(800, 600)
+      const { camera } = drawn(rendererOf(host, made))
+      camera.updateMatrixWorld()
+
+      const [right, up, view] = cameraBasis(camera)
+      // Component against transcript, and the transcript is the point: a viewer on a camera of
+      // its own would open the model somewhere else than the picture the user clicked. Every
+      // component of all three vectors, so no axis can be right by accident while another is
+      // flipped — a mirrored basis passes any test that only checks the view direction.
+      expectVectorClose(right, RASTER_BASIS.right)
+      expectVectorClose(up, RASTER_BASIS.up)
+      expectVectorClose(view, RASTER_BASIS.view)
+    })
+
+    it('holds that basis whatever the model and whatever the viewport', async () => {
+      // The control for the test above, which a camera hard-coded to one distance for one box
+      // would also pass. The basis is a *direction*, so it must survive both a different fit
+      // and a different aspect ratio while the position does not.
+      const made: FakeRenderer[] = []
+      const { host, observer } = await setup({
+        create: recording(made),
+        files: [fileDto({ name: 'wedge.stl', sizeBytes: STL_WEDGE.byteLength })],
+        serve: () => Promise.resolve(servedAtOnce(STL_WEDGE)),
+      })
+      observer?.emit(800, 600)
+      const { camera } = drawn(rendererOf(host, made))
+      const wide = camera.position.clone()
+      camera.updateMatrixWorld()
+      const [right] = cameraBasis(camera)
+
+      observer?.emit(300, 900)
+      camera.updateMatrixWorld()
+      const [rightAgain, upAgain, viewAgain] = cameraBasis(camera)
+
+      expect(camera.position.distanceTo(wide)).toBeGreaterThan(1)
+      expectVectorClose(right, RASTER_BASIS.right)
+      expectVectorClose(rightAgain, RASTER_BASIS.right)
+      expectVectorClose(upAgain, RASTER_BASIS.up)
+      expectVectorClose(viewAgain, RASTER_BASIS.view)
+    })
+
+    it('orbits about the bed normal, not about three.js’s default up', async () => {
+      // What the basis buys the user, stated as behaviour rather than as a vector. Dragging
+      // sideways has to spin a printed part about the axis it was printed along; with three's
+      // default Y-up it tips instead. OrbitControls snapshots `camera.up` in its constructor,
+      // so this is also the only assertion that would catch the up being set too late.
+      const made: FakeRenderer[] = []
+      const { host, observer, page } = await setup({ create: recording(made) })
+      observer?.emit(800, 600)
+      const { camera } = drawn(rendererOf(host, made))
+      const before = camera.position.clone()
+
+      controlsOf(page).rotateLeft(Math.PI / 2)
+      settleCamera(rendererOf(host, made))
+
+      // A quarter turn about +Z leaves the height alone and swaps the two ground axes.
+      expect(camera.position.z).toBeCloseTo(before.z, 6)
+      expect(camera.position.length()).toBeCloseTo(before.length(), 6)
+      expect(camera.position.x).not.toBeCloseTo(before.x, 3)
+    })
+  })
+
+  describe('one material, whatever the file was', () => {
+    /**
+     * The defect three reviews carried: the same object looked different by format. STL got a
+     * `MeshStandardMaterial` the app built, an `.obj` with no `.mtl` got three's default
+     * `MeshPhongMaterial` (white and specular), and a `.3mf` got the 3MF loader's own grey.
+     *
+     * Asserted as agreement between the formats first and against a literal second. The
+     * agreement is the requirement; the literal only pins which of the three won.
+     */
+    async function materialsOfFormat(name: string, bytes: Uint8Array) {
+      restart()
+      // Which loader really ran. Without this the test's whole claim — that three *different*
+      // formats agree — would survive a helper that quietly loaded the same STL three times,
+      // and "they all look alike" would be true for the wrong reason. Confirmed by mutation:
+      // pinning the name to 'box.stl' inside this helper leaves the suite green without it.
+      const parsers = {
+        '.stl': vi.spyOn(STLLoader.prototype, 'parse'),
+        '.obj': vi.spyOn(OBJLoader.prototype, 'parse'),
+        '.3mf': vi.spyOn(ThreeMFLoader.prototype, 'parse'),
+      }
+      const made: FakeRenderer[] = []
+      const { host } = await setup({
+        create: recording(made),
+        files: [fileDto({ name, sizeBytes: bytes.byteLength })],
+        serve: () => Promise.resolve(servedAtOnce(bytes)),
+      })
+      const expected = name.slice(name.lastIndexOf('.')).toLowerCase()
+      expect(
+        Object.entries(parsers)
+          .filter(([, spy]) => spy.mock.calls.length > 0)
+          .map(([extension]) => extension),
+      ).toEqual([expected])
+      for (const spy of Object.values(parsers)) spy.mockRestore()
+
+      const { scene } = drawn(rendererOf(host, made))
+      const meshes = meshesIn(scene)
+      expect(meshes.length).toBeGreaterThan(0)
+      return meshes.map((mesh) => mesh.material as Material)
+    }
+
+    it('draws STL, OBJ and 3MF in the same material', async () => {
+      const stl = await materialsOfFormat('box.stl', STL_BOX)
+      const obj = await materialsOfFormat('box.obj', OBJ_BOX)
+      const threeMf = await materialsOfFormat('box.3mf', THREEMF_BOX)
+
+      const shape = (materials: Material[]) =>
+        materials.map((material) => ({
+          type: material.type,
+          colour: (material as MeshLambertMaterial).color.getHexString(),
+          flat: (material as MeshLambertMaterial).flatShading,
+          side: material.side,
+        }))
+
+      // Same box, three containers, one look. Before this the three lines below read
+      // MeshStandardMaterial/ffffff, MeshPhongMaterial/ffffff and MeshPhongMaterial/ffffff with
+      // three different shading models behind them.
+      expect(shape(obj)).toEqual(shape(stl))
+      expect(shape(threeMf)).toEqual(shape(stl))
+      expect(shape(stl)).toEqual([
+        { type: 'MeshLambertMaterial', colour: 'efdcc6', flat: true, side: DoubleSide },
+      ])
+    })
+
+    it('gives each mesh its own material instance, so disposal stays one per mesh', async () => {
+      // Two meshes sharing one material would be disposed twice, and the whole disposal matrix
+      // counts. The 3MF fixture is a single mesh, so this is asserted where more than one
+      // exists: an OBJ with two named objects.
+      const twoObjects = utf8(
+        [
+          'o first',
+          ...CORNERS.map(([x, y, z]) => `v ${x} ${y} ${z}`),
+          ...TRIANGLES.map(([a, b, c]) => `f ${a + 1} ${b + 1} ${c + 1}`),
+          'o second',
+          ...CORNERS.map(([x, y, z]) => `v ${x + 200} ${y} ${z}`),
+          ...TRIANGLES.map(([a, b, c]) => `f ${a + 9} ${b + 9} ${c + 9}`),
+        ].join('\n') + '\n',
+      )
+      const materials = await materialsOfFormat('two.obj', twoObjects)
+
+      expect(materials.length).toBe(2)
+      expect(materials[0]).not.toBe(materials[1])
+      // The control: they are distinct *instances* but not distinct *looks*.
+      expect(materials[0]?.type).toBe(materials[1]?.type)
+    })
+  })
+
+  describe('the lights', () => {
+    /**
+     * What a surface facing `normal` receives, summed over the scene's own lights and divided
+     * by π the way three.js's `BRDF_Lambert` does — so 1 means the material's full base colour
+     * reaches the eye and 0 means black.
+     *
+     * Computed from the lights that are actually in the scene rather than asserting on their
+     * count or their intensities. A test that read back `AMBIENT_SHARE * Math.PI` would be the
+     * source restated; this one fails if a light is dropped, if the pair stops being opposed,
+     * or if an intensity is written without its π.
+     */
+    function irradiance(scene: Scene, normal: Vector3): number {
+      let total = 0
+      scene.traverse((node) => {
+        const light = node as Partial<Light> & { position?: Vector3 }
+        if ((light as Partial<AmbientLight>).isAmbientLight === true) {
+          total += (light.intensity ?? 0) / Math.PI
+        } else if ((light as Partial<DirectionalLight>).isDirectionalLight === true) {
+          // A DirectionalLight's target defaults to the origin, so its position is the
+          // direction the light comes *from* — which is what a surface normal dots against.
+          const towards = light.position!.clone().normalize()
+          total += (Math.max(0, normal.dot(towards)) * (light.intensity ?? 0)) / Math.PI
+        }
+      })
+      return total
+    }
+
+    /**
+     * The rasterizer's light direction, and the floor the viewer settled on. The direction is
+     * copied from `raster.ts`; the floor is not — see the trade table on `AMBIENT_SHARE`.
+     */
+    const LIGHT = new Vector3(-0.3, -0.55, 0.78).normalize()
+    const FLOOR = 0.2
+
+    it('reproduces AMBIENT + (1 - AMBIENT) · |N·L| for every direction', async () => {
+      const made: FakeRenderer[] = []
+      const { host } = await setup({ create: recording(made) })
+      const { scene } = drawn(rendererOf(host, made))
+
+      // Sampled over a spiral covering the whole sphere, not the handful of directions that
+      // happen to be easy: a single mis-signed light passes at the pole and fails at the
+      // equator, and the reverse.
+      for (let i = 0; i < 200; i++) {
+        const z = 1 - (2 * (i + 0.5)) / 200
+        const r = Math.sqrt(Math.max(0, 1 - z * z))
+        const phi = i * 2.399963
+        const normal = new Vector3(r * Math.cos(phi), r * Math.sin(phi), z)
+        const expected = FLOOR + (1 - FLOOR) * Math.abs(normal.dot(LIGHT))
+        expect(irradiance(scene, normal)).toBeCloseTo(expected, 6)
+      }
+    })
+
+    it('never lets a face go dark, and never lets one clip', async () => {
+      // The two properties the formula above exists for, spelled out so a reader does not have
+      // to evaluate it: no surface is ever black, whichever way the user has orbited, and no
+      // surface ever exceeds the base colour, so the model's own tone is what reaches the eye.
+      const made: FakeRenderer[] = []
+      const { host } = await setup({ create: recording(made) })
+      const { scene } = drawn(rendererOf(host, made))
+
+      // Edge-on to the light is the darkest a face can be...
+      const edgeOn = new Vector3(1, 0, 0).cross(LIGHT).normalize()
+      expect(irradiance(scene, edgeOn)).toBeCloseTo(FLOOR, 6)
+      // ...and square on to it is the brightest, in both directions.
+      expect(irradiance(scene, LIGHT)).toBeCloseTo(1, 6)
+      expect(irradiance(scene, LIGHT.clone().negate())).toBeCloseTo(1, 6)
+    })
+
+    it('keeps a box’s three faces far enough apart to read as a box', async () => {
+      // The property the floor was lowered for, and the one nothing else here would catch: a
+      // raised floor leaves every assertion above true (the formula still holds, no face is
+      // black, nothing clips) while flattening an axis-aligned part into a silhouette. B1 spent
+      // several rounds on "three obviously different tones is what tells the eye it is a box",
+      // and most of a print library is boxy.
+      //
+      // The bound is asserted on the shade ratio rather than on rendered pixels because that is
+      // what caps the contrast a viewer can ever show: two lit faces cannot differ by more than
+      // their irradiances do. Measured on the built page, these ratios come out as 1.26:1 and
+      // 1.39:1 of WCAG contrast, against 1.22:1 and 1.32:1 before the floor moved.
+      const made: FakeRenderer[] = []
+      const { host } = await setup({ create: recording(made) })
+      const { scene } = drawn(rendererOf(host, made))
+
+      const top = irradiance(scene, new Vector3(0, 0, 1))
+      const front = irradiance(scene, new Vector3(0, -1, 0))
+      const rightEnd = irradiance(scene, new Vector3(1, 0, 0))
+
+      // Ordered the way a printed part on a bed is lit, and separated by a margin the previous
+      // 0.28 floor did not clear — it gave 1.2449 and 1.3628, against 1.2871 and 1.4545 now, so
+      // these two bounds are red at the old value and green at the new one.
+      expect(top).toBeGreaterThan(front)
+      expect(front).toBeGreaterThan(rightEnd)
+      expect(top / front).toBeGreaterThan(1.27)
+      expect(front / rightEnd).toBeGreaterThan(1.42)
+
+      // And the same knob's other end, so this test cannot be satisfied by dropping the floor
+      // to nothing: the darkest possible face still receives a fifth of the base colour.
+      const edgeOn = new Vector3(1, 0, 0).cross(LIGHT).normalize()
+      expect(irradiance(scene, edgeOn)).toBeGreaterThan(0.19)
+    })
+  })
+
+  describe('getting back to the opening view', () => {
+    /** Opens a model, then moves the camera the way a drag does. */
+    async function orbited() {
+      const made: FakeRenderer[] = []
+      const { harness, host, observer, page } = await setup({ create: recording(made) })
+      observer?.emit(800, 600)
+      const { camera } = drawn(rendererOf(host, made))
+      const opened = camera.position.clone()
+
+      // The same event the component listens for, so the "the camera is the user's now" flag
+      // is set exactly as a real drag sets it. jsdom implements no pointer capture, and the
+      // real OrbitControls takes it on the first pointerdown, so it is stubbed here the same
+      // way the framing suite already stubs it.
+      const canvas = host.querySelector('canvas') as HTMLCanvasElement
+      canvas.setPointerCapture = () => {}
+      canvas.dispatchEvent(new Event('pointerdown'))
+      controlsOf(page).rotateLeft(1.1)
+      controlsOf(page).dollyOut(0.5)
+      settleCamera(rendererOf(host, made))
+      harness.detectChanges()
+
+      expect(camera.position.distanceTo(opened)).toBeGreaterThan(1)
+      return { harness, host, observer, camera, opened, renderer: rendererOf(host, made) }
+    }
+
+    it('offers the control only once there is a view to reset', async () => {
+      const { host } = await setup({
+        files: [fileDto({ name: 'sliced.gcode', kind: 'other' })],
+      })
+      expect(resetButton(host)).toBeNull()
+
+      // The control, and the reason this test is not vacuous: the same query does find it on a
+      // page that loaded a model.
+      restart()
+      const ready = await setup({})
+      expect(resetButton(ready.host)).not.toBeNull()
+    })
+
+    it('puts the camera back where the model opened', async () => {
+      const { harness, host, camera, opened, renderer } = await orbited()
+
+      resetButton(host)!.click()
+      harness.detectChanges()
+      settleCamera(renderer)
+
+      expect(camera.position.distanceTo(opened)).toBeLessThan(1e-6)
+    })
+
+    it('hands the automatic re-fit back, so a later resize frames the model again', async () => {
+      // The half of the reset that is invisible in a screenshot. Re-framing without clearing
+      // the flag leaves the camera correct now and frozen forever after, which is the same bug
+      // in slow motion.
+      const { harness, host, observer, camera, renderer } = await orbited()
+
+      resetButton(host)!.click()
+      harness.detectChanges()
+      settleCamera(renderer)
+      const afterReset = camera.position.length()
+
+      observer?.emit(300, 900)
+
+      expect(camera.position.length()).toBeGreaterThan(afterReset * 1.5)
+    })
+
+    it('does not re-fit on resize while the camera is still the user’s', async () => {
+      // The control for the test above: without it, "a resize re-frames" would pass whether or
+      // not the reset had cleared anything.
+      const { observer, camera } = await orbited()
+      const before = camera.position.clone()
+
+      observer?.emit(300, 900)
+
+      expect(camera.position.distanceTo(before)).toBeLessThan(1e-6)
+    })
+  })
+
+  describe('the keyboard path', () => {
+    async function focusable() {
+      const made: FakeRenderer[] = []
+      const { harness, host, observer } = await setup({ create: recording(made) })
+      observer?.emit(800, 600)
+      const renderer = rendererOf(host, made)
+      const { camera } = drawn(renderer)
+      const viewport = host.querySelector('.spm-viewport') as HTMLElement
+      /**
+       * One key press, all the way through the damping.
+       *
+       * The settle is not decoration. A press hands OrbitControls a delta it spends 5 % of
+       * per frame, so an assertion taken straight afterwards reads a twentieth of the
+       * movement — enough for "it moved" and useless for "the opposite key undoes it".
+       */
+      const press = (key: string, init: KeyboardEventInit = {}): boolean => {
+        const event = new KeyboardEvent('keydown', {
+          key,
+          bubbles: true,
+          cancelable: true,
+          ...init,
+        })
+        viewport.dispatchEvent(event)
+        settleCamera(renderer)
+        return event.defaultPrevented
+      }
+      return { harness, host, observer, viewport, camera, renderer, press }
+    }
+
+    it('is reachable by tab only while there is a model to orbit', async () => {
+      const { viewport } = await focusable()
+      expect(viewport.getAttribute('tabindex')).toBe('0')
+
+      // The control. A focus stop on an empty panel is a trap with nothing behind it.
+      restart()
+      const { host } = await setup({ files: [fileDto({ name: 'sliced.gcode', kind: 'other' })] })
+      expect(host.querySelector('.spm-viewport')?.getAttribute('tabindex')).toBeNull()
+    })
+
+    it('orbits left and right about the bed normal', async () => {
+      const { camera, press } = await focusable()
+      const before = camera.position.clone()
+
+      expect(press('ArrowRight')).toBe(true)
+
+      // Turned, at constant radius and constant height — the same axis a drag uses.
+      expect(camera.position.length()).toBeCloseTo(before.length(), 6)
+      expect(camera.position.z).toBeCloseTo(before.z, 6)
+      expect(camera.position.x).not.toBeCloseTo(before.x, 6)
+
+      // And the opposite key really is the opposite: back to the start, not twice as far.
+      press('ArrowLeft')
+      expect(camera.position.distanceTo(before)).toBeLessThan(1e-6)
+    })
+
+    it('raises and lowers the camera', async () => {
+      const { camera, press } = await focusable()
+      const before = camera.position.clone()
+
+      press('ArrowUp')
+      expect(camera.position.z).toBeGreaterThan(before.z)
+
+      press('ArrowDown')
+      expect(camera.position.z).toBeCloseTo(before.z, 6)
+    })
+
+    it('zooms the way the sign says, which is not the way OrbitControls names it', async () => {
+      // The assertion that earned its place: `dollyIn` multiplies the orbit radius, so the
+      // obvious spelling zooms *out*. Driving the real page is what caught it — `-` made the
+      // model bigger. Asserted on the distance, which is the thing the user sees.
+      const { camera, press } = await focusable()
+      const before = camera.position.length()
+
+      press('+')
+      const closer = camera.position.length()
+      expect(closer).toBeLessThan(before)
+
+      press('-')
+      expect(camera.position.length()).toBeCloseTo(before, 6)
+
+      // '=' is the same key unshifted, and must do the same thing rather than nothing.
+      press('=')
+      expect(camera.position.length()).toBeCloseTo(closer, 6)
+    })
+
+    it('resets on 0, and hands the automatic re-fit back with it', async () => {
+      const { observer, camera, press } = await focusable()
+      const opened = camera.position.clone()
+      for (let i = 0; i < 6; i++) press('ArrowRight')
+      expect(camera.position.distanceTo(opened)).toBeGreaterThan(1)
+
+      expect(press('0')).toBe(true)
+      expect(camera.position.distanceTo(opened)).toBeLessThan(1e-6)
+
+      // Keyboard orbiting takes the camera exactly as a drag does, so 0 has to give it back
+      // exactly as the button does.
+      const afterReset = camera.position.length()
+      observer?.emit(300, 900)
+      expect(camera.position.length()).toBeGreaterThan(afterReset * 1.5)
+    })
+
+    it('leaves chords and unclaimed keys to the browser', async () => {
+      const { camera, press } = await focusable()
+      const before = camera.position.clone()
+
+      // Ctrl+Right is "next word" and Shift+Right is a selection; Tab is the way out of here.
+      // Swallowing any of them would be a worse accessibility bug than having no keys at all.
+      expect(press('ArrowRight', { ctrlKey: true })).toBe(false)
+      expect(press('ArrowRight', { shiftKey: true })).toBe(false)
+      expect(press('ArrowRight', { altKey: true })).toBe(false)
+      expect(press('ArrowRight', { metaKey: true })).toBe(false)
+      expect(press('Tab')).toBe(false)
+      expect(press('a')).toBe(false)
+      expect(camera.position.distanceTo(before)).toBeLessThan(1e-9)
+
+      // The control: the very same helper, on the very same element, does move the camera and
+      // does claim the event when the key is one of ours.
+      expect(press('ArrowRight')).toBe(true)
+      expect(camera.position.distanceTo(before)).toBeGreaterThan(0)
+    })
+  })
+
+  describe('the stage', () => {
+    /**
+     * Looked at in a browser, every non-drawing outcome sat above an empty panel three quarters
+     * of the viewport tall — a viewer that had visibly failed rather than one that had
+     * deliberately not started. Most visible on the size gate, which owns none of the CSS and
+     * had never been seen.
+     */
+    const collapsed = (host: HTMLElement) =>
+      host.querySelector('.spm-viewport')?.classList.contains('spm-viewport--collapsed')
+
+    it('keeps the stage for a model, and for one on its way', async () => {
+      const { host } = await setup({})
+      expect(collapsed(host)).toBe(false)
+
+      restart()
+      const gated = paced(STL_BOX, 2)
+      const loading = await setup({
+        serve: () => Promise.resolve(gated.response),
+        wait: false,
+      })
+      await vi.waitFor(() => {
+        loading.harness.detectChanges()
+        expect(loading.page.state().status).toBe('loading')
+      })
+      expect(collapsed(loading.host)).toBe(false)
+    })
+
+    it('gives the room back when there is nothing to draw', async () => {
+      const oversized = await setup({
+        files: [fileDto({ name: 'huge.stl', sizeBytes: Math.ceil(sizeLimitFor('huge.stl')!) + 1 })],
+      })
+      expect(oversized.page.state().status).toBe('oversized')
+      expect(collapsed(oversized.host)).toBe(true)
+
+      restart()
+      const unsupported = await setup({
+        files: [fileDto({ name: 'sliced.gcode', kind: 'other' })],
+      })
+      expect(collapsed(unsupported.host)).toBe(true)
+
+      restart()
+      const noWebgl = await setup({
+        create: () => {
+          throw new Error('WebGL unavailable')
+        },
+      })
+      expect(collapsed(noWebgl.host)).toBe(true)
     })
   })
 

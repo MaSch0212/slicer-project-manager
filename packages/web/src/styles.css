@@ -404,6 +404,7 @@ p {
 }
 
 .spm-file-thumb {
+  position: relative;
   display: grid;
   width: 3.5rem;
   height: 3.5rem;
@@ -414,6 +415,21 @@ p {
   background: var(--jig-color-surface-100);
   font-size: var(--jig-font-size-xs);
   text-align: center;
+}
+
+/* Covers the whole tile, so the picture of the model opens the model. See the comment in
+   project-detail.page.ts for why it carries no accessible name. Given a visible hover state
+   because a target with no cursor change and no feedback is one nobody discovers. */
+.spm-file-thumb-hit {
+  position: absolute;
+  inset: 0;
+  cursor: pointer;
+  border: 2px solid transparent;
+  border-radius: inherit;
+}
+
+.spm-file-thumb-hit:hover {
+  border-color: var(--jig-color-primary-500);
 }
 
 .spm-file-thumb img {
@@ -471,8 +487,41 @@ h2.spm-project-title {
 }
 
 /*
- * The canvas clears transparently, so this is the viewer's background — a theme token, which
- * means light and dark both work and a theme switch needs no JavaScript at all.
+ * The canvas clears transparently, so this is the viewer's background.
+ *
+ * ## Why the stage is dark in both themes
+ *
+ * The model's colour lives in a WebGL material, which is JavaScript, and task 1 deliberately
+ * kept the background in CSS so a theme switch needs no JavaScript at all. That leaves a fixed
+ * model against a background that could move -- and jig's surface ramp *inverts* between
+ * themes (measured: surface-100 is rgb(225,229,234) in light and rgb(21,25,30) in dark). A
+ * fixed model over an inverting background must lose one theme or the other, which is exactly
+ * what shipped: on the light theme's surface-100, a 3DBenchy's bulk measured rgb(254,254,254)
+ * against it -- **1.25:1**, with even its shadow side at 1.53:1. An OBJ was worse still at
+ * 1.27:1, because MeshPhongMaterial clipped to 255.
+ *
+ * So the stage is pinned to the dark end of the ramp in both themes -- surface-900 in light
+ * and surface-100 in dark, which the ramp's own symmetry makes the *same* colour,
+ * rgb(21,25,30). Still tokens, so a change to the theme's slate hue carries into both; and
+ * still both themes considered, rather than one written and the other inherited.
+ *
+ * Two things make that the right answer rather than a convenient one. The thumbnail this view
+ * has to read as the same object as is itself rendered on flat dark slate (rgb(31,35,42) --
+ * `BACKGROUND_R/G/B` in packages/core/src/previews/raster.ts), and those tiles already sit on
+ * this same page in the light theme, so the viewer finally matches the pictures beside it.
+ * And measured against the model's own lit range -- pixels read back off the canvas, both
+ * themes identical -- the panel runs **13.22:1** at the lit end (rgb(239,220,198), which is
+ * MODEL_COLOUR exactly) and **3.32:1** at the darkest opaque pixel (rgb(115,106,94)), still
+ * clear of the 3:1 non-text threshold. The shadowed end moved down from 4.32:1 in fix round 1,
+ * deliberately, to buy back adjacent-face separation on boxy parts -- see AMBIENT_SHARE.
+ *
+ * The border is `surface-500`, the one rung of the ramp that resolves to the same colour in
+ * both themes (rgb(103,123,152)). `--jig-color-border` cannot do this job: in the light theme
+ * it resolves to precisely the same value as surface-100, so on the old stage the border was
+ * a measured no-op. Against the stage it now measures 4.09:1, and against the page body 4.06:1
+ * in light and 4.69:1 in dark, so the panel has an edge from either side. The dark theme is
+ * where it earns its keep: the stage is only 1.15:1 against the page body there, so the edge
+ * is entirely the border's work.
  *
  * `min-height` rather than a fixed one: the element is what the ResizeObserver watches, and a
  * height that collapses to zero would ask three.js for a 0x0 drawing buffer.
@@ -491,9 +540,46 @@ h2.spm-project-title {
   min-height: 18rem;
   max-height: 75vh;
   flex: 1;
-  border: 1px solid var(--jig-color-border);
+  border: 1px solid var(--jig-color-surface-500);
   border-radius: var(--jig-size-rounded-lg);
+  background: var(--jig-color-surface-900);
+}
+
+/* @awdlab/jig toggles this class on <html>; see ColorSchemeService. */
+.dark .spm-viewport {
   background: var(--jig-color-surface-100);
+}
+
+/* The focus ring has to clear the model, so it is drawn inside the panel rather than around
+   it -- an outline on a near-black stage against a near-white page reads as part of the page
+   otherwise. Only reachable when a model is on screen; the component drops the tabindex
+   otherwise. */
+.spm-viewport:focus-visible {
+  outline: 2px solid var(--jig-color-primary-500);
+  outline-offset: -3px;
+}
+
+/*
+ * No model, no stage.
+ *
+ * The size gate, the unsupported-format message and every failure used to be read against an
+ * empty panel three quarters of the viewport tall, which looks like a viewer that failed to
+ * draw rather than one that deliberately did not start. `display: none` and not `visibility`
+ * or a zero height: the ResizeObserver watches this element, and the point is to give the room
+ * back to the page. The observer reports 0x0 while it is hidden, which `ViewerPage.resize`
+ * already clamps to 1x1, and it fires again with the real box when the panel returns.
+ */
+.spm-viewport--collapsed {
+  display: none;
+}
+
+/* The title and the reset control share a row, with the control pushed to the far end. Wraps
+   rather than squeezing the heading on a narrow viewport. */
+.spm-viewer-title {
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--jig-size-padding-md);
 }
 
 /* three.js is told not to size the canvas itself (see ViewerPage.resize), so CSS does it.

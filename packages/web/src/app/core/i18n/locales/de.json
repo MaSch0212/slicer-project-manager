@@ -99,7 +99,7 @@
   "viewer": {
     "title": "Modellansicht",
     "back": "Zurück zum Projekt",
-    "canvasLabel": "3D-Ansicht des Modells. Ziehen zum Drehen, Scrollen zum Zoomen.",
+    "canvasLabel": "3D-Ansicht des Modells. Ziehen zum Drehen, Scrollen zum Zoomen. Wenn die Ansicht den Fokus hat, drehen die Pfeiltasten, + und - zoomen, und 0 setzt sie zurück.",
     "noWebgl": "Dieser Browser konnte keine 3D-Ansicht öffnen. Möglicherweise ist WebGL deaktiviert, oder es sind bereits zu viele 3D-Ansichten offen -- lade die Seite neu und versuche es erneut.",
     "loading": "Modell wird geladen",
     "loadingPercent": "Modell wird geladen -- {{ percent }} %",
@@ -110,7 +110,8 @@
     "emptyModel": "Dieses Modell enthält keine Dreiecke, es gibt also nichts anzuzeigen. Die Datei wurde möglicherweise leer exportiert.",
     "slicerProject": "Dies ist ein Slicer-Projekt und kein einfaches Modell, es gibt hier also kein einzelnes Netz anzuzeigen. Lade es auf der Projektseite herunter, um es in deinem Slicer zu öffnen.",
     "tooLarge": "Dieses Modell ist {{ size }} groß. Eine {{ extension }}-Datei zu öffnen kann ein Vielfaches ihrer eigenen Größe an Speicher belegen, und wie viel diese hier braucht, lässt sich ohne Herunterladen nicht sagen -- deshalb fragt die Ansicht lieber nach, und es wurde noch nichts heruntergeladen.",
-    "loadAnyway": "Trotzdem laden"
+    "loadAnyway": "Trotzdem laden",
+    "resetView": "Ansicht zurücksetzen"
   },
   "errors": {
     "quotaExceeded": "Dieser Upload würde das Kontingent überschreiten ({{ usage }} von {{ quota }} belegt)",

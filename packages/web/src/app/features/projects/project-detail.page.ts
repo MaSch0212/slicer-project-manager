@@ -258,6 +258,26 @@ function sameEditModel(a: EditModel, b: EditModel): boolean {
                     } @else {
                       <span class="spm-muted">{{ t.translations().projects.previewPending }}</span>
                     }
+                    <!--
+                      The thumbnail is what a user reaches for, and until now it was inert: a
+                      picture of the model sitting two columns left of the icon button that
+                      actually opens it. This covers the tile with the same link.
+
+                      aria-hidden + tabindex="-1" on purpose. It is a duplicate of the labelled
+                      "View <name>" control in the same row, and an unlabelled second link to
+                      the same place is noise in the tab order and in a screen reader's list of
+                      links. Mouse and touch get the large target; everything else keeps the
+                      one named control. Empty rather than wrapping the image, so the img's alt
+                      text is not swallowed into a link name.
+                    -->
+                    @if (file.kind === 'model') {
+                      <a
+                        class="spm-file-thumb-hit"
+                        [routerLink]="['/projects', id(), 'view', file.id]"
+                        tabindex="-1"
+                        aria-hidden="true"
+                      ></a>
+                    }
                   </span>
 
                   <span class="spm-file-body">

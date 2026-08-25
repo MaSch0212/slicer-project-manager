@@ -642,5 +642,62 @@ describe('ProjectDetailPage', () => {
       // empty file list.
       expect(text(fixture)).toContain('notes.txt')
     })
+
+    /**
+     * The thumbnail is the picture of the model, sitting two columns to the left of the icon
+     * button that opens it, and it was inert — so the thing a user reaches for did nothing
+     * while the thing that worked looked like a toolbar affordance.
+     */
+    it('opens the viewer from the thumbnail itself', async () => {
+      const { fixture } = setup({}, [{ path: 'projects/:id/view/:fileId', children: [] }])
+      await settle()
+      const router = TestBed.inject(Router)
+
+      const hit = fixture.nativeElement.querySelector(
+        '.spm-file-thumb .spm-file-thumb-hit',
+      ) as HTMLAnchorElement | null
+      expect(hit).not.toBeNull()
+      expect(hit?.getAttribute('href')).toBe('/projects/p1/view/f1')
+
+      expect(router.url).not.toBe('/projects/p1/view/f1')
+      hit?.click()
+      await settle()
+      expect(router.url).toBe('/projects/p1/view/f1')
+    })
+
+    it('keeps the thumbnail out of the tab order and out of the accessibility tree', async () => {
+      const { fixture } = setup({}, [{ path: 'projects/:id/view/:fileId', children: [] }])
+      await settle()
+
+      const hit = fixture.nativeElement.querySelector('.spm-file-thumb-hit') as HTMLElement
+      // It is a duplicate of the labelled "View <name>" control in the same row. A second,
+      // unnamed link to the same place is noise in the tab order and in a screen reader's
+      // list of links, so mouse and touch get the large target and nothing else changes.
+      expect(hit.getAttribute('tabindex')).toBe('-1')
+      expect(hit.getAttribute('aria-hidden')).toBe('true')
+      expect(hit.textContent?.trim()).toBe('')
+
+      // The control: the named button it defers to really is there, so this is a duplicate
+      // being suppressed rather than the only entry point being hidden from assistive tech.
+      const named = [...fixture.nativeElement.querySelectorAll('a[href^="/projects/p1/view/"]')]
+      expect(named.length).toBe(2)
+      // `.some(...)` with no matcher after it asserts nothing at all — the exact shape this
+      // subsystem has caught seven times — so the count is asserted instead.
+      const hidden = named.filter((link) => (link as HTMLElement).ariaHidden === 'true')
+      expect(hidden.length).toBe(1)
+    })
+
+    it('does not put a hit target on a file the viewer cannot open', async () => {
+      const other: FileDto = { ...file, id: 'f9', name: 'notes.txt', kind: 'other' }
+      const { fixture } = setup({
+        get: vi.fn(() => Promise.resolve(fetched({ files: [other] }))),
+      })
+      await settle()
+
+      expect(fixture.nativeElement.querySelector('.spm-file-thumb-hit')).toBeNull()
+      // The control: the tile itself is still rendered, so the query above is looking at a row
+      // that exists.
+      expect(fixture.nativeElement.querySelector('.spm-file-thumb')).not.toBeNull()
+    })
   })
 })

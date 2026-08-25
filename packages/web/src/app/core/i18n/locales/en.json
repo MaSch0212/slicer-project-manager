@@ -99,7 +99,7 @@
   "viewer": {
     "title": "Model viewer",
     "back": "Back to the project",
-    "canvasLabel": "3D view of the model. Drag to rotate, scroll to zoom.",
+    "canvasLabel": "3D view of the model. Drag to rotate, scroll to zoom. With the view focused, the arrow keys rotate, + and - zoom, and 0 resets it.",
     "noWebgl": "This browser could not open a 3D view. WebGL may be switched off, or too many 3D views are already open -- reload the page and try again.",
     "loading": "Loading the model",
     "loadingPercent": "Loading the model -- {{ percent }}%",
@@ -110,7 +110,8 @@
     "emptyModel": "This model contains no triangles, so there is nothing to show. The file may have been exported empty.",
     "slicerProject": "This is a slicer project rather than a plain model, so there is no single mesh here to show. Download it from the project page to open it in your slicer.",
     "tooLarge": "This model is {{ size }}. Opening a {{ extension }} file can take many times its own size in memory, and there is no way to tell how much this one needs without downloading it first -- so the viewer asks instead, and nothing has been downloaded yet.",
-    "loadAnyway": "Load it anyway"
+    "loadAnyway": "Load it anyway",
+    "resetView": "Reset view"
   },
   "errors": {
     "quotaExceeded": "This upload would exceed your quota ({{ usage }} of {{ quota }} used)",
