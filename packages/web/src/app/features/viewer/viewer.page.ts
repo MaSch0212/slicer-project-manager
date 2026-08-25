@@ -287,13 +287,13 @@ export type ModelFormat = {
  * wrong in the direction that kills a tab — by 1.3x, 5.5x and 2.7x. Arithmetic misses what the
  * loaders actually allocate. If a cost here is ever changed, re-run the harness.
  *
- * **What is measured and what is not.** `.stl` and `.obj` are measured end to end. `.3mf` is
- * measured only as far as `3MFLoader.js:215`, because the DOM that line builds cannot be sized
- * in Node: jsdom's nodes are JS objects and cost far more than Blink's. So the 3MF cost is a
- * measured 20.65x plus an *estimated* ~31x for the DOM — a documented per-node floor over
- * exactly-counted elements and attributes, and about 60 % of the total. It is the one number
- * here that has never met the engine that will run it; `measureUserAgentSpecificMemory()` in a
- * real Chromium is what would close it.
+ * **What is measured and where.** `.stl` and `.obj` are measured in that Node harness, end to
+ * end. `.3mf` could not be: the DOM that `3MFLoader.js:215` builds is Blink's C++ allocation,
+ * which Node cannot size and jsdom mis-sizes by an order of magnitude — so it shipped as a
+ * measured 20.65x plus an *estimated* ~31x for the DOM. That estimate has since been settled
+ * against the real engine with `performance.measureUserAgentSpecificMemory()` in a
+ * cross-origin-isolated Chromium, which counts Blink's allocation as well as V8's; see the
+ * `.3mf` row for what came back.
  *
  * The multiplier is **not constant across file size**: every loader has a fixed cost of a few
  * megabytes, so a small file's ratio is much worse than a large one's while its absolute peak
@@ -368,21 +368,54 @@ const FORMATS: Readonly<Record<string, ModelFormat>> = {
     // `DOMParser` (`3MFLoader.js:215`, where `zip`, `fileText` and `xmlData` are all live).
     //
     // Round 0 counted the first two terms and called the DOM "on top and uncounted". It is not a
-    // rounding term, it is the largest one. Measured DOM-free the worst library 3MF is already
-    // 20.65x (13.24 MB → 273 MB, past the whole budget before a single node exists); its model
-    // part then holds 2,218,656 elements and 6,655,952 attributes, which at a conservative Blink
-    // floor of 88 B/element + 32 B/attribute is another 408 MB. Total 51.5x. Running the full
-    // parse under jsdom is not a Blink number but bounds it from above: every 3MF over 7.6 MB
-    // exhausted a 4 GB heap and died.
+    // rounding term, it is the largest one — and it is now measured rather than argued.
     //
-    // One honest mismatch: 51.5 comes from `pla_lith_mum_dad_e3.3mf`, and since the gate now
-    // refuses slicer projects on `kind` before ever reaching here, that file can no longer
-    // arrive. The 28 plain meshes this row can actually see measure about 36x. The number is
-    // kept because density is a property of the mesh and not of the wrapper — a plain mesh as
-    // dense as that project would cost the same — and because it is outcome-neutral: at 36x the
-    // line is 7.1 MB and gates the same two files. It is deliberately the conservative of two
-    // defensible numbers, not a measurement of this row's own population.
-    peakCost: 51.5,
+    // ## The measurement
+    //
+    // `performance.measureUserAgentSpecificMemory()`, in a headed Chromium served from a
+    // cross-origin-isolated origin, over the repo's own three.js. It is the only API that reports
+    // Blink's C++ DOM allocation alongside the JS heap, which is the whole of what Node could not
+    // see. A synchronous parse cannot be sampled from an async API, so the peak is taken by
+    // holding every intermediate `3MFLoader.js:215` has live — the inflated zip, the decoded
+    // model text and the document over it — and measuring with nothing released.
+    //
+    //   file                        on disk   elements   attributes   DOM      total    x
+    //   pla_lith_mum_dad_e3.3mf    13.24 MB  2,218,656    6,655,951  426 MB   686.6 MB  51.87
+    //   left.3mf (Beat Saber)       7.75 MB    891,398    2,674,138  171 MB   281.6 MB  36.34
+    //   Uno.3mf                     0.54 MB     44,944      134,810  8.7 MB    14.1 MB  26.12
+    //
+    // The estimate was 51.5x against a measured 51.87x on the very file it was derived from, and
+    // its DOM term was 408 MB against a measured 426 MB — the real Blink floor is about
+    // 96 B/element rather than the 88 B assumed, and 32 B/attribute is right. So the cost moves
+    // to 51.9 and stops being an estimate. Nothing about which files are gated changes: at 51.5
+    // the line was 4.97 MB and at 51.9 it is 4.93 MB, and the library holds no 3MF between them.
+    //
+    // ## What this number still does not include, which is a real gap
+    //
+    // It prices the point the estimate priced, and that point is not the peak. `parseModelNode`
+    // keeps the document reachable through `modelData['xml']` for the whole of the geometry
+    // build, so the DOM, the zip, the decoded text and the loader's plain-JS vertex and triangle
+    // arrays are all live together. Measured on the same two files, with V8's used heap read
+    // immediately after `parse()` returns and the DOM pinned so it could be measured beside it:
+    //
+    //   pla_lith_mum_dad_e3.3mf   481.6 MB JS + 426.0 MB DOM  =  907.6 MB   68.6x
+    //   left.3mf                  302.6 MB JS + 171.2 MB DOM  =  473.8 MB   61.1x
+    //
+    // So the true peak is about a third above this row. It is **not** priced here, and that is a
+    // deliberate deferral rather than an oversight: 68.6x puts the line at 3.73 MB, below the
+    // 3.95 MB 90th percentile that `PEAK_BUDGET_BYTES` is derived from and that a test in
+    // `viewer.page.spec.ts` pins, so closing it means re-deriving the budget — which would loosen
+    // the `.stl` and `.obj` lines on no new evidence about either. It costs nothing today: the
+    // gap only matters for a plain-mesh 3MF between 3.73 MB and 4.93 MB, and the library's
+    // largest under the line is 0.54 MB.
+    //
+    // One honest mismatch, unchanged: 51.9 comes from `pla_lith_mum_dad_e3.3mf`, and since the
+    // gate now refuses slicer projects on `kind` before ever reaching here, that file can no
+    // longer arrive. The plain meshes this row can actually see measure 36.34x at the same point.
+    // The number is kept because density is a property of the mesh and not of the wrapper — a
+    // plain mesh as dense as that project would cost the same — and because it is
+    // outcome-neutral: at 36x the line is 7.1 MB and gates the same two files.
+    peakCost: 51.9,
   },
 }
 
@@ -414,9 +447,9 @@ export const SUPPORTED_FORMATS: readonly string[] = Object.keys(FORMATS).map((ex
  * The budget is set **as low as it can go without ever prompting on an ordinary model**, because
  * for a gate every megabyte of headroom is a megabyte of risk and the only cost of caution is a
  * click. "Ordinary" is the reference library's 90th percentile over all 1,725 models: **3.95 MB**
- * (the median is 0.148 MB). The binding format is the dearest, 3MF at 51.5x:
+ * (the median is 0.148 MB). The binding format is the dearest, 3MF at 51.9x:
  *
- *     3.95 MB × 51.5 = 204 MB floor  →  256 MB shipped, 26 % headroom
+ *     3.95 MB × 51.9 = 205 MB floor  →  256 MB shipped, 25 % headroom
  *
  * Nothing pushes it upward, so the floor governs and 256 MB is the round number just above it.
  *
@@ -426,7 +459,7 @@ export const SUPPORTED_FORMATS: readonly string[] = Object.keys(FORMATS).map((ex
  * | ------ | -------------------- | ------------------------------------ |
  * | `.stl` | 256 / 6.75 = 37.9 MB | 25 of 1,311 (1.9 %)                  |
  * | `.obj` | 256 / 24.6 = 10.4 MB | 1 of 12 (8.3 %) — the 137.8 MB one   |
- * | `.3mf` | 256 / 51.5 =  5.0 MB | 2 of 28 (7.1 %) — the Beat Saber pair |
+ * | `.3mf` | 256 / 51.9 =  4.9 MB | 2 of 28 (7.1 %) — the Beat Saber pair |
  *
  * **28 of the 1,351 files the viewer will open, 2.1 %.** The other 374 `.3mf` in the library are
  * slicer projects and never reach the size gate at all — `load` refuses them on `FileDto.kind`
