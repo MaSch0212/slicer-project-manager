@@ -94,9 +94,12 @@ export function binaryStlCube(): Uint8Array {
  * comes back after "Load it anyway" is still the twelve-triangle cube: the gate is exercised at
  * full size while the parse, the fit and the draw stay as cheap as every other test here.
  *
- * OBJ, of the three formats, because its line is the cheapest to reach. Priced against the same
- * 256 MB budget the gate spends, `.stl` does not trip until 37.9 MB and `.3mf` — which would
- * have to be a real zip as well — until 4.9 MB but at twice the cost per byte to open.
+ * OBJ, of the three formats, on a balance of two costs. `.stl` does not trip until 37.9 MB, which
+ * is a download this suite should not spend its budget on. `.3mf` trips at 2.2 MB, five times
+ * smaller, but it would have to be a real zip built here as well, and its padding could not be
+ * inert — a 3MF is priced at four times an OBJ per byte precisely because every entry is inflated
+ * and turned into a DOM, so the fixture would cost the browser real memory rather than a string
+ * the loader skips. OBJ is the one where a large file on disk stays a small parse.
  */
 export function paddedObjCube(minimumBytes: number): Uint8Array {
   const lines = CORNERS.map(([x, y, z]) => `v ${x} ${y} ${z}`)

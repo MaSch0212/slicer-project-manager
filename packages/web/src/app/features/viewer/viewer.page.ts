@@ -287,22 +287,35 @@ export type ModelFormat = {
  * wrong in the direction that kills a tab — by 1.3x, 5.5x and 2.7x. Arithmetic misses what the
  * loaders actually allocate. If a cost here is ever changed, re-run the harness.
  *
- * **What is measured and where.** `.stl` and `.obj` are measured in that Node harness, end to
- * end. `.3mf` could not be: the DOM that `3MFLoader.js:215` builds is Blink's C++ allocation,
- * which Node cannot size and jsdom mis-sizes by an order of magnitude — so it shipped as a
- * measured 20.65x plus an *estimated* ~31x for the DOM. That estimate has since been settled
- * against the real engine, and the same probe re-measured all three formats as peak resident set
- * in Chromium, which is the quantity the Node harness reported. Read the `.3mf` row before
- * relying on any number in this table: two of the three are known to be off, and one of them is
- * off by a factor of 2.3 in the direction that kills a tab.
+ * **Every cost here has now been measured in the engine that runs it.** The Node harness could
+ * never price `.3mf`: the DOM that `3MFLoader.js:215` builds is Blink's C++ allocation, which
+ * Node cannot size and jsdom mis-sizes by an order of magnitude, so that row shipped for two
+ * rounds as a measured term plus an estimated one. A second harness closed it and re-measured
+ * all three formats with one method — `WorkingSet64` summed across Chromium's processes every
+ * 20 ms while the parse runs on the main thread, which is the same quantity `maxRSS` is, in the
+ * browser rather than in Node. Reproducible to three significant figures across runs.
  *
- *     format  shipped   Chromium peak RSS, on the file that sets the cost
- *     .stl      6.75    3.21x binary / 4.56–5.26x ASCII — shipped figure is conservative, kept
- *     .obj      24.6    28.7–28.9x on UBO.obj — shipped figure is ~17 % under
- *     .3mf      51.9    117.75x on the file it came from — shipped figure is 2.3x under
+ *     format  cost    Chromium peak RSS, on the file that sets it
+ *     .stl    6.75    3.21x binary, 4.56–5.26x ASCII — Node's dearer figure kept, see the row
+ *     .obj    28.9    28.70 / 28.73 / 28.93x on UBO.obj, over three runs
+ *     .3mf    117.75  117.74 / 117.75x on pla_lith_mum_dad_e3.3mf
  *
- * Neither correction is applied yet: both need `PEAK_BUDGET_BYTES` re-derived with them, and that
- * tolerance is shared by all three rows. Neither changes which library files are gated today.
+ * **What makes the two harnesses comparable**, rather than merely both present:
+ * `Waving_Groot_15.5cm.stl`, a 100 MB binary STL, measures **321 MB in Node and 321 MB in
+ * Chromium**. One shared calibration point, reproduced exactly on a repeat run, is what lets the
+ * `.stl` row keep a Node number while the other two rows take Chromium ones.
+ *
+ * **The rule when the two disagree: tighten on new evidence, loosen only when the loosening is
+ * itself the goal.** Chromium came back dearer for `.obj` and far dearer for `.3mf`, so both rows
+ * took the new number. It came back *cheaper* for every `.stl` path, so that row kept the old one.
+ * A gate is not a model to be made accurate in both directions — it is a bound, and a bound is
+ * only ever loosened deliberately.
+ *
+ * **The one modelling assumption left.** A `peakCost` is a multiplier with no intercept, so it
+ * assumes cost is proportional to file size. That is an approximation, and the row comments say
+ * where it frays (a small file's ratio is worse than a large one's). It holds best exactly where
+ * it matters most, on the dearest format: `.3mf` measures 117.75x at 13.24 MB and 120.95x at
+ * 0.54 MB, a spread of 2.7 % across a 25-fold range in size.
  *
  * The multiplier is **not constant across file size**: every loader has a fixed cost of a few
  * megabytes, so a small file's ratio is much worse than a large one's while its absolute peak
@@ -348,8 +361,13 @@ const FORMATS: Readonly<Record<string, ModelFormat>> = {
     // the megabyte, which is what validates the Chromium method for the other two rows — and the
     // ASCII path 4.56x on `EiffelTower.STL`, 4.72x on `iron-man-base-2.stl`, 5.26x on
     // `Octopus_full_v5.5.stl`. V8 in Chromium handles `parseASCII`'s intermediate number[]s better
-    // than Node's allocator did. 6.75 is kept rather than lowered: lowering a `peakCost` loosens
-    // the gate, and being conservative on the format that is 97 % of the library is free.
+    // than Node's allocator did.
+    //
+    // **6.75 is kept rather than lowered**, and that asymmetry is the rule, not an oversight: the
+    // other two rows took their dearer Chromium figure the same day this one declined its cheaper
+    // one. Tighten on new evidence, loosen only when the loosening is itself the goal. Nothing
+    // here wants loosening — this format is 97 % of the library, 6.75 already asks about only 25
+    // of its 1,311 files, and the cost of asking is a click.
     //
     // Pricing all three paths at the dearest still prompts on cheap files — of the 25 STLs
     // gated, 16 are plain binary and would have cost about 104 MB. That is the right way to be
@@ -374,19 +392,22 @@ const FORMATS: Readonly<Record<string, ModelFormat>> = {
     // above a tenth of the line it implies. The library's other eleven OBJs are all under
     // 5.6 MB and peak at 93 MB or less, so this costs no extra prompt at all.
     //
-    // **Re-measured in Chromium and found ~17 % low.** Peak RSS on the same two files that are at
-    // or above a tenth of the line: `UBO.obj` 3.83 MB → 110.9 MB, **28.9x** (28.70 / 28.73 / 28.93
-    // over three runs), and `HannosRing.obj` 5.53 MB → 108.2 MB, 19.57x, against the Node
-    // harness's 24.61x and 16.91x. `Baby_Yoda.obj` was not re-measured: at ~1.8 GB it is as likely
-    // to kill the renderer as to report, the gate refuses it by a factor of thirteen either way,
-    // and its multiplier is far below UBO's, so it cannot govern.
+    // **Re-measured in Chromium as peak RSS, and the Node figure was ~17 % low**, so this row now
+    // carries the browser's number. Both files at or above a tenth of the line, Node against
+    // Chromium: `UBO.obj` 3.83 MB, 24.61x → **28.9x** (110.0 / 110.1 / 110.9 MB over three runs);
+    // `HannosRing.obj` 5.53 MB, 16.91x → 19.57x. Same direction on both, and UBO governs, being
+    // the worst at or above a tenth of the line 28.9 implies.
     //
-    // Not corrected here for the same reason as `.3mf`: 28.9 moves the line to 8.86 MB, which is
-    // a change to a number `PEAK_BUDGET_BYTES` is derived against, and the budget is shared. It
-    // is outcome-neutral in the library — the next OBJ below `Baby_Yoda.obj` is 5.53 MB, so the
-    // same one file is gated at 10.41 MB or at 8.86 MB — but it is under-priced, and a 9 MB OBJ
-    // dropped into a library tomorrow would open silently at ~260 MB.
-    peakCost: 24.6,
+    // `Baby_Yoda.obj` was not re-measured. At ~1.8 GB it is as likely to kill the renderer as to
+    // report; its Node multiplier of 13.19x is less than half UBO's, so it cannot govern whatever
+    // it would have said; and the gate refuses it by a factor of fifteen either way. That is the
+    // one file in this table whose Chromium cost is unknown, and it is unknown on purpose.
+    //
+    // Adopting 28.9 moves the line from 10.41 MB to 8.86 MB and changes nothing in the library:
+    // the next OBJ below `Baby_Yoda.obj` is `HannosRing.obj` at 5.53 MB, so the same one file of
+    // twelve is gated either way. What it buys is a 9 MB OBJ dropped in tomorrow being asked
+    // about rather than opening silently at ~260 MB.
+    peakCost: 28.9,
   },
   '.3mf': {
     parse: (bytes) => new ThreeMFLoader().parse(bytes),
@@ -398,65 +419,45 @@ const FORMATS: Readonly<Record<string, ModelFormat>> = {
     // `DOMParser` (`3MFLoader.js:215`, where `zip`, `fileText` and `xmlData` are all live).
     //
     // Round 0 counted the first two terms and called the DOM "on top and uncounted". It is not a
-    // rounding term, it is the largest one — and it is now measured rather than argued.
+    // rounding term, it is the largest one — and it took three attempts to size, each of which
+    // was wrong in the same direction, so the wrong ones are worth naming: an 88 B/element Blink
+    // floor reasoned over exact node counts gave 51.5x; that estimate turned out to be right
+    // about what it modelled but wrong about *where* the peak is; and a second attempt using
+    // V8's `usedJSHeapSize` beside a measured DOM gave 68.6x, which was low again because
+    // `usedJSHeapSize` is the V8 heap alone — it excludes the external `ArrayBuffer` backing
+    // stores that hold the inflated zip and every `Float32Array`, and the slack V8 does not
+    // return to the OS during a six-second synchronous parse.
     //
     // ## The measurement
     //
-    // `performance.measureUserAgentSpecificMemory()`, in a headed Chromium served from a
-    // cross-origin-isolated origin, over the repo's own three.js. It is the only API that reports
-    // Blink's C++ DOM allocation alongside the JS heap, which is the whole of what Node could not
-    // see. A synchronous parse cannot be sampled from an async API, so the peak is taken by
-    // holding every intermediate `3MFLoader.js:215` has live — the inflated zip, the decoded
-    // model text and the document over it — and measuring with nothing released.
+    // Peak resident set: `WorkingSet64` summed across Chromium's processes every 20 ms while the
+    // parse runs on the main thread. RSS counts the V8 heap, the external backing stores V8 keeps
+    // off it, and Blink's C++ DOM — all three, which is why nothing smaller than RSS could price
+    // this row. It is also the same quantity `process.resourceUsage().maxRSS` gave the Node
+    // harness for `.stl` and `.obj`, so all three rows are finally one method.
     //
-    //   file                        on disk   elements   attributes   DOM      total    x
-    //   pla_lith_mum_dad_e3.3mf    13.24 MB  2,218,656    6,655,951  426 MB   686.6 MB  51.87
-    //   left.3mf (Beat Saber)       7.75 MB    891,398    2,674,138  171 MB   281.6 MB  36.34
-    //   Uno.3mf                     0.54 MB     44,944      134,810  8.7 MB    14.1 MB  26.12
+    //   file                       on disk   peak RSS    x        runs
+    //   pla_lith_mum_dad_e3.3mf   13.24 MB   1558.5 MB   117.75   117.74 / 117.75
+    //   left.3mf (Beat Saber)      7.75 MB    745.8 MB    96.22    96.23 / 96.22
+    //   Uno.3mf                    0.54 MB     65.3 MB   120.95
     //
-    // The estimate was 51.5x against a measured 51.87x on the very file it was derived from, and
-    // its DOM term was 408 MB against a measured 426 MB — the real Blink floor is about
-    // 96 B/element rather than the 88 B assumed, and 32 B/attribute is right. So the cost moves
-    // to 51.9 and stops being an estimate. Nothing about which files are gated changes: at 51.5
-    // the line was 4.97 MB and at 51.9 it is 4.93 MB, and the library holds no 3MF between them.
+    // Calibrated against the harness it replaces: `Waving_Groot_15.5cm.stl`, a 100 MB binary STL,
+    // measures 321 MB in Node and 321 MB in Chromium. The 3MF rows differ between the two by 2.3x
+    // for one reason — Node never built the DOM at all.
     //
-    // ## 51.9 IS NOT THE PEAK. IT IS 2.3x UNDER IT, KNOWINGLY.
+    // A control run rules out the method measuring itself: the 684-byte cube the e2e suite uses
+    // comes back at a 0.5 MB delta, twice.
     //
-    // Read the paragraph above carefully: it prices the point the *estimate* priced, and that
-    // point is not the peak. `parseModelNode` keeps the document reachable through
-    // `modelData['xml']` for the whole of the geometry build, so the DOM, the zip, the decoded
-    // text and the loader's plain-JS vertex and triangle arrays are all live together — and none
-    // of that is in the 51.9.
+    // ## Why the file it comes from is one the gate can no longer see
     //
-    // Measured end to end, as peak resident set: WorkingSet64 summed across Chromium's processes
-    // every 20 ms while the parse runs on the main thread. That is the same quantity
-    // `process.resourceUsage().maxRSS` gave the Node harness for `.stl` and `.obj`, so for the
-    // first time all three rows can be compared with one method. Reproducible to three
-    // significant figures across runs:
-    //
-    //   pla_lith_mum_dad_e3.3mf  13.24 MB → 1558.5 MB peak   117.75x
-    //   left.3mf                  7.75 MB →  745.8 MB peak    96.22x
-    //   Uno.3mf                   0.54 MB →   65.3 MB peak   120.95x
-    //
-    // The method is validated where it can be: `Waving_Groot_15.5cm.stl`, a 100 MB binary STL,
-    // measures 321 MB in Chromium and 321 MB in the Node harness — identical. The 3MF rows differ
-    // by 2.3x because Node never built the DOM at all.
-    //
-    // It is **not** priced here, and that is a deferral awaiting a decision rather than an
-    // oversight. Pricing it means re-deriving `PEAK_BUDGET_BYTES`, because 117.75x against the
-    // 3.95 MB 90th percentile that budget is derived from wants ~478 MB, and the same re-derivation
-    // would move the `.stl` and `.obj` lines with it. That is a shared-tolerance decision, not a
-    // constant this row can change on its own. What it costs meanwhile is bounded and small: the
-    // gap bites only a plain-mesh 3MF between 2.2 MB and 4.93 MB, and the library's largest plain
-    // mesh under the line is 0.54 MB, which peaks at 65 MB.
-    //
-    // One honest mismatch, unchanged: 51.9 comes from `pla_lith_mum_dad_e3.3mf`, and since the
-    // gate now refuses slicer projects on `kind` before ever reaching here, that file can no
-    // longer arrive. The plain meshes this row can actually see measure 36.34x at the same point.
-    // The number is kept because density is a property of the mesh and not of the wrapper — a
-    // plain mesh as dense as that project would cost the same — and because it is
-    // outcome-neutral: at 36x the line is 7.1 MB and gates the same two files.
-    peakCost: 51.9,
+    // 117.75 is `pla_lith_mum_dad_e3.3mf`, and since `load` refuses slicer projects on `kind`
+    // before reaching here, that file can never arrive. It is kept because density is a property
+    // of the mesh and not of the wrapper — a plain mesh as dense as that project costs the same —
+    // and because the two figures barely differ anyway: `Uno.3mf`, a plain mesh the gate does see,
+    // measures **120.95x**, which is dearer. That agreement across a 25-fold range in file size
+    // (2.7 % apart) is also the evidence for treating the cost as a plain multiplier with no
+    // intercept, which is what a `peakCost` is.
+    peakCost: 117.75,
   },
 }
 
@@ -483,27 +484,46 @@ export const SUPPORTED_FORMATS: readonly string[] = Object.keys(FORMATS).map((ex
  * reasons having nothing to do with this tab. The two must move independently, so this number is
  * written here and derived here.
  *
- * ## The derivation
+ * ## Where the number comes from
  *
- * The budget is set **as low as it can go without ever prompting on an ordinary model**, because
- * for a gate every megabyte of headroom is a megabyte of risk and the only cost of caution is a
- * click. "Ordinary" is the reference library's 90th percentile over all 1,725 models: **3.95 MB**
- * (the median is 0.148 MB). The binding format is the dearest, 3MF at 51.9x — **which is the
- * known-conservative figure, not the measured peak; see the `.3mf` row.** Re-deriving this from
- * the 117.75x that was actually measured wants a budget near 512 MB, and that decision has not
- * been taken, so what follows is the derivation as it stands rather than as it should be:
+ * It is **chosen, not derived** — a quarter of a gigabyte is as much as one model may cost a tab
+ * before someone is asked — and it is calibrated by the outcome it produces on real files rather
+ * than by an inequality. The reasoning behind the choice is the asymmetry: every megabyte of
+ * headroom is a megabyte of risk, and the only cost of caution is a click.
  *
- *     3.95 MB × 51.9 = 205 MB floor  →  256 MB shipped, 25 % headroom
+ * ### The derivation that used to be here, and why it is gone
  *
- * Nothing pushes it upward, so the floor governs and 256 MB is the round number just above it.
+ * It read: the 90th percentile over all 1,725 models is 3.95 MB, the dearest format costs Nx, so
+ * the budget must clear 3.95 MB × N or an ordinary model would prompt. That reads like a
+ * guarantee and is not one. It multiplies a percentile taken over *every* format by the *dearest
+ * format's* multiplier — a pairing no file in the library instantiates. The 3MF cost applies to
+ * exactly the 28 plain meshes the viewer can open, and of those the largest that loads is
+ * **0.54 MB** while the next one up is **7.65 MB**: the `.3mf` line can sit anywhere across that
+ * fourteen-fold range with identical behaviour. A bound whose binding case is a file that does
+ * not exist is an artifact of the arithmetic.
  *
- * ## What that catches, measured over the whole library
+ * It also had a failure mode worth remembering. Because the budget was written as an output of
+ * the costs, correcting a cost upward mechanically pushed the budget upward with it — so
+ * measuring `.3mf` properly at 117.75x would have "derived" a 512 MB budget and quietly stopped
+ * asking about seventeen STLs that peak at up to half a gigabyte. A gate that loosens itself
+ * whenever it learns something is not a gate. The costs are now measurements and the budget is a
+ * decision, and the two move independently.
  *
- * | Format | Line                 | Gated, of what the viewer will open |
- * | ------ | -------------------- | ------------------------------------ |
- * | `.stl` | 256 / 6.75 = 37.9 MB | 25 of 1,311 (1.9 %)                  |
- * | `.obj` | 256 / 24.6 = 10.4 MB | 1 of 12 (8.3 %) — the 137.8 MB one   |
- * | `.3mf` | 256 / 51.9 =  4.9 MB | 2 of 28 (7.1 %) — the Beat Saber pair |
+ * ## What 256 MB catches, measured over the whole library
+ *
+ * | Format | Line                  | Gated, of what the viewer will open   |
+ * | ------ | --------------------- | ------------------------------------- |
+ * | `.stl` | 256 / 6.75  = 37.9 MB | 25 of 1,311 (1.9 %)                   |
+ * | `.obj` | 256 / 28.9  =  8.9 MB | 1 of 12 (8.3 %) — the 137.8 MB one    |
+ * | `.3mf` | 256 / 117.75 = 2.2 MB | 2 of 28 (7.1 %) — the Beat Saber pair |
+ *
+ * Each line falls in a gap, not near a file. Rescanned when the costs were re-measured: the
+ * largest `.stl` that opens is 35.94 MB against a 37.9 MB line and the smallest gated is
+ * 41.99 MB; `.obj` 5.53 MB against 8.9 MB, next 137.79 MB; `.3mf` 0.54 MB against 2.2 MB, next
+ * 7.65 MB. Replacing the estimated costs with measured ones — `.obj` 24.6 → 28.9 and `.3mf`
+ * 51.9 → 117.75, which moved two of the three lines by more than half — changed the
+ * classification of **not one file**. That is what makes 256 MB safe to hold fixed while the
+ * costs move under it.
  *
  * **28 of the 1,351 files the viewer will open, 2.1 %.** The other 374 `.3mf` in the library are
  * slicer projects and never reach the size gate at all — `load` refuses them on `FileDto.kind`

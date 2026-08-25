@@ -13,12 +13,20 @@ const OVERSIZED = 'viewer-oversized.obj'
 /**
  * Big enough to trip the viewer's size gate, and no bigger.
  *
- * The gate refuses a `.obj` past `PEAK_BUDGET_BYTES / peakCost` = 256,000,000 / 24.6 =
- * 10,406,504 bytes (`viewer.page.ts`). This is that line plus about 6 %. The constant is not
- * imported — reaching into the app module from here would pull three.js and the whole Angular
- * graph into the test process — so if `.obj`'s `peakCost` is ever re-measured below about 23.3
- * the line moves past this file and the gate stops appearing. That shows up as this test
- * failing on a missing prompt, which is the right way for it to break.
+ * The gate refuses a `.obj` past `PEAK_BUDGET_BYTES / peakCost` = 256,000,000 / 28.9 =
+ * 8,858,131 bytes (`viewer.page.ts`). This is that line plus about 24 %.
+ *
+ * The margin is wide because it is free: the padding is comment lines the loader skips, so a
+ * fixture 2 MB clear of the line costs the same parse as one 0.1 MB clear of it, and only the
+ * write and the localhost download scale. It was 6 % over the line the day it was written and
+ * became 24 % when `.obj` was re-measured from 24.6 to 28.9 — kept at 11 MB rather than trimmed,
+ * because a fixture that has to be re-derived every time a cost moves is a fixture that will one
+ * day not be.
+ *
+ * The constant is not imported — reaching into the app module from here would pull three.js and
+ * the whole Angular graph into the test process — so if `.obj`'s `peakCost` is ever re-measured
+ * below about **23.3** the line moves past this file and the gate stops appearing. That shows up
+ * as this test failing on a missing prompt, which is the right way for it to break.
  */
 const OVERSIZED_BYTES = 11_000_000
 

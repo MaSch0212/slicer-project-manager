@@ -1554,20 +1554,37 @@ describe('ViewerPage', () => {
       expect(sizeLimitFor('sliced.gcode')).toBeUndefined()
     })
 
-    it('draws the line between the worst file in the library and an ordinary one', () => {
+    it('puts every line in a gap between two real library files, not near one', () => {
       // Every other test in this block derives its sizes from `sizeLimitFor`, which makes them
       // immune to the threshold being retuned — and equally blind to it being retuned to
-      // nonsense. A budget of ten gigabytes, or of one byte, leaves all of them green. These
-      // four numbers come from the reference library instead of from the code: the 164.8 MB
-      // binary STL is its largest file and the whole reason this gate exists, and 3.9 MB is
-      // just under the measured 90th percentile of all 1,725 models, 3.953 MB (the median is
-      // 0.148 MB) — so a model that size is an ordinary one and must open without a word in
-      // any format. That p90 is also what `PEAK_BUDGET_BYTES` is derived from, so this is the
-      // test that reddens if the budget ever drops below its own floor.
-      expect(164_800_000).toBeGreaterThan(limitFor('big.stl'))
-      expect(3_900_000).toBeLessThan(limitFor('ordinary.stl'))
-      expect(3_900_000).toBeLessThan(limitFor('ordinary.obj'))
-      expect(3_900_000).toBeLessThan(limitFor('ordinary.3mf'))
+      // nonsense. A budget of ten gigabytes, or of one byte, leaves all of them green. This is
+      // where the numbers come from outside the code instead: each pair is the largest file of
+      // that format the reference library holds that must open without a word, and the smallest
+      // it holds that must be asked about. Sizes from a rescan taken when the costs were last
+      // measured.
+      //
+      // The pairs are wide, and the width is the point. `.3mf` opens at 0.54 MB and asks at
+      // 7.65 MB, so that line can sit anywhere across a fourteen-fold range and behave the same.
+      // This test therefore pins what the gate *does* rather than an abstraction about what it
+      // should: the previous version asserted that a 3.9 MB model — the 90th percentile over all
+      // 1,725 models of every format — opens in every format, which sounds like a guarantee but
+      // multiplies a percentile over one population by a multiplier that only applies to another.
+      // No 3.9 MB plain-mesh 3MF exists, or needs to. See `PEAK_BUDGET_BYTES`.
+      //
+      //   format  largest that opens                        smallest that is gated
+      const brackets: [string, number, string, number][] = [
+        ['IMG_1585...NS.stl', 35_939_484, 'Köln5...NS (3).stl', 41_987_684],
+        ['HannosRing.obj', 5_526_573, 'Baby_Yoda.obj', 137_788_855],
+        ['Uno.3mf', 539_936, 'right.3mf', 7_647_338],
+      ]
+
+      for (const [openName, openBytes, gatedName, gatedBytes] of brackets) {
+        expect({ [openName]: openBytes > limitFor(openName) }).toEqual({ [openName]: false })
+        expect({ [gatedName]: gatedBytes > limitFor(gatedName) }).toEqual({ [gatedName]: true })
+      }
+
+      // And the file the whole gate exists for: the library's largest, a 164.8 MB binary STL.
+      expect(164_791_684).toBeGreaterThan(limitFor('Body_high_detail.stl'))
     })
 
     it('gates every real library file that is measured over the budget', () => {
