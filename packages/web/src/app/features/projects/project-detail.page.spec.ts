@@ -1,5 +1,5 @@
 import { ApplicationRef } from '@angular/core'
-import { Router, provideRouter } from '@angular/router'
+import { Router, provideRouter, type Routes } from '@angular/router'
 import { TestBed } from '@angular/core/testing'
 import { describe, expect, it, vi } from 'vitest'
 import { provideJigControls, withAutoColorScheme } from '@awdlab/jig/api/ng'
@@ -59,6 +59,11 @@ function setup(
     rename?: Mock
     deleteFile?: Mock
   } = {},
+  /**
+   * Routes the page's own links can actually reach. Empty by default — RouterLink only needs
+   * a Router to build an href — and supplied only by the test that follows one.
+   */
+  routes: Routes = [],
 ) {
   const api = {
     projects: {
@@ -84,7 +89,7 @@ function setup(
       // A real Router (not a `{ navigate }` stub as in login.page.spec): this template has
       // routerLinks back to the project list, and RouterLink needs a Router that can build
       // a UrlTree plus the root ActivatedRoute that provideRouter supplies.
-      provideRouter([]),
+      provideRouter(routes),
       { provide: API_CLIENT, useValue: api },
     ],
   })
@@ -593,4 +598,49 @@ describe('ProjectDetailPage', () => {
 
   // formatBytes itself moved to core/format-bytes.spec.ts (ruling 72.4) — it is now shared
   // with admin/users.page.ts, so its tests live with the implementation, not one of its callers.
+
+  /**
+   * Before this, nothing anywhere in the app named the viewer route: the file name beside the
+   * thumbnail links to `rawUrl`, which downloads the file, so a whole subsystem was reachable
+   * only by typing a URL.
+   */
+  describe('the way into the 3D viewer', () => {
+    it('navigates to the viewer for a model file', async () => {
+      const { fixture } = setup({}, [{ path: 'projects/:id/view/:fileId', children: [] }])
+      await settle()
+      const router = TestBed.inject(Router)
+
+      const link = fixture.nativeElement.querySelector(
+        'a[href="/projects/p1/view/f1"]',
+      ) as HTMLAnchorElement | null
+      expect(link).not.toBeNull()
+      // Following it, not merely rendering it: an href that no route matches would leave the
+      // reader on a blank page, and this is the only way to tell the two apart.
+      expect(router.url).not.toBe('/projects/p1/view/f1')
+
+      link?.click()
+      await settle()
+
+      expect(router.url).toBe('/projects/p1/view/f1')
+      // The download link is a separate affordance and stays: the viewer replaces neither
+      // saving the file nor opening it in a slicer.
+      expect(fixture.nativeElement.querySelector(`a[href="${file.rawUrl}"]`)).not.toBeNull()
+    })
+
+    it('does not offer it for a file that is not a model', async () => {
+      const other: FileDto = { ...file, id: 'f9', name: 'notes.txt', kind: 'other' }
+      const { fixture } = setup({
+        get: vi.fn(() => Promise.resolve(fetched({ files: [other] }))),
+      })
+      await settle()
+
+      // The control that makes the test above falsifiable in the other direction: a .gcode or
+      // a slicer project has nothing the viewer's three loaders can open, and an entry point
+      // that led to "this viewer cannot show that" would be worse than none.
+      expect(fixture.nativeElement.querySelector('a[href^="/projects/p1/view/"]')).toBeNull()
+      // And the row is on the page, so the assertion above is about the link and not about an
+      // empty file list.
+      expect(text(fixture)).toContain('notes.txt')
+    })
+  })
 })

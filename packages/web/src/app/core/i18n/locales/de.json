@@ -33,6 +33,7 @@
     "delete": "Projekt löschen",
     "deleteFiles": "Dateien auf der Festplatte ebenfalls löschen",
     "previewPending": "Vorschau ausstehend",
+    "view": "In 3D ansehen",
     "backToProjects": "Zurück zu allen Projekten",
     "edit": "Projekt bearbeiten",
     "archive": "Dieses Projekt archivieren",
@@ -99,7 +100,14 @@
     "title": "Modellansicht",
     "back": "Zurück zum Projekt",
     "canvasLabel": "3D-Ansicht des Modells. Ziehen zum Drehen, Scrollen zum Zoomen.",
-    "noWebgl": "Dieser Browser konnte keine 3D-Ansicht öffnen. Möglicherweise ist WebGL deaktiviert, oder es sind bereits zu viele 3D-Ansichten offen -- lade die Seite neu und versuche es erneut."
+    "noWebgl": "Dieser Browser konnte keine 3D-Ansicht öffnen. Möglicherweise ist WebGL deaktiviert, oder es sind bereits zu viele 3D-Ansichten offen -- lade die Seite neu und versuche es erneut.",
+    "loading": "Modell wird geladen",
+    "loadingPercent": "Modell wird geladen -- {{ percent }} %",
+    "unsupported": "Diese Ansicht zeigt Modelle der Formate {{ formats }} und kann keine {{ extension }}-Datei öffnen. Lade sie auf der Projektseite herunter, um sie in deinem Slicer zu öffnen.",
+    "missingFile": "Diese Datei gehört nicht mehr zu diesem Projekt. Gehe zurück zum Projekt, um zu sehen, was es jetzt enthält.",
+    "fetchFailed": "Das Modell konnte nicht heruntergeladen werden. Prüfe deine Verbindung und lade die Seite neu.",
+    "parseFailed": "Diese Datei konnte nicht als {{ extension }}-Modell gelesen werden. Sie ist möglicherweise beschädigt oder nur teilweise hochgeladen -- lade sie erneut hoch.",
+    "emptyModel": "Dieses Modell enthält keine Dreiecke, es gibt also nichts anzuzeigen. Die Datei wurde möglicherweise leer exportiert."
   },
   "errors": {
     "quotaExceeded": "Dieser Upload würde das Kontingent überschreiten ({{ usage }} von {{ quota }} belegt)",

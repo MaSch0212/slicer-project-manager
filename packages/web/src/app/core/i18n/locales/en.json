@@ -33,6 +33,7 @@
     "delete": "Delete project",
     "deleteFiles": "Also delete the files on disk",
     "previewPending": "Preview pending",
+    "view": "View in 3D",
     "backToProjects": "Back to all projects",
     "edit": "Edit project",
     "archive": "Archive this project",
@@ -99,7 +100,14 @@
     "title": "Model viewer",
     "back": "Back to the project",
     "canvasLabel": "3D view of the model. Drag to rotate, scroll to zoom.",
-    "noWebgl": "This browser could not open a 3D view. WebGL may be switched off, or too many 3D views are already open -- reload the page and try again."
+    "noWebgl": "This browser could not open a 3D view. WebGL may be switched off, or too many 3D views are already open -- reload the page and try again.",
+    "loading": "Loading the model",
+    "loadingPercent": "Loading the model -- {{ percent }}%",
+    "unsupported": "This viewer shows {{ formats }} models, and cannot open a {{ extension }} file. Download it from the project page to open it in your slicer.",
+    "missingFile": "This file is not part of this project any more. Go back to the project to see what it holds now.",
+    "fetchFailed": "The model could not be downloaded. Check your connection, then reload the page to try again.",
+    "parseFailed": "This file could not be read as a {{ extension }} model. It may be damaged or only partly uploaded -- try uploading it again.",
+    "emptyModel": "This model contains no triangles, so there is nothing to show. The file may have been exported empty."
   },
   "errors": {
     "quotaExceeded": "This upload would exceed your quota ({{ usage }} of {{ quota }} used)",

@@ -504,3 +504,13 @@ h2.spm-project-title {
   width: 100%;
   height: 100%;
 }
+
+/* The download indicator, in the same slot above the viewport the error messages use, so every
+   outcome of a load reads in one place. Capped rather than spanning the whole 80rem measure: a
+   page-wide bar for a file that is usually a few megabytes reads as a page load, not a model
+   one. Colour comes from jig tokens throughout (the bar's own, and .spm-muted's), so both
+   themes stay legible with no second rule. */
+.spm-viewer-progress jig-progress {
+  flex: 1;
+  max-width: 20rem;
+}

@@ -23,6 +23,7 @@ import { JigMessage } from '@awdlab/jig/message'
 import { JigSpinner } from '@awdlab/jig/spinner'
 import { JigTag } from '@awdlab/jig/tag'
 import { JigTooltip } from '@awdlab/jig/tooltip'
+import tabler3dCubeSphere from '@iconify/icons-tabler/3d-cube-sphere'
 import tablerArrowLeft from '@iconify/icons-tabler/arrow-left'
 import tablerPencil from '@iconify/icons-tabler/pencil'
 import tablerTrash from '@iconify/icons-tabler/trash'
@@ -291,6 +292,28 @@ function sameEditModel(a: EditModel, b: EditModel): boolean {
                     </span>
                   } @else {
                     <span class="spm-row">
+                      <!--
+                        The only way into the 3D viewer. The file name beside the thumbnail is
+                        a plain link to rawUrl, which downloads the file, and nothing else in
+                        the app names the viewer route -- so without this the whole viewer is
+                        reachable only by typing a URL.
+
+                        Offered for model files alone, which is exactly the set the viewer's
+                        three loaders cover: classifyFile in packages/core assigns that kind
+                        to .stl, .obj and a .3mf that is a mesh rather than a slicer project,
+                        matching the formats the rasterizer thumbnails.
+                      -->
+                      @if (file.kind === 'model') {
+                        <a
+                          jigButton
+                          kind="icon"
+                          [routerLink]="['/projects', id(), 'view', file.id]"
+                          [jigTooltip]="t.translations().projects.view + ' ' + file.name"
+                          jigTooltipAutoAriaMode="label"
+                        >
+                          <jig-icon [icon]="icons.view" />
+                        </a>
+                      }
                       <button
                         jigButton
                         kind="icon"
@@ -385,7 +408,12 @@ export class ProjectDetailPage {
   private readonly router = inject(Router)
   protected readonly t = inject(TranslateService)
 
-  protected readonly icons = { back: tablerArrowLeft, rename: tablerPencil, delete: tablerTrash }
+  protected readonly icons = {
+    back: tablerArrowLeft,
+    rename: tablerPencil,
+    delete: tablerTrash,
+    view: tabler3dCubeSphere,
+  }
 
   readonly id = input.required<string>()
 

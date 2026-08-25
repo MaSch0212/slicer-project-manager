@@ -25,6 +25,36 @@ describe('locale interpolation', () => {
     expect(result).not.toMatch(/[{}]/)
   })
 
+  // Every one of these is the whole of what a failed or in-progress load says, so a literal
+  // "{{ extension }}" would be the user's entire explanation of what went wrong.
+  it('substitutes the viewer placeholders in both locales', () => {
+    for (const translations of [en, de]) {
+      const viewer = translations.viewer
+      expect(interpolate(viewer.loadingPercent, { percent: 42 })).toContain('42')
+      const unsupported = interpolate(viewer.unsupported, {
+        extension: '.gcode',
+        formats: 'STL, OBJ, 3MF',
+      })
+      expect(unsupported).toContain('.gcode')
+      // The list of openable formats is derived from the loader table, not written out here,
+      // so both locales have to carry the placeholder for it.
+      expect(unsupported).toContain('STL, OBJ, 3MF')
+      expect(interpolate(viewer.parseFailed, { extension: '.3mf' })).toContain('.3mf')
+      for (const message of [viewer.loadingPercent, viewer.unsupported, viewer.parseFailed]) {
+        const filled = interpolate(message, {
+          percent: 42,
+          extension: '.stl',
+          formats: 'STL',
+        })
+        expect(filled).not.toMatch(/[{}]/)
+        // A placeholder the caller gave no value for is substituted with `String(undefined)`,
+        // so the braces disappear and the brace check above goes green over the literal word
+        // "undefined" sitting in the message. This is the assertion that sees it.
+        expect(filled).not.toMatch(/\bundefined\b/)
+      }
+    }
+  })
+
   it('substitutes the quota-exceeded placeholders in both locales', () => {
     for (const translations of [en, de]) {
       const result = interpolate(translations.errors.quotaExceeded, {
