@@ -95,7 +95,7 @@ export function binaryStlCube(): Uint8Array {
  * full size while the parse, the fit and the draw stay as cheap as every other test here.
  *
  * OBJ, of the three formats, on a balance of two costs. `.stl` does not trip until 37.9 MB, which
- * is a download this suite should not spend its budget on. `.3mf` trips at 2.2 MB, five times
+ * is a download this suite should not spend its budget on. `.3mf` trips at 2.1 MB, five times
  * smaller, but it would have to be a real zip built here as well, and its padding could not be
  * inert — a 3MF is priced at four times an OBJ per byte precisely because every entry is inflated
  * and turned into a DOM, so the fixture would cost the browser real memory rather than a string

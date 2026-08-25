@@ -1394,7 +1394,7 @@ describe('ViewerPage', () => {
      *
      * All three, not one: the threshold is a peak-memory budget divided by a *per-format*
      * cost, so "the gate works" is three different numbers and a spec that checked STL alone
-     * would say nothing about the two arms that are three and eight times more expensive.
+     * would say nothing about the two arms that are 4.3 and 17.9 times more expensive.
      */
     const formats: [string, string, Uint8Array][] = [
       ['box.stl', '.stl', STL_BOX],
@@ -1607,11 +1607,12 @@ describe('ViewerPage', () => {
       //   left.3mf                          7.75 MB   278 MB   746 MB   plain mesh
       //   right.3mf                         7.65 MB   274 MB     —      plain mesh
       //
-      // Node was `process.resourceUsage().maxRSS` per process; Chromium is WorkingSet64 sampled
-      // every 20 ms across the browser's processes while the parse runs, which is the same
-      // quantity in the engine that will actually run it. The binary STL reproduces exactly,
-      // which is what makes the two columns comparable. The 3MF rows do not, by a factor of 2.7,
-      // because Node never built the DOM — see the `.3mf` row in `viewer.page.ts`.
+      // Node was `process.resourceUsage().maxRSS` per process; Chromium is WorkingSet64 summed
+      // across the browser's processes while the parse runs, sampled about every 100–150 ms,
+      // which is the same quantity in the engine that will actually run it. The binary STL
+      // reproduces exactly, which is what makes the two columns comparable on the binary path;
+      // the ASCII rows disagree by about 1.4x, and the 3MF rows by 2.7x because Node never built
+      // the DOM at all — see the `.3mf` row in `viewer.page.ts`.
       const overBudget: [string, number][] = [
         ['Waving_Groot_15.5cm.stl', 100_050_000],
         ['Head_with_brim_high_detail.stl', 99_520_000],
@@ -1637,9 +1638,10 @@ describe('ViewerPage', () => {
     it('holds a 3MF and an STL of identical size to different lines', async () => {
       // A 3MF is a zip, and three's loader inflates every entry at once, decodes the model
       // part to a JS string and builds a DOM over that — so the same number of bytes on disk
-      // costs the tab roughly eight times what an STL of it does. The sibling test above
-      // proves a 3MF of exactly this size prompts; this proves an STL of it does not, and
-      // together they are the pair no single flat threshold can satisfy in either direction.
+      // costs the tab roughly eighteen times what an STL of it does — 120.95 against 6.75. The
+      // sibling test above proves a 3MF of exactly this size prompts; this proves an STL of it
+      // does not, and together they are the pair no single flat threshold can satisfy in either
+      // direction.
       const sizeBytes = justOver('box.3mf')
       expect(sizeBytes).toBeLessThan(limitFor('box.stl'))
 
