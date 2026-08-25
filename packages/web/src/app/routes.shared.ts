@@ -29,6 +29,14 @@ export const sharedRoutes: Routes = [
       import('./features/projects/project-detail.page').then((m) => m.ProjectDetailPage),
   },
   {
+    // Lazy on purpose and load-bearing: this is the only route that reaches three.js, and
+    // keeping the import inside the loaded component keeps the whole 549 kB viewer-page
+    // chunk (measured) out of the shell's 655 kB initial bundle.
+    path: 'projects/:id/view/:fileId',
+    canActivate: [authGuard],
+    loadComponent: () => import('./features/viewer/viewer.page').then((m) => m.ViewerPage),
+  },
+  {
     path: 'import',
     canActivate: [authGuard],
     loadComponent: () => import('./features/import/import.page').then((m) => m.ImportPage),

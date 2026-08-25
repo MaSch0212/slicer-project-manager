@@ -453,3 +453,45 @@ h2.spm-project-title {
   margin: 0;
   font-size: var(--jig-font-size-md);
 }
+
+/* ------------------------------------------------------------------ viewer */
+
+/* The viewer wants the height, not the width: the shared page cap would otherwise leave the
+   model in a narrow column with the rest of the viewport unused. */
+.spm-main--viewer {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.spm-main--viewer > .spm-stack {
+  flex: 1;
+  min-height: 0;
+}
+
+/*
+ * The canvas clears transparently, so this is the viewer's background — a theme token, which
+ * means light and dark both work and a theme switch needs no JavaScript at all.
+ *
+ * `min-height` rather than a fixed one: the element is what the ResizeObserver watches, and a
+ * height that collapses to zero would ask three.js for a 0x0 drawing buffer.
+ */
+.spm-viewport {
+  position: relative;
+  overflow: hidden;
+  min-height: 24rem;
+  flex: 1;
+  border: 1px solid var(--jig-color-border);
+  border-radius: var(--jig-size-rounded-lg);
+  background: var(--jig-color-surface-100);
+  touch-action: none;
+}
+
+/* three.js is told not to size the canvas itself (see ViewerPage.resize), so CSS does it.
+   `display: block` kills the inline-element descender gap, which would otherwise grow the
+   container by a few pixels every time the observer fired. */
+.spm-viewport canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}

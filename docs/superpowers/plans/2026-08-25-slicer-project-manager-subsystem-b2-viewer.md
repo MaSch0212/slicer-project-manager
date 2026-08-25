@@ -114,6 +114,9 @@ A reviewer should treat a violation as a defect regardless of what a task says.
       distance so it fills the view with a margin — the same fit rule the rasterizer uses.
 - [ ] Four states, each distinguishable and each tested: loading, ready, unsupported extension,
       and failed (fetch error, parse error, or a mesh with no triangles).
+- [ ] **Link to it.** `project-detail.page.ts` currently sends a model file to its `rawUrl`,
+      which downloads it. Nothing anywhere opens the viewer, so without this B2 ships a feature
+      reachable only by typing a URL. Add the entry point and test that it navigates.
 - [ ] Tests: each loader is selected for its extension and for an uppercase extension (the
       reference library contains `.STL` — this exact bug was found in B1); an unknown extension
       is `unsupported`, not a crash; a parse failure surfaces as an error state with a message.
@@ -137,6 +140,10 @@ A reviewer should treat a violation as a defect regardless of what a task says.
 - [ ] Lighting and material chosen so the model reads at a glance and both themes work. The
       thumbnail's amber-on-slate was tuned for a dark background only; say what you chose here
       and why.
+- [ ] Fix what task 1's review measured in a real browser: the viewport border is invisible in
+      the light theme (`surface-100` and `border` resolve to the same colour there), and the
+      transparency checker sits at 1.22:1 contrast in light and 2.82:1 in dark — visible in
+      both, comfortable in neither.
 - [ ] A grid or ground plane if it helps orientation, and only if it does.
 - [ ] The canvas needs an accessible name, and the orbit controls need a keyboard path or an
       honest statement that they have none.
@@ -148,14 +155,29 @@ A reviewer should treat a violation as a defect regardless of what a task says.
 
 - [ ] A check that fails if three.js reaches an initial chunk. The web CI job already greps the
       built bundle for a class name (spec 2.5); follow that pattern rather than inventing one,
-      and make it fail loudly with the chunk named.
+      and make it fail loudly with the chunk named. Verify each marker you grep for is actually
+      **present in the viewer chunk** — task 1 shipped two that match nothing anywhere, and a
+      marker that is never present cannot detect a leak.
+- [ ] **The obvious proof does not work, so do not plan around it.** Measured in task 1:
+      three.js is effectively not tree-shakeable here — a full `WebGLRenderer` import, a
+      realistic `Box3`/`Mesh`/`Scene` import and a single `Vector3` all produce the same 1.18 MB
+      initial bundle, which blows the existing 1 MB budget. So importing it eagerly fails the
+      **budget** before any grep runs, and no artifacts are written at all. Two consequences:
+      the grep step must be unable to pass against a stale `dist/` (a build that wrote nothing
+      must fail, not silently re-grep yesterday's output), and the proof that the grep bites has
+      to be staged differently — raise the budget temporarily, or plant a marker string.
 - [ ] Record the lazy chunk's size in the README so a future dependency bump that doubles it is
       visible in a diff.
 - [ ] An e2e that opens a real model and asserts the canvas has actually drawn — not that a
       `<canvas>` element exists. Playwright's bundled Chromium renders WebGL2 through
-      SwiftShader with no GPU (measured in this project: `ANGLE (Google, Vulkan 1.3.0
-    (SwiftShader Device (Subzero)))`), so read pixels back and assert the frame is not
-      uniformly the background colour.
+      SwiftShader with no GPU — measured in this project, the renderer string names
+      SwiftShader — so read pixels back and assert the frame is not uniformly the background
+      colour.
+- [ ] **Prove contexts are released, which the unit suite structurally cannot.** jsdom has no
+      WebGL, so task 1's renderer disposal is asserted against a stand-in; only a real browser
+      can show a context was freed. Navigate into the viewer and back more than sixteen times —
+      browsers cap live contexts around there — and assert the last one still draws. Without
+      this, nothing in the project proves the leak that motivated task 1 is actually fixed.
 - [ ] Keep the e2e fixture small. The web CI job has a ten-minute timeout and the e2e job
       twenty; a large model would spend the budget on a download.
 - [ ] Tests: the bundle check fails when three.js is imported eagerly (prove it by doing so

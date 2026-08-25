@@ -95,6 +95,12 @@
     "deleteUser": "Benutzer löschen",
     "confirmDeleteUser": "Diesen Benutzer löschen? Projekte und Dateimetadaten werden entfernt, der Bibliotheksordner bleibt jedoch absichtlich auf der Festplatte erhalten und gibt keinen Speicherplatz frei."
   },
+  "viewer": {
+    "title": "Modellansicht",
+    "back": "Zurück zum Projekt",
+    "canvasLabel": "3D-Ansicht des Modells. Ziehen zum Drehen, Scrollen zum Zoomen.",
+    "noWebgl": "Dieser Browser konnte keine 3D-Ansicht öffnen. Möglicherweise ist WebGL deaktiviert, oder es sind bereits zu viele 3D-Ansichten offen -- lade die Seite neu und versuche es erneut."
+  },
   "errors": {
     "quotaExceeded": "Dieser Upload würde das Kontingent überschreiten ({{ usage }} von {{ quota }} belegt)",
     "notFound": "Dieses Projekt existiert nicht mehr",

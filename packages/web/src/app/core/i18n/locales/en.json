@@ -95,6 +95,12 @@
     "deleteUser": "Delete user",
     "confirmDeleteUser": "Delete this user? Their projects and file metadata are removed, but their library folder is deliberately left on disk and does not free up any space."
   },
+  "viewer": {
+    "title": "Model viewer",
+    "back": "Back to the project",
+    "canvasLabel": "3D view of the model. Drag to rotate, scroll to zoom.",
+    "noWebgl": "This browser could not open a 3D view. WebGL may be switched off, or too many 3D views are already open -- reload the page and try again."
+  },
   "errors": {
     "quotaExceeded": "This upload would exceed your quota ({{ usage }} of {{ quota }} used)",
     "notFound": "This project does not exist any more",
