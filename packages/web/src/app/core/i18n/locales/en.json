@@ -107,7 +107,10 @@
     "missingFile": "This file is not part of this project any more. Go back to the project to see what it holds now.",
     "fetchFailed": "The model could not be downloaded. Check your connection, then reload the page to try again.",
     "parseFailed": "This file could not be read as a {{ extension }} model. It may be damaged or only partly uploaded -- try uploading it again.",
-    "emptyModel": "This model contains no triangles, so there is nothing to show. The file may have been exported empty."
+    "emptyModel": "This model contains no triangles, so there is nothing to show. The file may have been exported empty.",
+    "slicerProject": "This is a slicer project rather than a plain model, so there is no single mesh here to show. Download it from the project page to open it in your slicer.",
+    "tooLarge": "This model is {{ size }}. Opening a {{ extension }} file can take many times its own size in memory, and there is no way to tell how much this one needs without downloading it first -- so the viewer asks instead, and nothing has been downloaded yet.",
+    "loadAnyway": "Load it anyway"
   },
   "errors": {
     "quotaExceeded": "This upload would exceed your quota ({{ usage }} of {{ quota }} used)",

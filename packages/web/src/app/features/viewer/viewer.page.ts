@@ -3,7 +3,9 @@ import {
   Component,
   DOCUMENT,
   InjectionToken,
+  Injector,
   PendingTasks,
+  afterNextRender,
   computed,
   effect,
   inject,
@@ -43,6 +45,7 @@ import { ThreeMFLoader } from 'three/addons/loaders/3MFLoader.js'
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js'
 import { STLLoader } from 'three/addons/loaders/STLLoader.js'
 import { API_CLIENT } from '../../core/api/api-client.token'
+import { formatBytes } from '../../core/format-bytes'
 import { TranslateService } from '../../core/i18n/translate.service'
 
 /**
@@ -72,7 +75,7 @@ export const VIEWER_RENDERER_FACTORY = new InjectionToken<ViewerRendererFactory>
 /**
  * Where a load ended up. One signal holding a discriminated union rather than a status flag
  * beside a message and a percentage: those three can drift into states that do not exist —
- * "failed, 60 % done" — and every one of the four outcomes has to be distinguishable.
+ * "failed, 60 % done" — and every one of the outcomes has to be distinguishable.
  *
  * `extension` is the token the message names. It is the lowercased extension where there is
  * one and the whole file name where there is not, so no message can ever render a hole.
@@ -83,6 +86,13 @@ export type ViewerState =
   | { status: 'loading'; progress: number | null }
   | { status: 'ready' }
   | { status: 'unsupported'; extension: string }
+  // A `.3mf` the server classified as a slicer project rather than a mesh. Distinct from
+  // 'unsupported' because the advice is different — 3MF *is* a format this viewer opens, and
+  // "cannot open a .3mf file" would be a lie. Carries nothing: the message names no file.
+  | { status: 'slicerProject' }
+  // Nothing has been fetched. `sizeBytes` is carried rather than looked up again when the
+  // message is built, so what the user is told is the size the decision was actually made on.
+  | { status: 'oversized'; extension: string; sizeBytes: number }
   | { status: 'failed'; reason: LoadFailure; extension: string }
 
 /** Shared so that re-entering the loading state does not notify: signals compare by identity. */
@@ -130,32 +140,222 @@ function extensionOf(name: string): string {
 type ModelParser = (bytes: ArrayBuffer) => Object3D
 
 /**
+ * One openable format: how to read it, and what reading it costs.
+ *
+ * The two sit in one record deliberately rather than in a parser table beside a cost table.
+ * `peakCost` is the whole of what stands between the user and a tab that swaps or dies, and a
+ * fourth loader added to one table and not the other would read as "no gate" — the quietest
+ * possible way for this to stop working. `limitOf` refuses a cost that cannot bound anything,
+ * so the same hole cannot be reopened by writing `0`.
+ */
+export type ModelFormat = {
+  parse: ModelParser
+  /**
+   * Peak bytes held in the tab per byte of file, while a model of this format is opened.
+   * Spent against `PEAK_BUDGET_BYTES`. Must be finite and greater than zero.
+   */
+  peakCost: number
+}
+
+/**
  * Exactly the three formats the server rasterizes, so the viewer opens precisely what the
  * project page shows a thumbnail for and nothing else pretends to be viewable.
  *
  * Keys are lowercase because every lookup goes through `extensionOf`, which folds case.
+ *
+ * ## Where the `peakCost` numbers come from
+ *
+ * A Node harness loads a real file from the reference library through the app's own three.js
+ * 0.185 loader, one file per process, exactly as `fetchModel` → `parse` does, and reports
+ * `process.resourceUsage().maxRSS` above an idle process that has already imported the loader.
+ * Round 0 of this task reasoned the numbers out from the file formats instead and got all three
+ * wrong in the direction that kills a tab — by 1.3x, 5.5x and 2.7x. Arithmetic misses what the
+ * loaders actually allocate. If a cost here is ever changed, re-run the harness.
+ *
+ * **What is measured and what is not.** `.stl` and `.obj` are measured end to end. `.3mf` is
+ * measured only as far as `3MFLoader.js:215`, because the DOM that line builds cannot be sized
+ * in Node: jsdom's nodes are JS objects and cost far more than Blink's. So the 3MF cost is a
+ * measured 20.65x plus an *estimated* ~31x for the DOM — a documented per-node floor over
+ * exactly-counted elements and attributes, and about 60 % of the total. It is the one number
+ * here that has never met the engine that will run it; `measureUserAgentSpecificMemory()` in a
+ * real Chromium is what would close it.
+ *
+ * The multiplier is **not constant across file size**: every loader has a fixed cost of a few
+ * megabytes, so a small file's ratio is much worse than a large one's while its absolute peak
+ * is trivial. Each cost below is therefore the worst multiplier measured on a file at or above
+ * a tenth of the line that cost implies — small enough to be near the decision, large enough
+ * that fixed overheads are not the whole of it. The rule is checked the only way that matters:
+ * **no file in the library that this gate lets through exceeds the budget**, verified per file
+ * against the measured multiplier for its exact shape. The worst that gets through is a
+ * 27.46 MB ASCII STL at 254 MB, 99 % of budget.
  */
-const PARSERS: Readonly<Record<string, ModelParser>> = {
-  // STL carries geometry and nothing else — no materials, no colours — so the one material in
-  // the app is applied here. OBJ and 3MF bring their own and keep them.
-  '.stl': (bytes) =>
-    new Mesh(new STLLoader().parse(bytes), new MeshStandardMaterial({ roughness: 0.55 })),
-  // The only arm that costs a second full-size copy of the file: OBJ has no binary form, so the
-  // whole thing is decoded to a JS string before the loader sees it, and a large OBJ is large
-  // precisely because it is text. Task 3's size threshold has to be chosen for this arm, not
-  // for the STL one.
-  '.obj': (bytes) => new OBJLoader().parse(new TextDecoder().decode(bytes)),
-  '.3mf': (bytes) => new ThreeMFLoader().parse(bytes),
+const FORMATS: Readonly<Record<string, ModelFormat>> = {
+  '.stl': {
+    // STL carries geometry and nothing else — no materials, no colours — so the one material in
+    // the app is applied here. OBJ and 3MF bring their own and keep them.
+    parse: (bytes) =>
+      new Mesh(new STLLoader().parse(bytes), new MeshStandardMaterial({ roughness: 0.55 })),
+    // Three different code paths hide behind one extension, and `sizeBytes` cannot tell them
+    // apart — `isBinary` and the `COLOR=` sniff both need the first 84 bytes, which the gate
+    // does not have and must not fetch. So the cost is the dearest of the three:
+    //
+    //   plain binary  2.47–2.48x   701 of 1,311 library STLs
+    //   binary COLOR= 3.19–3.21x   549 of them — `STLLoader.js:186` allocates a *third*
+    //                              Float32Array when the 80-byte header says COLOR=, which is
+    //                              44 % of the library, not an edge case
+    //   ASCII         5.66–9.25x    61 of them — `parseASCII` holds the ArrayBuffer, the
+    //                              decoded string, and `vertices`/`normals` as plain number[]
+    //                              at 8 bytes a float before copying to Float32BufferAttribute
+    //
+    // So the ASCII path sets the cost. Which *number* off that path is the question, and the
+    // answer is not its worst ratio anywhere: **a multiplier only governs near the line**. Every
+    // loader has a fixed cost of a few megabytes, which is the whole of why a small file's ratio
+    // is bad — `CubeGears2-3.stl` measures 9.25x at 4.32 MB and peaks at 40 MB, a sixth of the
+    // budget, and no constant taken from it describes a 35 MB file. The nine ASCII STLs at or
+    // above 27 MB, which are the ones that can actually approach the budget, all measure 6.73x
+    // or less. 6.75 covers them with a little over.
+    //
+    // Verified rather than argued: priced at its own measured peak, no file this line lets
+    // through exceeds the budget, and the worst that gets through is `EiffelTower.STL` at
+    // 35.30 MB → 218 MB, 85 %.
+    //
+    // Pricing all three paths at the dearest still prompts on cheap files — of the 25 STLs
+    // gated, 16 are plain binary and would have cost about 104 MB. That is the right way to be
+    // wrong when the alternative is a 46 MB ASCII STL taking 284 MB silently, but it is a real
+    // cost, and it is what the user-facing message has to be honest about: it must not claim
+    // this particular file is expensive, only that the viewer cannot tell.
+    peakCost: 6.75,
+  },
+  '.obj': {
+    // OBJ has no binary form, so the whole file is decoded to a JS string before the loader sees
+    // it, and a large OBJ is large precisely because it is text.
+    parse: (bytes) => new OBJLoader().parse(new TextDecoder().decode(bytes)),
+    // By far the dearest per byte after 3MF, and round 0 priced it at 4.5 by counting only the
+    // copies that are easy to see. `OBJLoader.parse` also does `text.replace(/\r\n/g, '\n')`
+    // (a second full-size string while the first is live), `text.split('\n')` (millions of
+    // slices plus their backing array, each pinning the source string for the whole parse), and
+    // `state.colors.push(undefined, undefined, undefined)` per vertex whether the file has
+    // colours or not.
+    //
+    // Measured: 13.19x on `Baby_Yoda.obj` (137.79 MB → 1,817 MB — it needs more V8 old space by
+    // itself than a phone has), 16.91x at 5.53 MB, 24.61x at 3.83 MB. 24.61 is the worst at or
+    // above a tenth of the line it implies. The library's other eleven OBJs are all under
+    // 5.6 MB and peak at 93 MB or less, so this costs no extra prompt at all.
+    peakCost: 24.6,
+  },
+  '.3mf': {
+    parse: (bytes) => new ThreeMFLoader().parse(bytes),
+    // An order of magnitude dearer than either, and the reason this table is per-format.
+    //
+    // A 3MF is a zip, so its size on disk says almost nothing about what opening it holds.
+    // `ThreeMFLoader` calls fflate's `unzipSync`, which inflates *every* entry at once; decodes
+    // the model part to a JS string; and only then builds a DOM over that string with
+    // `DOMParser` (`3MFLoader.js:215`, where `zip`, `fileText` and `xmlData` are all live).
+    //
+    // Round 0 counted the first two terms and called the DOM "on top and uncounted". It is not a
+    // rounding term, it is the largest one. Measured DOM-free the worst library 3MF is already
+    // 20.65x (13.24 MB → 273 MB, past the whole budget before a single node exists); its model
+    // part then holds 2,218,656 elements and 6,655,952 attributes, which at a conservative Blink
+    // floor of 88 B/element + 32 B/attribute is another 408 MB. Total 51.5x. Running the full
+    // parse under jsdom is not a Blink number but bounds it from above: every 3MF over 7.6 MB
+    // exhausted a 4 GB heap and died.
+    //
+    // One honest mismatch: 51.5 comes from `pla_lith_mum_dad_e3.3mf`, and since the gate now
+    // refuses slicer projects on `kind` before ever reaching here, that file can no longer
+    // arrive. The 28 plain meshes this row can actually see measure about 36x. The number is
+    // kept because density is a property of the mesh and not of the wrapper — a plain mesh as
+    // dense as that project would cost the same — and because it is outcome-neutral: at 36x the
+    // line is 7.1 MB and gates the same two files. It is deliberately the conservative of two
+    // defensible numbers, not a measurement of this row's own population.
+    peakCost: 51.5,
+  },
 }
 
 /**
- * What the "unsupported" message names as openable, derived from `PARSERS` rather than written
+ * What the "unsupported" message names as openable, derived from `FORMATS` rather than written
  * out in each locale — the two would otherwise drift apart silently the moment a loader is
  * added, in two languages at once.
  */
-export const SUPPORTED_FORMATS: readonly string[] = Object.keys(PARSERS).map((extension) =>
+export const SUPPORTED_FORMATS: readonly string[] = Object.keys(FORMATS).map((extension) =>
   extension.slice(1).toUpperCase(),
 )
+
+/**
+ * How much memory one model may cost this tab before the user is asked whether to spend it.
+ *
+ * **This is the browser's number and nothing else's.** It is emphatically *not*
+ * `DEFAULT_MAX_MESH_BYTES` from `packages/core/src/previews/mesh/limits.ts`, which happens to be
+ * the same 256 MB — round 0 claimed that lineage and it was false in three ways. That constant's
+ * own doc says it is "a backstop, not the mechanism", that "nothing in the reference library is
+ * refused by this", and that "it is not derived from the memory budget"; it bounds geometry
+ * arrays alone rather than a whole load; and it is operator-tunable through `SPM_MAX_MESH_MB` to
+ * track a server's RAM and preview concurrency. Importing it would tie a browser filter that
+ * fires on 40 real files to a deliberately non-binding server ceiling that someone may raise for
+ * reasons having nothing to do with this tab. The two must move independently, so this number is
+ * written here and derived here.
+ *
+ * ## The derivation
+ *
+ * The budget is set **as low as it can go without ever prompting on an ordinary model**, because
+ * for a gate every megabyte of headroom is a megabyte of risk and the only cost of caution is a
+ * click. "Ordinary" is the reference library's 90th percentile over all 1,725 models: **3.95 MB**
+ * (the median is 0.148 MB). The binding format is the dearest, 3MF at 51.5x:
+ *
+ *     3.95 MB × 51.5 = 204 MB floor  →  256 MB shipped, 26 % headroom
+ *
+ * Nothing pushes it upward, so the floor governs and 256 MB is the round number just above it.
+ *
+ * ## What that catches, measured over the whole library
+ *
+ * | Format | Line                 | Gated, of what the viewer will open |
+ * | ------ | -------------------- | ------------------------------------ |
+ * | `.stl` | 256 / 6.75 = 37.9 MB | 25 of 1,311 (1.9 %)                  |
+ * | `.obj` | 256 / 24.6 = 10.4 MB | 1 of 12 (8.3 %) — the 137.8 MB one   |
+ * | `.3mf` | 256 / 51.5 =  5.0 MB | 2 of 28 (7.1 %) — the Beat Saber pair |
+ *
+ * **28 of the 1,351 files the viewer will open, 2.1 %.** The other 374 `.3mf` in the library are
+ * slicer projects and never reach the size gate at all — `load` refuses them on `FileDto.kind`
+ * first, which is the same predicate `project-detail.page.ts` uses to decide what gets a viewer
+ * link. So the 3MF row is aimed at exactly the 28 files a user can actually click through to.
+ *
+ * One unit trap worth naming: these lines are decimal megabytes, but `formatBytes` divides by
+ * 1024 while labelling the result "MB" (project-wide, and the project page prints file sizes the
+ * same way). The 37.9 MB STL line therefore shows to the user as "36.2 MB", and the library's
+ * 164.8 MB worst file appears in the prompt as "157.2 MB". The prompt matching the page the user
+ * came from matters more than matching this comment.
+ */
+const PEAK_BUDGET_BYTES = 256_000_000
+
+/**
+ * The size above which a model of this format is not opened without asking.
+ *
+ * Throws rather than returning something unusable if a `peakCost` cannot bound anything. A
+ * `peakCost: 0` typechecks and would make this `Infinity`, silently reopening the very hole
+ * putting the cost inside `FORMATS` exists to close — so the one spelling that could disable the
+ * gate by accident fails loudly instead, on the first load of that format.
+ */
+export function limitOf(extension: string, format: ModelFormat): number {
+  const limit = PEAK_BUDGET_BYTES / format.peakCost
+  if (!Number.isFinite(limit) || limit <= 0) {
+    throw new Error(`FORMATS['${extension}'] has a peakCost that would disable the size gate`)
+  }
+  return limit
+}
+
+/**
+ * The largest file of this name's format that opens without asking, or undefined when no loader
+ * handles the name at all — in which case `load` has already reported it unsupported and never
+ * asks.
+ *
+ * Exported for the spec, which derives a just-under and a just-over size from it rather than
+ * writing byte counts of its own: a test that hardcoded 27.7 MB would quietly stop testing the
+ * gate the day a `peakCost` was re-measured.
+ */
+export function sizeLimitFor(name: string): number | undefined {
+  const extension = extensionOf(name)
+  const format = FORMATS[extension]
+  return format === undefined ? undefined : limitOf(extension, format)
+}
 
 /** A load that ended in a state the user has to be told about, carrying which one. */
 class ModelLoadError extends Error {
@@ -258,7 +458,14 @@ function triangleCount(root: Object3D): number {
                 role="status", not "alert": a download in progress is not an interruption, and
                 the percentage updates several times a second.
               -->
-              <div class="spm-row spm-viewer-progress" role="status">
+              <!--
+                tabindex="-1" so loadAnyway can move focus here. Confirming the size gate
+                destroys the button that was pressed along with its @case arm, and focus would
+                otherwise fall to <body> — leaving a keyboard or screen-reader user with no
+                confirmation that anything happened, on the one load slow enough to need one.
+                -1 keeps it out of the tab order, so nothing changes for anyone else.
+              -->
+              <div #progressRegion tabindex="-1" class="spm-row spm-viewer-progress" role="status">
                 <jig-progress [value]="percent() ?? 0" [indeterminate]="percent() === null" />
                 <span class="spm-muted">{{ loadingLabel() }}</span>
               </div>
@@ -266,6 +473,30 @@ function triangleCount(root: Object3D): number {
             @case ('unsupported') {
               <!-- Warning, not error: nothing went wrong, this file is simply not a model. -->
               <jig-message color="warning" role="alert">{{ statusMessage() }}</jig-message>
+            }
+            @case ('slicerProject') {
+              <!-- Same shape, different sentence: a .3mf the server read as a slicer project. -->
+              <jig-message color="warning" role="alert">{{ statusMessage() }}</jig-message>
+            }
+            @case ('oversized') {
+              <!--
+                Warning, not error, for the same reason: nothing has gone wrong and the model is
+                one click away. The user asked to be asked, not to be stopped.
+
+                role="alert" stays on the message alone rather than wrapping the button too.
+                An alert is announced and then left behind; interactive content inside one is
+                not reliably reachable from where a screen reader lands. The button sits after
+                it as an ordinary control, and its own label says what it does.
+              -->
+              <div class="spm-stack spm-stack--tight">
+                <jig-message color="warning" role="alert">{{ statusMessage() }}</jig-message>
+                <!-- Wrapped so the button is its own width rather than the stack's. -->
+                <div>
+                  <button jigButton kind="primary" type="button" (click)="loadAnyway()">
+                    {{ t.translations().viewer.loadAnyway }}
+                  </button>
+                </div>
+              </div>
             }
             @case ('failed') {
               <jig-message color="error" role="alert">{{ statusMessage() }}</jig-message>
@@ -299,6 +530,7 @@ export class ViewerPage implements AfterViewInit, OnDestroy {
   private readonly createRenderer = inject(VIEWER_RENDERER_FACTORY)
   private readonly api = inject(API_CLIENT)
   private readonly pendingTasks = inject(PendingTasks)
+  private readonly injector = inject(Injector)
   protected readonly t = inject(TranslateService)
   protected readonly icons = { back: tablerArrowLeft }
 
@@ -306,6 +538,8 @@ export class ViewerPage implements AfterViewInit, OnDestroy {
   readonly fileId = input.required<string>()
 
   private readonly viewport = viewChild.required<ElementRef<HTMLElement>>('viewport')
+  /** Present only while a model is downloading; see loadAnyway. */
+  private readonly progressRegion = viewChild<ElementRef<HTMLElement>>('progressRegion')
 
   readonly initError = signal<string | null>(null)
 
@@ -356,11 +590,21 @@ export class ViewerPage implements AfterViewInit, OnDestroy {
     const state = this.state()
     const viewer = this.t.translations().viewer
     if (state.status === 'unsupported') {
-      // `formats` comes from PARSERS, so adding a loader cannot leave two locales claiming a
+      // `formats` comes from FORMATS, so adding a loader cannot leave two locales claiming a
       // shorter list than the viewer actually opens.
       return interpolate(viewer.unsupported, {
         extension: state.extension,
         formats: SUPPORTED_FORMATS.join(', '),
+      })
+    }
+    if (state.status === 'slicerProject') return viewer.slicerProject
+    if (state.status === 'oversized') {
+      // `formatBytes` and not a number of our own: this is the same figure, in the same shape,
+      // that the project page the user came from printed beside the file's name. A gate that
+      // quoted a different size than the page it was reached from would read as a bug.
+      return interpolate(viewer.tooLarge, {
+        extension: state.extension,
+        size: formatBytes(state.sizeBytes),
       })
     }
     if (state.status !== 'failed') return null
@@ -611,15 +855,49 @@ export class ViewerPage implements AfterViewInit, OnDestroy {
   }
 
   /**
+   * The user has read the size and wants it anyway. Runs the same load again with the gate
+   * lifted for that one run.
+   *
+   * The answer is deliberately not recorded anywhere — not in a field, not in a set of file
+   * ids, not in storage. It is an argument to a single call, so the *only* load it can affect
+   * is this one. Someone who presses this by mistake on a 164 MB model has agreed to download
+   * a 164 MB model, and nothing more: the next file, and this same file after a navigation,
+   * ask again. A remembered "yes" would turn one misclick into a viewer that never asks
+   * again, which is precisely the failure the gate exists to prevent.
+   *
+   * Re-registered with `PendingTasks` for the same reason `syncContent` does it — this is a
+   * fresh download, and `whenStable()` has to cover it too.
+   */
+  protected loadAnyway(): void {
+    if (this.state().status !== 'oversized') return
+    const file = this.file()
+    void this.pendingTasks.run(() => this.load(file, false, true))
+    // `load` sets the loading state before its first await, so the very next render has the
+    // progress region — which is where the focus the pressed button is about to take with it
+    // has to go. Without this a keyboard user is returned to <body> and a screen-reader user
+    // hears nothing at all, on a download that by definition takes a while.
+    afterNextRender(() => this.progressRegion()?.nativeElement.focus(), {
+      injector: this.injector,
+    })
+  }
+
+  /**
    * One load, start to finish: decide, fetch, parse, frame, swap — and put the page into
-   * exactly one of the four states on the way out.
+   * exactly one of the states on the way out.
    *
    * `file` is undefined for two different reasons and they do not read the same: the project
    * loaded and holds no such id (a stale link, or a file deleted from another tab), or the
    * project could not be fetched at all (`metadataFailed`, a network problem the user can
    * retry).
+   *
+   * `confirmed` is the user having pressed through the size gate for *this* load. It is a
+   * parameter and not a field on purpose — see `loadAnyway`.
    */
-  private async load(file: FileDto | undefined, metadataFailed: boolean): Promise<void> {
+  private async load(
+    file: FileDto | undefined,
+    metadataFailed: boolean,
+    confirmed = false,
+  ): Promise<void> {
     // Bump first, abort second, and that order is load-bearing: the aborted load's continuation
     // has to find its own token already stale, or it would report its own cancellation to the
     // user as a failed download of the file they have just moved on to.
@@ -633,13 +911,51 @@ export class ViewerPage implements AfterViewInit, OnDestroy {
       return
     }
 
-    const parse = PARSERS[extensionOf(file.name)]
+    const extensionKey = extensionOf(file.name)
+    const format = FORMATS[extensionKey]
     // The whole name when there is no extension, so no message renders an empty slot.
-    const extension = extensionOf(file.name) || file.name
-    if (!parse) {
-      // Decided before anything is fetched, which is also where task 3's size gate belongs:
-      // both are reasons not to open a connection at all.
+    const extension = extensionKey || file.name
+    if (!format) {
+      // Decided before anything is fetched, which is also where the two arms below belong:
+      // all three are reasons not to open a connection at all.
       this.state.set({ status: 'unsupported', extension })
+      return
+    }
+
+    // What the file *is*, not what it is called. `FileDto.kind` is on the object already in
+    // hand and is the same predicate `project-detail.page.ts` uses to decide which files get a
+    // viewer link at all, so reading it here makes the two agree instead of merely coincide.
+    //
+    // It matters most for `.3mf`, which is one extension over two entirely different things:
+    // the reference library holds 374 slicer projects and 28 plain meshes. Keyed on the
+    // extension alone the viewer offers to open a 96 MB Bambu project as a mesh — a download of
+    // ~2.5 GB of peak memory to render something the user never asked to see — and, because the
+    // size line then has to be set loose enough to be tolerable for those, it waved through both
+    // of the only large 3MF meshes a user can actually click on.
+    if (file.kind !== 'model') {
+      if (file.kind === 'slicer_project') {
+        this.state.set({ status: 'slicerProject' })
+        return
+      }
+      // A viewable extension the server could not read as a model — in practice a `.3mf` whose
+      // zip is damaged, since `classifyFile` gives `.stl` and `.obj` `kind: 'model'`
+      // unconditionally. Reported as a parse failure without fetching: that message ("may be
+      // damaged or only partly uploaded") is exactly the right advice, and it is now given for
+      // the price of no download at all rather than after pulling the whole file down to fail
+      // on it.
+      this.state.set({ status: 'failed', reason: 'parse', extension })
+      return
+    }
+
+    // The size gate, in the same place and for the same reason. The limit comes from `format`
+    // that was just looked up, so there is no "no loader" case left to spell out here — and
+    // `limitOf` throws rather than yielding a limit that could not gate anything.
+    const limit = limitOf(extensionKey, format)
+    if (!confirmed && file.sizeBytes > limit) {
+      // Nothing is fetched. Not fetched-and-discarded, not fetched-and-paused: a gate that
+      // opens the connection has already spent the download, which on the file this exists
+      // for is 164 MB over whatever connection the user is on.
+      this.state.set({ status: 'oversized', extension, sizeBytes: file.sizeBytes })
       return
     }
 
@@ -648,7 +964,7 @@ export class ViewerPage implements AfterViewInit, OnDestroy {
 
     let content: Object3D
     try {
-      content = await this.createContent(file, parse, token, inFlight.signal)
+      content = await this.createContent(file, format.parse, token, inFlight.signal)
     } catch (error) {
       if (token !== this.loadToken) return
       const reason = error instanceof ModelLoadError ? error.reason : 'parse'
@@ -713,11 +1029,12 @@ export class ViewerPage implements AfterViewInit, OnDestroy {
   }
 
   /**
-   * The one place a model's bytes are fetched, and therefore the one place there is to gate.
+   * The one place a model's bytes are fetched.
    *
-   * Task 3 gates earlier still — in `load`, beside the unsupported-extension arm — because a
-   * file over the size threshold must not open a connection at all; this stays the only door
-   * to the network so that gate cannot be routed around.
+   * The size gate sits earlier still — in `load`, beside the unsupported-extension arm —
+   * because a file over the threshold must not open a connection at all. This staying the
+   * only door to the network is what makes that gate impossible to route around, so a second
+   * `fetch` added to this module would be a hole in it rather than a convenience.
    */
   private async fetchModel(
     file: FileDto,

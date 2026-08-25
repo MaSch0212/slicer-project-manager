@@ -27,6 +27,7 @@ import type { Capabilities, FileDto, ProjectDetailDto } from '@spm/contract/dtos
 import { API_CLIENT } from '../../core/api/api-client.token'
 import { AuthStore } from '../../core/auth.store'
 import { CapabilitiesStore } from '../../core/capabilities.store'
+import { formatBytes } from '../../core/format-bytes'
 import { authGuard } from '../../core/guards'
 import { TranslateService } from '../../core/i18n/translate.service'
 import en from '../../core/i18n/locales/en.json'
@@ -36,6 +37,8 @@ import {
   SUPPORTED_FORMATS,
   VIEWER_RENDERER_FACTORY,
   ViewerPage,
+  limitOf,
+  sizeLimitFor,
   type ViewerState,
 } from './viewer.page'
 
@@ -501,8 +504,11 @@ async function setup(options: Options = {}): Promise<{
  * condition of defensive code; defensive code reachable from nowhere at all is the thing to
  * avoid, and that is what these two prevent.
  */
-function seam(page: ViewerPage): { setContent(next: Object3D | null): void } {
-  return page as unknown as { setContent(next: Object3D | null): void }
+function seam(page: ViewerPage): {
+  setContent(next: Object3D | null): void
+  loadAnyway(): void
+} {
+  return page as unknown as { setContent(next: Object3D | null): void; loadAnyway(): void }
 }
 
 /** Ages the current load out, exactly as starting a newer one does. See `seam`. */
@@ -591,6 +597,41 @@ function leakedListeners(
 
 /** Lets a rejected promise or a cancelled stream settle before the assertions run. */
 const flush = () => new Promise<void>((resolve) => setTimeout(resolve, 0))
+
+// ------------------------------------------------------------------ the size gate
+
+/**
+ * The threshold, read back from the component rather than written out here.
+ *
+ * A spec that hardcoded "105 MB" would still be green — and would no longer be testing
+ * anything — the day a `peakCost` was retuned or the budget moved, because both of its sizes
+ * would drift to the same side of the new line together. Throwing rather than defaulting is
+ * the other half of that: `?? 0` would put *every* file over the line, and the over-the-line
+ * tests would pass without a gate existing at all.
+ */
+function limitFor(name: string): number {
+  const limit = sizeLimitFor(name)
+  if (limit === undefined) throw new Error(`no size limit for ${name}`)
+  return limit
+}
+
+/** The largest whole number of bytes that must still open with no prompt. */
+const justUnder = (name: string): number => Math.floor(limitFor(name))
+/** One byte past it. */
+const justOver = (name: string): number => Math.floor(limitFor(name)) + 1
+
+/**
+ * The "load it anyway" control, found by the label the user actually reads.
+ *
+ * By label and not by a test-only attribute, so this also asserts the button is legible: a
+ * control found by `data-testid` can be an empty box on screen and the test cannot tell.
+ */
+function gateButton(host: HTMLElement): HTMLButtonElement | null {
+  for (const button of host.querySelectorAll('button')) {
+    if (button.textContent?.includes(en.viewer.loadAnyway)) return button as HTMLButtonElement
+  }
+  return null
+}
 
 /** Everything under the scene that would actually be drawn as triangles. */
 function meshesIn(scene: Scene): Mesh[] {
@@ -820,8 +861,12 @@ describe('ViewerPage', () => {
     }
 
     it('reports an extension no loader handles instead of crashing, and never fetches it', async () => {
-      const { host, page, fetch } = await setup({
-        files: [fileDto({ name: 'sliced.gcode', kind: 'other' })],
+      const { harness, host, page, fetch } = await setup({
+        files: [
+          fileDto({ name: 'sliced.gcode', kind: 'other' }),
+          // Only here as the positive control below; the .gcode file is what is under test.
+          fileDto({ id: 'f2', rawUrl: '/api/files/f2/raw' }),
+        ],
       })
 
       expect(page.state()).toEqual({ status: 'unsupported', extension: '.gcode' })
@@ -833,9 +878,16 @@ describe('ViewerPage', () => {
       // fourth loader cannot leave two locales advertising three.
       expect(SUPPORTED_FORMATS.length).toBeGreaterThan(0)
       for (const format of SUPPORTED_FORMATS) expect(message).toContain(format)
-      // Decided before the network is touched at all. Task 3's size gate goes in the same
-      // place and depends on this staying true.
+      // Decided before the network is touched at all. The size gate goes in the same place and
+      // depends on this staying true.
       expect(fetch).not.toHaveBeenCalled()
+
+      // The positive control that assertion lacked until fix round 1. A `fetch` spy that was
+      // never installed on the global the component calls satisfies `not.toHaveBeenCalled()`
+      // perfectly; navigating to a file the viewer *does* open proves this one is live.
+      await harness.navigateByUrl('/projects/p1/view/f2', ViewerPage)
+      await settle()
+      expect(fetch.mock.calls.map(([url]) => url)).toEqual(['/api/files/f2/raw'])
     })
 
     it('names the whole file when there is no extension to name', async () => {
@@ -1242,6 +1294,307 @@ describe('ViewerPage', () => {
         expect(triangleCountIn(drawn(rendererOf(host, made)).scene)).toBe(TRIANGLES.length)
       })
     }
+  })
+
+  describe('the size gate', () => {
+    /**
+     * Every openable format, with the file the fixture serves once the gate is passed.
+     *
+     * All three, not one: the threshold is a peak-memory budget divided by a *per-format*
+     * cost, so "the gate works" is three different numbers and a spec that checked STL alone
+     * would say nothing about the two arms that are three and eight times more expensive.
+     */
+    const formats: [string, string, Uint8Array][] = [
+      ['box.stl', '.stl', STL_BOX],
+      ['box.obj', '.obj', OBJ_BOX],
+      ['box.3mf', '.3mf', THREEMF_BOX],
+    ]
+
+    for (const [name, extension, bytes] of formats) {
+      it(`opens ${name} with no prompt at the last byte under its line`, async () => {
+        const made: FakeRenderer[] = []
+        const { host, page, fetch } = await setup({
+          create: recording(made),
+          files: [fileDto({ name, sizeBytes: justUnder(name) })],
+          serve: () => Promise.resolve(servedAtOnce(bytes)),
+        })
+
+        // At one byte under the line the viewer behaves exactly as it did before the gate
+        // existed. This is the control for the two negative assertions in the test below:
+        // the same `gateButton` query that finds a button over the line finds none here...
+        expect(gateButton(host)).toBeNull()
+        // ...and the same `fetch` spy that must stay untouched over the line does fire under
+        // it, so a spy that was never wired up cannot satisfy `not.toHaveBeenCalled()`.
+        expect(fetch.mock.calls.map(([url]) => url)).toEqual(['/api/files/f1/raw'])
+        expect(page.state()).toEqual({ status: 'ready' })
+        expect(triangleCountIn(drawn(rendererOf(host, made)).scene)).toBe(TRIANGLES.length)
+      })
+
+      it(`asks before opening ${name} over its line and requests nothing until told to`, async () => {
+        const made: FakeRenderer[] = []
+        const sizeBytes = justOver(name)
+        const { harness, host, page, fetch } = await setup({
+          create: recording(made),
+          files: [fileDto({ name, sizeBytes })],
+          serve: () => Promise.resolve(servedAtOnce(bytes)),
+        })
+
+        expect(page.state()).toEqual({ status: 'oversized', extension, sizeBytes })
+        // Not fetched-and-discarded and not fetched-and-paused: a gate that opens the
+        // connection has already spent the download it exists to ask about, which on the file
+        // this is really for is 164 MB over whatever connection the user is on.
+        expect(fetch).not.toHaveBeenCalled()
+        // Named, and in the same shape the project page printed beside the file — a gate that
+        // quoted a different number than the page it was reached from reads as a bug.
+        const message = host.querySelector('[role="alert"]')?.textContent ?? ''
+        expect(message).toContain(formatBytes(sizeBytes))
+        expect(gateButton(host)).not.toBeNull()
+
+        gateButton(host)?.click()
+        await settle()
+        harness.detectChanges()
+
+        // The positive control for `not.toHaveBeenCalled()` above: the same spy, in the same
+        // test, firing exactly once as soon as the user says yes.
+        expect(fetch.mock.calls.map(([url]) => url)).toEqual(['/api/files/f1/raw'])
+        expect(page.state()).toEqual({ status: 'ready' })
+        expect(gateButton(host)).toBeNull()
+        // And it is the real model, not merely a state change: confirming has to load.
+        expect(triangleCountIn(drawn(rendererOf(host, made)).scene)).toBe(TRIANGLES.length)
+      })
+    }
+
+    it('refuses a slicer project on its kind, whatever its extension says', async () => {
+      // The library holds 374 slicer-project .3mf files against 28 plain meshes, and the two
+      // are one extension over entirely different things. `FileDto.kind` is on the object
+      // `load` already holds and is the same predicate project-detail.page.ts uses to decide
+      // which files get a viewer link, so reading it here makes the two agree rather than
+      // merely coincide. Sized well over the 3MF line so this cannot pass by being small.
+      const { harness, host, page, fetch } = await setup({
+        files: [
+          fileDto({ name: 'plate_1.3mf', kind: 'slicer_project', sizeBytes: 96_000_000 }),
+          fileDto({ id: 'f2', rawUrl: '/api/files/f2/raw' }),
+        ],
+      })
+
+      expect(page.state()).toEqual({ status: 'slicerProject' })
+      // Not the size gate: there is no "load it anyway" for a file with no single mesh in it,
+      // and offering one would be offering ~2.5 GB of peak memory to render nothing useful.
+      expect(gateButton(host)).toBeNull()
+      expect(host.querySelector('[role="alert"]')?.textContent).toBe(en.viewer.slicerProject)
+      expect(fetch).not.toHaveBeenCalled()
+
+      // The positive control. Fix round 1 declared `f2` here and then never navigated to it, so
+      // this negative was the one assertion in the block that stayed green when the `fetch` spy
+      // was unwired from the global — and the round-1 report claimed a control that was not
+      // there. Navigating on proves the spy is live in this test, not merely in its siblings.
+      await harness.navigateByUrl('/projects/p1/view/f2', ViewerPage)
+      await settle()
+      expect(fetch.mock.calls.map(([url]) => url)).toEqual(['/api/files/f2/raw'])
+    })
+
+    it('does not fetch a file the server could not read as a model', async () => {
+      const { harness, page, fetch } = await setup({
+        // `classifyFile` gives .stl and .obj `kind: 'model'` unconditionally, so in practice
+        // this is a .3mf whose zip is damaged. The parse-failure message is exactly the right
+        // advice for it, and it now costs no download to give.
+        files: [
+          fileDto({ name: 'broken.3mf', kind: 'other', sizeBytes: 1_000 }),
+          fileDto({ id: 'f2', rawUrl: '/api/files/f2/raw' }),
+        ],
+      })
+
+      expect(page.state()).toEqual({ status: 'failed', reason: 'parse', extension: '.3mf' })
+      expect(fetch).not.toHaveBeenCalled()
+
+      // The positive control: the same spy fires for a file the viewer does open.
+      await harness.navigateByUrl('/projects/p1/view/f2', ViewerPage)
+      await settle()
+      expect(fetch.mock.calls.map(([url]) => url)).toEqual(['/api/files/f2/raw'])
+    })
+
+    it('moves focus to the progress region when the gate is confirmed', async () => {
+      // Confirming destroys the @case arm holding the button that was pressed, so without this
+      // focus falls to <body>: a keyboard user is dumped at the top of the document and a
+      // screen-reader user is told nothing at all, on the one kind of load slow enough that
+      // silence is indistinguishable from a dead button.
+      const gated = paced(STL_BOX, 2)
+      const { harness, host, page } = await setup({
+        files: [fileDto({ sizeBytes: justOver('box.stl') })],
+        serve: () => Promise.resolve(gated.response),
+      })
+      expect(page.state().status).toBe('oversized')
+
+      const button = gateButton(host)
+      button?.focus()
+      expect(document.activeElement).toBe(button)
+
+      button?.click()
+      await vi.waitFor(() => {
+        harness.detectChanges()
+        expect(page.state().status).toBe('loading')
+      })
+
+      // Not merely "focus left the button": it landed somewhere that says what is happening.
+      const region = host.querySelector('[role="status"]')
+      expect(region).not.toBeNull()
+      expect(document.activeElement).toBe(region)
+
+      gated.next()
+      gated.next()
+      await settle()
+    })
+
+    it('refuses a peakCost that would silently switch the gate off', () => {
+      // The argument for putting the cost inside FORMATS beside the parser is that a separate
+      // table would let a new loader read as "no gate". `peakCost: 0` typechecks and divides to
+      // Infinity, which is that same hole by another spelling.
+      const parse = () => new Mesh()
+      expect(() => limitOf('.xyz', { parse, peakCost: 0 })).toThrow(/peakCost/)
+      expect(() => limitOf('.xyz', { parse, peakCost: -1 })).toThrow(/peakCost/)
+      expect(() => limitOf('.xyz', { parse, peakCost: Number.NaN })).toThrow(/peakCost/)
+      // The control: a real cost yields a real limit through the very same call, so the three
+      // assertions above are about the guard and not about `limitOf` throwing unconditionally.
+      expect(limitOf('.xyz', { parse, peakCost: 8 })).toBeGreaterThan(0)
+      expect(Number.isFinite(limitOf('.xyz', { parse, peakCost: 8 }))).toBe(true)
+      // And an extension with no loader still answers "no limit" rather than throwing, which is
+      // what lets `limitFor` in this spec tell "ungated format" from "no such format" apart.
+      expect(sizeLimitFor('sliced.gcode')).toBeUndefined()
+    })
+
+    it('draws the line between the worst file in the library and an ordinary one', () => {
+      // Every other test in this block derives its sizes from `sizeLimitFor`, which makes them
+      // immune to the threshold being retuned — and equally blind to it being retuned to
+      // nonsense. A budget of ten gigabytes, or of one byte, leaves all of them green. These
+      // four numbers come from the reference library instead of from the code: the 164.8 MB
+      // binary STL is its largest file and the whole reason this gate exists, and 3.9 MB is
+      // just under the measured 90th percentile of all 1,725 models, 3.953 MB (the median is
+      // 0.148 MB) — so a model that size is an ordinary one and must open without a word in
+      // any format. That p90 is also what `PEAK_BUDGET_BYTES` is derived from, so this is the
+      // test that reddens if the budget ever drops below its own floor.
+      expect(164_800_000).toBeGreaterThan(limitFor('big.stl'))
+      expect(3_900_000).toBeLessThan(limitFor('ordinary.stl'))
+      expect(3_900_000).toBeLessThan(limitFor('ordinary.obj'))
+      expect(3_900_000).toBeLessThan(limitFor('ordinary.3mf'))
+    })
+
+    it('gates every real library file that is measured over the budget', () => {
+      // The files fix round 1 was opened for. Each is a real file in the reference library, each
+      // passed the round-0 gate, and each was *measured* — a Node harness running the app's own
+      // three.js 0.185 loader, one file per process, peak RSS above an idle baseline — to blow
+      // through the 256 MB budget. This is the only test that pins the `peakCost` numbers to
+      // anything outside the code: every other test in this block derives its sizes from
+      // `sizeLimitFor` and therefore moves with whatever the costs happen to be.
+      //
+      //   name                        bytes on disk   measured peak
+      const overBudget: [string, number, number][] = [
+        ['Waving_Groot_15.5cm.stl', 100_050_000, 321], // binary, COLOR= header
+        ['Head_with_brim_high_detail.stl', 99_520_000, 319], // binary, COLOR= header
+        ['Octopus_full_v5.5.stl', 62_900_000, 419], // ASCII
+        ['iron-man-base-2.stl', 46_550_000, 284], // ASCII
+        ['left.3mf', 7_750_000, 278], // plain mesh, not a slicer project
+        ['right.3mf', 7_650_000, 274], // plain mesh, not a slicer project
+      ]
+
+      for (const [name, sizeBytes, measuredPeakMb] of overBudget) {
+        expect({ name, gated: sizeBytes > limitFor(name), measuredPeakMb }).toEqual({
+          name,
+          gated: true,
+          measuredPeakMb,
+        })
+      }
+    })
+
+    it('prices the three formats in the order they were measured to cost', () => {
+      // 3MF is dearest per byte (a zip that inflates, decodes and then becomes a DOM), OBJ next
+      // (no binary form, plus OBJLoader's intermediate number[]s), STL cheapest. Any table that
+      // gets that order wrong is not a measurement of these loaders.
+      expect(limitFor('a.3mf')).toBeLessThan(limitFor('a.obj'))
+      expect(limitFor('a.obj')).toBeLessThan(limitFor('a.stl'))
+    })
+
+    it('holds a 3MF and an STL of identical size to different lines', async () => {
+      // A 3MF is a zip, and three's loader inflates every entry at once, decodes the model
+      // part to a JS string and builds a DOM over that — so the same number of bytes on disk
+      // costs the tab roughly eight times what an STL of it does. The sibling test above
+      // proves a 3MF of exactly this size prompts; this proves an STL of it does not, and
+      // together they are the pair no single flat threshold can satisfy in either direction.
+      const sizeBytes = justOver('box.3mf')
+      expect(sizeBytes).toBeLessThan(limitFor('box.stl'))
+
+      const { host, page, fetch } = await setup({
+        files: [fileDto({ name: 'box.stl', sizeBytes })],
+      })
+
+      expect(page.state()).toEqual({ status: 'ready' })
+      expect(gateButton(host)).toBeNull()
+      expect(fetch.mock.calls.map(([url]) => url)).toEqual(['/api/files/f1/raw'])
+    })
+
+    it('asks again for the next file, however the last one was answered', async () => {
+      const { harness, page, fetch } = await setup({
+        files: [
+          fileDto({ name: 'one.stl', sizeBytes: justOver('one.stl') }),
+          fileDto({
+            id: 'f2',
+            name: 'two.stl',
+            sizeBytes: justOver('two.stl'),
+            rawUrl: '/api/files/f2/raw',
+          }),
+        ],
+      })
+      expect(page.state().status).toBe('oversized')
+
+      gateButton(harness.routeNativeElement as HTMLElement)?.click()
+      await settle()
+      harness.detectChanges()
+      expect(page.state()).toEqual({ status: 'ready' })
+
+      const next = await harness.navigateByUrl('/projects/p1/view/f2', ViewerPage)
+      await settle()
+      harness.detectChanges()
+
+      // The whole point of the answer being an argument to one call rather than a field: an
+      // accidental "yes" on a 164 MB model buys that one model and nothing else. The router
+      // reuses the instance across a `:fileId` change, so a remembered answer would sit right
+      // here on the very same object.
+      expect(next).toBe(page)
+      expect(page.state().status).toBe('oversized')
+      expect(gateButton(harness.routeNativeElement as HTMLElement)).not.toBeNull()
+      // Negative and positive in one assertion, so it cannot pass for want of a wired spy:
+      // f2's bytes were never requested, and f1's — the file that *was* confirmed — were.
+      expect(fetch.mock.calls.map(([url]) => url)).toEqual(['/api/files/f1/raw'])
+    })
+
+    it('ignores a confirmation that arrives when nothing is gated', async () => {
+      const { page, fetch } = await setup()
+      // The control for the assertion below: this spy demonstrably fires on a real load, so
+      // "it was not called a second time" is a statement about the guard and not about wiring.
+      expect(page.state()).toEqual({ status: 'ready' })
+      expect(fetch).toHaveBeenCalledTimes(1)
+
+      // Defensive, and reachable only through a seam because the button renders only while the
+      // state is 'oversized'. Pinned rather than trusted, on the same rule as `setContent`'s
+      // no-scene arm: without the guard a stray confirmation re-downloads the model, and the
+      // models this code path exists for are the ones a needless second download hurts most.
+      seam(page).loadAnyway()
+      await settle()
+
+      expect(fetch).toHaveBeenCalledTimes(1)
+      expect(page.state()).toEqual({ status: 'ready' })
+    })
+
+    it('reports a format it cannot open as unsupported however large the file is', async () => {
+      const { host, page } = await setup({
+        files: [fileDto({ name: 'sliced.gcode', kind: 'other', sizeBytes: 500_000_000 })],
+      })
+
+      // The gate sits *behind* the unsupported arm, not in front of it. The other order offers
+      // to load a .gcode anyway — an offer the viewer cannot honour, on a file it would then
+      // download half a gigabyte of in order to fail on.
+      expect(page.state()).toEqual({ status: 'unsupported', extension: '.gcode' })
+      expect(gateButton(host)).toBeNull()
+    })
   })
 
   describe('on navigating away', () => {

@@ -107,7 +107,10 @@
     "missingFile": "Diese Datei gehört nicht mehr zu diesem Projekt. Gehe zurück zum Projekt, um zu sehen, was es jetzt enthält.",
     "fetchFailed": "Das Modell konnte nicht heruntergeladen werden. Prüfe deine Verbindung und lade die Seite neu.",
     "parseFailed": "Diese Datei konnte nicht als {{ extension }}-Modell gelesen werden. Sie ist möglicherweise beschädigt oder nur teilweise hochgeladen -- lade sie erneut hoch.",
-    "emptyModel": "Dieses Modell enthält keine Dreiecke, es gibt also nichts anzuzeigen. Die Datei wurde möglicherweise leer exportiert."
+    "emptyModel": "Dieses Modell enthält keine Dreiecke, es gibt also nichts anzuzeigen. Die Datei wurde möglicherweise leer exportiert.",
+    "slicerProject": "Dies ist ein Slicer-Projekt und kein einfaches Modell, es gibt hier also kein einzelnes Netz anzuzeigen. Lade es auf der Projektseite herunter, um es in deinem Slicer zu öffnen.",
+    "tooLarge": "Dieses Modell ist {{ size }} groß. Eine {{ extension }}-Datei zu öffnen kann ein Vielfaches ihrer eigenen Größe an Speicher belegen, und wie viel diese hier braucht, lässt sich ohne Herunterladen nicht sagen -- deshalb fragt die Ansicht lieber nach, und es wurde noch nichts heruntergeladen.",
+    "loadAnyway": "Trotzdem laden"
   },
   "errors": {
     "quotaExceeded": "Dieser Upload würde das Kontingent überschreiten ({{ usage }} von {{ quota }} belegt)",

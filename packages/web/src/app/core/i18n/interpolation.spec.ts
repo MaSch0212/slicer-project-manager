@@ -40,11 +40,26 @@ describe('locale interpolation', () => {
       // so both locales have to carry the placeholder for it.
       expect(unsupported).toContain('STL, OBJ, 3MF')
       expect(interpolate(viewer.parseFailed, { extension: '.3mf' })).toContain('.3mf')
-      for (const message of [viewer.loadingPercent, viewer.unsupported, viewer.parseFailed]) {
+      // The size gate's whole job is to say how big the file is, so a message that renders the
+      // placeholder instead of the number tells the user nothing they can decide on.
+      const tooLarge = interpolate(viewer.tooLarge, { size: '164.8 MB', extension: '.stl' })
+      expect(tooLarge).toContain('164.8 MB')
+      expect(tooLarge).toContain('.stl')
+      // No placeholders of its own, but it is the message 374 of the library's 402 .3mf files
+      // land on, so an empty string here would be a blank alert rather than a visible bug.
+      expect(viewer.slicerProject.length).toBeGreaterThan(20)
+      expect(viewer.slicerProject).not.toMatch(/[{}]/)
+      for (const message of [
+        viewer.loadingPercent,
+        viewer.unsupported,
+        viewer.parseFailed,
+        viewer.tooLarge,
+      ]) {
         const filled = interpolate(message, {
           percent: 42,
           extension: '.stl',
           formats: 'STL',
+          size: '164.8 MB',
         })
         expect(filled).not.toMatch(/[{}]/)
         // A placeholder the caller gave no value for is substituted with `String(undefined)`,
