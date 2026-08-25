@@ -138,9 +138,16 @@ Do **not** add `dom` alongside it: that resolves the global but re-types `WebSoc
 `WebSocket.CLOSED` stops being assignable to `readyState` in the dev-proxy tests. `deno.window`
 already carries the web APIs the server uses.
 
-The Angular CLI runs under Deno's Node compatibility layer, so the whole dev loop does:
-`deno task dev:ui`, `build:ui` and `test:web` invoke `ng` through `deno run`. Building,
-serving with live reload, and the 126 unit tests all work that way.
+The Angular toolchain is the one thing that still runs under **Node**. `ng`, `ngc` and
+Playwright are invoked as `node node_modules/…` from the deno tasks, so there is still a single
+entry point for everything (`deno task test:web`, `build:ui`, `e2e`) — Node is just what
+executes them.
+
+That is not conservatism. `ng test` under Deno's Node compatibility layer works on Windows and
+hangs on a Linux CI runner: no output at all, no error, until the job is killed. `CI=1` does not
+help and stdin is not the trigger. Since Node is already required — `core` has to work on both
+runtimes, and `node --test` is how that is proven — running the Node toolchain under Node costs
+nothing and removes a failure mode nobody would enjoy debugging.
 
 One policy worth knowing: Deno refuses npm packages published within the last day, as a
 supply-chain measure. `minimumDependencyAge` in `deno.json` sets that window and exempts the

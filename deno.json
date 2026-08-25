@@ -23,10 +23,10 @@
   "tasks": {
     "install": "deno install --allow-scripts",
     "dev": "echo \"Run two terminals: deno task dev:ui  |  deno task dev:server\"",
-    "dev:ui": "cd packages/web && deno run -A node_modules/@angular/cli/bin/ng.js serve --port 4200",
+    "dev:ui": "cd packages/web && node node_modules/@angular/cli/bin/ng.js serve --port 4200",
     "dev:server": "SPM_DEV_UI_ORIGIN=http://localhost:4200 SPM_LOG_LEVEL=debug deno run --env-file -A --watch --no-clear-screen packages/server/main.ts",
     "serve": "deno task build:ui && deno run --env-file -A packages/server/main.ts",
-    "build:ui": "cd packages/web && CI=1 deno run -A node_modules/@angular/cli/bin/ng.js build",
+    "build:ui": "cd packages/web && node node_modules/@angular/cli/bin/ng.js build",
     "import": "deno run --env-file -A packages/server/import-curamanager.ts",
     "lint": "deno run -A node_modules/eslint/bin/eslint.js .",
     "fmt": "deno run -A node_modules/prettier/bin/prettier.cjs --write .",
@@ -35,13 +35,13 @@
     "typecheck:contract": "deno run -A node_modules/typescript/bin/tsc --noEmit -p packages/contract/tsconfig.json",
     "typecheck:core": "deno run -A node_modules/typescript/bin/tsc --noEmit -p packages/core/tsconfig.json",
     "typecheck:server": "deno check packages/server/main.ts packages/server/import-curamanager.ts",
-    "typecheck:web": "cd packages/web && deno run -A node_modules/@angular/compiler-cli/bundles/src/bin/ngc.js -p tsconfig.app.json --noEmit",
+    "typecheck:web": "cd packages/web && node node_modules/@angular/compiler-cli/bundles/src/bin/ngc.js -p tsconfig.app.json --noEmit",
     "test:contract": "node --test \"packages/contract/test/**/*.test.ts\"",
     "test:core:node": "node --test \"packages/core/test/**/*.test.ts\"",
     "test:core:deno": "deno test --allow-read --allow-write --allow-env packages/core/test/",
     "test:server": "deno test --allow-all packages/server/test/",
-    "test:web": "cd packages/web && CI=1 deno run -A node_modules/@angular/cli/bin/ng.js test --no-watch",
-    "e2e": "cd packages/web && deno run -A node_modules/@playwright/test/cli.js test",
+    "test:web": "cd packages/web && node node_modules/@angular/cli/bin/ng.js test --no-watch",
+    "e2e": "cd packages/web && node node_modules/@playwright/test/cli.js test",
     "verify": "deno task lint && deno task fmt:check && deno task typecheck && deno task test:contract && deno task test:core:node && deno task test:core:deno && deno task test:server && deno task test:web"
   }
 }

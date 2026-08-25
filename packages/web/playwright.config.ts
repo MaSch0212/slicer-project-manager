@@ -25,7 +25,7 @@ export default defineConfig({
     // `@spm/core`, so the root import map is never consulted and the seed script dies with
     // `Import "@spm/core" not a dependency`. Naming the root config skips that.
     command: [
-      'pnpm --filter @spm/web exec ng build',
+      'node node_modules/@angular/cli/bin/ng.js build',
       `deno run -A --config ../../deno.json ../../packages/web/e2e/seed.ts "${libraryDir}"`,
       'deno run -A --config ../../deno.json ../server/main.ts',
     ].join(' && '),

@@ -3,9 +3,11 @@ on:
   push: { branches: [main] }
   pull_request:
 
-# Deno owns installation and every task; there is no package manager beside it. Node is still
-# installed wherever a job runs something under Node — `packages/core` is required to work on
-# both runtimes, and `node --test` reads the same node_modules `deno install` produces.
+# Deno owns installation, the workspace, the server and core. The Angular toolchain still runs
+# under Node: `ng test` hangs on a Linux runner under Deno's Node compatibility layer, emitting
+# no output at all until the job is killed, though it is fine on Windows and fine under Node
+# everywhere. So every job that runs ng, ngc, Playwright or `node --test` installs Node as well
+# — all of them read the same node_modules that `deno install` writes.
 jobs:
   checks:
     runs-on: ubuntu-latest
@@ -13,6 +15,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: denoland/setup-deno@v2
         with: { deno-version: v2.x }
+      - uses: actions/setup-node@v4
+        with: { node-version: '24' }
       # `deno task typecheck` runs `deno check` over the server entry points — plain tsc cannot
       # type-check the server, which uses Deno globals — and then `ngc --noEmit` over
       # packages/web, which compiles the Angular templates too, so the web job's `ng build` is
@@ -54,14 +58,18 @@ jobs:
 
   web:
     runs-on: ubuntu-latest
+    # ng test hung here once and sat until the run was cancelled; fail in ten minutes instead.
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: denoland/setup-deno@v2
         with: { deno-version: v2.x }
+      - uses: actions/setup-node@v4
+        with: { node-version: '24' }
       - run: deno install --allow-scripts --frozen
       - run: deno task test:web
       - run: deno task build:ui
-      - run: cd packages/web && deno run -A node_modules/@angular/cli/bin/ng.js build --configuration=electron
+      - run: cd packages/web && node node_modules/@angular/cli/bin/ng.js build --configuration=electron
       # The web build must physically exclude desktop-only code (spec 2.5), and the electron
       # build must keep it. Grepping the exported class name, not the module path: paths are
       # rewritten to hashed chunk names during bundling, so a path grep can never fail.
@@ -83,6 +91,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: denoland/setup-deno@v2
         with: { deno-version: v2.x }
+      - uses: actions/setup-node@v4
+        with: { node-version: '24' }
       - run: deno install --allow-scripts --frozen
-      - run: cd packages/web && deno run -A node_modules/@playwright/test/cli.js install --with-deps chromium
+      - run: cd packages/web && node node_modules/@playwright/test/cli.js install --with-deps chromium
       - run: deno task e2e
