@@ -1,0 +1,18 @@
+/* To learn more about Typescript configuration file: https://www.typescriptlang.org/docs/handbook/tsconfig-json.html. */
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    /* Playwright's own types arrive through the `@playwright/test` import rather than a
+       global, so `node` is the only ambient package needed. It is a root devDependency, the
+       same one `packages/core`'s Node tests rely on. */
+    "types": ["node"]
+  },
+  /* `playwright.config.ts` is in here deliberately: it reads process.env and builds the
+     webServer command, so it is exactly the kind of file a typo silently breaks until a CI
+     run times out. */
+  "include": ["e2e/**/*.ts", "playwright.config.ts"],
+  /* `e2e/seed.ts` runs under Deno, not Node -- playwright.config.ts invokes it with
+     `deno run`. It uses Deno globals and would fail against these libs, so it is checked by
+     `deno check` in the `typecheck:web:seed` task instead. */
+  "exclude": ["e2e/seed.ts"]
+}

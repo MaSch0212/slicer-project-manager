@@ -17,10 +17,12 @@ jobs:
         with: { deno-version: v2.x }
       - uses: actions/setup-node@v4
         with: { node-version: '24' }
-      # `deno task typecheck` runs `deno check` over the server entry points — plain tsc cannot
-      # type-check the server, which uses Deno globals — and then `ngc --noEmit` over
-      # packages/web, which compiles the Angular templates too, so the web job's `ng build` is
-      # no longer the only thing that proves the client compiles.
+      # `deno task typecheck` runs `deno check` over everything written against Deno globals —
+      # the server entry points and the e2e seed script, neither of which plain tsc can read —
+      # and tsc or `ngc --noEmit` over the rest. ngc compiles the Angular templates too, so the
+      # web job's `ng build` is no longer the only thing that proves the client compiles, and
+      # the Playwright sources under packages/web/e2e are checked here rather than only by
+      # Playwright's own runtime transform.
       - run: deno install --allow-scripts --frozen
       - run: deno task lint
       - run: deno task fmt:check
