@@ -1,6 +1,6 @@
-import { createReadStream } from 'node:fs'
+import { createReadStream, realpathSync, statSync } from 'node:fs'
 import { mkdir, rm, stat, writeFile } from 'node:fs/promises'
-import { isAbsolute, join, resolve, sep } from 'node:path'
+import { dirname, isAbsolute, join, resolve, sep } from 'node:path'
 import { Readable } from 'node:stream'
 import { z } from 'zod'
 import type { ApiClient } from '@spm/contract/api-client.ts'
@@ -188,7 +188,12 @@ const idSchema = z.string().min(1).max(64)
  * is a `Validation` failure rather than anything at all.
  */
 const uploadBodySchema = z.union([
-  z.object({ localPath: z.string().min(1) }),
+  z.object({
+    localPath: z.string().min(1),
+    // Non-negative rather than positive: an empty file is a legitimate thing to upload.
+    sizeBytes: z.number().int().min(0),
+    lastModifiedMs: z.number().int().min(0),
+  }),
   z.object({ bytes: z.instanceof(Uint8Array) }),
 ])
 
@@ -240,6 +245,68 @@ function streamOf(bytes: Uint8Array): ReadableStream<Uint8Array> {
   })
 }
 
+/** The filesystem's own name for a file, independent of how the path was spelled. */
+type FileIdentity = { dev: bigint; ino: bigint }
+
+function identityOf(path: string): FileIdentity | null {
+  try {
+    const info = statSync(path, { bigint: true })
+    return { dev: info.dev, ino: info.ino }
+  } catch {
+    return null
+  }
+}
+
+/** The path with links, short names and device prefixes resolved, or the plain resolution. */
+function realPathOf(path: string): string {
+  try {
+    return realpathSync.native(path)
+  } catch {
+    return resolve(path)
+  }
+}
+
+/**
+ * Whether `candidate` is `directory` or sits underneath it — by **filesystem identity**, not by
+ * string.
+ *
+ * String containment is what this replaced, and it was defeated five ways on Windows, all
+ * measured against the library's own `app.db`: `.SPM` (NTFS is case-insensitive), `\\?\C:\…`
+ * (the device-path prefix), `\\localhost\C$\…` and `\\?\UNC\localhost\C$\…` (UNC aliases for a
+ * local disk). `resolve()` is a string operation: it case-folds nothing and normalises none of
+ * those. Comparing `dev` and `ino` up the ancestor chain catches all five, because the question
+ * being asked is "is this the same directory", which is a filesystem question.
+ *
+ * A string comparison is kept alongside it, case-insensitive on Windows, so that a `stat` failure
+ * degrades to the weaker check rather than to no check at all.
+ *
+ * What identity comparison still cannot see is a **hard link** from outside `.spm` to a file
+ * inside it: a hard link is a second, equally real name, and the walk up from it never passes
+ * through `.spm`. Measured, and left: creating one needs write access to the filesystem, and the
+ * threat model here is a compromised renderer, which has none. Catching it would mean comparing
+ * the file's own identity against every file in `.spm` on every upload.
+ */
+function isInside(directory: string, candidate: string): boolean {
+  const parent = realPathOf(directory)
+  const child = realPathOf(candidate)
+  const fold = (value: string): string =>
+    process.platform === 'win32' ? value.toLowerCase() : value
+  if (fold(child) === fold(parent) || fold(child).startsWith(fold(parent) + sep)) return true
+
+  const parentId = identityOf(parent)
+  if (!parentId) return false
+  let current = child
+  // Bounded: a path has finitely many ancestors, and `dirname` reaches a fixed point at the root.
+  for (let depth = 0; depth < 64; depth += 1) {
+    const id = identityOf(current)
+    if (id && id.dev === parentId.dev && id.ino === parentId.ino) return true
+    const next = dirname(current)
+    if (next === current) return false
+    current = next
+  }
+  return false
+}
+
 /**
  * Checks a picked path in the **main process**, and answers with the file's size.
  *
@@ -248,16 +315,20 @@ function streamOf(bytes: Uint8Array): ReadableStream<Uint8Array> {
  * main world wrote from ever reaching here — but the preload runs in the renderer process, so on
  * the wrong side of that line. This is the main process's own check, and it exists so that a
  * `contextIsolation` bypass, a Chromium sandbox escape or one careless future edit to
- * `sanitise` does not restore the full escalation.
+ * `sanitiseArg` does not restore the full escalation.
  *
- * What it stops, exactly, and it is worth being precise because the temptation is to overclaim:
+ * What it refuses:
  *
  * - a **relative** path, which `createReadStream` would otherwise resolve against the main
  *   process's working directory — nothing the picker produces is relative;
- * - a path inside the library's own `.spm`, which is where the database, the previews and the
- *   staging area live. That is the file the demonstrated exploit read.
+ * - anything that resolves inside the library's own `.spm`, where the database, the previews and
+ *   the staging area live. That is the file the demonstrated exploit read. "Resolves" and not
+ *   "is spelled like": see `isInside`, and the hard link it still cannot see;
+ * - a file whose size or modification time no longer matches what it had when the user picked it
+ *   (`Conflict`). That is Chromium's own rule for a stale `File`, adopted here so the desktop and
+ *   browser arms answer the same way — see `WireUploadBody`.
  *
- * What it does **not** stop: an absolute path to any other file the user can read. The main
+ * What it does **not** refuse: an absolute path to any other file the user can read. The main
  * process has no way to know what the user picked — Electron surfaces no event for an
  * `<input type="file">` choice — so the preload's isolation remains the primary guarantee and
  * this is defence in depth behind it, not a replacement for it.
@@ -266,23 +337,41 @@ function streamOf(bytes: Uint8Array): ReadableStream<Uint8Array> {
  * the picker and the upload would otherwise be an `ENOENT` wrapped into `Internal`, and a
  * directory an `EISDIR` from deep inside the read.
  */
-async function sizeOfPickedFile(lib: Library, localPath: string): Promise<number> {
-  if (!isAbsolute(localPath)) {
+async function sizeOfPickedFile(
+  lib: Library,
+  body: { localPath: string; sizeBytes: number; lastModifiedMs: number },
+): Promise<number> {
+  if (!isAbsolute(body.localPath)) {
     throw new AppError('Validation', 'a picked file must be named by an absolute path')
   }
-  const resolved = resolve(localPath)
-  const privateDir = resolve(lib.dir, SPM_DIR)
-  if (resolved === privateDir || resolved.startsWith(privateDir + sep)) {
+  if (isInside(resolve(lib.dir, SPM_DIR), body.localPath)) {
     throw new AppError('Forbidden', `${SPM_DIR} is the library's own, and is not a source of files`)
   }
   let info
   try {
-    info = await stat(resolved)
+    info = await stat(realPathOf(body.localPath))
   } catch {
     throw new AppError('NotFound', 'that file is no longer where it was picked from')
   }
   if (!info.isFile()) throw new AppError('Validation', 'that is a folder, not a file')
+  if (info.size !== body.sizeBytes || !sameModificationTime(info.mtimeMs, body.lastModifiedMs)) {
+    throw new AppError('Conflict', 'that file changed after it was picked; choose it again')
+  }
   return info.size
+}
+
+/**
+ * Whether a `stat`'s modification time is the one Chromium recorded for the picked `File`.
+ *
+ * `File.lastModified` is whole milliseconds and `stat().mtimeMs` is fractional — measured on
+ * NTFS, `1787783467178` against `1787783467178.9192` — so it is compared truncated. The extra
+ * millisecond of slack is for a platform where Chromium rounds rather than floors, or where the
+ * nanosecond-to-float conversion lands a hair below the whole millisecond; it is not load-bearing,
+ * because the size comparison runs beside this one and a swap that also preserves the size is
+ * exactly the case this cannot see anyway.
+ */
+function sameModificationTime(mtimeMs: number, lastModifiedMs: number): boolean {
+  return Math.abs(Math.trunc(mtimeMs) - lastModifiedMs) <= 1
 }
 
 /**
@@ -300,11 +389,13 @@ async function toUploadBody(
   if ('bytes' in body) {
     return { stream: streamOf(body.bytes), sizeBytes: body.bytes.byteLength }
   }
-  const sizeBytes = await sizeOfPickedFile(lib, body.localPath)
-  // The resolved path, not the one that arrived: `sizeOfPickedFile` statted the resolved form,
-  // and reading a different string than the one that was checked is how a check gets bypassed.
+  const sizeBytes = await sizeOfPickedFile(lib, body)
+  // The real path, not the string that arrived: `sizeOfPickedFile` statted the real one, and
+  // reading a different path than the one that was checked is how a check gets bypassed.
   return {
-    stream: Readable.toWeb(createReadStream(resolve(body.localPath))) as ReadableStream<Uint8Array>,
+    stream: Readable.toWeb(
+      createReadStream(realPathOf(body.localPath)),
+    ) as ReadableStream<Uint8Array>,
     sizeBytes,
   }
 }
@@ -476,8 +567,8 @@ export const dispatch: DispatchTable = {
       if ('localPath' in body) {
         // Read from where the user keeps it. Deliberately *not* removed afterwards: it is their
         // file, not a staging copy, and the importer only reads it.
-        await sizeOfPickedFile(lib, body.localPath)
-        return await importCuraManagerZip(lib, ctx, resolve(body.localPath))
+        await sizeOfPickedFile(lib, body)
+        return await importCuraManagerZip(lib, ctx, realPathOf(body.localPath))
       }
       const staged = await stageArchive(lib, body.bytes)
       try {

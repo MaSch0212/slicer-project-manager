@@ -169,6 +169,11 @@ test.describe('the desktop shell', () => {
       // NTFS strips a trailing dot and a trailing space from a path component.
       'spm://app/_spm./files/abc/raw',
       'spm://app/_spm%20/files/abc/raw',
+      // Win32 path APIs truncate at a NUL, so these name the reserved directory in the same
+      // sense `_spm.` does. They answered 200 until a NUL anywhere in the path became a refusal
+      // outright -- the trailing-character trim could never have caught `_spm%00x`.
+      'spm://app/_spm%00/files/abc/raw',
+      'spm://app/_spm%00x/files/abc/raw',
       // Canonicalised by Chromium before the handler sees them; here so a change to that
       // canonicalisation shows up as a failure rather than as a new hole.
       'spm://app//_spm/files/abc/raw',
@@ -178,31 +183,40 @@ test.describe('the desktop shell', () => {
       'spm://app/_spm?x=1',
       'spm://app/_spm#frag',
     ]
-    const answers = await page.evaluate(async (urls: string[]) => {
-      const out: Record<string, string> = {}
-      for (const url of urls) {
-        try {
-          const response = await fetch(url)
-          out[url] = `${response.status} ${(await response.text()).slice(0, 15)}`
-        } catch (error) {
-          out[url] = `threw ${String(error)}`
-        }
-      }
-      // A deep link that is *not* under the prefix still gets the SPA, or this guard would have
-      // broken routing rather than reserved a prefix. `_spmx` likewise: the reservation is the
-      // whole segment, not the string as a prefix of one.
-      for (const url of ['spm://app/projects/some-id', 'spm://app/_spmx/files/abc/raw']) {
-        const response = await fetch(url)
-        out[url] = `${response.status} ${(await response.text()).slice(0, 15)}`
-      }
-      return out
-    }, RESERVED_URLS)
 
-    const expected: Record<string, string> = Object.fromEntries(
-      RESERVED_URLS.map((url) => [url, '404 not found']),
+    /*
+     * The other half of the boundary, and the reason this list exists at all: these are *not*
+     * aliases for the reserved directory, and the SPA is the right answer for every one of them.
+     * Without them the guard could be widened until it swallowed ordinary routes and no test
+     * would notice. A tab and a non-breaking space are not stripped by Win32 the way a trailing
+     * dot or space is, and `_spmx` shares only a prefix -- the reservation is the whole segment.
+     */
+    const PASSTHROUGH_URLS = [
+      'spm://app/projects/some-id',
+      'spm://app/_spmx/files/abc/raw',
+      'spm://app/_spm%09/files/abc/raw',
+      'spm://app/_spm%c2%a0/files/abc/raw',
+    ]
+    const answers = await page.evaluate(
+      async (urls: string[]) => {
+        const out: Record<string, string> = {}
+        for (const url of urls) {
+          try {
+            const response = await fetch(url)
+            out[url] = `${response.status} ${(await response.text()).slice(0, 15)}`
+          } catch (error) {
+            out[url] = `threw ${String(error)}`
+          }
+        }
+        return out
+      },
+      [...RESERVED_URLS, ...PASSTHROUGH_URLS],
     )
-    expected['spm://app/projects/some-id'] = '200 <!doctype html>'
-    expected['spm://app/_spmx/files/abc/raw'] = '200 <!doctype html>'
+
+    const expected: Record<string, string> = Object.fromEntries([
+      ...RESERVED_URLS.map((url) => [url, '404 not found']),
+      ...PASSTHROUGH_URLS.map((url) => [url, '200 <!doctype html>']),
+    ])
     // `\` is a path separator on Windows and an ordinary filename character everywhere else, so
     // this one URL names two different things and only one of them is a bypass. On win32 the
     // `..\` collapses and it lands on the reserved directory, which must 404. On Linux and macOS

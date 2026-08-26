@@ -1,5 +1,5 @@
 import { expect, test, type ElectronApplication, type Page } from '@playwright/test'
-import { existsSync, mkdtempSync, rmSync, statSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
@@ -285,7 +285,8 @@ test.describe('the IPC bridge', () => {
  * `ReadableStream` and stages nothing, so on the project page the two arms leave identical marks
  * on disk and nothing end-to-end distinguishes them. That route's arm choice is covered by the
  * vitest case in `ipc-api-client.spec.ts`, which spies on `Blob.arrayBuffer` and requires it never
- * to be called; do not read this assertion as covering both entry points.
+ * to be called, and by the stale-file test below, which can only fail the way it does if the page
+ * took the streaming arm. Do not read *this* assertion as covering both entry points.
  */
 test('the import page imports a picked archive without copying it into the library', async () => {
   const archiveDir = mkdtempSync(join(tmpdir(), 'spm-desktop-archive-'))
@@ -354,6 +355,97 @@ test('the desktop shell offers no sign-out, and still shows the rest of the navi
     await expect(page.getByRole('link', { name: 'Sign in' })).toHaveCount(0)
   } finally {
     await app.close()
+  }
+})
+
+/**
+ * The project page's own upload, end to end, and the stale-file rule that makes the desktop and
+ * browser arms agree.
+ *
+ * Two things this covers that nothing else does. First, `files.upload` through the real UI: the
+ * import page proves the streaming arm for archives, but the project page's `<input type="file">`
+ * had only vitest coverage with a mocked bridge. Second, finding F — a `File` is a durable handle
+ * to a *path*, so a renderer that holds one can redeem it later for whatever is at that path then;
+ * measured, before the fix, the *replacement* was streamed. Chromium refuses that same stale
+ * `File` in a browser with `NotReadableError`, so the preload now sends the size and modification
+ * time from the pick and the main process refuses a mismatch with `Conflict`.
+ *
+ * The refusal is also what proves the page took the streaming arm at all: the bytes arm has no
+ * path to go stale, so it would have uploaded the new contents happily.
+ */
+test('the project page uploads a picked file, and refuses one that changed since', async () => {
+  const sourceDir = mkdtempSync(join(tmpdir(), 'spm-desktop-source-'))
+  const source = join(sourceDir, 'driven.stl')
+  writeFileSync(source, 'solid driven endsolid driven')
+
+  const { app, libraryDir } = await launchApp([
+    { name: 'Uploads', files: { 'existing.stl': 'solid e endsolid e' } },
+  ])
+  try {
+    const page = await app.firstWindow()
+    await page.waitForLoadState('domcontentloaded')
+    await page.evaluate(() => globalThis.spm.invoke('projects.rescan', []))
+    await page.reload()
+    await page.locator('.spm-project-link').first().click()
+    await expect(page.locator('h1')).toHaveText('Uploads')
+
+    // The happy path first: a real file, picked and uploaded through the page's own control.
+    await page.locator('input[type="file"]').setInputFiles(source)
+    await expect(page.locator('.spm-file', { hasText: 'driven.stl' })).toBeVisible()
+    expect(readFileSync(join(libraryDir, 'Uploads', 'driven.stl'), 'utf8')).toBe(
+      'solid driven endsolid driven',
+    )
+    // Streamed from where it lay: the source is untouched and nothing was staged.
+    expect(existsSync(source)).toBe(true)
+    expect(existsSync(join(libraryDir, '.spm', 'uploads'))).toBe(false)
+    await expect(page.locator('jig-message[color="error"]')).toHaveCount(0)
+
+    // Now a file the renderer has been holding since before it changed.
+    //
+    // Through an input of the test's own rather than the page's: `onFileInput` clears
+    // `element.value` after every upload precisely so the same file can be picked again, which
+    // means the page never holds a `File` for longer than one call. A renderer that *does* hold
+    // one is the case under test, and it is the shape the round-2 measurement used.
+    const stale = join(sourceDir, 'stale.stl')
+    writeFileSync(stale, 'solid stale endsolid stale')
+    await page.evaluate(() => {
+      const input = document.createElement('input')
+      input.type = 'file'
+      input.id = 'held-picker'
+      document.body.append(input)
+    })
+    await page.locator('#held-picker').setInputFiles(stale)
+
+    const projectId = await page.evaluate(async () => {
+      const listed = await globalThis.spm.invoke('projects.list', [{}])
+      return (listed as { value: { id: string }[] }).value[0]!.id
+    })
+    const uploadHeld = (name: string) =>
+      page.evaluate(
+        ([id, fileName]) => {
+          const held = (document.getElementById('held-picker') as HTMLInputElement).files![0]
+          return globalThis.spm.invoke('files.upload', [id, fileName, { __spmFileRef: held }])
+        },
+        [projectId, name] as const,
+      )
+
+    // The held File works while the file behind it is unchanged, so the refusal below is about
+    // staleness and not about holding a File at all.
+    expect(await uploadHeld('held.stl')).toMatchObject({ ok: true, value: { sizeBytes: 26 } })
+
+    writeFileSync(stale, 'REPLACED AFTER IT WAS PICKED, AND LONGER THAN IT WAS BEFORE\n')
+    expect(await uploadHeld('stale.stl')).toMatchObject({
+      ok: false,
+      error: { code: 'Conflict' },
+    })
+    // The replacement never reached the library at all.
+    expect(existsSync(join(libraryDir, 'Uploads', 'stale.stl'))).toBe(false)
+    expect(readFileSync(join(libraryDir, 'Uploads', 'held.stl'), 'utf8')).toBe(
+      'solid stale endsolid stale',
+    )
+  } finally {
+    await app.close()
+    rmSync(sourceDir, { recursive: true, force: true })
   }
 })
 

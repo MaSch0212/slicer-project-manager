@@ -1,11 +1,14 @@
 import assert from 'node:assert/strict'
 import {
   existsSync,
+  linkSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
   readdirSync,
   rmSync,
+  statSync,
+  utimesSync,
   writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -33,7 +36,7 @@ import {
   type IpcResult as DesktopIpcResult,
   type WireUploadBody,
 } from '../src/protocol.ts'
-import { sanitiseArg, sanitiseArgs } from '../src/sanitise-args.ts'
+import { sanitiseArg, sanitiseArgs, type PickedFile } from '../src/sanitise-args.ts'
 import { FILE_URL_BASE } from '../src/urls.ts'
 
 /**
@@ -173,7 +176,11 @@ test('the three keys the upload path is spelled with cannot drift apart', () => 
   //    removing the key a forged argument uses, which is the security-relevant half. This is a
   //    compile-time tie: the computed key is typed by `LOCAL_PATH_KEY`, so the annotation only
   //    holds while the two are the same literal.
-  const pathArm: WireUploadBody = { [LOCAL_PATH_KEY]: 'C:\\somewhere\\picked.stl' }
+  const pathArm: WireUploadBody = {
+    [LOCAL_PATH_KEY]: 'C:\\somewhere\\picked.stl',
+    sizeBytes: 1,
+    lastModifiedMs: 1,
+  }
   assert.ok(LOCAL_PATH_KEY in pathArm)
 })
 
@@ -194,7 +201,9 @@ test('the three keys the upload path is spelled with cannot drift apart', () => 
  * Electron renderer, so it is injected.
  */
 const PICKED = { picked: true }
-const resolvePicked = (file: unknown): string => (file === PICKED ? 'C:\\picked\\model.stl' : '')
+const PICKED_WIRE = { localPath: 'C:\\picked\\model.stl', sizeBytes: 34, lastModifiedMs: 1700000 }
+const resolvePicked = (file: unknown): PickedFile | null =>
+  file === PICKED ? { ...PICKED_WIRE } : null
 
 test('the sanitiser removes a forged localPath at every depth, not just the top', () => {
   const victim = 'C:\\Users\\someone\\.ssh\\id_rsa'
@@ -226,12 +235,10 @@ test('the sanitiser removes a forged localPath at every depth, not just the top'
 })
 
 test('the sanitiser writes a localPath only from a real picked file', () => {
-  assert.deepEqual(sanitiseArg({ [FILE_REF_KEY]: PICKED }, resolvePicked), {
-    localPath: 'C:\\picked\\model.stl',
-  })
+  assert.deepEqual(sanitiseArg({ [FILE_REF_KEY]: PICKED }, resolvePicked), PICKED_WIRE)
   // Nested too, so the substitution is not a top-level special case either.
   assert.deepEqual(sanitiseArg({ a: { [FILE_REF_KEY]: PICKED } }, resolvePicked), {
-    a: { localPath: 'C:\\picked\\model.stl' },
+    a: PICKED_WIRE,
   })
   // Anything the resolver cannot name yields neither arm, so the schema refuses it. A token
   // holding a string, a `Blob`, a made-up `File` and a value that makes the resolver throw all
@@ -239,10 +246,21 @@ test('the sanitiser writes a localPath only from a real picked file', () => {
   for (const held of ['C:\\Users\\someone\\.ssh\\id_rsa', {}, null, 7]) {
     assert.deepEqual(sanitiseArg({ [FILE_REF_KEY]: held }, resolvePicked), {}, String(held))
   }
+  // Everything the main world put beside the file is discarded, not merged: a path it would
+  // like used, and a size and time it would like the main process to check against. All three
+  // come from the preload's own view of the `File` or they are worth nothing.
   assert.deepEqual(
-    sanitiseArg({ [FILE_REF_KEY]: PICKED, localPath: 'C:\\forged' }, resolvePicked),
-    { localPath: 'C:\\picked\\model.stl' },
-    'a forged path alongside a real file must not win',
+    sanitiseArg(
+      {
+        [FILE_REF_KEY]: PICKED,
+        localPath: 'C:\\forged',
+        sizeBytes: 999,
+        lastModifiedMs: 999,
+        extra: 'dropped',
+      },
+      resolvePicked,
+    ),
+    PICKED_WIRE,
   )
 })
 
@@ -495,16 +513,26 @@ async function withFreshLibrary(
   }
 }
 
+/**
+ * What the preload sends for a file the user picked: the path, and the size and modification time
+ * Chromium snapshotted when they picked it. Read off the file here, which is what the snapshot is
+ * for a file nobody has touched since.
+ */
+function pickedBody(localPath: string): WireUploadBody {
+  const info = statSync(localPath)
+  return { localPath, sizeBytes: info.size, lastModifiedMs: Math.trunc(info.mtimeMs) }
+}
+
 test('files.upload streams a picked file off disk without ever holding it in memory', async () => {
   // The arm every upload the UI can start actually takes. `localPath` reaches the main process
-  // only because the preload minted it (see protocol.ts); here it is supplied directly, which is
+  // only because the preload wrote it (see protocol.ts); here it is supplied directly, which is
   // the same thing the preload's substitution produces.
   const project = (await call('projects.create', [{ name: 'Picked' }])) as { id: string }
   const source = join(tmpdir(), `spm-dispatch-picked-${Date.now()}.stl`)
   const contents = 'solid picked\nendsolid picked\n'
   writeFileSync(source, contents)
 
-  const file = (await call('files.upload', [project.id, 'picked.stl', { localPath: source }])) as {
+  const file = (await call('files.upload', [project.id, 'picked.stl', pickedBody(source)])) as {
     id: string
     sizeBytes: number
     rawUrl: string
@@ -523,15 +551,80 @@ test('files.upload streams a picked file off disk without ever holding it in mem
 test('a picked path that no longer exists is NotFound, and a folder is Validation', async () => {
   const project = (await call('projects.create', [{ name: 'Gone' }])) as { id: string }
   const missing = join(tmpdir(), `spm-dispatch-missing-${Date.now()}.stl`)
+  const snapshot = { sizeBytes: 1, lastModifiedMs: 1 }
 
   assert.equal(
-    (await rejection(call('files.upload', [project.id, 'a.stl', { localPath: missing }]))).code,
+    (
+      await rejection(
+        call('files.upload', [project.id, 'a.stl', { localPath: missing, ...snapshot }]),
+      )
+    ).code,
     'NotFound',
   )
   assert.equal(
-    (await rejection(call('files.upload', [project.id, 'a.stl', { localPath: dir }]))).code,
+    (await rejection(call('files.upload', [project.id, 'a.stl', { localPath: dir, ...snapshot }])))
+      .code,
     'Validation',
   )
+  await call('projects.delete', [project.id, { deleteFiles: true }])
+})
+
+test('a file that changed after it was picked is refused, as it is in the browser', async () => {
+  /*
+   * Finding F. A `File` is a durable handle to a *path*: the renderer can hold one and redeem it
+   * later for whatever is at that path then, and deleting the preload's token map did not change
+   * that. Measured — pick, replace the bytes, upload the same `File`, and the *replacement* was
+   * streamed under the old name.
+   *
+   * Chromium refuses that same stale `File` in a browser with `NotReadableError`, because it
+   * snapshot-validates against the size and modification time from the pick. So the preload sends
+   * that snapshot and this is where it is checked, and the two shells now answer the same way.
+   * Either half of the snapshot catches an ordinary overwrite; both are asserted because a
+   * same-size edit is exactly the case a size check alone misses.
+   */
+  const project = (await call('projects.create', [{ name: 'Swapped' }])) as { id: string }
+  const source = join(tmpdir(), `spm-dispatch-swap-${Date.now()}.stl`)
+  writeFileSync(source, 'solid original endsolid original')
+  const snapshot = pickedBody(source) as {
+    localPath: string
+    sizeBytes: number
+    lastModifiedMs: number
+  }
+
+  // Longer contents: size and modification time both move.
+  writeFileSync(source, 'REPLACED AFTER THE USER PICKED IT, AND MUCH LONGER THAN BEFORE\n')
+  assert.equal(
+    (await rejection(call('files.upload', [project.id, 'swapped.stl', snapshot]))).code,
+    'Conflict',
+  )
+
+  // Same length, so only the modification time betrays it. The time is set explicitly rather
+  // than left to the clock: two writes a few microseconds apart can land in the same
+  // millisecond, and then this would assert nothing — caught when it passed once and failed the
+  // next run for a reason that had nothing to do with the code under test.
+  writeFileSync(source, 'solid replaced endsolid replaced')
+  utimesSync(source, new Date(), new Date(snapshot.lastModifiedMs + 5_000))
+  const sameLength = { ...snapshot, sizeBytes: statSync(source).size }
+  assert.equal(statSync(source).size, snapshot.sizeBytes, 'the probe needs an equal-length swap')
+  assert.notEqual(
+    Math.trunc(statSync(source).mtimeMs),
+    snapshot.lastModifiedMs,
+    'the probe needs a different modification time',
+  )
+  assert.equal(
+    (await rejection(call('files.upload', [project.id, 'swapped.stl', sameLength]))).code,
+    'Conflict',
+  )
+
+  assert.equal(existsSync(join(dir, 'Swapped', 'swapped.stl')), false, 'a stale file was written')
+
+  // And picking it again works, which is what the error message tells the user to do.
+  const file = (await call('files.upload', [project.id, 'swapped.stl', pickedBody(source)])) as {
+    sizeBytes: number
+  }
+  assert.equal(file.sizeBytes, statSync(source).size)
+
+  rmSync(source, { force: true })
   await call('projects.delete', [project.id, { deleteFiles: true }])
 })
 
@@ -550,30 +643,99 @@ test('the main process refuses a picked path it should never be given', async ()
   const project = (await call('projects.create', [{ name: 'Backstop' }])) as { id: string }
   const victim = join(dir, '.spm', 'app.db')
   assert.ok(existsSync(victim), 'the probe needs a real file inside .spm')
+  const drive = dir.slice(0, 1)
+  const withoutDrive = dir.slice(2)
+  const BS = String.fromCharCode(92)
 
-  for (const [label, path, code] of [
-    // The file the demonstrated exploit read.
+  /*
+   * Every row below except the last two is an alias for the same `app.db`. Five of them defeated
+   * the first version of this check, which compared `resolve()`d strings with `startsWith`:
+   * `.SPM` (NTFS is case-insensitive), the `\\?\` device prefix, and two UNC spellings of the
+   * local disk. `resolve()` case-folds nothing and normalises neither prefix, so the check now
+   * compares filesystem identity up the ancestor chain — see `isInside`.
+   *
+   * They are Windows-only spellings, so they are only exercised there. The dot-segment and
+   * doubled-separator rows run everywhere and are what `resolve()` alone already handled.
+   */
+  const aliases: [string, string, string][] = [
     ['the library database', victim, 'Forbidden'],
     ['the .spm directory itself', join(dir, '.spm'), 'Forbidden'],
     ['a preview inside .spm', join(dir, '.spm', 'previews', 'anything.png'), 'Forbidden'],
+    ['a dot segment', join(dir, '.spm', '.', 'app.db'), 'Forbidden'],
+    ['a dotdot segment', join(dir, 'elsewhere', '..', '.spm', 'app.db'), 'Forbidden'],
+    ['forward slashes', victim.split(BS).join('/'), 'Forbidden'],
     // A relative path would otherwise resolve against the main process's working directory,
     // which is not anywhere a picker can point.
     ['a relative path', 'package.json', 'Validation'],
     ['a bare file name', 'app.db', 'Validation'],
-  ] as [string, string, string][]) {
+  ]
+  if (process.platform === 'win32') {
+    aliases.push(
+      ['case-folded .SPM', join(dir, '.SPM', 'app.db'), 'Forbidden'],
+      ['the device-path prefix', `${BS}${BS}?${BS}${victim}`, 'Forbidden'],
+      [
+        'a UNC alias for the local disk',
+        `${BS}${BS}localhost${BS}${drive}$${withoutDrive}${BS}.spm${BS}app.db`,
+        'Forbidden',
+      ],
+      [
+        'a device-prefixed UNC alias',
+        `${BS}${BS}?${BS}UNC${BS}localhost${BS}${drive}$${withoutDrive}${BS}.spm${BS}app.db`,
+        'Forbidden',
+      ],
+    )
+  }
+
+  for (const [label, path, code] of aliases) {
+    // The real snapshot where the file exists, so only the containment check can be what refuses.
+    const snapshot = existsSync(path)
+      ? pickedBody(path)
+      : { localPath: path, sizeBytes: 1, lastModifiedMs: 1 }
     assert.equal(
-      (await rejection(call('files.upload', [project.id, 'stolen.txt', { localPath: path }]))).code,
+      (await rejection(call('files.upload', [project.id, 'stolen.txt', snapshot]))).code,
       code,
       label,
     )
     assert.equal(
-      (await rejection(call('importer.curaManagerZip', [{ localPath: path }]))).code,
+      (await rejection(call('importer.curaManagerZip', [snapshot]))).code,
       code,
       `${label}, through the importer`,
     )
   }
 
   assert.equal(existsSync(join(dir, 'Backstop', 'stolen.txt')), false, 'a refused file was written')
+  await call('projects.delete', [project.id, { deleteFiles: true }])
+})
+
+test('a hard link into .spm is the limit of what path containment can see', async () => {
+  /*
+   * Documented rather than hidden. A hard link is a second, equally real name for the same bytes,
+   * so walking up from it never passes through `.spm` and no path-based check can refuse it —
+   * `realpathSync` does not collapse a hard link either, because there is nothing to collapse.
+   * Catching it would mean comparing the file's own identity against every file in `.spm` on
+   * every upload.
+   *
+   * Left as it is because of the threat model this backstop serves: it is defence in depth behind
+   * the preload, against a *compromised renderer*, and a renderer has no filesystem access with
+   * which to create a hard link in the first place. If that ever stops being true, this test is
+   * the one that fails and says so.
+   */
+  const project = (await call('projects.create', [{ name: 'Linked' }])) as { id: string }
+  const link = join(dir, `hard-link-${Date.now()}.bin`)
+  try {
+    linkSync(join(dir, '.spm', 'app.db'), link)
+  } catch {
+    // Some filesystems refuse hard links; there is nothing to assert then.
+    await call('projects.delete', [project.id, { deleteFiles: true }])
+    return
+  }
+
+  const copied = (await call('files.upload', [project.id, 'linked.bin', pickedBody(link)])) as {
+    sizeBytes: number
+  }
+  assert.equal(copied.sizeBytes, statSync(join(dir, '.spm', 'app.db')).size)
+
+  rmSync(link, { force: true })
   await call('projects.delete', [project.id, { deleteFiles: true }])
 })
 
@@ -585,9 +747,10 @@ test('importer.curaManagerZip reads a picked archive in place, without staging a
   ])
 
   await withFreshLibrary(async (session, freshDir) => {
-    const result = (await dispatch['importer.curaManagerZip'](session, [
-      { localPath: zipPath },
-    ])) as { projectsExtracted: number; strippedRoot: string | null }
+    const result = (await dispatch['importer.curaManagerZip'](session, [pickedBody(zipPath)])) as {
+      projectsExtracted: number
+      strippedRoot: string | null
+    }
     assert.equal(result.projectsExtracted, 1)
     assert.equal(result.strippedRoot, 'Picked Lib')
     assert.ok(existsSync(join(freshDir, 'Widget', 'part.stl')))

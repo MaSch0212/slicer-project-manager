@@ -70,14 +70,33 @@ export type IpcResult = IpcSuccess | IpcFailure
  * which the file could be swapped — both measured. Resolving inside the `invoke` that uses the
  * path removes the map and the token lifetime outright, rather than bounding them.
  *
- * A window between naming the file and opening it still exists and cannot be closed by this
- * design: the preload resolves the path and the main process opens it a moment later. What
- * changed is that the renderer can no longer *hold it open* — it is the duration of one `invoke`
- * rather than the lifetime of the process — and that nothing is handed to the main world it could
- * store, replay or enumerate. Closing it entirely would mean opening a file descriptor in the
- * preload and passing that, which a sandboxed preload cannot do.
+ * **The window between picking a file and uploading it is the renderer's, not one `invoke`'s**,
+ * and an earlier version of this comment claimed otherwise. A `File` is a durable handle to a
+ * *path*: the renderer can hold one for as long as it likes and redeem it later for whatever is
+ * at that path then. Deleting the token map removed the map, not that property. Measured — pick a
+ * file, replace the bytes at its path, then upload the same `File`, and the *replacement* was
+ * streamed: 63 bytes of new contents under the old name.
+ *
+ * Measured in the same run, and the reason this is now checked rather than described: the browser
+ * arm **refuses** that identical stale `File` with `NotReadableError`. Chromium snapshot-validates
+ * a `File` against the size and modification time it had when it was picked, so the two shells
+ * were giving different answers to the same user action and the desktop one was the permissive
+ * answer. So the preload sends the snapshot it can see — `File.size` and `File.lastModified`,
+ * which do **not** move when the file does (measured: 32 bytes and the same millisecond before
+ * and after the swap) — and `sizeOfPickedFile` in the main process refuses a mismatch with
+ * `Conflict`.
+ *
+ * The numbers come from the preload and never from the main world, for the same reason the path
+ * does: a renderer that could supply them could make them agree with whatever it had swapped in.
+ *
+ * What that check is and is not: it is exactly what Chromium does, so the two shells now agree.
+ * It is not a guarantee that the bytes are the ones the user saw — a writer that preserves size
+ * and modification time defeats it, and the irreducible gap between the `stat` and the `open`
+ * remains. Closing that would mean holding a file descriptor from the moment of the pick, which a
+ * sandboxed preload cannot do.
  */
-export type WireUploadBody = { localPath: string } | { bytes: Uint8Array }
+export type WireUploadBody =
+  { localPath: string; sizeBytes: number; lastModifiedMs: number } | { bytes: Uint8Array }
 
 /**
  * The key the renderer puts the picked `File` under. Declared here and re-declared in

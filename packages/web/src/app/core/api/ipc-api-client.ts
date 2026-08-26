@@ -144,9 +144,17 @@ export class IpcApiClient implements ApiClient {
    * buffer instead of three copies of itself in memory.
    *
    * The `File` and never a path: a path this world could write would let a compromised renderer
-   * have the main process open any file the user can read (constraint 4). Nothing is held between
-   * the two calls either — `canStreamFromDisk` answers a boolean and forgets, and the path is
-   * resolved inside the `invoke` that uses it.
+   * have the main process open any file the user can read (constraint 4). The *preload* holds
+   * nothing between the two calls — `canStreamFromDisk` answers a boolean and forgets, and the
+   * path is resolved inside the `invoke` that uses it.
+   *
+   * This world does hold something, and an earlier version of this comment glossed over it: the
+   * `File` handed to `upload` is a durable handle to a path, and the caller may have been holding
+   * it since the user picked it. Measured — replace the bytes at that path and the upload streams
+   * the replacement. So the preload also sends the size and modification time Chromium recorded
+   * at the pick, and the main process refuses a mismatch with `Conflict`. That is exactly what
+   * Chromium itself does to a stale `File` in a browser (`NotReadableError`), which is the point:
+   * without it the two shells answered the same user action differently.
    *
    * The `try` is the point of the method existing rather than the call being inline. `toBytes`
    * can reject — `RangeError` on a buffer too large for the renderer, `DOMException:

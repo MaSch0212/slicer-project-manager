@@ -11,8 +11,16 @@ import { FILE_REF_KEY, LOCAL_PATH_KEY } from './protocol.ts'
  * `test/dispatch.test.ts` asserts the output directly, under plain Node.
  */
 
-/** `webUtils.getPathForFile`, narrowed: the path behind a picked `File`, or `''` for anything else. */
-export type PathResolver = (file: unknown) => string
+/**
+ * What the preload can say about a picked `File`: where it is, and the size and modification time
+ * it had when the user picked it. The last two are the snapshot the main process checks the file
+ * against before reading it — see `WireUploadBody`. They come from here, in the isolated world,
+ * and never from the main world, which could otherwise make them agree with a swapped file.
+ */
+export type PickedFile = { localPath: string; sizeBytes: number; lastModifiedMs: number }
+
+/** Describes a picked `File`, or `null` for a `Blob`, a script-built `File`, or anything else. */
+export type PathResolver = (file: unknown) => PickedFile | null
 
 /**
  * How deep `sanitiseArg` will walk. Nothing legitimate comes close — the deepest argument any
@@ -53,10 +61,20 @@ export function sanitiseArg(value: unknown, pathOf: PathResolver, depth = 1): un
 
   const record = value as Record<string, unknown>
   if (Object.hasOwn(record, FILE_REF_KEY)) {
-    const localPath = pathOf(record[FILE_REF_KEY])
+    const picked = pathOf(record[FILE_REF_KEY])
     // No file behind it: the object goes on with neither arm and the main process's
     // `uploadBodySchema` refuses it, rather than something being invented here.
-    return localPath ? { [LOCAL_PATH_KEY]: localPath } : {}
+    //
+    // A *fresh* object either way, never a merge with `record`: whatever else the main world put
+    // alongside the file — a size it would like the main process to believe, say — is discarded
+    // rather than carried through.
+    return picked === null
+      ? {}
+      : {
+          [LOCAL_PATH_KEY]: picked.localPath,
+          sizeBytes: picked.sizeBytes,
+          lastModifiedMs: picked.lastModifiedMs,
+        }
   }
 
   const out: Record<string, unknown> = {}

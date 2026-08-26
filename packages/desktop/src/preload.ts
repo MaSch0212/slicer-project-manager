@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import { BRIDGE_KEY, INVOKE_CHANNEL, type IpcResult, type SpmBridge } from './protocol.ts'
-import { sanitiseArgs } from './sanitise-args.ts'
+import { sanitiseArgs, type PickedFile } from './sanitise-args.ts'
 
 /**
  * The renderer's only door into the main process.
@@ -29,7 +29,8 @@ import { sanitiseArgs } from './sanitise-args.ts'
  */
 
 /**
- * The path behind a picked `File`, or `''` for anything else.
+ * Where a picked `File` is, and what it looked like when it was picked — or `null` for anything
+ * that is not a file on disk.
  *
  * Measured in Electron 44.0.0, `sandbox: true`, `contextIsolation: true`: `getPathForFile`
  * returns the absolute path for a `File` that came from an `<input type="file">`, the empty
@@ -37,21 +38,34 @@ import { sanitiseArgs } from './sanitise-args.ts'
  * `Blob` at all — including a duck-typed `{ name, size, type, path }`. The throw is caught here
  * rather than left to the caller: a preload that raises into the main world on a hostile argument
  * makes every caller's error handling load-bearing for this one's safety.
+ *
+ * `size` and `lastModified` are read here rather than in the renderer because the main process
+ * checks the file against them before reading it (see `WireUploadBody`), and a number the main
+ * world supplied could be made to agree with a file it had swapped. They are Chromium's snapshot
+ * from the moment of the pick and do not move when the file does — measured.
  */
-function pathOf(file: unknown): string {
+function pickedFileOf(file: unknown): PickedFile | null {
+  let localPath: string
   try {
-    return webUtils.getPathForFile(file as File) || ''
+    localPath = webUtils.getPathForFile(file as File) || ''
   } catch {
-    return ''
+    return null
+  }
+  if (!localPath) return null
+  const picked = file as File
+  return {
+    localPath,
+    sizeBytes: picked.size,
+    lastModifiedMs: picked.lastModified,
   }
 }
 
 const bridge: SpmBridge = {
-  canStreamFromDisk: (file: unknown): boolean => pathOf(file) !== '',
+  canStreamFromDisk: (file: unknown): boolean => pickedFileOf(file) !== null,
   invoke: (path: string, args: unknown[]): Promise<IpcResult> =>
     ipcRenderer.invoke(INVOKE_CHANNEL, {
       path,
-      args: sanitiseArgs(args, pathOf),
+      args: sanitiseArgs(args, pickedFileOf),
     }) as Promise<IpcResult>,
 }
 

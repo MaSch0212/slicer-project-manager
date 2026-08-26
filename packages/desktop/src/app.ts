@@ -151,12 +151,20 @@ export function defaultRendererDir(): string {
  * a success status and the wrong content type is the worst of the three states. Task 3 replaces
  * the 404 with real bytes.
  *
- * It runs **after** `resolve`, and that ordering is the whole of the check. Written first against
- * the decoded-but-unresolved path, it had three live bypasses, all answering 200 with the SPA:
+ * It runs **after** `resolve`, and that ordering is what makes it proof against the *separator*
+ * encodings — the class the containment check above exists for. Written first against the
+ * decoded-but-unresolved path it had three live bypasses, all answering 200 with the SPA:
  * `x/..%2f_spm/…` presented `x` as its first segment and `resolve` then collapsed it back onto
- * `_spm` — the very encoded-separator escape the paragraph above names — and `_spm.` and `_spm%20`
- * are NTFS aliases for the same directory, which the case-folding reasoning had missed. Asking
- * `relative()` what the resolved path actually is cannot be outflanked by an encoding.
+ * `_spm`, and `_spm.` and `_spm%20` are NTFS aliases for the same directory, which the
+ * case-folding reasoning had missed.
+ *
+ * Not proof of completeness, which is what an earlier version of this sentence claimed: `_spm%00`
+ * and `_spm%00x` went straight past it and answered 200, because Win32 path APIs truncate at a
+ * NUL and the trim did not. Any path containing a NUL is now refused outright, one line below —
+ * a smaller and more defensible rule than modelling that truncation, and one `fs` would have
+ * enforced anyway by throwing. What remains is a list of normalisations, each with a measurement
+ * behind it, not a proof; `shell.spec.ts` carries every alias tried, including the seven that
+ * correctly do *not* name the reserved directory.
  */
 export function resolveRendererFile(rendererDir: string, pathname: string): string | null {
   const root = resolve(rendererDir)
@@ -169,6 +177,10 @@ export function resolveRendererFile(rendererDir: string, pathname: string): stri
     // the main process logs an unhandled rejection. A malformed path is a 404 like any other.
     return null
   }
+  // A NUL is never part of a path we serve. Node refuses one before the filesystem sees it, and
+  // Win32 truncates at it — which is how `_spm%00` named the reserved directory while looking
+  // like a different segment to a trailing-character trim.
+  if (decoded.includes('\0')) return null
   const candidate = resolve(join(root, decoded))
   if (candidate !== root && !candidate.startsWith(root + sep)) return null
   if (isReservedPath(root, candidate)) return null
