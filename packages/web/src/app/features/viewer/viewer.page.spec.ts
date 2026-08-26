@@ -865,6 +865,29 @@ describe('ViewerPage', () => {
     expect(renderer.animationLoop).toBeNull()
   })
 
+  it('does not fetch another model once the context is gone for good', async () => {
+    const made: FakeRenderer[] = []
+    const { harness, host, page, fetch } = await setup({ create: recording(made) })
+    host.querySelector('canvas')?.dispatchEvent(new Event('webglcontextlost'))
+    harness.detectChanges()
+    expect(fetch.mock.calls.map(([url]) => url)).toEqual(['/api/files/f1/raw'])
+
+    // Reachable only by editing the URL — nothing in the app links viewer→viewer — but the
+    // router reuses the instance, so the effect fires and would happily download and parse a
+    // model into a renderer whose context is dead. That is a user's bandwidth and a tab's memory
+    // spent on something nobody can see.
+    const next = await harness.navigateByUrl('/projects/p1/view/f2', ViewerPage)
+    await settle()
+
+    expect(next).toBe(page)
+    expect(next.fileId()).toBe('f2')
+    expect(fetch.mock.calls.map(([url]) => url)).toEqual(['/api/files/f1/raw'])
+    // And the message is still the true one. Clearing it to let the load through would trade a
+    // correct error for a blank canvas, because nothing rebuilds the renderer on an input change.
+    expect(next.initError()).toBe(en.viewer.noWebgl)
+    expect(host.querySelector('[role="alert"]')?.textContent).toContain('WebGL')
+  })
+
   it('swaps the model when the router reuses it for another file', async () => {
     const spies = spyOnDisposals()
     const made: FakeRenderer[] = []
@@ -1999,6 +2022,52 @@ describe('ViewerPage', () => {
       return { harness, host, observer, camera, opened, renderer: rendererOf(host, made) }
     }
 
+    /**
+     * The same drag, caught while it is still coasting.
+     *
+     * `orbited()` above settles the camera so that its precondition is deterministic. That is
+     * the right call for what it tests and the wrong one for what this tests: settling is
+     * exactly what drains OrbitControls' damping residue, so a suite built only on `orbited()`
+     * can never see a reset that has residue to contend with — which is the reset a real user
+     * performs, since damping coasts for about a second after every drag.
+     *
+     * Eight ticks rather than five hundred: enough that the camera has visibly moved, few enough
+     * that about two thirds of the rotation delta is still unspent. The test directly below pins
+     * that "still unspent" property, so putting a settle back in here reddens something.
+     */
+    async function orbitedMidCoast() {
+      const made: FakeRenderer[] = []
+      const { harness, host, observer, page } = await setup({ create: recording(made) })
+      observer?.emit(800, 600)
+      const renderer = rendererOf(host, made)
+      const { camera } = drawn(renderer)
+      const opened = camera.position.clone()
+
+      const canvas = host.querySelector('canvas') as HTMLCanvasElement
+      canvas.setPointerCapture = () => {}
+      canvas.dispatchEvent(new Event('pointerdown'))
+      controlsOf(page).rotateLeft(1.1)
+      controlsOf(page).dollyOut(0.5)
+      for (let index = 0; index < 8; index++) renderer.tick()
+      harness.detectChanges()
+
+      expect(camera.position.distanceTo(opened)).toBeGreaterThan(1)
+      const viewport = host.querySelector('.spm-viewport') as HTMLElement
+      return { harness, host, observer, camera, opened, renderer, viewport }
+    }
+
+    it('leaves the drag coasting, which is the whole point of the mid-coast helper', async () => {
+      // A control on the helper rather than on the component. If a future edit adds a settle to
+      // `orbitedMidCoast()` — the natural thing to do when a test built on it looks flaky — the
+      // two resets below quietly stop testing anything and this reddens instead.
+      const { camera, renderer } = await orbitedMidCoast()
+
+      const before = camera.position.clone()
+      renderer.tick()
+
+      expect(camera.position.distanceTo(before)).toBeGreaterThan(1e-3)
+    })
+
     it('offers the control only once there is a view to reset', async () => {
       const { host } = await setup({
         files: [fileDto({ name: 'sliced.gcode', kind: 'other' })],
@@ -2016,6 +2085,42 @@ describe('ViewerPage', () => {
       const { harness, host, camera, opened, renderer } = await orbited()
 
       resetButton(host)!.click()
+      harness.detectChanges()
+      settleCamera(renderer)
+
+      expect(camera.position.distanceTo(opened)).toBeLessThan(1e-6)
+    })
+
+    it('puts the camera back while the drag is still coasting', async () => {
+      // The case the test above structurally cannot reach, and the one that shipped broken.
+      //
+      // `orbited()` settles the camera before it asserts, so that its "the camera really moved"
+      // precondition is deterministic — and settling is precisely what drains OrbitControls'
+      // damping residue. So the only reset the suite could ever see was one with nothing left to
+      // coast. Measured in a browser, a reset pressed mid-coast used to leave about half the
+      // drag in place, permanently, because the animation loop went on spending the residue on
+      // top of the reset camera. Damping runs for about a second after every drag, so that is
+      // the normal case rather than a corner.
+      //
+      // The precondition that made the other assertion deterministic was the same one that
+      // removed the bug. This variant therefore does the opposite: it ticks just enough for the
+      // camera to have visibly moved and leaves the rest of the residue alive.
+      const { harness, host, camera, opened, renderer } = await orbitedMidCoast()
+
+      resetButton(host)!.click()
+      harness.detectChanges()
+      // Long enough that any surviving residue would have been spent by now.
+      settleCamera(renderer)
+
+      expect(camera.position.distanceTo(opened)).toBeLessThan(1e-6)
+    })
+
+    it('puts the camera back while the drag is still coasting, from the keyboard', async () => {
+      // `0` goes through the same `resetView`, but it is the path a keyboard user has and the
+      // one with no button to press twice if the first press half-works.
+      const { harness, camera, opened, renderer, viewport } = await orbitedMidCoast()
+
+      viewport.dispatchEvent(new KeyboardEvent('keydown', { key: '0' }))
       harness.detectChanges()
       settleCamera(renderer)
 

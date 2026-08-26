@@ -1,4 +1,7 @@
 import { expect, test, type Locator, type Page } from '@playwright/test'
+import { mkdtempSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { binaryStlCube, dropModelIntoLibrary, paddedObjCube, signIn } from './fixtures'
 
 /**
@@ -168,6 +171,61 @@ async function readFrame(page: Page, viewport: Locator): Promise<Frame> {
   )
 }
 
+/**
+ * Share of pixels that differ between two shots of the stage.
+ *
+ * A whole-frame comparison rather than anything derived, because what it has to detect is the
+ * camera sitting somewhere it should not: the model's tones, its area and the stage colour are
+ * all unchanged by a rotation, so every summary in `Frame` is blind to it. Measured idle against
+ * idle this is 0.00000 — the renderer is bit-deterministic here — which is what makes a
+ * threshold near zero meaningful rather than optimistic.
+ *
+ * The 2/255 tolerance per channel is not needed today and costs nothing; it keeps the test from
+ * turning into a bit-exactness assertion about SwiftShader, which is not what it is for.
+ */
+async function changedShare(page: Page, before: Buffer, after: Buffer): Promise<number> {
+  const urls = [before, after].map((png) => `data:image/png;base64,${png.toString('base64')}`)
+  return page.evaluate(async ([one, two]: string[]) => {
+    const decode = async (url: string): Promise<ImageData> => {
+      const image = new Image()
+      image.src = url
+      await image.decode()
+      const canvas = document.createElement('canvas')
+      canvas.width = image.naturalWidth
+      canvas.height = image.naturalHeight
+      const context = canvas.getContext('2d')
+      if (!context) throw new Error('no 2d context to decode the screenshot with')
+      context.drawImage(image, 0, 0)
+      return context.getImageData(0, 0, canvas.width, canvas.height)
+    }
+    const a = await decode(one!)
+    const b = await decode(two!)
+    let changed = 0
+    for (let i = 0; i < a.data.length; i += 4) {
+      const off =
+        Math.abs(a.data[i]! - b.data[i]!) > 2 ||
+        Math.abs(a.data[i + 1]! - b.data[i + 1]!) > 2 ||
+        Math.abs(a.data[i + 2]! - b.data[i + 2]!) > 2
+      if (off) changed++
+    }
+    return changed / (a.width * a.height)
+  }, urls)
+}
+
+/** Drags across the stage the way a user spins a model, and lets go. */
+async function dragAcross(page: Page, stage: Locator): Promise<void> {
+  const box = await stage.boundingBox()
+  if (!box) throw new Error('the stage has no box to drag across')
+  const x = box.x + box.width / 2
+  const y = box.y + box.height / 2
+  await page.mouse.move(x, y)
+  await page.mouse.down()
+  // Many small steps rather than one jump: OrbitControls integrates pointermove deltas, and a
+  // single move is one delta, which damping then spends in a couple of frames.
+  for (let step = 1; step <= 40; step++) await page.mouse.move(x + step * 4, y + step * 1.5)
+  await page.mouse.up()
+}
+
 /** The model's lit face and its dimmest one, which is what the contrast assertions read. */
 function litAndShadowed(frame: Frame): { lit: Rgb; shadowed: Rgb } {
   const lit = frame.faceTones[0]
@@ -207,7 +265,8 @@ async function readPanelColours(viewport: Locator): Promise<{ stage: Rgb; border
 
 /** Signs in, makes sure the fixtures are indexed, and lands on the project's page. */
 async function openProject(page: Page): Promise<void> {
-  await signIn(page)
+  await page.goto('/projects')
+  await expect(page.getByRole('heading', { name: 'Projects' })).toBeVisible()
   await page.getByRole('button', { name: 'Rescan library' }).click()
   await page.getByRole('heading', { name: PROJECT }).click()
   await expect(page.getByRole('heading', { name: PROJECT, level: 1 })).toBeVisible()
@@ -223,9 +282,36 @@ async function openInViewer(page: Page, fileName: string): Promise<Locator> {
   return stage
 }
 
-test.beforeAll(() => {
+/**
+ * One sign-in for this whole file, replayed into each test's context as a cookie.
+ *
+ * Not a micro-optimisation. `/api/auth` is rate-limited to ten attempts a minute per client
+ * address (`AUTH_RATE_LIMIT` in `packages/server/src/routes/auth.ts`), the whole suite runs
+ * serially against one server from one address, and it takes about thirty seconds — so the
+ * per-test sign-ins are all inside one window. At ten specs the suite sat exactly on the limit;
+ * adding the reset test made the eleventh login the one that got throttled, and a throttled login
+ * is indistinguishable from a wrong password on the page ("Username or password is not correct"),
+ * so it surfaced as a baffling auth failure in an unrelated test.
+ *
+ * Reusing a session is also simply what a browser does, and it takes this file from five logins
+ * to one, leaving the suite headroom instead of a tripwire at exactly ten.
+ */
+const AUTH_STATE = join(mkdtempSync(join(tmpdir(), 'spm-e2e-auth-')), 'viewer.json')
+test.use({ storageState: AUTH_STATE })
+
+test.beforeAll(async ({ browser }) => {
   dropModelIntoLibrary(PROJECT, MODEL, binaryStlCube())
   dropModelIntoLibrary(PROJECT, OVERSIZED, paddedObjCube(OVERSIZED_BYTES))
+
+  // A context of its own with an explicitly empty storage state — this is the one place that has
+  // to start signed out. An empty state rather than no option at all: the `browser` fixture
+  // applies the `test.use` default to `newContext()` too, so omitting it makes this line try to
+  // read the very file it is about to write.
+  const context = await browser.newContext({ storageState: { cookies: [], origins: [] } })
+  const page = await context.newPage()
+  await signIn(page)
+  await context.storageState({ path: AUTH_STATE })
+  await context.close()
 })
 
 /**
@@ -345,6 +431,50 @@ test('the stage, its border and the model read the same in both themes', async (
  * panel — and the unit suite cannot see any of this, because jsdom neither applies `display:
  * none` nor runs a ResizeObserver.
  */
+/**
+ * Reset put the model back, pressed the way a user presses it — straight after letting go.
+ *
+ * `enableDamping` keeps the view coasting for about a second after every drag, so "immediately
+ * after a drag" is not an edge case, it is what pressing the button looks like. It used to leave
+ * about half the drag in place permanently: `frame()` repositioned the camera, and the animation
+ * loop then went on spending OrbitControls' surviving `_sphericalDelta` on top of the reset. The
+ * fix drains the residue first; see `resetView`.
+ *
+ * The unit suite could not have found this and still cannot reach it convincingly. Its drag
+ * helper settled the camera to make "the camera moved" deterministic, and settling is exactly
+ * what drains the residue — so the only reset it could see was one with nothing left to coast.
+ * There is now a mid-coast variant there too, but this is the one that presses a real button
+ * after a real pointer drag and looks at pixels.
+ */
+test('reset puts the model back when it is pressed while the drag is still coasting', async ({
+  page,
+}) => {
+  await openProject(page)
+  const stage = await openInViewer(page, MODEL)
+  const opening = await stage.screenshot()
+
+  // The renderer is deterministic frame to frame, so anything above zero below is the camera.
+  expect(await changedShare(page, opening, await stage.screenshot())).toBe(0)
+
+  await dragAcross(page, stage)
+  // No settle: the button is pressed with the coast still running, which is the whole point.
+  await page.getByRole('button', { name: 'Reset view' }).click()
+
+  // Long enough for any surviving residue to have been spent — damping is ~1 s, and a wrong
+  // reset is permanent rather than slow, so this cannot pass by being read too early.
+  await page.waitForTimeout(2_000)
+  const afterReset = await changedShare(page, opening, await stage.screenshot())
+
+  // Measured: 0.00000 with the drain, 0.05929 without it, against a 0.11907 drag. The threshold
+  // is an order of magnitude below the defect and well above a deterministic zero.
+  expect(afterReset).toBeLessThan(0.005)
+
+  // And the drag really did move the view, so the assertion above is not passing on a no-op.
+  await dragAcross(page, stage)
+  await page.waitForTimeout(1_500)
+  expect(await changedShare(page, opening, await stage.screenshot())).toBeGreaterThan(0.02)
+})
+
 test('the stage comes back at full size after the user presses through the size gate', async ({
   page,
 }) => {

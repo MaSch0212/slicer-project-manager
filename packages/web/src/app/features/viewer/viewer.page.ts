@@ -342,8 +342,38 @@ export type ModelFormat = {
  * a tenth of the line that cost implies — small enough to be near the decision, large enough
  * that fixed overheads are not the whole of it. The rule is checked the only way that matters:
  * **no file in the library that this gate lets through exceeds the budget**, verified per file
- * against the measured multiplier for its exact shape. The worst that gets through is a
- * 27.46 MB ASCII STL at 254 MB, 99 % of budget.
+ * against the measured multiplier for its exact shape.
+ *
+ * "The worst that gets through" is two different files depending on which question is asked, and
+ * conflating them is how this paragraph came to contradict the `.stl` row for two rounds:
+ *
+ * - **Priced at the costs above**, it is simply the largest file under the dearest line:
+ *   `IMG_1585…NS.stl`, 35.94 MB, at 6.75 = **243 MB, 95 % of budget**.
+ * - **Measured**, it is not that file at all — it is plain binary and actually costs 92 MB
+ *   (2.56x). The dearest real admission is `EiffelTower.STL`, 35.30 MB of ASCII, at **161 MB,
+ *   63 % of budget** in Chromium (218 MB in the Node harness the `.stl` row quotes).
+ *
+ * Either way nothing admitted exceeds 256 MB, which is the property being claimed. The gap
+ * between 95 % and 63 % is the price of `.stl` being one cost over three parser paths, and the
+ * `.stl` row explains why that trade is deliberate.
+ *
+ * ## How to read the rows below
+ *
+ * These rows keep their own history on purpose — three of the four costs this table has shipped
+ * were wrong, and recording *why* each moved is what stops the next person re-deriving a number
+ * that was already measured and rejected. The hazard is that a stale figure sitting among
+ * deliberately-preserved stale figures is invisible — which is exactly how a "27.46 MB ASCII STL at
+ * 254 MB, 99 % of budget" claim stood at the end of this docblock for two rounds after the 9.25
+ * multiplier it was computed from had been retired.
+ *
+ * So there is one convention, and it is positional rather than prose:
+ *
+ * - **Every number outside a `## Superseded` heading is current.** It describes what ships.
+ * - **Every number under a `## Superseded` heading is history.** It is kept for its reasoning
+ *   and must never be quoted as a fact about the gate. Each such block names what replaced it.
+ *
+ * `grep '## Superseded'` lists every retired figure in the file. If a number is hard to place,
+ * that is a defect in this convention, not in the reader.
  */
 const FORMATS: Readonly<Record<string, ModelFormat>> = {
   '.stl': {
@@ -363,21 +393,19 @@ const FORMATS: Readonly<Record<string, ModelFormat>> = {
     //                              decoded string, and `vertices`/`normals` as plain number[]
     //                              at 8 bytes a float before copying to Float32BufferAttribute
     //
-    // So the ASCII path sets the cost. Which *number* off that path is the question, and the
-    // answer is not its worst ratio anywhere: **a multiplier only governs near the line**. Every
-    // loader has a fixed cost of a few megabytes, which is the whole of why a small file's ratio
-    // is bad — `CubeGears2-3.stl` measures 9.25x at 4.32 MB and peaks at 40 MB, a sixth of the
-    // budget, and no constant taken from it describes a 35 MB file. The nine ASCII STLs at or
-    // above 27 MB, which are the ones that can actually approach the budget, all measure 6.73x
-    // or less. 6.75 covers them with a little over.
+    // So the ASCII path sets the cost, and 6.75 covers the nine ASCII STLs at or above 27 MB —
+    // the ones that can actually approach the budget — which all measure 6.73x or less.
     //
-    // Verified rather than argued: priced at its own measured peak, no file this line lets
-    // through exceeds the budget, and the worst that gets through is `EiffelTower.STL` at
-    // 35.30 MB → 218 MB, 85 %.
+    // Verified rather than argued: no file this line lets through exceeds the budget. The dearest
+    // admission measured is `EiffelTower.STL`, 35.30 MB of ASCII, at **161 MB in Chromium** and
+    // 218 MB in the Node harness — 63 % and 85 % of budget. Priced at 6.75 rather than measured,
+    // the dearest admission is the largest file under the line instead, `IMG_1585…NS.stl` at
+    // 35.94 MB → 243 MB, 95 %; that one is plain binary and really costs 92 MB (2.56x). The
+    // docblock above sets out why those are two different questions.
     //
-    // Re-measured in Chromium as peak RSS, this is the one row that comes back *cheaper* than it
-    // ships: `Waving_Groot_15.5cm.stl` (binary, COLOR=) 3.21x — identical to the Node harness to
-    // the megabyte, which is what validates the Chromium method for the other two rows — and the
+    // Chromium as peak RSS makes this the one row that comes back *cheaper* than it ships:
+    // `Waving_Groot_15.5cm.stl` (binary, COLOR=) 3.21x — identical to the Node harness to the
+    // megabyte, which is what validates the Chromium method for the other two rows — and the
     // ASCII path 4.56x on `EiffelTower.STL`, 4.72x on `iron-man-base-2.stl`, 5.26x on
     // `Octopus_full_v5.5.stl`. V8 in Chromium handles `parseASCII`'s intermediate number[]s better
     // than Node's allocator did.
@@ -387,6 +415,16 @@ const FORMATS: Readonly<Record<string, ModelFormat>> = {
     // one. Tighten on new evidence, loosen only when the loosening is itself the goal. Nothing
     // here wants loosening — this format is 97 % of the library, 6.75 already asks about only 25
     // of its 1,311 files, and the cost of asking is a click.
+    //
+    // ## Superseded — replaced by 6.75, kept for the reasoning
+    //
+    // **9.25x**, the worst ASCII ratio measured anywhere in the library, was the candidate cost
+    // until ruling B2-14 retired it. The argument against it is the one worth keeping: **a
+    // multiplier only governs near the line**. Every loader has a fixed cost of a few megabytes,
+    // which is the whole of why a small file's ratio is bad — `CubeGears2-3.stl` measures 9.25x
+    // at 4.32 MB and peaks at 40 MB, a sixth of the budget, and no constant taken from it
+    // describes a 35 MB file. That is where the "at or above a tenth of the line" rule in the
+    // docblock came from.
     //
     // Pricing all three paths at the dearest still prompts on cheap files — of the 25 STLs
     // gated, 16 are plain binary and would have cost about 104 MB. That is the right way to be
@@ -399,36 +437,36 @@ const FORMATS: Readonly<Record<string, ModelFormat>> = {
     // OBJ has no binary form, so the whole file is decoded to a JS string before the loader sees
     // it, and a large OBJ is large precisely because it is text.
     parse: (bytes) => new OBJLoader().parse(new TextDecoder().decode(bytes)),
-    // By far the dearest per byte after 3MF, and round 0 priced it at 4.5 by counting only the
-    // copies that are easy to see. `OBJLoader.parse` also does `text.replace(/\r\n/g, '\n')`
+    // By far the dearest per byte after 3MF. `OBJLoader.parse` does `text.replace(/\r\n/g, '\n')`
     // (a second full-size string while the first is live), `text.split('\n')` (millions of
     // slices plus their backing array, each pinning the source string for the whole parse), and
     // `state.colors.push(undefined, undefined, undefined)` per vertex whether the file has
     // colours or not.
     //
-    // Measured: 13.19x on `Baby_Yoda.obj` (137.79 MB → 1,817 MB — it needs more V8 old space by
-    // itself than a phone has), 16.91x at 5.53 MB, 24.61x at 3.83 MB. 24.61 is the worst at or
-    // above a tenth of the line it implies. The library's other eleven OBJs are all under
-    // 5.6 MB and peak at 93 MB or less, so this costs no extra prompt at all.
+    // **28.93 is Chromium peak RSS on `UBO.obj`**, 3.83 MB → 110.9 MB, the worst of three runs
+    // (110.0 / 110.1 / 110.9, so 28.70 / 28.73 / 28.93). The dearest run rather than their mean,
+    // for the reason the docblock gives: a sampled peak can only under-report, so the highest
+    // sample of a set is the closest to the truth. `HannosRing.obj`, 5.53 MB, measures 19.57x.
+    // UBO governs, being the worst at or above a tenth of the line it implies.
     //
-    // **Re-measured in Chromium as peak RSS, and the Node figure was ~17 % low**, so this row now
-    // carries the browser's number. Both files at or above a tenth of the line, Node against
-    // Chromium: `UBO.obj` 3.83 MB, 24.61x → **28.93x** (110.0 / 110.1 / 110.9 MB over three runs,
-    // so 28.70 / 28.73 / 28.93); `HannosRing.obj` 5.53 MB, 16.91x → 19.57x. Same direction on
-    // both, and UBO governs, being the worst at or above a tenth of the line it implies.
+    // `Baby_Yoda.obj` was not measured in Chromium. At ~1.8 GB it is as likely to kill the
+    // renderer as to report; its Node multiplier of 13.19x is less than half UBO's, so it cannot
+    // govern whatever it would have said; and the gate refuses it by a factor of fifteen either
+    // way. That is the one file in this table whose Chromium cost is unknown, and it is unknown
+    // on purpose.
     //
-    // The dearest of the three runs, not their mean, for the reason the docblock gives: a sampled
-    // peak can only under-report, so the highest sample of a set is the closest to the truth.
+    // The line this puts at 8.85 MB changes nothing in the library: the next OBJ below
+    // `Baby_Yoda.obj` is `HannosRing.obj` at 5.53 MB, so the same one file of twelve is gated at
+    // any line between them. What the tightening buys is a 9 MB OBJ dropped in tomorrow being
+    // asked about rather than opening silently at ~260 MB.
     //
-    // `Baby_Yoda.obj` was not re-measured. At ~1.8 GB it is as likely to kill the renderer as to
-    // report; its Node multiplier of 13.19x is less than half UBO's, so it cannot govern whatever
-    // it would have said; and the gate refuses it by a factor of fifteen either way. That is the
-    // one file in this table whose Chromium cost is unknown, and it is unknown on purpose.
+    // ## Superseded — replaced by 28.93, kept for the reasoning
     //
-    // Adopting 28.93 moves the line from 10.41 MB to 8.85 MB and changes nothing in the library:
-    // the next OBJ below `Baby_Yoda.obj` is `HannosRing.obj` at 5.53 MB, so the same one file of
-    // twelve is gated either way. What it buys is a 9 MB OBJ dropped in tomorrow being asked
-    // about rather than opening silently at ~260 MB.
+    // **4.5x**, round 0's figure, counted only the copies that are easy to see and missed the
+    // three allocations listed above. **24.6x** was the Node harness's answer: 24.61x on
+    // `UBO.obj`, 16.91x on `HannosRing.obj`, 13.19x on `Baby_Yoda.obj` (137.79 MB → 1,817 MB —
+    // it needs more V8 old space by itself than a phone has). Chromium came back ~17 % dearer on
+    // both files it could re-measure, in the same direction, so the browser's number won.
     peakCost: 28.93,
   },
   '.3mf': {
@@ -440,15 +478,8 @@ const FORMATS: Readonly<Record<string, ModelFormat>> = {
     // the model part to a JS string; and only then builds a DOM over that string with
     // `DOMParser` (`3MFLoader.js:215`, where `zip`, `fileText` and `xmlData` are all live).
     //
-    // Round 0 counted the first two terms and called the DOM "on top and uncounted". It is not a
-    // rounding term, it is the largest one — and it took three attempts to size, each of which
-    // was wrong in the same direction, so the wrong ones are worth naming: an 88 B/element Blink
-    // floor reasoned over exact node counts gave 51.5x; that estimate turned out to be right
-    // about what it modelled but wrong about *where* the peak is; and a second attempt using
-    // V8's `usedJSHeapSize` beside a measured DOM gave 68.6x, which was low again because
-    // `usedJSHeapSize` is the V8 heap alone — it excludes the external `ArrayBuffer` backing
-    // stores that hold the inflated zip and every `Float32Array`, and the slack V8 does not
-    // return to the OS during a six-second synchronous parse.
+    // The DOM that last line builds is the largest of the three terms, not a rounding one, and
+    // it took four attempts to size. The three that failed are under `## Superseded` below.
     //
     // ## The measurement
     //
@@ -473,7 +504,7 @@ const FORMATS: Readonly<Record<string, ModelFormat>> = {
     // A control run rules out the method measuring itself: the 684-byte cube the e2e suite uses
     // comes back at a 0.5 MB delta, twice.
     //
-    // ## Why 120.95 and not 117.75
+    // ## Why 120.95 rather than the other two measurements
     //
     // The worst of the three, per the selection rule in the docblock above: the line 120.95
     // implies is 2.12 MB, a tenth of it is 0.21 MB, and `Uno.3mf` at 0.54 MB clears that
@@ -492,6 +523,24 @@ const FORMATS: Readonly<Record<string, ModelFormat>> = {
     // plain mesh the gate does see. The old number was defended on the grounds that density is a
     // property of the mesh and not of the wrapper — true, and no longer load-bearing, because the
     // number now comes from a file this row can actually be handed.
+    //
+    // ## Superseded — replaced by 120.95, kept for the reasoning
+    //
+    // Three wrong answers, all low, each for a different reason, and the reasons are why this
+    // block exists:
+    //
+    // - **20.65x**, round 0's: the zip and the decoded text counted, the DOM called "on top and
+    //   uncounted". It is the largest term, not a rounding one.
+    // - **51.5x**: 20.65 plus an 88 B/element + 32 B/attribute Blink floor reasoned over exact
+    //   node counts. Chromium later put the same instant at 51.87x — so the estimate was very
+    //   nearly right about what it modelled, and wrong about *where* the peak is: it priced
+    //   `3MFLoader.js:215`, and the loader keeps the document reachable through
+    //   `modelData['xml']` for the whole geometry build after it.
+    // - **68.6x**: the first attempt at the true peak, V8's `usedJSHeapSize` beside a measured
+    //   DOM. Low again, because `usedJSHeapSize` is the V8 heap alone — it excludes the external
+    //   `ArrayBuffer` backing stores holding the inflated zip and every `Float32Array`, and the
+    //   slack V8 does not return to the OS during a six-second synchronous parse. Peak RSS
+    //   counts all of it, which is why the measurement above uses nothing smaller.
     peakCost: 120.95,
   },
 }
@@ -864,6 +913,24 @@ export class ViewerPage implements AfterViewInit, OnDestroy {
   /** Present only while a model is downloading; see loadAnyway. */
   private readonly progressRegion = viewChild<ElementRef<HTMLElement>>('progressRegion')
 
+  /**
+   * Why WebGL failure is a separate signal instead of a seventh `ViewerState`.
+   *
+   * `ViewerState`'s own docblock argues against "a status flag beside a message" because the two
+   * can drift into states that do not exist, and this is a status flag beside a message. The
+   * divergence is deliberate: it is not a *load* outcome. A load has one result at a time, but
+   * "this browser cannot give us a context" is orthogonal to whether the bytes arrived — both can
+   * be true at once, and folding them into one union would mean either losing one of the two
+   * facts or inventing product states for their combinations.
+   *
+   * What the union's argument does cost here is that `showsModel()` and `showsStage()` both have
+   * to consult two sources to answer one question, and the template needs the outer
+   * `@if (initError()) … @else` to keep them from rendering together. That is the seam, and it is
+   * where a seventh state would go if one were ever added.
+   *
+   * It is set once and never cleared, which is also deliberate — see the `cannotDraw` arm of
+   * `syncContent`, where the consequence is handled.
+   */
   readonly initError = signal<string | null>(null)
 
   /**
@@ -1198,8 +1265,24 @@ export class ViewerPage implements AfterViewInit, OnDestroy {
     const metadataFailed = this.project.status() === 'error'
     const settled = metadataFailed || this.project.hasValue()
     const file = this.file()
+    const cannotDraw = this.initError() !== null
 
     if (!this.scene || this.loadedKey === key) return
+    if (cannotDraw) {
+      // There is no context to draw into, so downloading and parsing a model would spend a user's
+      // bandwidth and a tab's memory on something nobody can ever see. Reachable only by editing
+      // the URL — nothing in the app links viewer→viewer — and only after a *runtime* context
+      // loss, since a constructor failure leaves `scene` null and returns above.
+      //
+      // `loadedKey` is deliberately not advanced: if a future version ever recovers a context and
+      // clears `initError`, this effect re-runs and the load happens then.
+      //
+      // Note what is *not* done here: `initError` is not cleared. Clearing it would swap a true
+      // message for a blank canvas, because `ngAfterViewInit` runs once and nothing rebuilds the
+      // renderer on a route input change — the context stays dead. "Failure is explicit; a blank
+      // canvas is never an acceptable outcome" is the constraint that decides it.
+      return
+    }
     if (!settled) {
       // The project is still in flight. Nothing to load yet, and nothing to record either —
       // the effect runs again when it settles.
@@ -1255,11 +1338,59 @@ export class ViewerPage implements AfterViewInit, OnDestroy {
    *
    * `frame` is idempotent here — it re-centres a model already centred on the origin, which
    * subtracts a zero — so pressing this twice is the same as pressing it once.
+   *
+   * ## Draining the damping residue first, which is most of the point
+   *
+   * `enableDamping` means `OrbitControls` keeps a decaying `_sphericalDelta` and spends a slice
+   * of it on every `update()` (`OrbitControls.js:707-709`, decayed at `:792-794`). `frame()`
+   * repositions the camera and calls `update()` once — but the animation loop goes on calling
+   * `update()` every frame afterwards, so whatever is left of the drag is then applied **on top
+   * of the freshly reset camera** and the view settles somewhere else, permanently.
+   *
+   * Turning damping off for one `update()` is what drains it: that branch applies the whole
+   * remaining delta and then does `_sphericalDelta.set(0,0,0)` / `_panOffset.set(0,0,0)`
+   * (`:797-801`). It moves the camera further for an instant, which does not matter because
+   * `frame()` overwrites the position on the next line. Only rotation and pan need this;
+   * `_scale` is already zeroed unconditionally at `:897`, so a wheel zoom never had the bug.
+   * three's own `OrbitControls.reset()` has the same hole, so switching to it is not the fix.
+   *
+   * Measured on the built page, as the share of stage pixels differing from the opening frame
+   * (the renderer is bit-deterministic here: idle against idle is 0.00000):
+   *
+   *     case                                  before    after
+   *     a drag, the displacement to undo      0.11907   0.11908
+   *     reset pressed mid-coast               0.05929   0.00000
+   *     reset pressed after the coast died    0.00226   0.00000
+   *     the `0` key pressed mid-coast         0.07198   0.01060 *
+   *
+   * `*` is the focus ring, not the camera: focusing the panel with a key it ignores moves
+   * exactly 0.01060 of the pixels on its own.
+   *
+   * **Damping coasts for about a second after every drag, so mid-coast is the normal case**,
+   * and this is the control a user reaches for having just flung the model off-screen. Half the
+   * displacement surviving the one guaranteed way back is the whole failure this control exists
+   * to prevent, in slow motion.
+   *
+   * ## Why the suite did not catch it
+   *
+   * Worth a sentence here because the shape recurs. The unit test drives its drag through an
+   * `orbited()` helper that settles the camera before asserting, so the precondition "the camera
+   * really did move" is deterministic — and settling is exactly what drains the residue, so the
+   * only case the suite could ever see was the one that already worked. **The precondition that
+   * made the assertion deterministic was the same one that removed the bug.** There is now an
+   * `orbitedMidCoast()` variant that does not settle, and an e2e that presses reset immediately
+   * after a real drag.
    */
   protected resetView(): void {
     const content = this.content
     if (!content) return
     this.userMovedCamera = false
+    const controls = this.controls
+    if (controls) {
+      controls.enableDamping = false
+      controls.update()
+      controls.enableDamping = true
+    }
     this.frame(content)
   }
 
