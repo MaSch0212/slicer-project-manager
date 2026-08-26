@@ -115,6 +115,11 @@ with the library inside the repo.
 `deno task` lists the rest: `build:ui`, `serve` (build the UI, then serve it for real),
 `import`, `check`, `lint`, `fmt`, `test`, `test:core`, `test:server`, `e2e`.
 
+The desktop shell is a third thing to run: `deno task dev:desktop` builds the electron Angular
+bundle and the Electron main process, then launches it. It reads `SPM_LIBRARY_DIR` for the
+folder to open — a native picker replaces that later — and there is no server and no login in
+that mode.
+
 ### Editors
 
 Only `packages/server` is Deno code. `.vscode/settings.json` scopes the Deno extension to
@@ -230,17 +235,24 @@ wait for one another rather than failing.
 | `core`     | all behaviour; runs on Deno and Node         |
 | `server`   | the Deno HTTP transport                      |
 | `web`      | the Angular client                           |
+| `desktop`  | the Electron main process and its preload    |
 
 ## Tests
 
-    deno task verify   # lint, format, typecheck (tsc + deno check + ngc), contract,
-                       # core on Node, core on Deno, server, web
-    deno task e2e      # Playwright smoke suite; not part of verify
+    deno task verify        # lint, format, typecheck (tsc + deno check + ngc), contract,
+                            # core on Node, core on Deno, server, web
+    deno task e2e           # Playwright smoke suite; not part of verify
+    deno task test:desktop  # Playwright against a real Electron window; not part of verify
 
 `core` runs under both runtimes on purpose: that is what keeps the same code usable from the
-Electron main process (subsystem C).
+Electron main process, which calls it directly.
 
 `deno task e2e` builds the web bundle, seeds a throw-away library in the system temp directory and
 serves both from the real Deno server, so it exercises the static-file path the deployed server
 uses. It needs a browser binary once:
 `cd packages/web && deno run -A node_modules/@playwright/test/cli.js install chromium`.
+
+`deno task test:desktop` builds the Angular electron bundle and the main process, launches the
+real app against a throw-away library and asserts on what it painted. It needs the Electron
+binary once — `deno install` will not fetch it, because Electron 44 ships no install script:
+`node node_modules/electron/install.js` (about 100 MB, cached thereafter).
