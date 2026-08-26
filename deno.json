@@ -8,6 +8,7 @@
   ],
   "imports": {
     "@spm/contract": "./packages/contract/src/index.ts",
+    "@spm/contract/decorate.ts": "./packages/contract/src/decorate.ts",
     "@spm/contract/errors.ts": "./packages/contract/src/errors.ts",
     "@spm/contract/dtos.ts": "./packages/contract/src/dtos.ts",
     "@spm/contract/schemas.ts": "./packages/contract/src/schemas.ts",
