@@ -43,7 +43,11 @@ import { SettingsStore } from './core/settings.store'
                  resolves projection slots at compile time, so a control-flow block whose root
                  holds several projectable nodes drops all but the first out of its slot
                  (NG8011). Wrapping them makes the @if a single node again. -->
-            @if (auth.isAuthenticated()) {
+            <!-- The same expression the auth guard uses (core/auth/guards.ts), and for the same
+                 reason: in a shell that requires no authentication there is nothing to be
+                 signed in *to*, so the navigation must not wait for a user. This is a
+                 capability, not a shell check — no component here knows it is in Electron. -->
+            @if (!capabilities.capabilities().requiresAuth || auth.isAuthenticated()) {
               <ng-container placement="end">
                 <a jigButton kind="text" routerLink="/projects" routerLinkActive="spm-nav-active">
                   <jig-icon [icon]="icons.projects" />
@@ -68,16 +72,24 @@ import { SettingsStore } from './core/settings.store'
                     {{ t.translations().admin.title }}
                   </a>
                 }
-                <button
-                  jigButton
-                  kind="icon"
-                  type="button"
-                  [jigTooltip]="t.translations().app.signOut"
-                  jigTooltipAutoAriaMode="label"
-                  (click)="onSignOut()"
-                >
-                  <jig-icon [icon]="icons.signOut" />
-                </button>
+                <!-- Only where there is a session to end. Without this gate the desktop shell
+                     shows a sign-out button that drops the user on /login: a page with nothing
+                     to sign in to (auth.login answers Forbidden, which the login page renders as
+                     "Username or password is not correct"), reached by a control that also takes
+                     the navigation away on the way out. The button did nothing wrong — there is
+                     simply no such thing as signing out of a folder you opened. -->
+                @if (capabilities.capabilities().requiresAuth) {
+                  <button
+                    jigButton
+                    kind="icon"
+                    type="button"
+                    [jigTooltip]="t.translations().app.signOut"
+                    jigTooltipAutoAriaMode="label"
+                    (click)="onSignOut()"
+                  >
+                    <jig-icon [icon]="icons.signOut" />
+                  </button>
+                }
               </ng-container>
             }
           </jig-toolbar>

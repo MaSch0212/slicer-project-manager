@@ -17,6 +17,7 @@ import { closeLibrary, ensureLocalUser, openLibrary, type Library } from '@spm/c
 import { writeZip } from '../../core/test/fixtures/make-3mf.ts'
 import {
   IpcApiClient,
+  FILE_REF_KEY as WEB_FILE_REF_KEY,
   type IpcResult as WebIpcResult,
 } from '../../web/src/app/core/api/ipc-api-client.ts'
 import {
@@ -26,7 +27,7 @@ import {
   type ApiPath,
   type DispatchSession,
 } from '../src/dispatch.ts'
-import type { IpcResult as DesktopIpcResult } from '../src/protocol.ts'
+import { FILE_REF_KEY, type IpcResult as DesktopIpcResult } from '../src/protocol.ts'
 import { FILE_URL_BASE } from '../src/urls.ts'
 
 /**
@@ -120,6 +121,8 @@ function exerciseAll(client: ApiClient): Record<ApiPath, () => Promise<unknown>>
 test('the table implements exactly the interface, and IpcApiClient reaches every entry', async () => {
   const sent: string[] = []
   const client = new IpcApiClient({
+    // No path behind these Blobs, which is what a real preload would answer for them too.
+    fileRef: () => null,
     invoke: (path) => {
       sent.push(path)
       return Promise.resolve({ ok: true, value: undefined })
@@ -148,6 +151,11 @@ test('the renderer and main-process declarations of the wire result agree', () =
   const fromDesktop: WebIpcResult = {} as DesktopIpcResult
   const fromWeb: DesktopIpcResult = {} as WebIpcResult
   assert.ok(fromDesktop !== undefined && fromWeb !== undefined)
+
+  // This one is a value, and it has teeth: if the renderer's key and the preload's key ever
+  // differ, `resolveArg` stops recognising the token, the upload silently falls back to
+  // buffering the whole file, and nothing else in the suite notices — the upload still works.
+  assert.equal(WEB_FILE_REF_KEY, FILE_REF_KEY)
 })
 
 test('isApiPath refuses inherited property names', () => {
@@ -272,7 +280,7 @@ test('files upload, rename and delete, and their URLs point at the reserved spm:
   const project = (await call('projects.create', [{ name: 'Files' }])) as { id: string }
   const bytes = new TextEncoder().encode('solid cube\nendsolid cube\n')
 
-  const file = (await call('files.upload', [project.id, 'cube.stl', bytes])) as {
+  const file = (await call('files.upload', [project.id, 'cube.stl', { bytes }])) as {
     id: string
     name: string
     rawUrl: string
@@ -309,7 +317,7 @@ test('a ready preview decorates a thumb URL under the same prefix', async () => 
   const file = (await call('files.upload', [
     project.id,
     'part.stl',
-    new TextEncoder().encode('solid s endsolid s'),
+    { bytes: new TextEncoder().encode('solid s endsolid s') },
   ])) as { id: string }
   // The upload already queued a `pending` preview row; this is the queue's later UPDATE.
   const changed = lib.db
@@ -349,7 +357,107 @@ test('rescan adopts a folder that was dropped into the library', async () => {
   )
 })
 
-test('importer.curaManagerZip stages the bytes, imports them, and cleans up after itself', async () => {
+/* -------------------------------------------------------------------------------------------
+ * The two upload arms
+ * ---------------------------------------------------------------------------------------- */
+
+/** Whatever is sitting in the library's staging directory, which should be nothing, ever. */
+function stagedFiles(): string[] {
+  const uploads = join(dir, '.spm', 'uploads')
+  return existsSync(uploads) ? readdirSync(uploads) : []
+}
+
+/**
+ * A second library, opened and torn down for one test.
+ *
+ * The path-arm import test needs one because its assertion is that `.spm/uploads` was never
+ * *created*, and the shared library's bytes-arm test creates it. Asserting on the directory
+ * rather than on its contents is the whole point: the bytes arm deletes the staged file in a
+ * `finally`, so "no files in it" is true of both arms and would have been a vacuous check.
+ */
+async function withFreshLibrary(
+  run: (session: DispatchSession, libraryDir: string) => Promise<void>,
+): Promise<void> {
+  const freshDir = mkdtempSync(join(tmpdir(), 'spm-dispatch-fresh-'))
+  const fresh = openLibrary(freshDir)
+  try {
+    await run({ lib: fresh, ctx: ensureLocalUser(fresh) }, freshDir)
+  } finally {
+    closeLibrary(fresh)
+    rmSync(freshDir, { recursive: true, force: true })
+  }
+}
+
+test('files.upload streams a picked file off disk without ever holding it in memory', async () => {
+  // The arm every upload the UI can start actually takes. `localPath` reaches the main process
+  // only because the preload minted it (see protocol.ts); here it is supplied directly, which is
+  // the same thing the preload's substitution produces.
+  const project = (await call('projects.create', [{ name: 'Picked' }])) as { id: string }
+  const source = join(tmpdir(), `spm-dispatch-picked-${Date.now()}.stl`)
+  const contents = 'solid picked\nendsolid picked\n'
+  writeFileSync(source, contents)
+
+  const file = (await call('files.upload', [project.id, 'picked.stl', { localPath: source }])) as {
+    id: string
+    sizeBytes: number
+    rawUrl: string
+  }
+
+  assert.equal(file.sizeBytes, Buffer.byteLength(contents))
+  assert.equal(file.rawUrl, `${FILE_URL_BASE}/files/${file.id}/raw`)
+  assert.equal(readFileSync(join(dir, 'Picked', 'picked.stl'), 'utf8'), contents)
+  // The user's own file is read, never moved or removed.
+  assert.ok(existsSync(source), 'the picked file was consumed instead of copied')
+
+  rmSync(source, { force: true })
+  await call('projects.delete', [project.id, { deleteFiles: true }])
+})
+
+test('a picked path that no longer exists is NotFound, and a folder is Validation', async () => {
+  const project = (await call('projects.create', [{ name: 'Gone' }])) as { id: string }
+  const missing = join(tmpdir(), `spm-dispatch-missing-${Date.now()}.stl`)
+
+  assert.equal(
+    (await rejection(call('files.upload', [project.id, 'a.stl', { localPath: missing }]))).code,
+    'NotFound',
+  )
+  assert.equal(
+    (await rejection(call('files.upload', [project.id, 'a.stl', { localPath: dir }]))).code,
+    'Validation',
+  )
+  await call('projects.delete', [project.id, { deleteFiles: true }])
+})
+
+test('importer.curaManagerZip reads a picked archive in place, without staging a copy', async () => {
+  const zipPath = join(tmpdir(), `spm-dispatch-picked-import-${Date.now()}.zip`)
+  writeZip(zipPath, [
+    { name: 'Picked Lib/Widget/part.stl', data: 'solid w endsolid w' },
+    { name: 'Picked Lib/Widget/metadata.json', data: JSON.stringify({ Tags: ['picked'] }) },
+  ])
+
+  await withFreshLibrary(async (session, freshDir) => {
+    const result = (await dispatch['importer.curaManagerZip'](session, [
+      { localPath: zipPath },
+    ])) as { projectsExtracted: number; strippedRoot: string | null }
+    assert.equal(result.projectsExtracted, 1)
+    assert.equal(result.strippedRoot, 'Picked Lib')
+    assert.ok(existsSync(join(freshDir, 'Widget', 'part.stl')))
+    // Nothing was copied into the library to read it: the staging directory was never even
+    // created. This is the observable difference between the two arms, and the reason a 10 GiB
+    // archive costs no memory here.
+    assert.equal(
+      existsSync(join(freshDir, '.spm', 'uploads')),
+      false,
+      'the picked archive was staged instead of read where it lay',
+    )
+  })
+
+  // And the user still has their archive.
+  assert.ok(existsSync(zipPath), 'the picked archive was deleted')
+  rmSync(zipPath, { force: true })
+})
+
+test('importer.curaManagerZip stages the bytes arm, imports it, and cleans up after itself', async () => {
   const zipPath = join(tmpdir(), `spm-dispatch-import-${Date.now()}.zip`)
   writeZip(zipPath, [
     { name: 'Imported Lib/Gadget/part.stl', data: 'solid g endsolid g' },
@@ -358,7 +466,7 @@ test('importer.curaManagerZip stages the bytes, imports them, and cleans up afte
   const bytes = new Uint8Array(readFileSync(zipPath))
   rmSync(zipPath, { force: true })
 
-  const result = (await call('importer.curaManagerZip', [bytes])) as {
+  const result = (await call('importer.curaManagerZip', [{ bytes }])) as {
     projectsExtracted: number
     strippedRoot: string | null
   }
@@ -367,15 +475,15 @@ test('importer.curaManagerZip stages the bytes, imports them, and cleans up afte
   assert.ok(existsSync(join(dir, 'Gadget', 'part.stl')))
 
   // The staging copy must not survive: it lives inside the user's own library.
-  const uploads = join(dir, '.spm', 'uploads')
-  assert.deepEqual(existsSync(uploads) ? readdirSync(uploads) : [], [])
+  assert.deepEqual(stagedFiles(), [])
 })
 
 test('a rejected import still removes its staging copy', async () => {
-  const error = await rejection(call('importer.curaManagerZip', [new Uint8Array([1, 2, 3, 4])]))
+  const error = await rejection(
+    call('importer.curaManagerZip', [{ bytes: new Uint8Array([1, 2, 3, 4]) }]),
+  )
   assert.ok(error.message.length > 0)
-  const uploads = join(dir, '.spm', 'uploads')
-  assert.deepEqual(existsSync(uploads) ? readdirSync(uploads) : [], [])
+  assert.deepEqual(stagedFiles(), [])
 })
 
 /* -------------------------------------------------------------------------------------------
@@ -403,16 +511,24 @@ test('the argument list itself is validated, not just its contents', async () =>
     (await rejection(call('settings.put', [{ theme: 'chartreuse' }]))).code,
     'Validation',
   )
-  // The upload arms cannot cross IPC, so anything that is not bytes is refused here rather than
-  // silently written as an empty file — which is exactly what a Blob would have become.
-  assert.equal((await rejection(call('files.upload', ['id', 'a.stl', {}]))).code, 'Validation')
+  // Neither `UploadBody` arm can cross IPC as itself, so anything that is not one of the two
+  // wire arms is refused here rather than silently written as an empty file — which is exactly
+  // what a Blob would have become. `{}` is also what the preload produces for a file token it
+  // did not mint, so this is the landing point for a forged one.
+  for (const body of [{}, new Uint8Array([1]), { bytes: 'nope' }, { localPath: 7 }, null]) {
+    assert.equal(
+      (await rejection(call('files.upload', ['id', 'a.stl', body]))).code,
+      'Validation',
+      JSON.stringify(body),
+    )
+  }
 })
 
 test('a traversing file name never reaches the filesystem', async () => {
   const project = (await call('projects.create', [{ name: 'Traversal' }])) as { id: string }
   for (const name of ['../escaped.stl', '..\\escaped.stl', '.hidden', 'CON.stl']) {
     const error = await rejection(
-      call('files.upload', [project.id, name, new Uint8Array([1, 2, 3])]),
+      call('files.upload', [project.id, name, { bytes: new Uint8Array([1, 2, 3]) }]),
     )
     assert.equal(error.code, 'Validation', name)
   }

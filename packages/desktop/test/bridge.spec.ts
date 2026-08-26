@@ -1,6 +1,9 @@
 import { expect, test, type ElectronApplication, type Page } from '@playwright/test'
-import { DatabaseSync } from 'node:sqlite'
+import { existsSync, mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { DatabaseSync } from 'node:sqlite'
+import { writeZip } from '../../core/test/fixtures/make-3mf.ts'
 import { launchApp, type SeedProject } from './fixtures.ts'
 
 /**
@@ -24,6 +27,7 @@ declare global {
   // The preload's bridge, as the renderer sees it. Declared here so `page.evaluate` bodies are
   // type-checked by `deno task typecheck:desktop` rather than being `any`.
   var spm: {
+    fileRef(file: unknown): string | null
     invoke(
       path: string,
       args: unknown[],
@@ -174,6 +178,150 @@ test.describe('the IPC bridge', () => {
       result: { ok: false, error: { code: 'NotFound' } },
     })
   })
+
+  test('the renderer cannot name a file the user did not pick', async () => {
+    // Constraint 4, and the reason a picked file crosses as an opaque token rather than as its
+    // path. If the main world could write `localPath` itself, a compromised renderer could have
+    // the main process read anything the user can read and copy it into the library — which is
+    // an arbitrary-file-read primitive, since the library is then served back over spm://.
+    //
+    // The preload strips any `localPath` it did not mint, so what reaches the main process is an
+    // object with neither arm and `uploadBodySchema` refuses it.
+    const project = await page.evaluate(() =>
+      globalThis.spm.invoke('projects.create', [{ name: 'Forgery' }]),
+    )
+    const projectId = (project as { value: { id: string } }).value.id
+
+    const forged = await page.evaluate(
+      async ([id, victim]) => ({
+        // A path straight off the main world.
+        directPath: await globalThis.spm.invoke('files.upload', [
+          id,
+          'stolen.txt',
+          { localPath: victim },
+        ]),
+        // A token the preload never minted.
+        madeUpToken: await globalThis.spm.invoke('files.upload', [
+          id,
+          'stolen.txt',
+          { __spmFileRef: 'ref-999' },
+        ]),
+        // And through the importer, which reads a path too.
+        viaImporter: await globalThis.spm.invoke('importer.curaManagerZip', [
+          { localPath: victim },
+        ]),
+        // A real File the script made up has no file behind it, so the preload answers null
+        // rather than inventing a path — this is the discriminator the client relies on.
+        refForSyntheticFile: globalThis.spm.fileRef(new File([new Uint8Array([1])], 'made.zip')),
+        refForBlob: globalThis.spm.fileRef(new Blob([new Uint8Array([1])])),
+      }),
+      [projectId, join(libraryDir, '.spm', 'app.db')] as const,
+    )
+
+    expect(forged.directPath).toMatchObject({ ok: false, error: { code: 'Validation' } })
+    expect(forged.madeUpToken).toMatchObject({ ok: false, error: { code: 'Validation' } })
+    expect(forged.viaImporter).toMatchObject({ ok: false, error: { code: 'Validation' } })
+    expect(forged.refForSyntheticFile).toBeNull()
+    expect(forged.refForBlob).toBeNull()
+
+    // Nothing was read and nothing was written. A `Validation` code alone would not say that.
+    const detail = await page.evaluate(
+      (id) => globalThis.spm.invoke('projects.get', [id]),
+      projectId,
+    )
+    expect((detail as { value: { files: unknown[] } }).value.files).toEqual([])
+    expect(existsSync(join(libraryDir, 'Forgery', 'stolen.txt'))).toBe(false)
+
+    await page.evaluate(
+      (id) => globalThis.spm.invoke('projects.delete', [id, { deleteFiles: true }]),
+      projectId,
+    )
+  })
+})
+
+/**
+ * The importer, driven through the page a user actually uses, and the assertion that it never
+ * buffered the archive.
+ *
+ * The report for the first round of this task claimed the importer was unreachable in the desktop
+ * shell and deferred its memory ceiling on that basis. It was reachable: `/import` is in
+ * `sharedRoutes`, the header links it, and the review drove it. So the ceiling is gone instead of
+ * deferred — `IpcApiClient` asks the preload to name the picked file and the main process streams
+ * it off disk.
+ *
+ * `.spm/uploads` is the observable difference between the two arms: the bytes arm has to write
+ * the archive into the library before `importCuraManagerZip` can read a path, and the path arm
+ * never creates that directory at all. Asserting the *import worked* proves the path was read;
+ * asserting the directory was never created proves it was read in place.
+ */
+test('the import page imports a picked archive without copying it into the library', async () => {
+  const archiveDir = mkdtempSync(join(tmpdir(), 'spm-desktop-archive-'))
+  const archive = join(archiveDir, 'curamanager.zip')
+  writeZip(archive, [
+    { name: 'My Lib/Gadget/part.stl', data: 'solid g endsolid g' },
+    { name: 'My Lib/Gadget/metadata.json', data: JSON.stringify({ Tags: ['picked'] }) },
+    { name: 'My Lib/Bracket/model.3mf', data: 'not really a 3mf' },
+  ])
+
+  const { app, libraryDir } = await launchApp()
+  try {
+    const page = await app.firstWindow()
+    await page.waitForLoadState('domcontentloaded')
+
+    await page.getByRole('link', { name: 'Import' }).click()
+    await expect(page.getByRole('heading', { name: 'Import a CuraManager library' })).toBeVisible()
+
+    // A path, not an inline buffer: a user picks a file that exists, and only a file that exists
+    // has a path for the preload to name.
+    await page.locator('input[type="file"]').setInputFiles(archive)
+    await page.getByRole('button', { name: /upload/i }).click()
+
+    await expect(page.getByText('Import finished')).toBeVisible({ timeout: 30_000 })
+    await expect(page.getByRole('status')).toContainText('2 projects and 3 files imported')
+
+    // Read in place: the staging directory was never created. Asserting on the directory and
+    // not on its contents is deliberate — the bytes arm deletes the staged file in a `finally`,
+    // so "nothing in it" is true of both arms and would have been a vacuous check.
+    expect(existsSync(join(libraryDir, '.spm', 'uploads'))).toBe(false)
+    // And the user still has their archive where they left it.
+    expect(existsSync(archive)).toBe(true)
+
+    await page.getByRole('link', { name: 'View projects' }).click()
+    await expect(page.getByRole('heading', { name: 'Gadget' })).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Bracket' })).toBeVisible()
+  } finally {
+    await app.close()
+    rmSync(archiveDir, { recursive: true, force: true })
+  }
+})
+
+/**
+ * Local mode has no sessions, so it must not offer to end one.
+ *
+ * Task 2 is what made this reachable: `account.me()` now answers, `auth.isAuthenticated()` is
+ * true, and the header rendered a sign-out button. Pressing it dropped the user on `/login` —
+ * a page with nothing to sign in to, whose only failure message is "Username or password is not
+ * correct", reached by a control that removed the navigation on the way out. The nav and the
+ * button are now gated on `capabilities.requiresAuth`, which is a capability the shell publishes
+ * rather than a component learning which shell it is in (constraint 1).
+ */
+test('the desktop shell offers no sign-out, and still shows the rest of the navigation', async () => {
+  const { app } = await launchApp()
+  try {
+    const page = await app.firstWindow()
+    await page.waitForLoadState('domcontentloaded')
+    await expect.poll(() => page.url()).toBe('spm://app/projects')
+
+    // The nav is there — without this, gating it off entirely would also pass the next line.
+    for (const link of ['Projects', 'Import', 'Settings']) {
+      await expect(page.getByRole('link', { name: link })).toBeVisible()
+    }
+    await expect(page.getByRole('button', { name: 'Sign out' })).toHaveCount(0)
+    // And nothing can walk the user into the login page from here.
+    await expect(page.getByRole('link', { name: 'Sign in' })).toHaveCount(0)
+  } finally {
+    await app.close()
+  }
 })
 
 /**

@@ -5,7 +5,7 @@ import { extname, join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { closeLibrary, ensureLocalUser, openLibrary, type Ctx, type Library } from '@spm/core'
 import { registerInvokeHandler } from './ipc.ts'
-import { RENDERER_HOST, RENDERER_ORIGIN } from './urls.ts'
+import { RENDERER_HOST, RENDERER_ORIGIN, RESERVED_PATH_SEGMENT } from './urls.ts'
 
 /**
  * The Electron main process, minus its entry point.
@@ -61,12 +61,16 @@ export const LIBRARY_DIR_ENV = 'SPM_LIBRARY_DIR'
 
 /**
  * `spm://` has to be declared privileged *before* `app.whenReady()`, which is why it is here
- * and not in task 3 with the rest of the scheme. Task 3 adds the `spm://file/<id>/{thumb,raw}`
- * handler; until then the handler below answers 404 for every host but the renderer's.
+ * and not in task 3 with the rest of the scheme. Task 3 adds the handler for
+ * `spm://app/${RESERVED_PATH_SEGMENT}/files/<id>/{raw,thumb}`; until then `resolveRendererFile`
+ * refuses that prefix outright, so it 404s rather than being answered by the renderer's own
+ * index.html.
  *
- * Note for task 3: the renderer's origin is `spm://app`, so `spm://file/...` is cross-origin to
- * it. `<img src>` does not care, but a `fetch()` from the renderer for `spm://file/...` fails
- * with a bare `TypeError: Failed to fetch` — measured — until the response carries CORS headers.
+ * There is no `spm://file` host, which is what the plan originally specified — ruling C-7 moved
+ * file bytes under the renderer's own host at a reserved path, because `spm://file` is a
+ * different origin from `spm://app` and a `fetch()` from the renderer for a cross-origin
+ * `spm://` URL fails with a bare `TypeError: Failed to fetch` — measured — until the response
+ * carries CORS headers, and B2's viewer fetches `rawUrl` directly.
  */
 export const SPM_SCHEME_PRIVILEGES = {
   standard: true,
@@ -130,13 +134,22 @@ export function defaultRendererDir(): string {
 /**
  * Maps a `spm://app/...` path onto a file in the renderer directory, or to `index.html` for
  * anything that is a client-side route rather than an asset. Returns null when the request
- * escapes the renderer directory, or when its path cannot be decoded at all.
+ * escapes the renderer directory, when it falls under the reserved prefix, or when its path
+ * cannot be decoded at all.
  *
  * The containment check is not belt-and-braces. Chromium canonicalises `..` segments in a
  * standard-scheme URL and decodes `%2e` before the handler ever sees the path, so those escapes
  * are already dead — but an *encoded separator* is not canonicalised. Measured: with the check
  * removed, `spm://app/..%2f..%2f..%2fpackage.json` returns a file from outside the renderer
  * directory with status 200.
+ *
+ * The reserved-prefix check is what makes ruling C-7's path prefix actually reserved, and it is
+ * here rather than in task 3 because task 2 is what started emitting those URLs. Without it the
+ * SPA fallback below swallows them: `spm://app/_spm/files/<id>/raw` has no known extension, so
+ * it came back **200 `text/html`** with index.html in the body — measured — and B2's viewer then
+ * reported a perfectly intact model as damaged. Failing closed costs one line; failing open with
+ * a success status and the wrong content type is the worst of the three states. Task 3 replaces
+ * the 404 with real bytes.
  */
 export function resolveRendererFile(rendererDir: string, pathname: string): string | null {
   const root = resolve(rendererDir)
@@ -149,6 +162,11 @@ export function resolveRendererFile(rendererDir: string, pathname: string): stri
     // the main process logs an unhandled rejection. A malformed path is a 404 like any other.
     return null
   }
+  // Split on both separators and compare case-insensitively: `resolve()` treats `\` as a
+  // separator on Windows, and NTFS would match `_SPM` to a real `_spm` directory, so a check
+  // that only knew about lowercase `/_spm/` would leave two ways past it.
+  const [firstSegment] = decoded.split(/[\\/]+/).filter(Boolean)
+  if (firstSegment?.toLowerCase() === RESERVED_PATH_SEGMENT) return null
   const candidate = resolve(join(root, decoded))
   if (candidate !== root && !candidate.startsWith(root + sep)) return null
   if (existsSync(candidate) && statSync(candidate).isFile()) return candidate
@@ -163,12 +181,16 @@ export function contentTypeFor(file: string): string {
   return CONTENT_TYPES[extname(file).toLowerCase()] ?? 'application/octet-stream'
 }
 
-/** The single `spm://` handler. Task 3 adds the `file` host beside the renderer's. */
+/**
+ * The single `spm://` handler. There is one host, `spm://app`; task 3 adds the branch that serves
+ * `spm://app/${RESERVED_PATH_SEGMENT}/files/<id>/{raw,thumb}`, which `resolveRendererFile`
+ * currently refuses.
+ */
 export function createSpmHandler(rendererDir: string): (request: Request) => Promise<Response> {
   return async (request: Request): Promise<Response> => {
     const url = new URL(request.url)
     if (url.hostname !== RENDERER_HOST) {
-      // spm://file/<id>/thumb and spm://file/<id>/raw arrive here in task 3.
+      // Nothing legitimate reaches here: every URL this app emits is under spm://app.
       return new Response('not found', { status: 404 })
     }
     const file = resolveRendererFile(rendererDir, url.pathname)

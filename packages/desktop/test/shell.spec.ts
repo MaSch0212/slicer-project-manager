@@ -139,6 +139,52 @@ test.describe('the desktop shell', () => {
     })
   })
 
+  test('the reserved prefix 404s instead of being answered by the SPA shell', async () => {
+    // Ruling C-7 chose a path prefix over a second host, and the price of a path prefix is that
+    // the renderer's own index.html fallback will happily answer it: `_spm/files/<id>/raw` has
+    // no extension resolveRendererFile knows, so before the guard every URL task 2 emits came
+    // back **200 text/html** with the SPA in the body -- measured, and B2's viewer then reported
+    // an intact model as damaged. Task 3 replaces these 404s with real bytes; until then they
+    // must fail closed.
+    //
+    // The status *and* the body, because a 200 with HTML is the failure being guarded against
+    // and a status-only assertion would pass on any 404-shaped mistake while missing this one.
+    const answers = await page.evaluate(async () => {
+      const urls = [
+        'spm://app/_spm/files/abc/raw',
+        'spm://app/_spm/files/abc/thumb',
+        'spm://app/_spm',
+        // NTFS is case-insensitive, so this would have reached a real `_spm` directory.
+        'spm://app/_SPM/files/abc/raw',
+        // Percent-encoded, because the check runs after decodeURIComponent.
+        'spm://app/%5f%73%70%6d/files/abc/raw',
+      ]
+      const out: Record<string, string> = {}
+      for (const url of urls) {
+        try {
+          const response = await fetch(url)
+          out[url] = `${response.status} ${(await response.text()).slice(0, 15)}`
+        } catch (error) {
+          out[url] = `threw ${String(error)}`
+        }
+      }
+      // A deep link that is *not* under the prefix still gets the SPA, or this guard would have
+      // broken routing rather than reserved a prefix.
+      const deepLink = await fetch('spm://app/projects/some-id')
+      out['spm://app/projects/some-id'] =
+        `${deepLink.status} ${(await deepLink.text()).slice(0, 15)}`
+      return out
+    })
+    expect(answers).toEqual({
+      'spm://app/_spm/files/abc/raw': '404 not found',
+      'spm://app/_spm/files/abc/thumb': '404 not found',
+      'spm://app/_spm': '404 not found',
+      'spm://app/_SPM/files/abc/raw': '404 not found',
+      'spm://app/%5f%73%70%6d/files/abc/raw': '404 not found',
+      'spm://app/projects/some-id': '200 <!doctype html>',
+    })
+  })
+
   test('the window keeps the three webPreferences the trust model rests on', async () => {
     // Constraint 3 of the plan, and the reason the renderer can be treated as untrusted at all.
     // Nothing else in this file notices if they change: with `nodeIntegration: true` and

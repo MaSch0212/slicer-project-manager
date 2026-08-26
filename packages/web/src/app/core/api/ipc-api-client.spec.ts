@@ -1,9 +1,20 @@
 import { describe, expect, it, vi } from 'vitest'
 import { AppError } from '@spm/contract/errors.ts'
-import { BRIDGE_MISSING, IpcApiClient, desktopBridge, type IpcResult } from './ipc-api-client'
+import {
+  BRIDGE_MISSING,
+  FILE_REF_KEY,
+  IpcApiClient,
+  desktopBridge,
+  type IpcResult,
+} from './ipc-api-client'
 
+/**
+ * `fileRef: () => null` is a real preload's answer for a `Blob` or a script-built `File`
+ * (`webUtils.getPathForFile` returns `''` for both, measured), so this is the buffering arm.
+ * Tests that want the path arm supply their own `fileRef`.
+ */
 function bridgeReturning(result: IpcResult) {
-  return { invoke: vi.fn().mockResolvedValue(result) }
+  return { fileRef: vi.fn().mockReturnValue(null), invoke: vi.fn().mockResolvedValue(result) }
 }
 
 describe('IpcApiClient', () => {
@@ -62,7 +73,10 @@ describe('IpcApiClient', () => {
   it('turns a rejected channel into an AppError rather than letting a raw Error escape', async () => {
     // The main process answers failures as values, so this only happens when the channel itself
     // is gone. Callers must still see one failure shape, exactly as HttpApiClient promises.
-    const bridge = { invoke: vi.fn().mockRejectedValue(new Error('No handler registered')) }
+    const bridge = {
+      fileRef: vi.fn().mockReturnValue(null),
+      invoke: vi.fn().mockRejectedValue(new Error('No handler registered')),
+    }
 
     const error = await new IpcApiClient(bridge).capabilities().catch((thrown: unknown) => thrown)
 
@@ -82,12 +96,46 @@ describe('IpcApiClient', () => {
 
   describe('uploads', () => {
     /**
-     * Both `UploadBody` arms have to arrive as bytes. Measured in Electron 44.0.0: a `Blob`, a
+     * A picked file is named, not copied. This is the arm every upload the UI can start takes,
+     * and the reason the transport has no size ceiling: the bytes stay on disk and the main
+     * process streams them. The token and never the path — a path the untrusted main world could
+     * write would let a compromised renderer have the main process open any file the user can
+     * read (constraint 4).
+     */
+    it('sends a preload token for a file that is backed by one, and never reads it', async () => {
+      const bridge = bridgeReturning({ ok: true, value: { id: 'f1' } })
+      bridge.fileRef.mockReturnValue('ref-7')
+      const picked = new File([new Uint8Array([1, 2, 3])], 'cube.stl')
+      // If this is ever called, the file was buffered after all.
+      const arrayBuffer = vi.spyOn(picked, 'arrayBuffer')
+
+      await new IpcApiClient(bridge).files.upload('p1', 'cube.stl', { blob: picked })
+
+      const [path, args] = bridge.invoke.mock.calls[0]!
+      expect(path).toBe('files.upload')
+      expect(bridge.fileRef).toHaveBeenCalledWith(picked)
+      expect(args[2]).toEqual({ [FILE_REF_KEY]: 'ref-7' })
+      expect(arrayBuffer).not.toHaveBeenCalled()
+    })
+
+    it('sends a token for a picked archive too', async () => {
+      const bridge = bridgeReturning({ ok: true, value: { projectsExtracted: 1 } })
+      bridge.fileRef.mockReturnValue('ref-1')
+
+      await new IpcApiClient(bridge).importer.curaManagerZip({
+        blob: new File([new Uint8Array([1])], 'lib.zip'),
+      })
+
+      expect(bridge.invoke.mock.calls[0]![1][0]).toEqual({ [FILE_REF_KEY]: 'ref-1' })
+    })
+
+    /**
+     * The fallback, for a body with no file behind it. Measured in Electron 44.0.0: a `Blob`, a
      * `File` and a `ReadableStream` all cross `ipcRenderer.invoke` as an empty plain object, with
      * no error raised — so a client that forwarded the body untouched would have written
      * zero-byte files and reported success.
      */
-    it('reads the blob arm into a Uint8Array of the same bytes', async () => {
+    it('reads the blob arm into a Uint8Array when there is no file behind it', async () => {
       const bridge = bridgeReturning({ ok: true, value: { id: 'f1' } })
       const bytes = new Uint8Array([115, 111, 108, 105, 100])
 
@@ -97,8 +145,10 @@ describe('IpcApiClient', () => {
       expect(path).toBe('files.upload')
       expect(args[0]).toBe('p1')
       expect(args[1]).toBe('cube.stl')
-      expect(args[2]).toBeInstanceOf(Uint8Array)
-      expect(Array.from(args[2] as Uint8Array)).toEqual([115, 111, 108, 105, 100])
+      expect((args[2] as { bytes: Uint8Array }).bytes).toBeInstanceOf(Uint8Array)
+      expect(Array.from((args[2] as { bytes: Uint8Array }).bytes)).toEqual([
+        115, 111, 108, 105, 100,
+      ])
     })
 
     it('drains the stream arm into the same bytes', async () => {
@@ -115,7 +165,53 @@ describe('IpcApiClient', () => {
 
       const [path, args] = bridge.invoke.mock.calls[0]!
       expect(path).toBe('importer.curaManagerZip')
-      expect(Array.from(args[0] as Uint8Array)).toEqual([1, 2, 3, 4])
+      expect(Array.from((args[0] as { bytes: Uint8Array }).bytes)).toEqual([1, 2, 3, 4])
+    })
+
+    /**
+     * Reading the body happens in an argument position, outside `invoke`'s own try, so a
+     * rejection there used to escape as itself: measured, `files.upload` threw a bare
+     * `RangeError` with `isAppError` false and `code` undefined. Both callers of these two
+     * methods branch on `isAppError` (`import.page.ts:134`, `project-detail.page.ts:679`), so
+     * the user got the generic message and no diagnosis, and the invariant this client documents
+     * two lines above was simply untrue.
+     *
+     * `RangeError` is what Chromium raises for a buffer larger than the renderer can allocate —
+     * the failure mode of the fallback arm — and `DOMException: NotFoundError` for a file that
+     * moved between the picker and the read.
+     */
+    it.each([
+      [
+        'a buffer too large for the renderer',
+        new RangeError('Array buffer allocation failed'),
+        'Array buffer allocation failed',
+      ],
+      [
+        'a file that moved after it was picked',
+        // Not `instanceof Error` in this test environment, measured: the assertion below is on
+        // the fragment because the client falls through to `String(error)` for it, which yields
+        // `NotFoundError: not found`. Either branch has to produce an AppError, which is the
+        // property under test.
+        new DOMException('not found', 'NotFoundError'),
+        'not found',
+      ],
+    ])('reports %s as an AppError, not as itself', async (_name, thrown, fragment) => {
+      const bridge = bridgeReturning({ ok: true, value: { id: 'f1' } })
+      const unreadable = {
+        arrayBuffer: () => Promise.reject(thrown),
+      } as unknown as Blob
+
+      for (const call of [
+        () => new IpcApiClient(bridge).files.upload('p1', 'a.stl', { blob: unreadable }),
+        () => new IpcApiClient(bridge).importer.curaManagerZip({ blob: unreadable }),
+      ]) {
+        const error = await call().catch((caught: unknown) => caught)
+        expect(error).toBeInstanceOf(AppError)
+        expect((error as AppError).code).toBe('Internal')
+        expect((error as AppError).message).toContain(fragment)
+      }
+      // And nothing was sent: a half-read body must not reach the main process.
+      expect(bridge.invoke).not.toHaveBeenCalled()
     })
   })
 
@@ -133,10 +229,17 @@ describe('IpcApiClient', () => {
       }
     })
 
-    it('rejects an object on window.spm that has no invoke', () => {
+    // A half-built bridge is what a stale preload beside a newer renderer looks like, and the
+    // `fileRef` case matters more than it seems: without the check, uploads would fall back to
+    // buffering and nothing would say why.
+    it.each([
+      ['nothing at all', {}],
+      ['no invoke', { fileRef: vi.fn() }],
+      ['no fileRef', { invoke: vi.fn() }],
+    ])('rejects a window.spm with %s', (_name, installed) => {
       const globals = globalThis as { spm?: unknown }
       const saved = globals.spm
-      globals.spm = {}
+      globals.spm = installed
       try {
         expect(() => desktopBridge()).toThrowError(BRIDGE_MISSING)
       } finally {
@@ -148,7 +251,7 @@ describe('IpcApiClient', () => {
     it('returns the bridge the preload installed', () => {
       const globals = globalThis as { spm?: unknown }
       const saved = globals.spm
-      const installed = { invoke: vi.fn() }
+      const installed = { fileRef: vi.fn(), invoke: vi.fn() }
       globals.spm = installed
       try {
         expect(desktopBridge()).toBe(installed)

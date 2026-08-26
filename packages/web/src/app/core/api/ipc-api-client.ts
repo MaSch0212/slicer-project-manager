@@ -43,8 +43,20 @@ export type IpcSuccess = { ok: true; value: unknown }
 export type IpcResult = IpcSuccess | IpcFailure
 
 export type SpmBridge = {
+  /**
+   * The path of the file behind a picked `File`, as an opaque token the preload can swap back,
+   * or `null` when there is no file behind it. The path itself never reaches this world.
+   */
+  fileRef(file: unknown): string | null
   invoke(path: string, args: unknown[]): Promise<IpcResult>
 }
+
+/**
+ * The key a preload-minted file token travels under. Must equal `FILE_REF_KEY` in
+ * `packages/desktop/src/protocol.ts`; `packages/desktop/test/dispatch.test.ts` asserts the two
+ * strings are the same value, so this cannot drift into a silent fallback to buffering.
+ */
+export const FILE_REF_KEY = '__spmFileRef'
 
 /**
  * Also the marker CI greps for. Keep it a literal in this file: a template built from parts, or a
@@ -56,14 +68,18 @@ export const BRIDGE_MISSING =
 
 export function desktopBridge(): SpmBridge {
   const candidate = (globalThis as { spm?: Partial<SpmBridge> }).spm
-  if (!candidate || typeof candidate.invoke !== 'function') {
+  if (
+    !candidate ||
+    typeof candidate.invoke !== 'function' ||
+    typeof candidate.fileRef !== 'function'
+  ) {
     throw new AppError('Internal', BRIDGE_MISSING)
   }
   return candidate as SpmBridge
 }
 
 /**
- * Reads either `UploadBody` arm into bytes.
+ * Reads either `UploadBody` arm into bytes. The fallback; see `readBody` for what happens first.
  *
  * Neither arm can cross IPC as itself. Measured in Electron 44.0.0, through a sandboxed,
  * context-isolated preload: a `Blob`, a `File` and a `ReadableStream` handed to
@@ -72,13 +88,10 @@ export function desktopBridge(): SpmBridge {
  * bytes rather than an error. A `Uint8Array` arrives intact, `instanceof Uint8Array` and all, at
  * about 540 MB/s (1 GiB measured at 1.9 s, 128 MiB at 0.2 s).
  *
- * The cost, stated plainly: an upload is held in memory twice for a moment — once as the caller's
- * `Blob` and once as this array — and then a third time in the main process, where core writes it
- * out through a one-chunk stream. For the files this app handles (spec 2.7's models and slicer
- * projects) that is fine; for the 10 GiB CuraManager archive the server's import route accepts, it
- * is not, and the desktop shell will need a chunked channel before it can match that limit. That
- * is a task-5 problem — there is no importer UI path in the desktop shell yet — and it is recorded
- * here rather than half-built.
+ * Buffering is bounded by whatever the renderer can hold, which is why it is the fallback and not
+ * the route. Nothing in the UI reaches it: every upload this app can start — `<input type="file">`
+ * on the project page, `jig-upload` on the import page — hands over a `File` that is backed by a
+ * real file on disk.
  */
 async function toBytes(body: UploadBody): Promise<Uint8Array> {
   if ('blob' in body) return new Uint8Array(await body.blob.arrayBuffer())
@@ -117,6 +130,37 @@ export class IpcApiClient implements ApiClient {
       throw new AppError(result.error.code, result.error.message, result.error.details)
     }
     throw new AppError('Internal', `the desktop bridge returned an unrecognised result for ${path}`)
+  }
+
+  /**
+   * Turns an `UploadBody` into the arm the main process takes, without the bytes crossing IPC
+   * when they do not have to.
+   *
+   * A `File` from a picker is backed by a real file, and the preload can name it: `fileRef`
+   * returns an opaque token for it (and `null` for a `Blob` or a script-built `File`, measured —
+   * `webUtils.getPathForFile` answers `''` for those). The main process then streams the file off
+   * disk, so a 10 GiB archive costs a 64 KiB buffer instead of three copies of itself in memory.
+   * The token, not the path: a path the untrusted main world could write would let a compromised
+   * renderer have the main process open any file the user can read (constraint 4), so the preload
+   * mints it, swaps it back in its own world, and strips any `localPath` it did not write.
+   *
+   * The `try` is the point of the method existing rather than the call being inline. `toBytes`
+   * can reject — `RangeError` on a buffer too large for the renderer, `DOMException:
+   * NotFoundError` when the file moved between the picker and the read — and an argument
+   * expression is outside `invoke`'s own try, so those escaped as themselves. Every rejection
+   * this client produces must be an `AppError`, exactly as `HttpApiClient` promises, or callers
+   * that branch on `isAppError` (import.page.ts, project-detail.page.ts) get no diagnosis at all.
+   */
+  private async readBody(body: UploadBody): Promise<unknown> {
+    try {
+      if ('blob' in body) {
+        const ref = this.bridge.fileRef(body.blob)
+        if (ref !== null) return { [FILE_REF_KEY]: ref }
+      }
+      return { bytes: await toBytes(body) }
+    } catch (error) {
+      throw new AppError('Internal', error instanceof Error ? error.message : String(error))
+    }
   }
 
   capabilities(): Promise<Capabilities> {
@@ -176,12 +220,12 @@ export class IpcApiClient implements ApiClient {
 
   readonly importer = {
     curaManagerZip: async (body: UploadBody): Promise<ZipImportResultDto> =>
-      this.invoke('importer.curaManagerZip', [await toBytes(body)]),
+      this.invoke('importer.curaManagerZip', [await this.readBody(body)]),
   }
 
   readonly files = {
     upload: async (projectId: string, name: string, body: UploadBody): Promise<FileDto> =>
-      this.invoke('files.upload', [projectId, name, await toBytes(body)]),
+      this.invoke('files.upload', [projectId, name, await this.readBody(body)]),
     rename: (id: string, name: string): Promise<FileDto> => this.invoke('files.rename', [id, name]),
     delete: (id: string): Promise<void> => this.invoke('files.delete', [id]),
   }

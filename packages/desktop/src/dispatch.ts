@@ -1,5 +1,7 @@
-import { mkdir, rm, writeFile } from 'node:fs/promises'
+import { createReadStream } from 'node:fs'
+import { mkdir, rm, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { Readable } from 'node:stream'
 import { z } from 'zod'
 import type { ApiClient } from '@spm/contract/api-client.ts'
 import { createDecorators } from '@spm/contract/decorate.ts'
@@ -46,6 +48,7 @@ import {
   type Ctx,
   type Library,
 } from '@spm/core'
+import type { WireUploadBody } from './protocol.ts'
 import { ACTIVATION_URL_BASE, FILE_URL_BASE } from './urls.ts'
 
 /**
@@ -101,9 +104,13 @@ const { decorateFile, decorateProject, decorateProjectDetail } = createDecorator
  *
  * `DispatchTable` below is a mapped type over this union, so a method added to `ApiClient` and
  * not implemented here fails `deno task typecheck`, and a key here that `ApiClient` does not have
- * fails it too. The runtime test in `test/dispatch.test.ts` is kept as well, but as the second
- * line of defence rather than the first — see the note there for what it catches that this does
- * not.
+ * fails it too. A wrong *result* type fails too, since each entry is `Dispatched<ResultAt<P>>`.
+ *
+ * What it does **not** cover, and must not be trusted with: the argument tuple. `Dispatched`
+ * takes `args: unknown[]`, so swapping two elements of a `z.tuple` (and the callback parameters
+ * with them) typechecks clean. That is `test/dispatch.test.ts`'s job — it calls every route
+ * through a real `IpcApiClient`, and the path strings in that client are likewise invisible to
+ * the compiler.
  */
 type MethodPaths<T> = {
   [K in keyof T & string]: T[K] extends (...args: never[]) => unknown
@@ -167,15 +174,22 @@ type ArgsSchema<A extends readonly unknown[]> = {
 const idSchema = z.string().min(1).max(64)
 
 /**
- * The bytes of an upload.
+ * How an upload arrives. See `WireUploadBody` in protocol.ts for the two arms and for why a
+ * `localPath` can only have been written by the preload.
  *
- * Measured in Electron 44.0.0 through a sandboxed, context-isolated preload: a `Blob`, a `File`
- * and a `ReadableStream` all cross `ipcRenderer.invoke` as an **empty plain object** — no throw
- * and no warning — while a `Uint8Array` arrives intact and `instanceof Uint8Array` still holds in
- * the main process. So `IpcApiClient` reads both `UploadBody` arms into bytes and this is what
- * lands here; see the comment on `IpcApiClient.files.upload` for the cost of that choice.
+ * `z.instanceof(Uint8Array)` for the bytes arm is not decoration. Measured in Electron 44.0.0
+ * through a sandboxed, context-isolated preload: a `Blob`, a `File` and a `ReadableStream` all
+ * cross `ipcRenderer.invoke` as an **empty plain object** — no throw and no warning — so without
+ * this check a client that forwarded a body untouched would write a zero-byte file and report
+ * success. A `Uint8Array` arrives intact and `instanceof Uint8Array` still holds here.
+ *
+ * A union with no third arm, so the empty object the preload produces for an unrecognised token
+ * is a `Validation` failure rather than anything at all.
  */
-const bytesSchema = z.instanceof(Uint8Array)
+const uploadBodySchema = z.union([
+  z.object({ localPath: z.string().min(1) }),
+  z.object({ bytes: z.instanceof(Uint8Array) }),
+])
 
 function libraryCall<P extends ApiPath, A extends readonly unknown[]>(
   path: P,
@@ -226,10 +240,53 @@ function streamOf(bytes: Uint8Array): ReadableStream<Uint8Array> {
 }
 
 /**
+ * The size of a file the user picked, or an `AppError` naming what is wrong with it.
+ *
+ * Without this, a path that has been deleted between the picker and the upload surfaces as an
+ * `ENOENT` wrapped into `Internal`, and a directory surfaces as an `EISDIR` from deep inside the
+ * read. Both are things a user can act on, so both get a code the UI can switch on.
+ */
+async function sizeOfPickedFile(localPath: string): Promise<number> {
+  let info
+  try {
+    info = await stat(localPath)
+  } catch {
+    throw new AppError('NotFound', 'that file is no longer where it was picked from')
+  }
+  if (!info.isFile()) throw new AppError('Validation', 'that is a folder, not a file')
+  return info.size
+}
+
+/**
+ * Turns either wire arm into the streaming `UploadBody` core takes.
+ *
+ * The `localPath` arm is the one every upload the UI can start actually uses, and it is the whole
+ * reason there is no size ceiling on this transport: the bytes are streamed off disk in the main
+ * process and never enter a renderer buffer or an IPC message. `createReadStream` is chunked, so
+ * a 10 GiB archive costs a 64 KiB buffer here.
+ */
+async function toUploadBody(
+  body: WireUploadBody,
+): Promise<{ stream: ReadableStream<Uint8Array>; sizeBytes: number }> {
+  if ('bytes' in body) {
+    return { stream: streamOf(body.bytes), sizeBytes: body.bytes.byteLength }
+  }
+  const sizeBytes = await sizeOfPickedFile(body.localPath)
+  return {
+    stream: Readable.toWeb(createReadStream(body.localPath)) as ReadableStream<Uint8Array>,
+    sizeBytes,
+  }
+}
+
+/**
  * Stages the archive inside the library's own `.spm/uploads`, exactly as the server's import
  * route does and for the same reasons: `importCuraManagerZip` reads a path, the zip's central
  * directory sits at the end of the file so nothing can be validated before the last byte, and
  * `.spm` is excluded from every rescan so a staging file can never be adopted as a project.
+ *
+ * Only reached by the bytes arm. A picked archive is imported from where it already is — copying
+ * a multi-gigabyte zip into the user's own library to read it back is what the server has to do
+ * with an HTTP body and what a desktop shell does not.
  */
 async function stageArchive(lib: Library, bytes: Uint8Array): Promise<string> {
   const dir = join(lib.dir, '.spm', 'uploads')
@@ -383,9 +440,15 @@ export const dispatch: DispatchTable = {
 
   'importer.curaManagerZip': libraryCall(
     'importer.curaManagerZip',
-    z.tuple([bytesSchema]),
-    async ({ lib, ctx }, bytes) => {
-      const staged = await stageArchive(lib, bytes)
+    z.tuple([uploadBodySchema]),
+    async ({ lib, ctx }, body) => {
+      if ('localPath' in body) {
+        // Read from where the user keeps it. Deliberately *not* removed afterwards: it is their
+        // file, not a staging copy, and the importer only reads it.
+        await sizeOfPickedFile(body.localPath)
+        return await importCuraManagerZip(lib, ctx, body.localPath)
+      }
+      const staged = await stageArchive(lib, body.bytes)
       try {
         return await importCuraManagerZip(lib, ctx, staged)
       } finally {
@@ -398,14 +461,9 @@ export const dispatch: DispatchTable = {
 
   'files.upload': libraryCall(
     'files.upload',
-    z.tuple([idSchema, fileNameSchema, bytesSchema]),
-    async ({ lib, ctx }, projectId, name, bytes) =>
-      decorateFile(
-        await uploadFile(lib, ctx, projectId, name, {
-          stream: streamOf(bytes),
-          sizeBytes: bytes.byteLength,
-        }),
-      ),
+    z.tuple([idSchema, fileNameSchema, uploadBodySchema]),
+    async ({ lib, ctx }, projectId, name, body) =>
+      decorateFile(await uploadFile(lib, ctx, projectId, name, await toUploadBody(body))),
   ),
   'files.rename': libraryCall(
     'files.rename',
