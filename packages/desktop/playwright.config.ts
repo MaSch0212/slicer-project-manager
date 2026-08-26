@@ -7,6 +7,11 @@ import { defineConfig } from '@playwright/test'
  */
 export default defineConfig({
   testDir: './test',
+  /* `.spec.ts` only. `test/dispatch.test.ts` is a `node --test` suite over the dispatch table
+     with no Electron in it at all, and it runs in `deno task verify`; Playwright's default
+     testMatch would also pick it up and run it a second time, under a runner whose `test()` it
+     does not use. */
+  testMatch: '**/*.spec.ts',
   /* Builds before anything runs, and fails the whole run if the build produced nothing. The
      tests must never be able to pass against a stale dist/. */
   globalSetup: './test/build.setup.ts',

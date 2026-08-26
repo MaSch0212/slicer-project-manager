@@ -56,8 +56,9 @@
     "test:core:deno": "deno test --allow-read --allow-write --allow-env packages/core/test/",
     "test:server": "deno test --allow-all packages/server/test/",
     "test:web": "cd packages/web && node node_modules/@angular/cli/bin/ng.js test --no-watch",
+    "test:desktop:unit": "node --test \"packages/desktop/test/**/*.test.ts\"",
     "e2e": "cd packages/web && node node_modules/@playwright/test/cli.js test",
     "test:desktop": "cd packages/desktop && node ../../node_modules/@playwright/test/cli.js test",
-    "verify": "deno task lint && deno task fmt:check && deno task typecheck && deno task test:contract && deno task test:core:node && deno task test:core:deno && deno task test:server && deno task test:web"
+    "verify": "deno task lint && deno task fmt:check && deno task typecheck && deno task test:contract && deno task test:core:node && deno task test:core:deno && deno task test:server && deno task test:desktop:unit && deno task test:web"
   }
 }

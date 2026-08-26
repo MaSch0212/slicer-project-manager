@@ -85,6 +85,21 @@ jobs:
           grep -rl DesktopPlaceholderPage packages/web/dist/electron/browser \
             || { echo "::error::fileReplacements did not swap in the electron routes"; exit 1; }
 
+      # Same shape, for the second fileReplacement: API_CLIENT resolves to IpcApiClient in the
+      # electron build and to HttpApiClient in the web one. The marker is a string literal from
+      # ipc-api-client.ts (BRIDGE_MISSING) and not the class name, because the minifier renames
+      # classes and cannot touch a string -- and a marker that matches nothing is a failure here
+      # too, which is what the `||` below makes the electron case say.
+      - name: web bundle carries no IPC transport
+        run: |
+          if grep -rl "the desktop IPC bridge is missing" packages/web/dist/web/browser; then
+            echo "::error::IpcApiClient leaked into the web bundle"; exit 1
+          fi
+      - name: electron bundle carries the IPC transport
+        run: |
+          grep -rl "the desktop IPC bridge is missing" packages/web/dist/electron/browser \
+            || { echo "::error::fileReplacements did not swap in the electron API_CLIENT"; exit 1; }
+
       # three.js is 600 kB of the viewer chunk and the only thing keeping it out of the first
       # payload is the lazy route boundary in routes.shared.ts. An ordinary-looking `import
       # { Vector3 } from 'three'` in any eagerly-loaded file pulls in the whole of it -- it is
@@ -178,6 +193,12 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: '24' }
       - run: deno install --allow-scripts --frozen
+      # The dispatch table under plain Node, before anything downloads a 100 MB browser: it is
+      # the bulk of what the desktop package does, it needs no display and no Electron, and a
+      # failure in it should not arrive twenty steps later disguised as a GUI timeout. It is in
+      # `deno task verify` as well -- ruling C-5 keeps the *Playwright* suite out of verify, not
+      # this one.
+      - run: deno task test:desktop:unit
       # Electron 44 has no postinstall script at all -- its package.json has no `scripts` key --
       # so `deno install --allow-scripts` writes the JS wrapper and stops. Measured: afterwards
       # there is no `dist/` under node_modules/electron. Two consequences. One, the ~100 MB

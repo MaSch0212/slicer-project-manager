@@ -65,16 +65,27 @@ test.describe('the desktop shell', () => {
     await expect(brand).toBeVisible()
     await expect(brand).toHaveText(APP_TITLE)
 
-    const loginPage = page.locator('spm-login-page')
-    await expect(loginPage.locator('h1')).toHaveText('Sign in')
-    await expect(loginPage.locator('input[autocomplete="username"]')).toBeVisible()
+    // Task 1 asserted the login page here. Task 2's bridge answers `capabilities()` with
+    // `requiresAuth: false`, so the auth guard no longer redirects and the settled route is
+    // /projects — see the note in the navigation test below.
+    const projectsPage = page.locator('spm-projects-page')
+    await expect(projectsPage.locator('h1')).toHaveText('Projects')
+    await expect(projectsPage.locator('input[jigInput]').first()).toBeVisible()
 
-    // Visible is Playwright's non-empty-bounding-box check, but only of the element itself;
-    // this says the form as a whole occupies real space, which a stylesheet that failed to
-    // load would not produce.
-    const box = await loginPage.locator('form').boundingBox()
-    expect(box?.width ?? 0).toBeGreaterThan(100)
-    expect(box?.height ?? 0).toBeGreaterThan(100)
+    // Task 1 measured a bounding box here, on the login form. That was a weak instrument and it
+    // is worth saying why rather than porting it: an *unstyled* block element containing a row
+    // of inputs also has a width and a height, so the numbers only ever ruled out a collapsed
+    // box. This asks styles.css directly instead. `.spm-card` gets its border and padding from
+    // there and from nowhere else, and both are resolved from jig theme custom properties that
+    // only exist once provideJigControls has injected its rules — so a missing stylesheet, an
+    // unstyled shell and a theme that never initialised are all `0px` / `0px none`.
+    const card = await projectsPage.locator('.spm-filters').evaluate((element) => {
+      const style = getComputedStyle(element)
+      return { padding: style.paddingTop, border: style.borderTopWidth, box: element.clientWidth }
+    })
+    expect(card.padding).not.toBe('0px')
+    expect(card.border).not.toBe('0px')
+    expect(card.box).toBeGreaterThan(100)
   })
 
   test('the renderer is served from spm://, and the router can navigate', async () => {
@@ -83,13 +94,14 @@ test.describe('the desktop shell', () => {
     // to it, since this comment first claimed history.pushState throws there and it does not.
     // See app.ts for why `spm://app/` is still the right answer over a relative base href.
     //
-    // The settled route is /login, not /projects: the app asks for /projects, the auth guard
-    // reads `requiresAuth` from CapabilitiesStore, and until task 2's IPC bridge exists there
-    // is nothing to answer `capabilities()` with, so the store falls back to its offline
-    // defaults where requiresAuth is true. That the router *got here* is the proof of
-    // navigation -- the initial URL was spm://app/ and this is three redirects later. Task 2
-    // changes the expected value below to spm://app/projects.
-    await expect.poll(() => page.url()).toBe('spm://app/login')
+    // The settled route is /projects. Task 1 settled at /login instead: the guard is
+    // `!capabilities.requiresAuth || auth.isAuthenticated()`, and with no bridge neither arm
+    // held -- CapabilitiesStore fell back to offline defaults (requiresAuth true) and
+    // AuthStore.refresh() had nothing to ask. Task 2's bridge satisfies both, and measured by
+    // mutation, *either* one alone is enough to get here. See bridge.spec.ts, which asserts the
+    // capability value itself; this line only says the router got somewhere -- the initial URL
+    // was spm://app/ and this is two redirects later.
+    await expect.poll(() => page.url()).toBe('spm://app/projects')
   })
 
   test('refuses a renderer request that escapes the renderer directory', async () => {
@@ -143,9 +155,10 @@ test.describe('the desktop shell', () => {
     // `sandbox: false` to make a preload easier to write -- see the note in preload.ts.
     const prefs = await app.evaluate(({ BrowserWindow }) => {
       // Present and documented at runtime, but absent from electron.d.ts in 44.0.0, so the cast
-      // is unavoidable. It is written to yield null rather than throw if the method ever goes:
-      // toMatchObject on null fails, where an optional call quietly returning undefined into a
-      // loose assertion would not.
+      // is unavoidable. The `?? null` keeps the expression well typed if the method ever goes;
+      // it is not load-bearing for the assertion, which was the original claim here and is
+      // wrong -- measured: `toMatchObject(undefined)` throws in this Playwright version too, so
+      // both spellings fail loudly.
       const contents = BrowserWindow.getAllWindows()[0]!.webContents as unknown as {
         getLastWebPreferences?: () => Record<string, unknown> | null
       }
@@ -159,11 +172,15 @@ test.describe('the desktop shell', () => {
   })
 
   test('the preload bridge is installed on the window', async () => {
-    // Task 2 puts invoke() on this object. Asserting it exists now is not ceremony: a
-    // sandboxed preload that fails to load takes the whole bridge with it and says so only in
-    // the renderer console, so the first symptom without this test would be task 2's IPC
-    // "not working" for a reason that has nothing to do with task 2.
-    expect(await page.evaluate(() => typeof (globalThis as { spm?: unknown }).spm)).toBe('object')
+    // A sandboxed preload that fails to load takes the whole bridge with it and says so only in
+    // the renderer console. `invoke` and not just the object: task 2 filled the bridge, and an
+    // empty one is what a preload bundled as ESM by mistake would leave behind -- see build.ts.
+    expect(
+      await page.evaluate(() => {
+        const bridge = (globalThis as { spm?: { invoke?: unknown } }).spm
+        return [typeof bridge, typeof bridge?.invoke]
+      }),
+    ).toEqual(['object', 'function'])
   })
 
   test('opens, migrates and seeds the library it was pointed at', async () => {
@@ -217,7 +234,7 @@ test('the renderer boots without a console error or warning', async () => {
   })
   page.on('pageerror', (error) => complaints.push(`pageerror: ${error.message}`))
   await page.waitForLoadState('domcontentloaded')
-  await expect.poll(() => page.url()).toBe('spm://app/login')
+  await expect.poll(() => page.url()).toBe('spm://app/projects')
   expect(complaints).toEqual([])
   await app.close()
 })

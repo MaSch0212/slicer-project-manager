@@ -51,6 +51,10 @@
                 {
                   "replace": "src/app/routes.ts",
                   "with": "src/app/routes.electron.ts"
+                },
+                {
+                  "replace": "src/app/core/api/api-client.token.ts",
+                  "with": "src/app/core/api/api-client.token.electron.ts"
                 }
               ]
             }
