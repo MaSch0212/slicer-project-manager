@@ -3781,7 +3781,8 @@
           "dependencies": [
             "npm:@playwright/test@^1.56.0",
             "npm:electron@44",
-            "npm:esbuild@0.28"
+            "npm:esbuild@0.28",
+            "npm:zod@4"
           ]
         }
       },

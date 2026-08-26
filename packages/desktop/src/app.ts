@@ -4,6 +4,8 @@ import { readFile } from 'node:fs/promises'
 import { extname, join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { closeLibrary, ensureLocalUser, openLibrary, type Ctx, type Library } from '@spm/core'
+import { registerInvokeHandler } from './ipc.ts'
+import { RENDERER_HOST, RENDERER_ORIGIN } from './urls.ts'
 
 /**
  * The Electron main process, minus its entry point.
@@ -46,9 +48,13 @@ export const APP_NAME = 'Slicer Project Manager'
  * - Decisive for task 3: `spm://file/<id>/raw` is cross-origin to a `file://` document with no
  *   way to make it otherwise, whereas both hosts living under one scheme leaves task 3 free to
  *   move the file host under `spm://app/` and be same-origin if CORS proves a nuisance.
+ *
+ * That last paragraph is now settled rather than speculative: ruling C-7 moved file bytes under
+ * the renderer's own host at a reserved path. The two constants moved to `urls.ts` with it, so
+ * `dispatch.ts` — which must be importable without Electron — can read them; they are re-exported
+ * here because that is where task 1 put them and where task 3 will look.
  */
-export const RENDERER_HOST = 'app'
-export const RENDERER_ORIGIN = `spm://${RENDERER_HOST}`
+export { RENDERER_HOST, RENDERER_ORIGIN } from './urls.ts'
 
 /** Names the library folder to open. Same variable the Deno server reads, on purpose. */
 export const LIBRARY_DIR_ENV = 'SPM_LIBRARY_DIR'
@@ -250,13 +256,20 @@ export function main(): void {
 
   let session: DesktopSession | null = null
 
+  // Before `whenReady`, and before any window: `ipcMain.handle` is not tied to a window, and
+  // registering it first means the renderer cannot possibly load and call into a channel that
+  // is not there yet. The accessor is a closure over `session` rather than the value, because
+  // the value is null until a folder is opened and task 4 swaps it without a restart.
+  registerInvokeHandler(() => session)
+
   app.whenReady().then(() => {
     try {
       protocol.handle('spm', createSpmHandler(defaultRendererDir()))
 
       const libraryDir = resolveLibraryDir()
       // Task 4 replaces this branch with a folder picker. Until then a shell with no library
-      // still opens: the renderer has no way to reach one before task 2's bridge anyway.
+      // still opens, and the bridge answers `capabilities` out of the shell itself while every
+      // library-backed call reports `Conflict: no library folder is open`.
       if (libraryDir) session = openDesktopLibrary(libraryDir)
 
       createMainWindow()

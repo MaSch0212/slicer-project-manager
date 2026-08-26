@@ -1,0 +1,423 @@
+import { mkdir, rm, writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
+import { z } from 'zod'
+import type { ApiClient } from '@spm/contract/api-client.ts'
+import { createDecorators } from '@spm/contract/decorate.ts'
+import type { Capabilities } from '@spm/contract/dtos.ts'
+import { AppError } from '@spm/contract/errors.ts'
+import {
+  changePasswordSchema,
+  createProjectSchema,
+  createUserSchema,
+  fileNameSchema,
+  loginSchema,
+  passwordSchema,
+  profilePatchSchema,
+  projectPatchSchema,
+  projectQuerySchema,
+  settingsPatchSchema,
+  tagNameSchema,
+  updateUserSchema,
+} from '@spm/contract/schemas.ts'
+import {
+  addTag,
+  changePassword,
+  checkActivationToken,
+  createProject,
+  createUser,
+  deleteFile,
+  deleteProject,
+  deleteUser,
+  getProject,
+  getSettings,
+  importCuraManagerZip,
+  listProjects,
+  listUsers,
+  me,
+  putSettings,
+  reissueInvite,
+  removeTag,
+  renameFile,
+  rescan,
+  updateProfile,
+  updateProject,
+  updateUser,
+  uploadFile,
+  type Ctx,
+  type Library,
+} from '@spm/core'
+import { ACTIVATION_URL_BASE, FILE_URL_BASE } from './urls.ts'
+
+/**
+ * The whole of `ApiClient`, mapped onto `@spm/core`.
+ *
+ * This module imports nothing from `electron` — a requirement, not an accident. It is the thing
+ * that has to be covered exhaustively, because a missing entry is a runtime failure in a shell
+ * no other suite exercises, and `test/dispatch.test.ts` runs it under plain `node --test` against
+ * a real temporary library. `ipc.ts` is the only file that knows the table is reached over IPC.
+ *
+ * The reference implementation is `packages/server/src/routes/*.ts`: every entry below calls the
+ * same core function with the same arguments in the same order, and decorates the result the same
+ * way. Where an entry does something the server does not, the comment says why.
+ */
+
+/** A library that is open, migrated, and has its single local user (spec 2.6). */
+export type DispatchSession = { lib: Library; ctx: Ctx }
+
+/**
+ * The spec-2.4 column for "Electron, local folder", as far as this task can honestly claim it.
+ *
+ * `requiresAuth: false` is what spec 2.6 says local mode is, and it is asserted on directly. It
+ * is *not*, on its own, what gets the renderer off `/login`, and the carried-in ruling that said
+ * so is wrong — measured, by flipping this one flag back to `true` and running the desktop suite:
+ * the app still lands on `spm://app/projects` and thirteen of fourteen tests stay green. The
+ * guard is `!capabilities.requiresAuth || auth.isAuthenticated()` (guards.ts), and the bridge
+ * satisfies *both* arms at once: this flag is the first, and `account.me` answering with
+ * `ensureLocalUser`'s row is the second. Flipping either one alone leaves the app on `/projects`;
+ * task 1 was stuck on `/login` because it had neither.
+ *
+ * `canPickLocalFolder` is **false** here and not `true`, even though spec 2.4's column for this
+ * mode says true: task 4 builds the picker, and until it exists the flag would light up a
+ * control that goes nowhere, which is the plan's own stated reason for keeping the slicer flags
+ * off. Task 4 flips it and owns the assertion on the whole object.
+ */
+export const DESKTOP_CAPABILITIES: Capabilities = {
+  requiresAuth: false,
+  canManageUsers: false,
+  canPickLocalFolder: false,
+  canLaunchSlicer: false,
+  canConfigureSlicers: false,
+  canBrowseModelSites: false,
+}
+
+const { decorateFile, decorateProject, decorateProjectDetail } = createDecorators(FILE_URL_BASE)
+
+/* -------------------------------------------------------------------------------------------
+ * The path type — why the key set is a compile error and not only a test
+ * ---------------------------------------------------------------------------------------- */
+
+/**
+ * Every dotted route of `ApiClient`: `'capabilities' | 'auth.login' | … | 'files.delete'`.
+ *
+ * `DispatchTable` below is a mapped type over this union, so a method added to `ApiClient` and
+ * not implemented here fails `deno task typecheck`, and a key here that `ApiClient` does not have
+ * fails it too. The runtime test in `test/dispatch.test.ts` is kept as well, but as the second
+ * line of defence rather than the first — see the note there for what it catches that this does
+ * not.
+ */
+type MethodPaths<T> = {
+  [K in keyof T & string]: T[K] extends (...args: never[]) => unknown
+    ? K
+    : T[K] extends object
+      ? `${K}.${MethodPaths<T[K]>}`
+      : never
+}[keyof T & string]
+
+export type ApiPath = MethodPaths<ApiClient>
+
+type ValueAt<T, P extends string> = P extends `${infer Head}.${infer Rest}`
+  ? Head extends keyof T
+    ? ValueAt<T[Head], Rest>
+    : never
+  : P extends keyof T
+    ? T[P]
+    : never
+
+/** What `ApiClient` promises at `P`, unwrapped. Each entry is typed to produce exactly this. */
+type ResultAt<P extends ApiPath> =
+  ValueAt<ApiClient, P> extends (...args: never[]) => infer R ? Awaited<R> : never
+
+/**
+ * The session is nullable at this signature because `capabilities` must be answerable before any
+ * folder is open — it has to be, or the renderer could never get far enough to ask for one. Every
+ * other entry is built with `libraryCall`, which refuses a null session rather than dereferencing
+ * it.
+ */
+type Dispatched<R> = (session: DispatchSession | null, args: unknown[]) => Promise<R>
+
+export type DispatchTable = { readonly [P in ApiPath]: Dispatched<ResultAt<P>> }
+
+/* -------------------------------------------------------------------------------------------
+ * Argument validation
+ * ---------------------------------------------------------------------------------------- */
+
+/**
+ * Constraint 4: the renderer is the untrusted side of this boundary. Every entry parses its
+ * argument list before core sees it, with `@spm/contract`'s own schemas wherever one exists —
+ * the same objects the server's `parseJson` uses, so a malformed input is rejected with the same
+ * `code` and the same issues in both shells.
+ *
+ * A `z.tuple` with no rest element also rejects an argument list that is too long or too short,
+ * which a per-argument check would not.
+ *
+ * Structural rather than `z.ZodType<A>`: zod v4's `ZodTuple` carries an `Input` type parameter
+ * that does not unify with a bare `ZodType<A>` annotation, and this is the part of the signature
+ * that actually matters.
+ */
+type ArgsSchema<A extends readonly unknown[]> = {
+  safeParse(value: unknown): { success: true; data: A } | { success: false; error: z.ZodError }
+}
+
+/**
+ * Ids are opaque strings from `newId()`; there is no contract schema for one, because there is
+ * nothing to validate beyond "a plausible string". The real check is core's own lookup, which
+ * joins against the owner and throws `NotFound`. This only keeps an object, or a megabyte of
+ * text, from reaching a prepared statement.
+ */
+const idSchema = z.string().min(1).max(64)
+
+/**
+ * The bytes of an upload.
+ *
+ * Measured in Electron 44.0.0 through a sandboxed, context-isolated preload: a `Blob`, a `File`
+ * and a `ReadableStream` all cross `ipcRenderer.invoke` as an **empty plain object** — no throw
+ * and no warning — while a `Uint8Array` arrives intact and `instanceof Uint8Array` still holds in
+ * the main process. So `IpcApiClient` reads both `UploadBody` arms into bytes and this is what
+ * lands here; see the comment on `IpcApiClient.files.upload` for the cost of that choice.
+ */
+const bytesSchema = z.instanceof(Uint8Array)
+
+function libraryCall<P extends ApiPath, A extends readonly unknown[]>(
+  path: P,
+  schema: ArgsSchema<A>,
+  run: (session: DispatchSession, ...args: A) => ResultAt<P> | Promise<ResultAt<P>>,
+): Dispatched<ResultAt<P>> {
+  return async (session, args) => {
+    if (!session) throw new AppError('Conflict', 'no library folder is open')
+    const parsed = schema.safeParse(args)
+    if (!parsed.success) {
+      throw new AppError('Validation', `invalid arguments for ${path}`, {
+        issues: parsed.error.issues,
+      })
+    }
+    return await run(session, ...parsed.data)
+  }
+}
+
+/** For the one route that answers out of the shell itself rather than out of a library. */
+function shellCall<P extends ApiPath, A extends readonly unknown[]>(
+  path: P,
+  schema: ArgsSchema<A>,
+  run: (...args: A) => ResultAt<P> | Promise<ResultAt<P>>,
+): Dispatched<ResultAt<P>> {
+  return async (_session, args) => {
+    const parsed = schema.safeParse(args)
+    if (!parsed.success) {
+      throw new AppError('Validation', `invalid arguments for ${path}`, {
+        issues: parsed.error.issues,
+      })
+    }
+    return await run(...parsed.data)
+  }
+}
+
+/* -------------------------------------------------------------------------------------------
+ * Uploads
+ * ---------------------------------------------------------------------------------------- */
+
+/** Core's upload takes the streaming arm of `UploadBody`; the bytes arrived whole, so wrap them. */
+function streamOf(bytes: Uint8Array): ReadableStream<Uint8Array> {
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(bytes)
+      controller.close()
+    },
+  })
+}
+
+/**
+ * Stages the archive inside the library's own `.spm/uploads`, exactly as the server's import
+ * route does and for the same reasons: `importCuraManagerZip` reads a path, the zip's central
+ * directory sits at the end of the file so nothing can be validated before the last byte, and
+ * `.spm` is excluded from every rescan so a staging file can never be adopted as a project.
+ */
+async function stageArchive(lib: Library, bytes: Uint8Array): Promise<string> {
+  const dir = join(lib.dir, '.spm', 'uploads')
+  await mkdir(dir, { recursive: true })
+  const path = join(dir, `${crypto.randomUUID()}.zip`)
+  await writeFile(path, bytes)
+  return path
+}
+
+/* -------------------------------------------------------------------------------------------
+ * The table
+ * ---------------------------------------------------------------------------------------- */
+
+const NO_SESSIONS_HERE = 'this library is open locally; it has no accounts and no sessions'
+
+export const dispatch: DispatchTable = {
+  capabilities: shellCall('capabilities', z.tuple([]), () => DESKTOP_CAPABILITIES),
+
+  /*
+   * Local mode has no sessions at all (spec 2.6), and that is what these four say.
+   *
+   * `login` and `activate` both mint a session token in core, and in this shell there is nowhere
+   * for one to live and nothing that would read it: `ctx` is fixed to `ensureLocalUser`'s row for
+   * the lifetime of the process. Calling core and discarding the token would write session rows
+   * that influence nothing — a worse answer than refusing, because it would look like it worked.
+   *
+   * `logout` resolves instead of refusing, because it is the one of the four the UI can actually
+   * reach: the header's sign-out button is gated on `auth.isAuthenticated()`, which is true here
+   * since `account.me()` succeeds. "End the session you do not have" is a no-op, not an error.
+   * (That the button is shown at all in local mode is a UI question, and task 4's.)
+   *
+   * `checkToken` is a real read-only core query. A local library simply contains no activation
+   * tokens, so it answers `{ valid: false }` truthfully rather than by being told to.
+   */
+  'auth.login': libraryCall(
+    'auth.login',
+    z.tuple([loginSchema.shape.username, loginSchema.shape.password]),
+    // The parameters are named and unused on purpose: without them the argument tuple would be
+    // inferred from this callback as `[]`, and the schema's two elements would be dropped.
+    (_session, _username, _password) => {
+      throw new AppError('Forbidden', NO_SESSIONS_HERE)
+    },
+  ),
+  'auth.logout': libraryCall('auth.logout', z.tuple([]), () => undefined),
+  'auth.checkToken': libraryCall(
+    'auth.checkToken',
+    z.tuple([z.string().min(1)]),
+    async ({ lib }, token) => {
+      const result = await checkActivationToken(lib.db, token)
+      // The same narrowing the server route does: `userId` is internal and never leaves core.
+      return result.valid ? { valid: true, username: result.username } : { valid: false }
+    },
+  ),
+  'auth.activate': libraryCall(
+    'auth.activate',
+    z.tuple([z.string().min(1), passwordSchema]),
+    (_session, _token, _newPassword) => {
+      throw new AppError('Forbidden', NO_SESSIONS_HERE)
+    },
+  ),
+
+  'account.me': libraryCall('account.me', z.tuple([]), ({ lib, ctx }) => me(lib, ctx)),
+  'account.changePassword': libraryCall(
+    'account.changePassword',
+    z.tuple([changePasswordSchema.shape.current, changePasswordSchema.shape.next]),
+    async ({ lib, ctx }, current, next) => {
+      await changePassword(lib, ctx, current, next)
+    },
+  ),
+  'account.updateProfile': libraryCall(
+    'account.updateProfile',
+    z.tuple([profilePatchSchema]),
+    ({ lib, ctx }, patch) => updateProfile(lib, ctx, patch),
+  ),
+
+  'settings.get': libraryCall('settings.get', z.tuple([]), ({ lib, ctx }) => getSettings(lib, ctx)),
+  'settings.put': libraryCall(
+    'settings.put',
+    z.tuple([settingsPatchSchema]),
+    ({ lib, ctx }, patch) => putSettings(lib, ctx, patch),
+  ),
+
+  'users.list': libraryCall('users.list', z.tuple([]), ({ lib, ctx }) => listUsers(lib, ctx)),
+  'users.create': libraryCall(
+    'users.create',
+    z.tuple([createUserSchema]),
+    async ({ lib, ctx }, input) => {
+      const { user, token } = await createUser(lib, ctx, input)
+      return { user, activationUrl: `${ACTIVATION_URL_BASE}#${token}` }
+    },
+  ),
+  'users.reissueInvite': libraryCall(
+    'users.reissueInvite',
+    z.tuple([idSchema]),
+    async ({ lib, ctx }, id) => {
+      const { token } = await reissueInvite(lib, ctx, id)
+      return { activationUrl: `${ACTIVATION_URL_BASE}#${token}` }
+    },
+  ),
+  'users.update': libraryCall(
+    'users.update',
+    z.tuple([idSchema, updateUserSchema]),
+    ({ lib, ctx }, id, patch) => updateUser(lib, ctx, id, patch),
+  ),
+  'users.delete': libraryCall('users.delete', z.tuple([idSchema]), ({ lib, ctx }, id) => {
+    deleteUser(lib, ctx, id)
+  }),
+
+  'projects.list': libraryCall(
+    'projects.list',
+    z.tuple([projectQuerySchema]),
+    ({ lib, ctx }, query) => listProjects(lib, ctx, query).map(decorateProject),
+  ),
+  'projects.get': libraryCall('projects.get', z.tuple([idSchema]), ({ lib, ctx }, id) =>
+    decorateProjectDetail(getProject(lib, ctx, id)),
+  ),
+  'projects.create': libraryCall(
+    'projects.create',
+    z.tuple([createProjectSchema]),
+    ({ lib, ctx }, input) => decorateProject(createProject(lib, ctx, input)),
+  ),
+  'projects.update': libraryCall(
+    'projects.update',
+    z.tuple([idSchema, projectPatchSchema]),
+    ({ lib, ctx }, id, patch) => decorateProject(updateProject(lib, ctx, id, patch)),
+  ),
+  'projects.delete': libraryCall(
+    'projects.delete',
+    z.tuple([idSchema, z.object({ deleteFiles: z.boolean() })]),
+    ({ lib, ctx }, id, opts) => {
+      deleteProject(lib, ctx, id, opts)
+    },
+  ),
+  'projects.addTag': libraryCall(
+    'projects.addTag',
+    z.tuple([idSchema, tagNameSchema]),
+    ({ lib, ctx }, id, name) => {
+      addTag(lib, ctx, id, name)
+    },
+  ),
+  'projects.removeTag': libraryCall(
+    'projects.removeTag',
+    z.tuple([idSchema, tagNameSchema]),
+    ({ lib, ctx }, id, name) => {
+      removeTag(lib, ctx, id, name)
+    },
+  ),
+  'projects.rescan': libraryCall('projects.rescan', z.tuple([]), ({ lib, ctx }) =>
+    rescan(lib, ctx),
+  ),
+
+  'importer.curaManagerZip': libraryCall(
+    'importer.curaManagerZip',
+    z.tuple([bytesSchema]),
+    async ({ lib, ctx }, bytes) => {
+      const staged = await stageArchive(lib, bytes)
+      try {
+        return await importCuraManagerZip(lib, ctx, staged)
+      } finally {
+        // Always: the archive has either been extracted or rejected, and either way a
+        // multi-gigabyte copy inside the user's own library is not theirs to keep.
+        await rm(staged, { force: true }).catch(() => {})
+      }
+    },
+  ),
+
+  'files.upload': libraryCall(
+    'files.upload',
+    z.tuple([idSchema, fileNameSchema, bytesSchema]),
+    async ({ lib, ctx }, projectId, name, bytes) =>
+      decorateFile(
+        await uploadFile(lib, ctx, projectId, name, {
+          stream: streamOf(bytes),
+          sizeBytes: bytes.byteLength,
+        }),
+      ),
+  ),
+  'files.rename': libraryCall(
+    'files.rename',
+    z.tuple([idSchema, fileNameSchema]),
+    ({ lib, ctx }, id, name) => decorateFile(renameFile(lib, ctx, id, name)),
+  ),
+  'files.delete': libraryCall('files.delete', z.tuple([idSchema]), ({ lib, ctx }, id) => {
+    deleteFile(lib, ctx, id)
+  }),
+}
+
+/** Narrows an arbitrary string from the renderer to a key of the table. */
+export function isApiPath(value: unknown): value is ApiPath {
+  return typeof value === 'string' && Object.hasOwn(dispatch, value)
+}

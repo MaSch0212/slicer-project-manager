@@ -5,7 +5,8 @@
   "type": "module",
   "dependencies": {
     "@spm/contract": "workspace:*",
-    "@spm/core": "workspace:*"
+    "@spm/core": "workspace:*",
+    "zod": "^4.0.0"
   },
   "devDependencies": {
     "@playwright/test": "^1.56.0",
