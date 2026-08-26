@@ -1,6 +1,6 @@
 import { createReadStream } from 'node:fs'
 import { mkdir, rm, stat, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { isAbsolute, join, resolve, sep } from 'node:path'
 import { Readable } from 'node:stream'
 import { z } from 'zod'
 import type { ApiClient } from '@spm/contract/api-client.ts'
@@ -41,6 +41,7 @@ import {
   removeTag,
   renameFile,
   rescan,
+  SPM_DIR,
   updateProfile,
   updateProject,
   updateUser,
@@ -240,16 +241,43 @@ function streamOf(bytes: Uint8Array): ReadableStream<Uint8Array> {
 }
 
 /**
- * The size of a file the user picked, or an `AppError` naming what is wrong with it.
+ * Checks a picked path in the **main process**, and answers with the file's size.
  *
- * Without this, a path that has been deleted between the picker and the upload surfaces as an
- * `ENOENT` wrapped into `Internal`, and a directory surfaces as an `EISDIR` from deep inside the
- * read. Both are things a user can act on, so both get a code the UI can switch on.
+ * Constraint 4 says every IPC channel validates its input in the main process, and that the
+ * renderer is the untrusted side of the boundary. The preload is what stops a `localPath` the
+ * main world wrote from ever reaching here — but the preload runs in the renderer process, so on
+ * the wrong side of that line. This is the main process's own check, and it exists so that a
+ * `contextIsolation` bypass, a Chromium sandbox escape or one careless future edit to
+ * `sanitise` does not restore the full escalation.
+ *
+ * What it stops, exactly, and it is worth being precise because the temptation is to overclaim:
+ *
+ * - a **relative** path, which `createReadStream` would otherwise resolve against the main
+ *   process's working directory — nothing the picker produces is relative;
+ * - a path inside the library's own `.spm`, which is where the database, the previews and the
+ *   staging area live. That is the file the demonstrated exploit read.
+ *
+ * What it does **not** stop: an absolute path to any other file the user can read. The main
+ * process has no way to know what the user picked — Electron surfaces no event for an
+ * `<input type="file">` choice — so the preload's isolation remains the primary guarantee and
+ * this is defence in depth behind it, not a replacement for it.
+ *
+ * It also turns two ordinary accidents into codes the UI can switch on: a file deleted between
+ * the picker and the upload would otherwise be an `ENOENT` wrapped into `Internal`, and a
+ * directory an `EISDIR` from deep inside the read.
  */
-async function sizeOfPickedFile(localPath: string): Promise<number> {
+async function sizeOfPickedFile(lib: Library, localPath: string): Promise<number> {
+  if (!isAbsolute(localPath)) {
+    throw new AppError('Validation', 'a picked file must be named by an absolute path')
+  }
+  const resolved = resolve(localPath)
+  const privateDir = resolve(lib.dir, SPM_DIR)
+  if (resolved === privateDir || resolved.startsWith(privateDir + sep)) {
+    throw new AppError('Forbidden', `${SPM_DIR} is the library's own, and is not a source of files`)
+  }
   let info
   try {
-    info = await stat(localPath)
+    info = await stat(resolved)
   } catch {
     throw new AppError('NotFound', 'that file is no longer where it was picked from')
   }
@@ -266,14 +294,17 @@ async function sizeOfPickedFile(localPath: string): Promise<number> {
  * a 10 GiB archive costs a 64 KiB buffer here.
  */
 async function toUploadBody(
+  lib: Library,
   body: WireUploadBody,
 ): Promise<{ stream: ReadableStream<Uint8Array>; sizeBytes: number }> {
   if ('bytes' in body) {
     return { stream: streamOf(body.bytes), sizeBytes: body.bytes.byteLength }
   }
-  const sizeBytes = await sizeOfPickedFile(body.localPath)
+  const sizeBytes = await sizeOfPickedFile(lib, body.localPath)
+  // The resolved path, not the one that arrived: `sizeOfPickedFile` statted the resolved form,
+  // and reading a different string than the one that was checked is how a check gets bypassed.
   return {
-    stream: Readable.toWeb(createReadStream(body.localPath)) as ReadableStream<Uint8Array>,
+    stream: Readable.toWeb(createReadStream(resolve(body.localPath))) as ReadableStream<Uint8Array>,
     sizeBytes,
   }
 }
@@ -289,7 +320,7 @@ async function toUploadBody(
  * with an HTTP body and what a desktop shell does not.
  */
 async function stageArchive(lib: Library, bytes: Uint8Array): Promise<string> {
-  const dir = join(lib.dir, '.spm', 'uploads')
+  const dir = join(lib.dir, SPM_DIR, 'uploads')
   await mkdir(dir, { recursive: true })
   const path = join(dir, `${crypto.randomUUID()}.zip`)
   await writeFile(path, bytes)
@@ -445,8 +476,8 @@ export const dispatch: DispatchTable = {
       if ('localPath' in body) {
         // Read from where the user keeps it. Deliberately *not* removed afterwards: it is their
         // file, not a staging copy, and the importer only reads it.
-        await sizeOfPickedFile(body.localPath)
-        return await importCuraManagerZip(lib, ctx, body.localPath)
+        await sizeOfPickedFile(lib, body.localPath)
+        return await importCuraManagerZip(lib, ctx, resolve(body.localPath))
       }
       const staged = await stageArchive(lib, body.bytes)
       try {
@@ -463,7 +494,7 @@ export const dispatch: DispatchTable = {
     'files.upload',
     z.tuple([idSchema, fileNameSchema, uploadBodySchema]),
     async ({ lib, ctx }, projectId, name, body) =>
-      decorateFile(await uploadFile(lib, ctx, projectId, name, await toUploadBody(body))),
+      decorateFile(await uploadFile(lib, ctx, projectId, name, await toUploadBody(lib, body))),
   ),
   'files.rename': libraryCall(
     'files.rename',

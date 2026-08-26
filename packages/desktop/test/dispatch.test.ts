@@ -27,7 +27,13 @@ import {
   type ApiPath,
   type DispatchSession,
 } from '../src/dispatch.ts'
-import { FILE_REF_KEY, type IpcResult as DesktopIpcResult } from '../src/protocol.ts'
+import {
+  FILE_REF_KEY,
+  LOCAL_PATH_KEY,
+  type IpcResult as DesktopIpcResult,
+  type WireUploadBody,
+} from '../src/protocol.ts'
+import { sanitiseArg, sanitiseArgs } from '../src/sanitise-args.ts'
 import { FILE_URL_BASE } from '../src/urls.ts'
 
 /**
@@ -121,8 +127,8 @@ function exerciseAll(client: ApiClient): Record<ApiPath, () => Promise<unknown>>
 test('the table implements exactly the interface, and IpcApiClient reaches every entry', async () => {
   const sent: string[] = []
   const client = new IpcApiClient({
-    // No path behind these Blobs, which is what a real preload would answer for them too.
-    fileRef: () => null,
+    // No file behind these Blobs, which is what a real preload would answer for them too.
+    canStreamFromDisk: () => false,
     invoke: (path) => {
       sent.push(path)
       return Promise.resolve({ ok: true, value: undefined })
@@ -151,11 +157,112 @@ test('the renderer and main-process declarations of the wire result agree', () =
   const fromDesktop: WebIpcResult = {} as DesktopIpcResult
   const fromWeb: DesktopIpcResult = {} as WebIpcResult
   assert.ok(fromDesktop !== undefined && fromWeb !== undefined)
+})
 
-  // This one is a value, and it has teeth: if the renderer's key and the preload's key ever
-  // differ, `resolveArg` stops recognising the token, the upload silently falls back to
-  // buffering the whole file, and nothing else in the suite notices — the upload still works.
+test('the three keys the upload path is spelled with cannot drift apart', () => {
+  // 1. The renderer puts the picked File under its own copy of the key; the preload looks for
+  //    its own. Drift is not silent — measured: the preload leaves the object untouched, the
+  //    unrecognised key fails `uploadBodySchema`, and the import-page Playwright test goes red
+  //    with "Import finished" never appearing. (An earlier version of this comment claimed the
+  //    upload would quietly fall back to buffering. It does not; it fails outright. This
+  //    assertion is the one that names *which* string is wrong when it does.)
   assert.equal(WEB_FILE_REF_KEY, FILE_REF_KEY)
+
+  // 2. The key the preload writes a resolved path under has to be the key `WireUploadBody`'s
+  //    path arm — and so `uploadBodySchema` — reads. If they disagree, the preload's strip stops
+  //    removing the key a forged argument uses, which is the security-relevant half. This is a
+  //    compile-time tie: the computed key is typed by `LOCAL_PATH_KEY`, so the annotation only
+  //    holds while the two are the same literal.
+  const pathArm: WireUploadBody = { [LOCAL_PATH_KEY]: 'C:\\somewhere\\picked.stl' }
+  assert.ok(LOCAL_PATH_KEY in pathArm)
+})
+
+/* -------------------------------------------------------------------------------------------
+ * The preload's argument sanitiser
+ * ---------------------------------------------------------------------------------------- */
+
+/**
+ * Asserted here, on its own output, and not only through the bridge.
+ *
+ * Through the bridge, a nested `{ localPath }` comes back `Validation` whether the strip removed
+ * it or not, because `uploadBodySchema` is a top-level union and never sees a nested object.
+ * That made the end-to-end forgery cases pass for a reason that has nothing to do with the guard
+ * — a coincidence the next schema change repeals. These read what the sanitiser actually
+ * produced.
+ *
+ * `PICKED` stands in for a `File`; the real resolver is `webUtils.getPathForFile`, which needs an
+ * Electron renderer, so it is injected.
+ */
+const PICKED = { picked: true }
+const resolvePicked = (file: unknown): string => (file === PICKED ? 'C:\\picked\\model.stl' : '')
+
+test('the sanitiser removes a forged localPath at every depth, not just the top', () => {
+  const victim = 'C:\\Users\\someone\\.ssh\\id_rsa'
+  assert.deepEqual(sanitiseArg({ localPath: victim }, resolvePicked), {})
+  assert.deepEqual(sanitiseArg({ localPath: victim, bytes: 'kept' }, resolvePicked), {
+    bytes: 'kept',
+  })
+  assert.deepEqual(sanitiseArg({ a: { localPath: victim } }, resolvePicked), { a: {} })
+  assert.deepEqual(sanitiseArg({ a: { b: { c: { localPath: victim } } } }, resolvePicked), {
+    a: { b: { c: {} } },
+  })
+  assert.deepEqual(sanitiseArg([{ localPath: victim }], resolvePicked), [{}])
+  assert.deepEqual(sanitiseArg({ a: [{ b: { localPath: victim } }] }, resolvePicked), {
+    a: [{ b: {} }],
+  })
+  // The whole list, the way `invoke` calls it.
+  assert.deepEqual(sanitiseArgs(['id', 'a.stl', { localPath: victim }], resolvePicked), [
+    'id',
+    'a.stl',
+    {},
+  ])
+  // Nowhere in the output does the string survive, at any depth.
+  assert.equal(
+    JSON.stringify(sanitiseArgs([{ deep: [{ localPath: victim }] }], resolvePicked)).includes(
+      'id_rsa',
+    ),
+    false,
+  )
+})
+
+test('the sanitiser writes a localPath only from a real picked file', () => {
+  assert.deepEqual(sanitiseArg({ [FILE_REF_KEY]: PICKED }, resolvePicked), {
+    localPath: 'C:\\picked\\model.stl',
+  })
+  // Nested too, so the substitution is not a top-level special case either.
+  assert.deepEqual(sanitiseArg({ a: { [FILE_REF_KEY]: PICKED } }, resolvePicked), {
+    a: { localPath: 'C:\\picked\\model.stl' },
+  })
+  // Anything the resolver cannot name yields neither arm, so the schema refuses it. A token
+  // holding a string, a `Blob`, a made-up `File` and a value that makes the resolver throw all
+  // land here.
+  for (const held of ['C:\\Users\\someone\\.ssh\\id_rsa', {}, null, 7]) {
+    assert.deepEqual(sanitiseArg({ [FILE_REF_KEY]: held }, resolvePicked), {}, String(held))
+  }
+  assert.deepEqual(
+    sanitiseArg({ [FILE_REF_KEY]: PICKED, localPath: 'C:\\forged' }, resolvePicked),
+    { localPath: 'C:\\picked\\model.stl' },
+    'a forged path alongside a real file must not win',
+  )
+})
+
+test('the sanitiser passes binary payloads through by identity and terminates on a cycle', () => {
+  // Rebuilding a Uint8Array through Object.entries would turn it into { "0": 1, … } and the
+  // bytes arm would upload nothing.
+  const bytes = new Uint8Array([1, 2, 3])
+  const sanitised = sanitiseArg({ bytes }, resolvePicked) as { bytes: Uint8Array }
+  assert.equal(sanitised.bytes, bytes)
+  assert.equal(sanitiseArg(bytes, resolvePicked), bytes)
+
+  // Past the depth cap the value becomes null, which every schema refuses. Without the cap a
+  // cyclic argument — which contextBridge permits — would recurse until the stack gave out.
+  const cyclic: Record<string, unknown> = { localPath: 'C:\\forged' }
+  cyclic['self'] = cyclic
+  const walked = JSON.stringify(sanitiseArg(cyclic, resolvePicked))
+  assert.equal(walked, '{"self":{"self":{"self":{"self":{"self":{"self":null}}}}}}')
+  // The forged path is gone from every one of those levels, not only the outermost.
+  assert.equal(walked.includes('forged'), false)
+  assert.equal(walked.includes('localPath'), false)
 })
 
 test('isApiPath refuses inherited property names', () => {
@@ -425,6 +532,48 @@ test('a picked path that no longer exists is NotFound, and a folder is Validatio
     (await rejection(call('files.upload', [project.id, 'a.stl', { localPath: dir }]))).code,
     'Validation',
   )
+  await call('projects.delete', [project.id, { deleteFiles: true }])
+})
+
+test('the main process refuses a picked path it should never be given', async () => {
+  /*
+   * The preload is what stops the untrusted main world writing a `localPath` at all — but the
+   * preload runs in the renderer process, on the untrusted side of the line constraint 4 draws.
+   * This is the main process's own check, so a contextIsolation bypass or one careless edit to
+   * `sanitise` does not restore the full escalation. Both entry points, because they validate
+   * separately.
+   *
+   * What it does not stop is stated in `sizeOfPickedFile` and not pretended at here: an absolute
+   * path to any *other* file the user can read still passes, because the main process has no way
+   * to know what the user picked.
+   */
+  const project = (await call('projects.create', [{ name: 'Backstop' }])) as { id: string }
+  const victim = join(dir, '.spm', 'app.db')
+  assert.ok(existsSync(victim), 'the probe needs a real file inside .spm')
+
+  for (const [label, path, code] of [
+    // The file the demonstrated exploit read.
+    ['the library database', victim, 'Forbidden'],
+    ['the .spm directory itself', join(dir, '.spm'), 'Forbidden'],
+    ['a preview inside .spm', join(dir, '.spm', 'previews', 'anything.png'), 'Forbidden'],
+    // A relative path would otherwise resolve against the main process's working directory,
+    // which is not anywhere a picker can point.
+    ['a relative path', 'package.json', 'Validation'],
+    ['a bare file name', 'app.db', 'Validation'],
+  ] as [string, string, string][]) {
+    assert.equal(
+      (await rejection(call('files.upload', [project.id, 'stolen.txt', { localPath: path }]))).code,
+      code,
+      label,
+    )
+    assert.equal(
+      (await rejection(call('importer.curaManagerZip', [{ localPath: path }]))).code,
+      code,
+      `${label}, through the importer`,
+    )
+  }
+
+  assert.equal(existsSync(join(dir, 'Backstop', 'stolen.txt')), false, 'a refused file was written')
   await call('projects.delete', [project.id, { deleteFiles: true }])
 })
 

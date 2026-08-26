@@ -149,16 +149,36 @@ test.describe('the desktop shell', () => {
     //
     // The status *and* the body, because a 200 with HTML is the failure being guarded against
     // and a status-only assertion would pass on any 404-shaped mistake while missing this one.
-    const answers = await page.evaluate(async () => {
-      const urls = [
-        'spm://app/_spm/files/abc/raw',
-        'spm://app/_spm/files/abc/thumb',
-        'spm://app/_spm',
-        // NTFS is case-insensitive, so this would have reached a real `_spm` directory.
-        'spm://app/_SPM/files/abc/raw',
-        // Percent-encoded, because the check runs after decodeURIComponent.
-        'spm://app/%5f%73%70%6d/files/abc/raw',
-      ]
+    //
+    // Every alias of the prefix this handler could be reached through. The first version of the
+    // guard tested the decoded-but-unresolved path and let three of these through with a 200:
+    // `x/..%2f_spm/…` (the encoded separator resolve() collapses afterwards -- the same escape
+    // the containment check three lines up exists for), and `_spm.` and `_spm%20`, which NTFS
+    // treats as the same directory. They are the reason the check now runs on the resolved path.
+    const RESERVED_URLS = [
+      'spm://app/_spm/files/abc/raw',
+      'spm://app/_spm/files/abc/thumb',
+      'spm://app/_spm',
+      // NTFS is case-insensitive, so this reaches a real `_spm` directory.
+      'spm://app/_SPM/files/abc/raw',
+      // Percent-encoded, because the check runs after decodeURIComponent.
+      'spm://app/%5f%73%70%6d/files/abc/raw',
+      // The encoded separator: `x` looks like the first segment until resolve() removes it.
+      'spm://app/x/..%2f_spm/files/abc/raw',
+      'spm://app/x/..%5c_spm/files/abc/raw',
+      // NTFS strips a trailing dot and a trailing space from a path component.
+      'spm://app/_spm./files/abc/raw',
+      'spm://app/_spm%20/files/abc/raw',
+      // Canonicalised by Chromium before the handler sees them; here so a change to that
+      // canonicalisation shows up as a failure rather than as a new hole.
+      'spm://app//_spm/files/abc/raw',
+      'spm://app/./_spm/files/abc/raw',
+      'spm://app/x/../_spm/files/abc/raw',
+      'spm://app/_spm%2ffiles/abc/raw',
+      'spm://app/_spm?x=1',
+      'spm://app/_spm#frag',
+    ]
+    const answers = await page.evaluate(async (urls: string[]) => {
       const out: Record<string, string> = {}
       for (const url of urls) {
         try {
@@ -169,20 +189,21 @@ test.describe('the desktop shell', () => {
         }
       }
       // A deep link that is *not* under the prefix still gets the SPA, or this guard would have
-      // broken routing rather than reserved a prefix.
-      const deepLink = await fetch('spm://app/projects/some-id')
-      out['spm://app/projects/some-id'] =
-        `${deepLink.status} ${(await deepLink.text()).slice(0, 15)}`
+      // broken routing rather than reserved a prefix. `_spmx` likewise: the reservation is the
+      // whole segment, not the string as a prefix of one.
+      for (const url of ['spm://app/projects/some-id', 'spm://app/_spmx/files/abc/raw']) {
+        const response = await fetch(url)
+        out[url] = `${response.status} ${(await response.text()).slice(0, 15)}`
+      }
       return out
-    })
-    expect(answers).toEqual({
-      'spm://app/_spm/files/abc/raw': '404 not found',
-      'spm://app/_spm/files/abc/thumb': '404 not found',
-      'spm://app/_spm': '404 not found',
-      'spm://app/_SPM/files/abc/raw': '404 not found',
-      'spm://app/%5f%73%70%6d/files/abc/raw': '404 not found',
-      'spm://app/projects/some-id': '200 <!doctype html>',
-    })
+    }, RESERVED_URLS)
+
+    const expected: Record<string, string> = Object.fromEntries(
+      RESERVED_URLS.map((url) => [url, '404 not found']),
+    )
+    expected['spm://app/projects/some-id'] = '200 <!doctype html>'
+    expected['spm://app/_spmx/files/abc/raw'] = '200 <!doctype html>'
+    expect(answers).toEqual(expected)
   })
 
   test('the window keeps the three webPreferences the trust model rests on', async () => {
@@ -217,16 +238,34 @@ test.describe('the desktop shell', () => {
     })
   })
 
-  test('the preload bridge is installed on the window', async () => {
+  test('the preload bridge is installed on the window, and hands out nothing else', async () => {
     // A sandboxed preload that fails to load takes the whole bridge with it and says so only in
-    // the renderer console. `invoke` and not just the object: task 2 filled the bridge, and an
+    // the renderer console. The members and not just the object: task 2 filled the bridge, and an
     // empty one is what a preload bundled as ESM by mistake would leave behind -- see build.ts.
+    //
+    // `canStreamFromDisk` answering a *boolean* is the property, not an implementation detail.
+    // The first version of this handed the renderer an opaque token from a preload-side map of
+    // live paths; that map was unbounded and its entries never expired -- 20 000 minted from the
+    // main world in 12 ms, the first still redeemable -- so there is deliberately nothing here
+    // now that the renderer can hold on to, store or replay.
     expect(
       await page.evaluate(() => {
-        const bridge = (globalThis as { spm?: { invoke?: unknown } }).spm
-        return [typeof bridge, typeof bridge?.invoke]
+        const bridge = (globalThis as { spm?: Record<string, unknown> }).spm
+        return {
+          typeofBridge: typeof bridge,
+          keys: bridge ? Object.keys(bridge).sort() : null,
+          typeofInvoke: typeof bridge?.['invoke'],
+          answersABoolean: typeof (
+            bridge?.['canStreamFromDisk'] as ((f: unknown) => unknown) | undefined
+          )?.(new Blob([new Uint8Array([1])])),
+        }
       }),
-    ).toEqual(['object', 'function'])
+    ).toEqual({
+      typeofBridge: 'object',
+      keys: ['canStreamFromDisk', 'invoke'],
+      typeofInvoke: 'function',
+      answersABoolean: 'boolean',
+    })
   })
 
   test('opens, migrates and seeds the library it was pointed at', async () => {

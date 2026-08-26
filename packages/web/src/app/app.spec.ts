@@ -6,6 +6,7 @@ import { nova } from '@awdlab/jig-themes/nova'
 import { describe, expect, it, vi } from 'vitest'
 import { API_CLIENT } from './core/api/api-client.token'
 import { AuthStore } from './core/auth.store'
+import { CapabilitiesStore } from './core/capabilities.store'
 import { TranslateService } from './core/i18n/translate.service'
 import { App } from './app'
 
@@ -20,12 +21,28 @@ const USER = {
   createdAt: 0,
 }
 
-async function setup(logout = vi.fn().mockResolvedValue(undefined)) {
+const WEB_CAPABILITIES = {
+  requiresAuth: true,
+  canManageUsers: true,
+  canPickLocalFolder: false,
+  canLaunchSlicer: false,
+  canConfigureSlicers: false,
+  canBrowseModelSites: false,
+}
+
+async function setup(
+  logout = vi.fn().mockResolvedValue(undefined),
+  capabilities = WEB_CAPABILITIES,
+) {
   const api = {
     auth: { logout },
     account: { me: vi.fn().mockResolvedValue(USER) },
     settings: { get: vi.fn(), put: vi.fn() },
-    capabilities: { get: vi.fn().mockResolvedValue({ requiresAuth: true, canManageUsers: true }) },
+    // A function, because that is what `ApiClient.capabilities` is and what
+    // `CapabilitiesStore.load()` calls. It used to be `{ get: … }` here, which nothing ever
+    // called, so the store sat on its offline defaults and the shell was only ever rendered
+    // for one capability set.
+    capabilities: vi.fn().mockResolvedValue(capabilities),
   }
   await TestBed.configureTestingModule({
     imports: [App],
@@ -48,6 +65,8 @@ async function setup(logout = vi.fn().mockResolvedValue(undefined)) {
   await TestBed.inject(TranslateService).ready
   const auth = TestBed.inject(AuthStore)
   auth.setUser(USER)
+  const capabilityStore = TestBed.inject(CapabilitiesStore)
+  await capabilityStore.load()
   const router = TestBed.inject(Router)
   await router.navigateByUrl('/projects')
 
@@ -55,10 +74,40 @@ async function setup(logout = vi.fn().mockResolvedValue(undefined)) {
   return { fixture, api, auth, router, app: fixture.componentInstance }
 }
 
+/** The sign-out control, found the way a screen reader finds it. */
+function signOutButtons(fixture: { nativeElement: unknown }): NodeListOf<Element> {
+  return (fixture.nativeElement as HTMLElement).querySelectorAll('[aria-label="Sign out"]')
+}
+
 describe('App', () => {
   it('should create the app', async () => {
     const { fixture } = await setup()
     expect(fixture.componentInstance).toBeTruthy()
+  })
+
+  /**
+   * The sign-out control is gated on a capability so the Electron shell — which has no sessions —
+   * does not offer to end one. That gate is in shared renderer code, and the desktop suite only
+   * asserts the *absence*: changing the expression to any other always-false capability removed
+   * sign-out from the browser build with 247 vitest and 12 e2e tests still green. Both directions,
+   * so the pair actually pins the expression.
+   */
+  it('shows sign-out where there is a session to end', async () => {
+    const { fixture } = await setup()
+    fixture.detectChanges()
+    expect(signOutButtons(fixture)).toHaveLength(1)
+  })
+
+  it('offers no sign-out where the shell requires no authentication', async () => {
+    const { fixture } = await setup(undefined, { ...WEB_CAPABILITIES, requiresAuth: false })
+    fixture.detectChanges()
+    expect(signOutButtons(fixture)).toHaveLength(0)
+    // The rest of the navigation is still there — otherwise gating the whole block off would
+    // pass the line above for the wrong reason.
+    const links = [...(fixture.nativeElement as HTMLElement).querySelectorAll('a')].map((a) =>
+      a.textContent?.trim(),
+    )
+    expect(links).toEqual(expect.arrayContaining(['Projects', 'Import', 'Settings']))
   })
 
   // The shell used to bind (click)="auth.logout()" directly. AuthStore.logout clears local

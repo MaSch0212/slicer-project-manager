@@ -53,28 +53,52 @@ export type IpcResult = IpcSuccess | IpcFailure
  * `bytes` remains for the arm that has no path — `ApiClient.UploadBody` permits a plain `Blob`,
  * and a generated one has no file behind it. Nothing in the UI takes that arm today.
  *
- * **A `localPath` may only ever be minted by the preload.** A path from the untrusted main world
- * would let a compromised renderer make the main process read any file the user can read and
- * copy it into the library, which is exactly what constraint 4 forbids. So the main world never
- * handles a path: it asks the preload for an opaque `FILE_REF_KEY` token, and the preload — in
- * its own isolated world, where the main world cannot reach — swaps the token for the real path
- * on the way out and strips any `localPath` it did not write itself.
+ * **A `localPath` may only ever be written by the preload.** A path from the untrusted main world
+ * would let a compromised renderer make the main process read any file the user can read and copy
+ * it into the library, which is exactly what constraint 4 forbids. So the main world never
+ * handles a path at all: it puts the `File` object itself under `FILE_REF_KEY` in the arguments,
+ * and the preload — in its own isolated world, where the main world cannot reach — replaces it
+ * with `{ localPath }` on the way out and strips any `localPath` it did not write itself, at
+ * every depth.
+ *
+ * Passing the `File` rather than an earlier-minted token is deliberate and was measured: a `File`
+ * nested inside an object inside the argument array arrives in the preload still `instanceof
+ * File`, and `webUtils.getPathForFile` resolves it there. The first version of this handed the
+ * main world an opaque token from a separate `fileRef()` call and kept a map of live tokens in
+ * the preload; that map was unbounded (20 000 entries minted from the renderer in 12 ms, none
+ * evicted, the first still redeemable) and left a window between naming a file and reading it in
+ * which the file could be swapped — both measured. Resolving inside the `invoke` that uses the
+ * path removes the map and the token lifetime outright, rather than bounding them.
+ *
+ * A window between naming the file and opening it still exists and cannot be closed by this
+ * design: the preload resolves the path and the main process opens it a moment later. What
+ * changed is that the renderer can no longer *hold it open* — it is the duration of one `invoke`
+ * rather than the lifetime of the process — and that nothing is handed to the main world it could
+ * store, replay or enumerate. Closing it entirely would mean opening a file descriptor in the
+ * preload and passing that, which a sandboxed preload cannot do.
  */
 export type WireUploadBody = { localPath: string } | { bytes: Uint8Array }
 
 /**
- * The key the renderer puts a preload-minted file token under. Declared here and re-declared in
+ * The key the renderer puts the picked `File` under. Declared here and re-declared in
  * `packages/web/src/app/core/api/ipc-api-client.ts`; `dispatch.test.ts` asserts the two strings
  * are equal, so they cannot drift.
  */
 export const FILE_REF_KEY = '__spmFileRef'
 
+/**
+ * The key the preload writes a resolved path under, and strips everywhere else. Same shape as
+ * `WireUploadBody`'s path arm, tied to it by a compile-time check in `dispatch.test.ts`.
+ */
+export const LOCAL_PATH_KEY = 'localPath'
+
 /** What `contextBridge.exposeInMainWorld(BRIDGE_KEY, ...)` puts on the renderer's `window`. */
 export type SpmBridge = {
   /**
-   * The path of the file behind a picked `File`, as an opaque token, or `null` when there is no
-   * file behind it. The path itself never crosses into the main world.
+   * Whether this value is a `File` with a real file behind it, and so can be streamed off disk
+   * instead of buffered. Answers a boolean and nothing else: it holds no state, mints nothing,
+   * and never tells the main world *where* the file is.
    */
-  fileRef(file: unknown): string | null
+  canStreamFromDisk(file: unknown): boolean
   invoke(path: string, args: unknown[]): Promise<IpcResult>
 }

@@ -1,5 +1,5 @@
 export type { Ctx } from './ctx.ts'
-export { closeLibrary, openLibrary, type Db, type Library } from './db/open.ts'
+export { closeLibrary, openLibrary, SPM_DIR, type Db, type Library } from './db/open.ts'
 export { newId } from './db/ids.ts'
 export { runMigrations } from './db/migrate.ts'
 export {

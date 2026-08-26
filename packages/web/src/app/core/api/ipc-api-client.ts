@@ -44,17 +44,18 @@ export type IpcResult = IpcSuccess | IpcFailure
 
 export type SpmBridge = {
   /**
-   * The path of the file behind a picked `File`, as an opaque token the preload can swap back,
-   * or `null` when there is no file behind it. The path itself never reaches this world.
+   * Whether this value is a `File` with a real file behind it, and so can be streamed off disk
+   * instead of buffered. A boolean and nothing more: the preload holds no state for it and this
+   * world is never told *where* the file is.
    */
-  fileRef(file: unknown): string | null
+  canStreamFromDisk(file: unknown): boolean
   invoke(path: string, args: unknown[]): Promise<IpcResult>
 }
 
 /**
- * The key a preload-minted file token travels under. Must equal `FILE_REF_KEY` in
- * `packages/desktop/src/protocol.ts`; `packages/desktop/test/dispatch.test.ts` asserts the two
- * strings are the same value, so this cannot drift into a silent fallback to buffering.
+ * The key the picked `File` itself travels under, for the preload to swap for a path in its own
+ * world. Must equal `FILE_REF_KEY` in `packages/desktop/src/protocol.ts`;
+ * `packages/desktop/test/dispatch.test.ts` asserts the two strings are the same value.
  */
 export const FILE_REF_KEY = '__spmFileRef'
 
@@ -71,7 +72,7 @@ export function desktopBridge(): SpmBridge {
   if (
     !candidate ||
     typeof candidate.invoke !== 'function' ||
-    typeof candidate.fileRef !== 'function'
+    typeof candidate.canStreamFromDisk !== 'function'
   ) {
     throw new AppError('Internal', BRIDGE_MISSING)
   }
@@ -136,13 +137,16 @@ export class IpcApiClient implements ApiClient {
    * Turns an `UploadBody` into the arm the main process takes, without the bytes crossing IPC
    * when they do not have to.
    *
-   * A `File` from a picker is backed by a real file, and the preload can name it: `fileRef`
-   * returns an opaque token for it (and `null` for a `Blob` or a script-built `File`, measured —
-   * `webUtils.getPathForFile` answers `''` for those). The main process then streams the file off
-   * disk, so a 10 GiB archive costs a 64 KiB buffer instead of three copies of itself in memory.
-   * The token, not the path: a path the untrusted main world could write would let a compromised
-   * renderer have the main process open any file the user can read (constraint 4), so the preload
-   * mints it, swaps it back in its own world, and strips any `localPath` it did not write.
+   * A `File` from a picker is backed by a real file on disk, and `canStreamFromDisk` says so (it
+   * is false for a `Blob` or a script-built `File`, measured — `webUtils.getPathForFile` answers
+   * `''` for those). The `File` then travels in the arguments and the *preload* turns it into a
+   * path in its own world, so the main process streams it and a 10 GiB archive costs a 64 KiB
+   * buffer instead of three copies of itself in memory.
+   *
+   * The `File` and never a path: a path this world could write would let a compromised renderer
+   * have the main process open any file the user can read (constraint 4). Nothing is held between
+   * the two calls either — `canStreamFromDisk` answers a boolean and forgets, and the path is
+   * resolved inside the `invoke` that uses it.
    *
    * The `try` is the point of the method existing rather than the call being inline. `toBytes`
    * can reject — `RangeError` on a buffer too large for the renderer, `DOMException:
@@ -153,9 +157,8 @@ export class IpcApiClient implements ApiClient {
    */
   private async readBody(body: UploadBody): Promise<unknown> {
     try {
-      if ('blob' in body) {
-        const ref = this.bridge.fileRef(body.blob)
-        if (ref !== null) return { [FILE_REF_KEY]: ref }
+      if ('blob' in body && this.bridge.canStreamFromDisk(body.blob)) {
+        return { [FILE_REF_KEY]: body.blob }
       }
       return { bytes: await toBytes(body) }
     } catch (error) {

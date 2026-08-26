@@ -9,12 +9,15 @@ import {
 } from './ipc-api-client'
 
 /**
- * `fileRef: () => null` is a real preload's answer for a `Blob` or a script-built `File`
- * (`webUtils.getPathForFile` returns `''` for both, measured), so this is the buffering arm.
- * Tests that want the path arm supply their own `fileRef`.
+ * `canStreamFromDisk: () => false` is a real preload's answer for a `Blob` or a script-built
+ * `File` (`webUtils.getPathForFile` returns `''` for both, measured), so this is the buffering
+ * arm. Tests that want the streaming arm flip it.
  */
 function bridgeReturning(result: IpcResult) {
-  return { fileRef: vi.fn().mockReturnValue(null), invoke: vi.fn().mockResolvedValue(result) }
+  return {
+    canStreamFromDisk: vi.fn().mockReturnValue(false),
+    invoke: vi.fn().mockResolvedValue(result),
+  }
 }
 
 describe('IpcApiClient', () => {
@@ -74,7 +77,7 @@ describe('IpcApiClient', () => {
     // The main process answers failures as values, so this only happens when the channel itself
     // is gone. Callers must still see one failure shape, exactly as HttpApiClient promises.
     const bridge = {
-      fileRef: vi.fn().mockReturnValue(null),
+      canStreamFromDisk: vi.fn().mockReturnValue(false),
       invoke: vi.fn().mockRejectedValue(new Error('No handler registered')),
     }
 
@@ -96,15 +99,17 @@ describe('IpcApiClient', () => {
 
   describe('uploads', () => {
     /**
-     * A picked file is named, not copied. This is the arm every upload the UI can start takes,
-     * and the reason the transport has no size ceiling: the bytes stay on disk and the main
-     * process streams them. The token and never the path — a path the untrusted main world could
-     * write would let a compromised renderer have the main process open any file the user can
-     * read (constraint 4).
+     * A picked file is handed over, not copied. This is the arm every upload the UI can start
+     * takes, and the reason the transport has no size ceiling: the bytes stay on disk and the
+     * main process streams them.
+     *
+     * The `File` itself and never a path — a path this world could write would let a compromised
+     * renderer have the main process open any file the user can read (constraint 4). The preload
+     * turns it into a path in its own world, inside the same `invoke`.
      */
-    it('sends a preload token for a file that is backed by one, and never reads it', async () => {
+    it('hands the File itself over for a file that is backed by one, and never reads it', async () => {
       const bridge = bridgeReturning({ ok: true, value: { id: 'f1' } })
-      bridge.fileRef.mockReturnValue('ref-7')
+      bridge.canStreamFromDisk.mockReturnValue(true)
       const picked = new File([new Uint8Array([1, 2, 3])], 'cube.stl')
       // If this is ever called, the file was buffered after all.
       const arrayBuffer = vi.spyOn(picked, 'arrayBuffer')
@@ -113,20 +118,25 @@ describe('IpcApiClient', () => {
 
       const [path, args] = bridge.invoke.mock.calls[0]!
       expect(path).toBe('files.upload')
-      expect(bridge.fileRef).toHaveBeenCalledWith(picked)
-      expect(args[2]).toEqual({ [FILE_REF_KEY]: 'ref-7' })
+      expect(bridge.canStreamFromDisk).toHaveBeenCalledWith(picked)
+      // The same object, by identity: a copy would have no file behind it by the time the
+      // preload looked.
+      expect((args[2] as Record<string, unknown>)[FILE_REF_KEY]).toBe(picked)
+      // And no path anywhere in the arguments — this world never learns one.
+      expect(JSON.stringify(args)).not.toContain('localPath')
       expect(arrayBuffer).not.toHaveBeenCalled()
     })
 
-    it('sends a token for a picked archive too', async () => {
+    it('hands over a picked archive the same way', async () => {
       const bridge = bridgeReturning({ ok: true, value: { projectsExtracted: 1 } })
-      bridge.fileRef.mockReturnValue('ref-1')
+      bridge.canStreamFromDisk.mockReturnValue(true)
+      const picked = new File([new Uint8Array([1])], 'lib.zip')
 
-      await new IpcApiClient(bridge).importer.curaManagerZip({
-        blob: new File([new Uint8Array([1])], 'lib.zip'),
-      })
+      await new IpcApiClient(bridge).importer.curaManagerZip({ blob: picked })
 
-      expect(bridge.invoke.mock.calls[0]![1][0]).toEqual({ [FILE_REF_KEY]: 'ref-1' })
+      expect((bridge.invoke.mock.calls[0]![1][0] as Record<string, unknown>)[FILE_REF_KEY]).toBe(
+        picked,
+      )
     })
 
     /**
@@ -230,12 +240,12 @@ describe('IpcApiClient', () => {
     })
 
     // A half-built bridge is what a stale preload beside a newer renderer looks like, and the
-    // `fileRef` case matters more than it seems: without the check, uploads would fall back to
-    // buffering and nothing would say why.
+    // `canStreamFromDisk` case matters more than it seems: without the check every upload would
+    // take the buffering arm and nothing would say why.
     it.each([
       ['nothing at all', {}],
-      ['no invoke', { fileRef: vi.fn() }],
-      ['no fileRef', { invoke: vi.fn() }],
+      ['no invoke', { canStreamFromDisk: vi.fn() }],
+      ['no canStreamFromDisk', { invoke: vi.fn() }],
     ])('rejects a window.spm with %s', (_name, installed) => {
       const globals = globalThis as { spm?: unknown }
       const saved = globals.spm
@@ -251,7 +261,7 @@ describe('IpcApiClient', () => {
     it('returns the bridge the preload installed', () => {
       const globals = globalThis as { spm?: unknown }
       const saved = globals.spm
-      const installed = { fileRef: vi.fn(), invoke: vi.fn() }
+      const installed = { canStreamFromDisk: vi.fn(), invoke: vi.fn() }
       globals.spm = installed
       try {
         expect(desktopBridge()).toBe(installed)

@@ -1,7 +1,7 @@
 import { app, BrowserWindow, protocol } from 'electron'
 import { existsSync, statSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
-import { extname, join, resolve, sep } from 'node:path'
+import { extname, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { closeLibrary, ensureLocalUser, openLibrary, type Ctx, type Library } from '@spm/core'
 import { registerInvokeHandler } from './ipc.ts'
@@ -150,6 +150,13 @@ export function defaultRendererDir(): string {
  * reported a perfectly intact model as damaged. Failing closed costs one line; failing open with
  * a success status and the wrong content type is the worst of the three states. Task 3 replaces
  * the 404 with real bytes.
+ *
+ * It runs **after** `resolve`, and that ordering is the whole of the check. Written first against
+ * the decoded-but-unresolved path, it had three live bypasses, all answering 200 with the SPA:
+ * `x/..%2f_spm/…` presented `x` as its first segment and `resolve` then collapsed it back onto
+ * `_spm` — the very encoded-separator escape the paragraph above names — and `_spm.` and `_spm%20`
+ * are NTFS aliases for the same directory, which the case-folding reasoning had missed. Asking
+ * `relative()` what the resolved path actually is cannot be outflanked by an encoding.
  */
 export function resolveRendererFile(rendererDir: string, pathname: string): string | null {
   const root = resolve(rendererDir)
@@ -162,19 +169,34 @@ export function resolveRendererFile(rendererDir: string, pathname: string): stri
     // the main process logs an unhandled rejection. A malformed path is a 404 like any other.
     return null
   }
-  // Split on both separators and compare case-insensitively: `resolve()` treats `\` as a
-  // separator on Windows, and NTFS would match `_SPM` to a real `_spm` directory, so a check
-  // that only knew about lowercase `/_spm/` would leave two ways past it.
-  const [firstSegment] = decoded.split(/[\\/]+/).filter(Boolean)
-  if (firstSegment?.toLowerCase() === RESERVED_PATH_SEGMENT) return null
   const candidate = resolve(join(root, decoded))
   if (candidate !== root && !candidate.startsWith(root + sep)) return null
+  if (isReservedPath(root, candidate)) return null
   if (existsSync(candidate) && statSync(candidate).isFile()) return candidate
   // No such file: either a deep link the Angular router owns, or a genuinely missing asset.
   // An asset request has an extension we know about, and answering it with index.html would
   // hand Chromium HTML where it asked for JavaScript, which fails in a far less obvious way.
   if (extname(candidate) in CONTENT_TYPES) return null
   return join(root, 'index.html')
+}
+
+/**
+ * Whether a path that has already been resolved and contained falls under the reserved prefix.
+ *
+ * Three normalisations, each for a measured bypass rather than for symmetry:
+ *
+ * - it works from `relative(root, candidate)`, so `..` and `.` segments — however they were
+ *   encoded — have already been collapsed by `resolve` before the first segment is read;
+ * - lowercased, because NTFS matches `_SPM` to a real `_spm` directory;
+ * - trailing dots and spaces trimmed, because NTFS strips them too, so `_spm.` and `_spm%20`
+ *   name that same directory. `path.resolve` does not strip either — it is a string operation —
+ *   which is why this has to.
+ */
+export function isReservedPath(root: string, candidate: string): boolean {
+  const [firstSegment] = relative(root, candidate)
+    .split(/[\\/]+/)
+    .filter(Boolean)
+  return firstSegment?.toLowerCase().replace(/[. ]+$/, '') === RESERVED_PATH_SEGMENT
 }
 
 export function contentTypeFor(file: string): string {

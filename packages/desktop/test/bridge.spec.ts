@@ -1,5 +1,5 @@
 import { expect, test, type ElectronApplication, type Page } from '@playwright/test'
-import { existsSync, mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, rmSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
@@ -27,7 +27,7 @@ declare global {
   // The preload's bridge, as the renderer sees it. Declared here so `page.evaluate` bodies are
   // type-checked by `deno task typecheck:desktop` rather than being `any`.
   var spm: {
-    fileRef(file: unknown): string | null
+    canStreamFromDisk(file: unknown): boolean
     invoke(
       path: string,
       args: unknown[],
@@ -180,12 +180,14 @@ test.describe('the IPC bridge', () => {
   })
 
   test('the renderer cannot name a file the user did not pick', async () => {
-    // Constraint 4, and the reason a picked file crosses as an opaque token rather than as its
+    // Constraint 4, and the reason a picked file crosses as the `File` object rather than as a
     // path. If the main world could write `localPath` itself, a compromised renderer could have
     // the main process read anything the user can read and copy it into the library — which is
-    // an arbitrary-file-read primitive, since the library is then served back over spm://.
+    // an arbitrary-file-read primitive, since the library is then served back over spm://. The
+    // review measured that exactly, with the strip removed: 135 168 bytes of the library's own
+    // app.db, header `SQLite format 3\0`, written into a project as stolen.txt.
     //
-    // The preload strips any `localPath` it did not mint, so what reaches the main process is an
+    // The preload strips `localPath` at every depth, so what reaches the main process is an
     // object with neither arm and `uploadBodySchema` refuses it.
     const project = await page.evaluate(() =>
       globalThis.spm.invoke('projects.create', [{ name: 'Forgery' }]),
@@ -193,44 +195,69 @@ test.describe('the IPC bridge', () => {
     const projectId = (project as { value: { id: string } }).value.id
 
     const forged = await page.evaluate(
-      async ([id, victim]) => ({
-        // A path straight off the main world.
-        directPath: await globalThis.spm.invoke('files.upload', [
-          id,
-          'stolen.txt',
-          { localPath: victim },
-        ]),
-        // A token the preload never minted.
-        madeUpToken: await globalThis.spm.invoke('files.upload', [
-          id,
-          'stolen.txt',
-          { __spmFileRef: 'ref-999' },
-        ]),
-        // And through the importer, which reads a path too.
-        viaImporter: await globalThis.spm.invoke('importer.curaManagerZip', [
-          { localPath: victim },
-        ]),
-        // A real File the script made up has no file behind it, so the preload answers null
-        // rather than inventing a path — this is the discriminator the client relies on.
-        refForSyntheticFile: globalThis.spm.fileRef(new File([new Uint8Array([1])], 'made.zip')),
-        refForBlob: globalThis.spm.fileRef(new Blob([new Uint8Array([1])])),
-      }),
+      async ([id, victim]) => {
+        const upload = (body: unknown) =>
+          globalThis.spm.invoke('files.upload', [id, 'stolen.txt', body])
+        const nested = { a: { b: { c: { localPath: victim } } } }
+        return {
+          // A path straight off the main world.
+          directPath: await upload({ localPath: victim }),
+          // Nested, which the depth-0 version of the strip passed through untouched and only
+          // zod happened to refuse. The strip is recursive now, so it is refused by the guard
+          // rather than by a schema that could change.
+          nestedPath: await upload(nested),
+          inArray: await upload([{ localPath: victim }]),
+          // Both arms at once: the strip must remove the path and leave the legitimate bytes.
+          bothArms: await upload({ localPath: victim, bytes: new Uint8Array([1]) }),
+          // A token the preload never wrote, and one holding something that is not a File.
+          madeUpToken: await upload({ __spmFileRef: 'ref-999' }),
+          tokenHoldingAPath: await upload({ __spmFileRef: { path: victim } }),
+          // And through the importer, which reads a path too.
+          viaImporter: await globalThis.spm.invoke('importer.curaManagerZip', [
+            { localPath: victim },
+          ]),
+          // A File the script made up has no file behind it, so the preload says so rather than
+          // inventing a path — this is the discriminator the client relies on.
+          syntheticFile: globalThis.spm.canStreamFromDisk(
+            new File([new Uint8Array([1])], 'made.zip'),
+          ),
+          blob: globalThis.spm.canStreamFromDisk(new Blob([new Uint8Array([1])])),
+          // And a value that is not a Blob at all must not raise into this world: the preload
+          // catches `getPathForFile`'s throw so no caller's error handling is load-bearing here.
+          duckTyped: globalThis.spm.canStreamFromDisk({ name: 'x.stl', size: 1, path: victim }),
+          // The bridge holds two functions and nothing that could leak a path.
+          bridgeKeys: Object.keys(globalThis.spm).sort(),
+        }
+      },
       [projectId, join(libraryDir, '.spm', 'app.db')] as const,
     )
 
-    expect(forged.directPath).toMatchObject({ ok: false, error: { code: 'Validation' } })
-    expect(forged.madeUpToken).toMatchObject({ ok: false, error: { code: 'Validation' } })
-    expect(forged.viaImporter).toMatchObject({ ok: false, error: { code: 'Validation' } })
-    expect(forged.refForSyntheticFile).toBeNull()
-    expect(forged.refForBlob).toBeNull()
+    for (const key of [
+      'directPath',
+      'nestedPath',
+      'inArray',
+      'madeUpToken',
+      'tokenHoldingAPath',
+      'viaImporter',
+    ] as const) {
+      expect(forged[key], key).toMatchObject({ ok: false, error: { code: 'Validation' } })
+    }
+    // The one that must succeed, and must succeed as *one byte* — proof the strip removed the
+    // path and kept the arm the renderer was entitled to.
+    expect(forged.bothArms).toMatchObject({ ok: true, value: { sizeBytes: 1 } })
+    expect(forged.syntheticFile).toBe(false)
+    expect(forged.blob).toBe(false)
+    expect(forged.duckTyped).toBe(false)
+    expect(forged.bridgeKeys).toEqual(['canStreamFromDisk', 'invoke'])
 
-    // Nothing was read and nothing was written. A `Validation` code alone would not say that.
-    const detail = await page.evaluate(
+    // Nothing was read. `stolen.txt` exists, from the one legitimate arm, and it is one byte —
+    // not the 135 168 of the file that was named. A `Validation` code alone would not say that.
+    const detail = (await page.evaluate(
       (id) => globalThis.spm.invoke('projects.get', [id]),
       projectId,
-    )
-    expect((detail as { value: { files: unknown[] } }).value.files).toEqual([])
-    expect(existsSync(join(libraryDir, 'Forgery', 'stolen.txt'))).toBe(false)
+    )) as { value: { files: { name: string; sizeBytes: number }[] } }
+    expect(detail.value.files).toMatchObject([{ name: 'stolen.txt', sizeBytes: 1 }])
+    expect(statSync(join(libraryDir, 'Forgery', 'stolen.txt')).size).toBe(1)
 
     await page.evaluate(
       (id) => globalThis.spm.invoke('projects.delete', [id, { deleteFiles: true }]),
@@ -253,6 +280,12 @@ test.describe('the IPC bridge', () => {
  * the archive into the library before `importCuraManagerZip` can read a path, and the path arm
  * never creates that directory at all. Asserting the *import worked* proves the path was read;
  * asserting the directory was never created proves it was read in place.
+ *
+ * It observes the **importer only**. `files.upload`'s bytes arm wraps its buffer in a
+ * `ReadableStream` and stages nothing, so on the project page the two arms leave identical marks
+ * on disk and nothing end-to-end distinguishes them. That route's arm choice is covered by the
+ * vitest case in `ipc-api-client.spec.ts`, which spies on `Blob.arrayBuffer` and requires it never
+ * to be called; do not read this assertion as covering both entry points.
  */
 test('the import page imports a picked archive without copying it into the library', async () => {
   const archiveDir = mkdtempSync(join(tmpdir(), 'spm-desktop-archive-'))
