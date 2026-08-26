@@ -1,0 +1,15 @@
+{
+  "name": "@spm/desktop",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@spm/contract": "workspace:*",
+    "@spm/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.56.0",
+    "electron": "^44.0.0",
+    "esbuild": "^0.28.0"
+  }
+}

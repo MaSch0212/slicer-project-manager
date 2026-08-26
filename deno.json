@@ -1,5 +1,11 @@
 {
-  "workspace": ["./packages/contract", "./packages/core", "./packages/server", "./packages/web"],
+  "workspace": [
+    "./packages/contract",
+    "./packages/core",
+    "./packages/desktop",
+    "./packages/server",
+    "./packages/web"
+  ],
   "imports": {
     "@spm/contract": "./packages/contract/src/index.ts",
     "@spm/contract/errors.ts": "./packages/contract/src/errors.ts",
@@ -27,11 +33,14 @@
     "dev:server": "SPM_DEV_UI_ORIGIN=http://localhost:4200 SPM_LOG_LEVEL=debug deno run --env-file -A --watch --no-clear-screen packages/server/main.ts",
     "serve": "deno task build:ui && deno run --env-file -A packages/server/main.ts",
     "build:ui": "cd packages/web && node node_modules/@angular/cli/bin/ng.js build",
+    "build:ui:electron": "cd packages/web && node node_modules/@angular/cli/bin/ng.js build --configuration=electron",
+    "build:desktop": "deno task build:ui:electron && deno run -A packages/desktop/build.ts",
+    "dev:desktop": "deno task build:desktop && node node_modules/electron/cli.js packages/desktop/dist/main.js",
     "import": "deno run --env-file -A packages/server/import-curamanager.ts",
     "lint": "deno run -A node_modules/eslint/bin/eslint.js .",
     "fmt": "deno run -A node_modules/prettier/bin/prettier.cjs --write .",
     "fmt:check": "deno run -A node_modules/prettier/bin/prettier.cjs --check .",
-    "typecheck": "deno task typecheck:contract && deno task typecheck:core && deno task typecheck:server && deno task typecheck:web",
+    "typecheck": "deno task typecheck:contract && deno task typecheck:core && deno task typecheck:server && deno task typecheck:web && deno task typecheck:desktop",
     "typecheck:contract": "deno run -A node_modules/typescript/bin/tsc --noEmit -p packages/contract/tsconfig.json",
     "typecheck:core": "deno run -A node_modules/typescript/bin/tsc --noEmit -p packages/core/tsconfig.json",
     "typecheck:server": "deno check packages/server/main.ts packages/server/import-curamanager.ts",
@@ -40,12 +49,14 @@
     "typecheck:web:spec": "cd packages/web && node node_modules/typescript/bin/tsc --noEmit -p tsconfig.spec.json",
     "typecheck:web:e2e": "cd packages/web && node node_modules/typescript/bin/tsc --noEmit -p tsconfig.e2e.json",
     "typecheck:web:seed": "deno check packages/web/e2e/seed.ts",
+    "typecheck:desktop": "deno run -A node_modules/typescript/bin/tsc --noEmit -p packages/desktop/tsconfig.json",
     "test:contract": "node --test \"packages/contract/test/**/*.test.ts\"",
     "test:core:node": "node --test \"packages/core/test/**/*.test.ts\"",
     "test:core:deno": "deno test --allow-read --allow-write --allow-env packages/core/test/",
     "test:server": "deno test --allow-all packages/server/test/",
     "test:web": "cd packages/web && node node_modules/@angular/cli/bin/ng.js test --no-watch",
     "e2e": "cd packages/web && node node_modules/@playwright/test/cli.js test",
+    "test:desktop": "cd packages/desktop && node ../../node_modules/@playwright/test/cli.js test",
     "verify": "deno task lint && deno task fmt:check && deno task typecheck && deno task test:contract && deno task test:core:node && deno task test:core:deno && deno task test:server && deno task test:web"
   }
 }
