@@ -43,7 +43,12 @@ test('a rescan adopts a folder dropped into the library', async ({ page }) => {
   await page.getByRole('button', { name: 'Sign in' }).click()
 
   await page.getByRole('button', { name: 'Rescan library' }).click()
-  await expect(page.getByRole('status')).toContainText('Adopted 1')
+  // The rescan summary specifically, not any role="status". A rescan reloads the project list,
+  // and `jig-spinner` carries `role="status"` too, so while that reload is in flight there are
+  // two of them and Playwright's strict mode fails the locator rather than the assertion:
+  // "strict mode violation: getByRole('status') resolved to 2 elements". It only shows up on a
+  // slow runner -- green here, red on CI -- and it is a race in the locator, not in the app.
+  await expect(page.locator('jig-message[role="status"]')).toContainText('Adopted 1')
   await expect(page.getByRole('heading', { name: 'Dropped In' })).toBeVisible()
 })
 

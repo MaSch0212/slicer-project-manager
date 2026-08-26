@@ -191,6 +191,13 @@ export function resolveRendererFile(rendererDir: string, pathname: string): stri
  * - trailing dots and spaces trimmed, because NTFS strips them too, so `_spm.` and `_spm%20`
  *   name that same directory. `path.resolve` does not strip either — it is a string operation —
  *   which is why this has to.
+ *
+ * The last two are Windows facts applied on every platform on purpose. On Linux `_spm.` really is
+ * a different directory from `_spm`, so refusing it there is stricter than it needs to be — but
+ * no such directory exists in a renderer build, and one guard that behaves the same everywhere is
+ * worth more than a platform switch inside a security check. Where the platforms genuinely differ
+ * is `\`, which `resolve` treats as a separator only on Windows; `shell.spec.ts` states that case
+ * explicitly rather than asserting a single answer for both.
  */
 export function isReservedPath(root: string, candidate: string): boolean {
   const [firstSegment] = relative(root, candidate)

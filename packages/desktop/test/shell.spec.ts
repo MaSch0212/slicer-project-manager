@@ -203,6 +203,16 @@ test.describe('the desktop shell', () => {
     )
     expected['spm://app/projects/some-id'] = '200 <!doctype html>'
     expected['spm://app/_spmx/files/abc/raw'] = '200 <!doctype html>'
+    // `\` is a path separator on Windows and an ordinary filename character everywhere else, so
+    // this one URL names two different things and only one of them is a bypass. On win32 the
+    // `..\` collapses and it lands on the reserved directory, which must 404. On Linux and macOS
+    // `..\_spm` is a single directory name that does not exist inside the renderer folder, so the
+    // request never names the reserved directory at all and the SPA fallback is the correct
+    // answer -- the same one any other unknown deep link gets. Written on Windows and measured on
+    // both: the CI runner is what showed the second half.
+    if (process.platform !== 'win32') {
+      expected['spm://app/x/..%5c_spm/files/abc/raw'] = '200 <!doctype html>'
+    }
     expect(answers).toEqual(expected)
   })
 
