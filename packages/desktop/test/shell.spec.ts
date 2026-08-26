@@ -19,6 +19,12 @@ test.describe('the desktop shell', () => {
   let page: Page
   let libraryDir: string
 
+  // One Electron process and one library folder for every test in this block, because starting
+  // one costs a couple of seconds and none of these tests writes anything the next reads. That
+  // holds only while playwright.config.ts keeps `workers: 1` and `fullyParallel: false`: a test
+  // added here that navigates the page, closes the window or writes to the library would be
+  // changing state the tests around it are asserting on. Anything like that gets its own
+  // `launchApp()`, the way the exit-status test at the bottom does.
   test.beforeAll(async () => {
     ;({ app, libraryDir } = await launchApp())
     page = await app.firstWindow()
@@ -30,7 +36,10 @@ test.describe('the desktop shell', () => {
   })
 
   test('opens exactly one window, named for the app', async () => {
-    expect(app.windows()).toHaveLength(1)
+    // Polled, not snapshotted. `app.windows()` is whatever Playwright had seen by the time it
+    // was called, so a second window opened a tick late would slip past a bare read — and the
+    // failure this guards against is one window too many, which arrives after the first.
+    await expect.poll(() => app.windows().length).toBe(1)
     expect(await app.evaluate(({ app: electronApp }) => electronApp.getName())).toBe(APP_TITLE)
 
     const [nativeTitle] = await app.evaluate(({ BrowserWindow }) =>
@@ -69,11 +78,10 @@ test.describe('the desktop shell', () => {
   })
 
   test('the renderer is served from spm://, and the router can navigate', async () => {
-    // The renderer cannot be loaded with `loadFile`. The Angular build emits `<base href="/">`,
-    // so under file:// every asset resolves to file:///main.js and <app-root> stays empty
-    // (measured); and a file:// document has an opaque origin, where history.pushState throws
-    // and the router cannot move. `spm://app/` is a standard scheme with a real origin, so
-    // both work.
+    // Not `loadFile`: the Angular build emits `<base href="/">`, so under file:// every asset
+    // resolves to file:///main.js and <app-root> stays empty. Measured -- as was the correction
+    // to it, since this comment first claimed history.pushState throws there and it does not.
+    // See app.ts for why `spm://app/` is still the right answer over a relative base href.
     //
     // The settled route is /login, not /projects: the app asks for /projects, the auth guard
     // reads `requiresAuth` from CapabilitiesStore, and until task 2's IPC bridge exists there
@@ -85,14 +93,69 @@ test.describe('the desktop shell', () => {
   })
 
   test('refuses a renderer request that escapes the renderer directory', async () => {
-    // An encoded slash survives Chromium's URL canonicalisation, where a literal `..` and a
-    // `%2e%2e` do not. Without the containment check in resolveRendererFile this exact URL
-    // returns 200 and a file from outside the renderer directory. Task 3 owns the library's
-    // own path containment; this is only about what the renderer host can reach.
-    const status = await page.evaluate(
-      async () => (await fetch('spm://app/..%2f..%2f..%2fpackage.json')).status,
-    )
-    expect(status).toBe(404)
+    // An encoded separator survives Chromium's URL canonicalisation, where a literal `..` and a
+    // `%2e%2e` do not. Without the containment check in resolveRendererFile the first of these
+    // returns 200 and a file from outside the renderer directory. Both separators are here
+    // because this handler runs on Windows too, where `resolve()` treats `\` as one.
+    //
+    // `%zz` is not an escape at all: it made decodeURIComponent throw URIError, which rejected
+    // the handler's promise and reached the renderer as a bare `TypeError: Failed to fetch`
+    // with an unhandled rejection logged in the main process. A malformed path is a 404.
+    //
+    // Task 3 owns path containment for the library itself; this is only about what the renderer
+    // host can reach.
+    const statuses = await page.evaluate(async () => {
+      const urls = [
+        'spm://app/..%2f..%2f..%2fpackage.json',
+        'spm://app/..%5c..%5c..%5cpackage.json',
+        'spm://app/%zz',
+      ]
+      const out: Record<string, number | string> = {}
+      for (const url of urls) {
+        try {
+          out[url] = (await fetch(url)).status
+        } catch (error) {
+          out[url] = `threw ${String(error)}`
+        }
+      }
+      return out
+    })
+    expect(statuses).toEqual({
+      'spm://app/..%2f..%2f..%2fpackage.json': 404,
+      'spm://app/..%5c..%5c..%5cpackage.json': 404,
+      'spm://app/%zz': 404,
+    })
+  })
+
+  test('the window keeps the three webPreferences the trust model rests on', async () => {
+    // Constraint 3 of the plan, and the reason the renderer can be treated as untrusted at all.
+    // Nothing else in this file notices if they change: with `nodeIntegration: true` and
+    // `sandbox: false` every other test here stays green, including the preload-bridge one,
+    // which looks like it covers this and does not.
+    //
+    // Read from the main process on purpose. A renderer-side `typeof require` check is the
+    // obvious test and the wrong one -- `contextIsolation: true` keeps Node's globals out of
+    // the main world even with nodeIntegration back on, so it stays green through exactly the
+    // change it is supposed to catch. getLastWebPreferences() is what the window is actually
+    // running with, not what was passed in.
+    //
+    // This lives in task 1 rather than task 2 because task 2 is where someone reaches for
+    // `sandbox: false` to make a preload easier to write -- see the note in preload.ts.
+    const prefs = await app.evaluate(({ BrowserWindow }) => {
+      // Present and documented at runtime, but absent from electron.d.ts in 44.0.0, so the cast
+      // is unavoidable. It is written to yield null rather than throw if the method ever goes:
+      // toMatchObject on null fails, where an optional call quietly returning undefined into a
+      // loose assertion would not.
+      const contents = BrowserWindow.getAllWindows()[0]!.webContents as unknown as {
+        getLastWebPreferences?: () => Record<string, unknown> | null
+      }
+      return contents.getLastWebPreferences?.() ?? null
+    })
+    expect(prefs).toMatchObject({
+      nodeIntegration: false,
+      contextIsolation: true,
+      sandbox: true,
+    })
   })
 
   test('the preload bridge is installed on the window', async () => {
@@ -132,6 +195,31 @@ test.describe('the desktop shell', () => {
         users: [{ username: 'local', library_dir: '.' }],
       })
   })
+})
+
+test('the renderer boots without a console error or warning', async () => {
+  // Its own launch, because the listener has to be attached before the document loads and the
+  // shared app in the block above is already past that by the time a test runs.
+  //
+  // The reason this exists is the content security policy: without one Chromium accepts a
+  // fetch to anywhere, and Electron says so on every start with "Electron Security Warning
+  // (Insecure Content-Security-Policy)". That warning is a console message like any other, so
+  // rather than assert on the header — which says only that a string was sent — this asserts
+  // that Chromium and Electron between them had nothing to complain about. It doubles as a
+  // tripwire for the renderer's own errors, of which there are currently none.
+  const { app } = await launchApp()
+  const page = await app.firstWindow()
+  const complaints: string[] = []
+  page.on('console', (message) => {
+    if (message.type() === 'error' || message.type() === 'warning') {
+      complaints.push(`${message.type()}: ${message.text().replace(/\s+/g, ' ').slice(0, 160)}`)
+    }
+  })
+  page.on('pageerror', (error) => complaints.push(`pageerror: ${error.message}`))
+  await page.waitForLoadState('domcontentloaded')
+  await expect.poll(() => page.url()).toBe('spm://app/login')
+  expect(complaints).toEqual([])
+  await app.close()
 })
 
 test('the process exits 0 when the last window closes', async () => {
