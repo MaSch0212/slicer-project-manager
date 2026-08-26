@@ -366,14 +366,22 @@ export type ModelFormat = {
  * 254 MB, 99 % of budget" claim stood at the end of this docblock for two rounds after the 9.25
  * multiplier it was computed from had been retired.
  *
- * So there is one convention, and it is positional rather than prose:
+ * So there is one convention, and it is positional rather than prose. It sorts **costs** — the
+ * multipliers this table prices files with — because that is the only kind of number a reader can
+ * act on wrongly:
  *
- * - **Every number outside a `## Superseded` heading is current.** It describes what ships.
- * - **Every number under a `## Superseded` heading is history.** It is kept for its reasoning
- *   and must never be quoted as a fact about the gate. Each such block names what replaced it.
+ * - **Every cost outside a `## Superseded` heading is the one that ships.**
+ * - **Every cost under a `## Superseded` heading was considered and rejected**, and each block
+ *   names what replaced it. Kept for the reasoning; never quotable as a fact about the gate.
  *
- * `grep '## Superseded'` lists every retired figure in the file. If a number is hard to place,
- * that is a defect in this convention, not in the reader.
+ * Measurements of individual files are facts rather than costs, so they live wherever they are
+ * relevant — including inside a `## Superseded` block, where a rejected cost was a real
+ * measurement of the wrong file. The distinction is load-bearing in the `.3mf` row, where
+ * 117.75x is simultaneously a measurement that still stands and a cost that does not.
+ *
+ * `grep '## Superseded'` lists every rejected cost in the file. There are no exceptions: a
+ * convention with one is worse than none, because the exception is exactly where the next stale
+ * number hides.
  */
 const FORMATS: Readonly<Record<string, ModelFormat>> = {
   '.stl': {
@@ -479,7 +487,7 @@ const FORMATS: Readonly<Record<string, ModelFormat>> = {
     // `DOMParser` (`3MFLoader.js:215`, where `zip`, `fileText` and `xmlData` are all live).
     //
     // The DOM that last line builds is the largest of the three terms, not a rounding one, and
-    // it took four attempts to size. The three that failed are under `## Superseded` below.
+    // it took four attempts to size. The four rejected costs are under `## Superseded` below.
     //
     // ## The measurement
     //
@@ -518,16 +526,10 @@ const FORMATS: Readonly<Record<string, ModelFormat>> = {
     //   bound. Taking the largest of the three is the least-wrong reading of a set of lower
     //   bounds.
     //
-    // It also happens to fix a mismatch. 117.75 came from `pla_lith_mum_dad_e3.3mf`, which `load`
-    // refuses on `kind` before ever reaching here, so the gate could never see it; `Uno.3mf` is a
-    // plain mesh the gate does see. The old number was defended on the grounds that density is a
-    // property of the mesh and not of the wrapper — true, and no longer load-bearing, because the
-    // number now comes from a file this row can actually be handed.
-    //
     // ## Superseded — replaced by 120.95, kept for the reasoning
     //
-    // Three wrong answers, all low, each for a different reason, and the reasons are why this
-    // block exists:
+    // Four rejected costs, each low for a different reason, and the reasons are why this block
+    // exists:
     //
     // - **20.65x**, round 0's: the zip and the decoded text counted, the DOM called "on top and
     //   uncounted". It is the largest term, not a rounding one.
@@ -541,6 +543,13 @@ const FORMATS: Readonly<Record<string, ModelFormat>> = {
     //   `ArrayBuffer` backing stores holding the inflated zip and every `Float32Array`, and the
     //   slack V8 does not return to the OS during a six-second synchronous parse. Peak RSS
     //   counts all of it, which is why the measurement above uses nothing smaller.
+    // - **117.75x**: the right method on the wrong file. It is a real peak-RSS measurement and
+    //   still stands as one in the table above — what was rejected is using it as *the cost*. It
+    //   comes from `pla_lith_mum_dad_e3.3mf`, which `load` refuses on `kind` before ever reaching
+    //   this row, so the gate can never be handed it; and it is cheaper than `Uno.3mf`, a plain
+    //   mesh the gate does see. It was defended for a round on the grounds that density is a
+    //   property of the mesh and not of the wrapper, which is true and simply not needed once a
+    //   file this row can actually receive measures dearer.
     peakCost: 120.95,
   },
 }
@@ -1339,39 +1348,10 @@ export class ViewerPage implements AfterViewInit, OnDestroy {
    * `frame` is idempotent here — it re-centres a model already centred on the origin, which
    * subtracts a zero — so pressing this twice is the same as pressing it once.
    *
-   * ## Draining the damping residue first, which is most of the point
+   * The damping residue is drained before the re-fit, which is most of the point. That lives in
+   * `refit`, along with why it is needed and what it measured.
    *
-   * `enableDamping` means `OrbitControls` keeps a decaying `_sphericalDelta` and spends a slice
-   * of it on every `update()` (`OrbitControls.js:707-709`, decayed at `:792-794`). `frame()`
-   * repositions the camera and calls `update()` once — but the animation loop goes on calling
-   * `update()` every frame afterwards, so whatever is left of the drag is then applied **on top
-   * of the freshly reset camera** and the view settles somewhere else, permanently.
-   *
-   * Turning damping off for one `update()` is what drains it: that branch applies the whole
-   * remaining delta and then does `_sphericalDelta.set(0,0,0)` / `_panOffset.set(0,0,0)`
-   * (`:797-801`). It moves the camera further for an instant, which does not matter because
-   * `frame()` overwrites the position on the next line. Only rotation and pan need this;
-   * `_scale` is already zeroed unconditionally at `:897`, so a wheel zoom never had the bug.
-   * three's own `OrbitControls.reset()` has the same hole, so switching to it is not the fix.
-   *
-   * Measured on the built page, as the share of stage pixels differing from the opening frame
-   * (the renderer is bit-deterministic here: idle against idle is 0.00000):
-   *
-   *     case                                  before    after
-   *     a drag, the displacement to undo      0.11907   0.11908
-   *     reset pressed mid-coast               0.05929   0.00000
-   *     reset pressed after the coast died    0.00226   0.00000
-   *     the `0` key pressed mid-coast         0.07198   0.01060 *
-   *
-   * `*` is the focus ring, not the camera: focusing the panel with a key it ignores moves
-   * exactly 0.01060 of the pixels on its own.
-   *
-   * **Damping coasts for about a second after every drag, so mid-coast is the normal case**,
-   * and this is the control a user reaches for having just flung the model off-screen. Half the
-   * displacement surviving the one guaranteed way back is the whole failure this control exists
-   * to prevent, in slow motion.
-   *
-   * ## Why the suite did not catch it
+   * ## Why the suite did not catch this for four rounds
    *
    * Worth a sentence here because the shape recurs. The unit test drives its drag through an
    * `orbited()` helper that settles the camera before asserting, so the precondition "the camera
@@ -1385,6 +1365,54 @@ export class ViewerPage implements AfterViewInit, OnDestroy {
     const content = this.content
     if (!content) return
     this.userMovedCamera = false
+    this.refit(content)
+  }
+
+  /**
+   * Puts `content` in the opening frame, and makes that stick.
+   *
+   * **The invariant, for whoever adds the next re-fit: `frame()` is never called directly.**
+   * Everything that re-fits goes through here, because framing the camera is not enough on its
+   * own — the drag that was in flight has to be thrown away first, or it lands on top.
+   *
+   * `enableDamping` means `OrbitControls` keeps a decaying `_sphericalDelta` and spends a slice
+   * of it on every `update()` (`OrbitControls.js:707-709`, decayed at `:792-794`). `frame()`
+   * repositions the camera and calls `update()` once — but the animation loop goes on calling
+   * `update()` every frame afterwards, so whatever is left of the drag is applied **on top of the
+   * freshly framed camera** and the view settles somewhere else, permanently.
+   *
+   * Turning damping off for one `update()` is what drains it: that branch applies the whole
+   * remaining delta and then does `_sphericalDelta.set(0,0,0)` / `_panOffset.set(0,0,0)`
+   * (`:797-801`). It moves the camera further for an instant, which does not matter because
+   * `frame()` overwrites the position on the next line. Only rotation and pan need this;
+   * `_scale` is already zeroed unconditionally at `:897`, so a wheel zoom never had the bug.
+   * three's own `OrbitControls.reset()` has the same hole, so switching to it is not the fix.
+   *
+   * ## The three callers, and why all three need it
+   *
+   * - `resetView` — the recovery control. Measured on the built page as the share of stage pixels
+   *   differing from the opening frame (the renderer is bit-deterministic: idle against idle is
+   *   0.00000). Reset mid-coast was **0.05929** against a 0.11907 drag — about half the
+   *   displacement surviving the one guaranteed way back — and is **0.00000** with the drain.
+   *   Reset after the coast died went 0.00226 to 0.00000. The `0` key went 0.07198 to 0.01060,
+   *   and that remainder is not the camera: focusing the panel with a key it ignores moves
+   *   exactly 0.01060 of the pixels by drawing `:focus-visible`.
+   * - `load` — a model arriving. The stage is live and orbitable while the bytes are downloading
+   *   (`showsStage()` is true for 'loading'), so a user who spins it during a download used to
+   *   get an opening view that was not the thumbnail's basis. Measured the same way, releasing
+   *   the bytes the instant the drag ends: **0.06329** without the drain, **0.00000** with it.
+   *   One press of Reset cured it, which is why it went four rounds unnoticed — but it is the
+   *   same bug on a path with no button in it.
+   * - `resize` — a container that changed shape. This one is safe *by argument* rather than by
+   *   need: it re-fits only while `userMovedCamera` is false, and every input that creates
+   *   residue sets that flag, while the only two places that clear it are the two above, which
+   *   drain. It goes through here anyway, so the invariant holds by construction instead of by
+   *   an argument that a later edit could quietly invalidate.
+   *
+   * Damping coasts for about a second after every drag, which is why "mid-coast" is the normal
+   * case for all three rather than a corner.
+   */
+  private refit(content: Object3D): void {
     const controls = this.controls
     if (controls) {
       controls.enableDamping = false
@@ -1565,9 +1593,11 @@ export class ViewerPage implements AfterViewInit, OnDestroy {
       return
     }
 
-    // A new model gets a fresh fit even if the previous one had been orbited around.
+    // A new model gets a fresh fit even if the previous one had been orbited around — and
+    // `refit`, not `frame`, because the stage stays live while the bytes download: a drag started
+    // during the wait is still coasting when this runs, and would land on top of the new fit.
     this.userMovedCamera = false
-    this.frame(content)
+    this.refit(content)
     this.setContent(content)
     this.state.set({ status: 'ready' })
   }
@@ -1808,6 +1838,6 @@ export class ViewerPage implements AfterViewInit, OnDestroy {
     // fit is redone, but only while the camera is still the one this component placed:
     // re-framing after the user has orbited or zoomed would undo their work every time the
     // window moved.
-    if (this.content && !this.userMovedCamera) this.frame(this.content)
+    if (this.content && !this.userMovedCamera) this.refit(this.content)
   }
 }

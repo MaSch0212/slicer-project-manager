@@ -446,6 +446,59 @@ test('the stage, its border and the model read the same in both themes', async (
  * There is now a mid-coast variant there too, but this is the one that presses a real button
  * after a real pointer drag and looks at pixels.
  */
+/**
+ * A model opens in the thumbnail's basis even if the stage was being spun while it downloaded.
+ *
+ * The same root cause as the reset defect, on the path with no button in it. `showsStage()` is
+ * true for 'loading', so the panel is up and orbitable while the bytes arrive — a user can spin
+ * the previous model, or the empty stage on a first load, and the damping from that drag is still
+ * coasting when `load` re-fits. It used to land on top of the fit, so the model opened a few
+ * degrees off the basis its thumbnail was rendered from.
+ *
+ * The response is held open rather than delayed by a fixed time, and that matters twice over. A
+ * localhost fetch of a 684-byte cube is far quicker than a drag, so without holding it there is
+ * no window to drag inside at all; and damping decays about 5 % a frame, so a fixed delay lets
+ * most of the residue evaporate before the model lands — measured, a 1.5 s delay left so little
+ * that the defect showed up as 0.0098 against a 0.005 threshold, which is not a margin worth
+ * shipping a test on. Releasing the bytes the instant the drag ends puts the residue at its
+ * maximum, which is both the honest worst case and the reproducible one.
+ */
+test('a model opens in the opening view even if the stage was dragged while it loaded', async ({
+  page,
+}) => {
+  await openProject(page)
+
+  // The reference: what this file's opening view looks like when nothing interferes.
+  const clean = await openInViewer(page, MODEL)
+  const opening = await clean.screenshot()
+  await page.getByRole('link', { name: BACK }).click()
+  await expect(page.getByRole('heading', { name: PROJECT, level: 1 })).toBeVisible()
+
+  let release = (): void => {}
+  const held = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  await page.route('**/api/files/*/raw', async (route) => {
+    await held
+    await route.continue()
+  })
+  await page.getByRole('link', { name: `View in 3D ${MODEL}` }).click()
+
+  // The stage is up and live before the model is: that is the window this test exists for.
+  const panel = page.locator('.spm-viewport')
+  await expect(panel.locator('canvas')).toBeVisible()
+  await expect(page.getByRole('img', { name: CANVAS_LABEL })).toHaveCount(0)
+  await dragAcross(page, panel)
+  release()
+
+  const stage = page.getByRole('img', { name: CANVAS_LABEL })
+  await expect(stage).toBeVisible()
+  // Long enough for any surviving residue to have been spent on top of the fit.
+  await page.waitForTimeout(2_000)
+
+  expect(await changedShare(page, opening, await stage.screenshot())).toBeLessThan(0.005)
+})
+
 test('reset puts the model back when it is pressed while the drag is still coasting', async ({
   page,
 }) => {

@@ -865,6 +865,38 @@ describe('ViewerPage', () => {
     expect(renderer.animationLoop).toBeNull()
   })
 
+  it('opens the next model in the opening view even if the last one was mid-drag', async () => {
+    // The same defect as the reset one, on the path nobody presses a button to reach. The stage
+    // stays live while a model downloads — `showsStage()` is true for 'loading' — so a user can
+    // spin the previous model, or the empty stage on a first load, while the bytes arrive. The
+    // fit `load` then does was landed on by the surviving damping delta, and the model opened a
+    // few degrees off the basis the thumbnail is rendered from. Smaller than the reset case and
+    // one press of Reset cured it, which is why it went unnoticed.
+    const made: FakeRenderer[] = []
+    const { harness, host, page } = await setup({ create: recording(made) })
+    const renderer = rendererOf(host, made)
+    const { camera } = drawn(renderer)
+    const opened = camera.position.clone()
+
+    const canvas = host.querySelector('canvas') as HTMLCanvasElement
+    canvas.setPointerCapture = () => {}
+    canvas.dispatchEvent(new Event('pointerdown'))
+    controlsOf(page).rotateLeft(1.1)
+    // Deliberately not settled: a few frames in, most of the delta is still unspent. That is the
+    // state a real drag is in when a download lands, and settling here would drain the very
+    // thing under test.
+    for (let index = 0; index < 8; index++) renderer.tick()
+    expect(camera.position.distanceTo(opened)).toBeGreaterThan(0.1)
+
+    const next = await harness.navigateByUrl('/projects/p1/view/f2', ViewerPage)
+    await settle()
+    settleCamera(renderer)
+
+    // Same model geometry in the fixture, so the correct opening view is the same position.
+    expect(next.state()).toEqual({ status: 'ready' })
+    expect(camera.position.distanceTo(opened)).toBeLessThan(1e-6)
+  })
+
   it('does not fetch another model once the context is gone for good', async () => {
     const made: FakeRenderer[] = []
     const { harness, host, page, fetch } = await setup({ create: recording(made) })
