@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { AppError } from '@spm/contract/errors.ts'
+import type { Mesh } from '../src/previews/mesh/mesh.ts'
 import { parse3mfMesh } from '../src/previews/mesh/threemf.ts'
 import { assert, test } from './harness.ts'
 import { writeZip } from './fixtures/make-3mf.ts'
@@ -192,6 +193,41 @@ test('a vertex with a non-finite coordinate is rejected', async () => {
   })
 })
 
+/**
+ * Runs `parse3mfMesh` with `Uint8Array.prototype.indexOf` counted, and reports the bytes it
+ * walked.
+ *
+ * The scanner's linearity is a property of one intrinsic: every search is
+ * `bytes.indexOf(anchor, probe)` with a `probe` that only ever moves forward, so each byte of
+ * the document is crossed a bounded number of times regardless of how many tags it holds. The
+ * distance those calls cover is therefore the work the "does not go quadratic" claim is about,
+ * and counting it measures the algorithm instead of the machine it ran on.
+ *
+ * Patching a prototype is heavy-handed, and it is deliberate: it costs production nothing, it
+ * needs no seam widened in `threemf.ts` for a test's benefit, and it observes exactly the call
+ * the doc comments in `indexOfBytes` reason about. The tests in this file run one at a time, and
+ * the patch is removed in a `finally`.
+ */
+async function measureScan(path: string): Promise<{ mesh: Mesh; bytesWalked: number }> {
+  const original = Uint8Array.prototype.indexOf
+  let bytesWalked = 0
+  Uint8Array.prototype.indexOf = function (this: Uint8Array, value: number, from?: number): number {
+    const at = original.call(this, value, from)
+    // Where the scan began, under `indexOf`'s own rules: a negative `from` counts back from the
+    // end, and one past the end finds nothing. Clamped so a search that started beyond the array
+    // cannot subtract its way to a negative distance.
+    const raw = from === undefined ? 0 : from < 0 ? this.length + from : from
+    const start = raw < 0 ? 0 : raw > this.length ? this.length : raw
+    bytesWalked += (at === -1 ? this.length : at) - start
+    return at
+  }
+  try {
+    return { mesh: await parse3mfMesh(path), bytesWalked }
+  } finally {
+    Uint8Array.prototype.indexOf = original
+  }
+}
+
 test('the scanner does not go quadratic on a mesh with many vertices and triangles', async () => {
   await withTmpDir(async (dir) => {
     const smallPath = join(dir, 'small.3mf')
@@ -199,32 +235,69 @@ test('the scanner does not go quadratic on a mesh with many vertices and triangl
     const SMALL_N = 3000
     const LARGE_N = 30000 // 10x the tags of the small fixture
 
-    write3mf(smallPath, buildGridModelXml(SMALL_N))
-    write3mf(largePath, buildGridModelXml(LARGE_N))
+    const smallXml = buildGridModelXml(SMALL_N)
+    write3mf(smallPath, smallXml)
+    const largeXml = buildGridModelXml(LARGE_N)
+    write3mf(largePath, largeXml)
 
-    const t0 = performance.now()
-    const small = await parse3mfMesh(smallPath)
-    const t1 = performance.now()
-    const large = await parse3mfMesh(largePath)
-    const t2 = performance.now()
+    const small = await measureScan(smallPath)
+    const large = await measureScan(largePath)
 
-    assert.equal(small.triangleCount, SMALL_N)
-    assert.equal(large.triangleCount, LARGE_N)
+    assert.equal(small.mesh.triangleCount, SMALL_N)
+    assert.equal(large.mesh.triangleCount, LARGE_N)
 
-    const smallTime = Math.max(t1 - t0, 1)
-    const largeTime = Math.max(t2 - t1, 1)
-    // A linear (cached-cursor indexOf) scan takes roughly 10x as long for 10x the tags; a
-    // quadratic scan (re-searching from the start each time, or a whole-document regex
-    // backtracking) would take roughly 100x (measured 107x when a naive quadratic scan was
-    // substituted in review). The 50x ceiling keeps a comfortable margin over the ~12-30x
-    // observed across warm and cold runs while still catching a quadratic regression outright.
+    // ## Why this counts work per byte instead of comparing two sizes
+    //
+    // This assertion used to be a wall-clock ratio of the two parses, and it flaked: a loaded
+    // machine measured 154x against a 50x ceiling that a quiet one clears at 12-30x. Replacing
+    // the stopwatch with bytes walked removes the flake -- but measuring it also showed the
+    // ratio itself was the wrong shape, and had been all along.
+    //
+    // The scanner reads the document in fixed-size windows. A scan that restarts from the front
+    // of its *window* on every call is quadratic in the window, not in the document, so its total
+    // work still grows linearly with the document and the ratio between a 3k-tag file and a
+    // 30k-tag one stays around 10. Substituting exactly that mutant (`indexOfBytes` probing from
+    // the buffer start and filtering matches behind `from`) leaves the ratio at 12.9 -- under any
+    // ceiling this test could reasonably set -- while the work explodes 679x, from 7.94 bytes
+    // walked per document byte to 5,395. The old test caught that mutant only through its
+    // absolute `largeTime < 5000` backstop; the headline ratio, the one that flaked, was blind
+    // to it.
+    //
+    // So the property to assert is the constant itself: the scan walks a small, bounded number of
+    // bytes per document byte, whatever the document's size. That is what "linear" means here,
+    // and it is what a cursor that never rewinds buys.
+    const smallPerByte = small.bytesWalked / smallXml.length
+    const largePerByte = large.bytesWalked / largeXml.length
+
+    // Measured at 7.942 on the small fixture and 7.946 on the large: four monotonic cursors plus
+    // the `>` searches that close each tag, each crossing the document about twice. 20 leaves room
+    // for another cursor without leaving room for a rescan, which costs hundreds.
     assert.ok(
-      largeTime / smallTime < 50,
-      `large/small time ratio was ${largeTime / smallTime}, expected roughly linear scaling`,
+      largePerByte < 20,
+      `scan walked ${largePerByte} bytes per document byte, expected a small constant`,
     )
-    // Absolute backstop: catches a pathological slowdown even in the (unlikely) case where
-    // both times are inflated by the same constant factor and the ratio alone looks fine.
-    assert.ok(largeTime < 5000, `large parse took ${largeTime}ms, expected well under 5s`)
+
+    // The counter would also read near zero for an implementation that stopped calling `indexOf`
+    // -- a whole-document regex, say, which is itself one of the quadratic shapes this test
+    // refuses. A scan cannot find the tags without crossing the document at least once, so a
+    // figure below 1 means the instrument, not the scanner, is what changed.
+    assert.ok(
+      smallPerByte >= 1,
+      `scan walked ${smallPerByte} bytes per document byte; the counter is no longer observing it`,
+    )
+
+    // And the constant must not grow with the document, which is the part a single measurement
+    // cannot show. Measured at 1.0005 across a 10x size step -- the constant really is constant.
+    const growth = largePerByte / smallPerByte
+    assert.ok(growth < 1.5, `work per byte grew ${growth}x over a 10x document, expected flat`)
+    // Each of the three was shown to fail, against the mutation named:
+    //   ceiling  `indexOfBytes` probing from the buffer start        6,606 bytes/byte
+    //   growth   that, plus WINDOW_BYTES raised to hold the whole part      9.89x
+    //   floor    `bytesWalked += 0`, i.e. the instrument blinded                0
+    // The growth control needs the ceiling lifted to be reached at all, because the ceiling
+    // catches that mutation too. It is kept rather than folded into the ceiling because it is
+    // the assertion that states the property in the form the scanner's docs claim it: work per
+    // byte does not depend on how many bytes there are.
   })
 })
 
