@@ -88,66 +88,66 @@ A reviewer should treat a violation as a defect regardless of what a task says.
 
 ### Task 1 — The route, the canvas, and disposal
 
-- [ ] Add `projects/:id/view/:fileId` to `packages/web/src/app/routes.shared.ts` with
+- [x] Add `projects/:id/view/:fileId` to `packages/web/src/app/routes.shared.ts` with
       `loadComponent`, guarded by `authGuard` like its siblings.
-- [ ] `packages/web/src/app/features/viewer/viewer.page.ts`: a standalone `OnPush` component
+- [x] `packages/web/src/app/features/viewer/viewer.page.ts`: a standalone `OnPush` component
       that creates a `WebGLRenderer`, a scene, a camera and `OrbitControls`, sized to its
       container and resizing with it.
-- [ ] Render a hard-coded cube for now. This task is the plumbing; task 2 loads real files.
-- [ ] **Disposal is the point of this task.** On destroy: stop the animation loop, dispose
+- [x] Render a hard-coded cube for now. This task is the plumbing; task 2 loads real files.
+- [x] **Disposal is the point of this task.** On destroy: stop the animation loop, dispose
       every geometry, material and texture, dispose the controls, call
       `renderer.dispose()` and `forceContextLoss()`, and drop the canvas. Write the test first —
       navigate away and assert the resources were released.
-- [ ] A `ResizeObserver`, not a window listener: the canvas shares a page with a sidebar.
-- [ ] Tests: the route resolves and lazily loads; a canvas is present; navigating away disposes
+- [x] A `ResizeObserver`, not a window listener: the canvas shares a page with a sidebar.
+- [x] Tests: the route resolves and lazily loads; a canvas is present; navigating away disposes
       (assert on spies over the three.js objects, and confirm the test fails if any single
       `dispose()` is removed).
 
 ### Task 2 — Loading real geometry
 
-- [ ] `STLLoader`, `OBJLoader` and `ThreeMFLoader` from `three/examples/jsm/loaders/`, chosen by
+- [x] `STLLoader`, `OBJLoader` and `ThreeMFLoader` from `three/examples/jsm/loaders/`, chosen by
       the file's extension — the same three the server rasterizes, so the viewer covers exactly
       what the grid shows a thumbnail for.
-- [ ] Fetch from `FileDto.rawUrl`. Report progress if the loader offers it; a 164 MB STL over a
+- [x] Fetch from `FileDto.rawUrl`. Report progress if the loader offers it; a 164 MB STL over a
       home connection is not instant.
-- [ ] Frame the loaded geometry: compute its bounding box, centre it, and set the camera
+- [x] Frame the loaded geometry: compute its bounding box, centre it, and set the camera
       distance so it fills the view with a margin — the same fit rule the rasterizer uses.
-- [ ] Four states, each distinguishable and each tested: loading, ready, unsupported extension,
+- [x] Four states, each distinguishable and each tested: loading, ready, unsupported extension,
       and failed (fetch error, parse error, or a mesh with no triangles).
-- [ ] **Link to it.** `project-detail.page.ts` currently sends a model file to its `rawUrl`,
+- [x] **Link to it.** `project-detail.page.ts` currently sends a model file to its `rawUrl`,
       which downloads it. Nothing anywhere opens the viewer, so without this B2 ships a feature
       reachable only by typing a URL. Add the entry point and test that it navigates.
-- [ ] Tests: each loader is selected for its extension and for an uppercase extension (the
+- [x] Tests: each loader is selected for its extension and for an uppercase extension (the
       reference library contains `.STL` — this exact bug was found in B1); an unknown extension
       is `unsupported`, not a crash; a parse failure surfaces as an error state with a message.
 
 ### Task 3 — The size gate
 
-- [ ] Over a threshold, do not load. Show the file's size and a control to load it anyway.
-- [ ] Derive the threshold from something real, not a round number: the reference library has
+- [x] Over a threshold, do not load. Show the file's size and a control to load it anyway.
+- [x] Derive the threshold from something real, not a round number: the reference library has
       1,311 STLs and a 164 MB worst case. State in a comment what fraction of the library falls
       above the chosen line, and why that line.
-- [ ] The choice is per-load, not remembered — an accidental "load anyway" on a 164 MB file
+- [x] The choice is per-load, not remembered — an accidental "load anyway" on a 164 MB file
       should not make every later model load silently.
-- [ ] Tests: under the threshold loads without a prompt; over it prompts and does not fetch
+- [x] Tests: under the threshold loads without a prompt; over it prompts and does not fetch
       until confirmed (assert no request was made); confirming loads.
 
 ### Task 4 — Making it look like the same object as the thumbnail
 
-- [ ] Default camera as decision 3: azimuth 32°, elevation `atan(1/√2)`. Take the exact angles
+- [x] Default camera as decision 3: azimuth 32°, elevation `atan(1/√2)`. Take the exact angles
       from `packages/core/src/previews/raster.ts`, which documents them and pins them with a
       test — do not re-derive them by eye.
-- [ ] Lighting and material chosen so the model reads at a glance and both themes work. The
+- [x] Lighting and material chosen so the model reads at a glance and both themes work. The
       thumbnail's amber-on-slate was tuned for a dark background only; say what you chose here
       and why.
-- [ ] Fix what task 1's review measured in a real browser: the viewport border is invisible in
+- [x] Fix what task 1's review measured in a real browser: the viewport border is invisible in
       the light theme (`surface-100` and `border` resolve to the same colour there), and the
       transparency checker sits at 1.22:1 contrast in light and 2.82:1 in dark — visible in
       both, comfortable in neither.
-- [ ] A grid or ground plane if it helps orientation, and only if it does.
-- [ ] The canvas needs an accessible name, and the orbit controls need a keyboard path or an
+- [x] A grid or ground plane if it helps orientation, and only if it does.
+- [x] The canvas needs an accessible name, and the orbit controls need a keyboard path or an
       honest statement that they have none.
-- [ ] **Look at it.** Render several real models — `D:\SPM Library\marc` has 1,311 STLs and 402
+- [x] **Look at it.** Render several real models — `D:\SPM Library\marc` has 1,311 STLs and 402
       `.3mf` files, of which 374 are slicer projects and only **28** are plain meshes the viewer
       can open, plus a 3DBenchy and a Batman bust — take screenshots, open them, and report what
       you see.
@@ -155,12 +155,12 @@ A reviewer should treat a violation as a defect regardless of what a task says.
 
 ### Task 5 — Proving it, and keeping three.js out of the initial bundle
 
-- [ ] A check that fails if three.js reaches an initial chunk. The web CI job already greps the
+- [x] A check that fails if three.js reaches an initial chunk. The web CI job already greps the
       built bundle for a class name (spec 2.5); follow that pattern rather than inventing one,
       and make it fail loudly with the chunk named. Verify each marker you grep for is actually
       **present in the viewer chunk** — task 1 shipped two that match nothing anywhere, and a
       marker that is never present cannot detect a leak.
-- [ ] **The obvious proof does not work, so do not plan around it.** Measured in task 1:
+- [x] **The obvious proof does not work, so do not plan around it.** Measured in task 1:
       three.js is effectively not tree-shakeable here — a full `WebGLRenderer` import, a
       realistic `Box3`/`Mesh`/`Scene` import and a single `Vector3` all produce the same 1.18 MB
       initial bundle, which blows the existing 1 MB budget. So importing it eagerly fails the
@@ -168,21 +168,21 @@ A reviewer should treat a violation as a defect regardless of what a task says.
       the grep step must be unable to pass against a stale `dist/` (a build that wrote nothing
       must fail, not silently re-grep yesterday's output), and the proof that the grep bites has
       to be staged differently — raise the budget temporarily, or plant a marker string.
-- [ ] Record the lazy chunk's size in the README so a future dependency bump that doubles it is
+- [x] Record the lazy chunk's size in the README so a future dependency bump that doubles it is
       visible in a diff.
-- [ ] An e2e that opens a real model and asserts the canvas has actually drawn — not that a
+- [x] An e2e that opens a real model and asserts the canvas has actually drawn — not that a
       `<canvas>` element exists. Playwright's bundled Chromium renders WebGL2 through
       SwiftShader with no GPU — measured in this project, the renderer string names
       SwiftShader — so read pixels back and assert the frame is not uniformly the background
       colour.
-- [ ] **Prove contexts are released, which the unit suite structurally cannot.** jsdom has no
+- [x] **Prove contexts are released, which the unit suite structurally cannot.** jsdom has no
       WebGL, so task 1's renderer disposal is asserted against a stand-in; only a real browser
       can show a context was freed. Navigate into the viewer and back more than sixteen times —
       browsers cap live contexts around there — and assert the last one still draws. Without
       this, nothing in the project proves the leak that motivated task 1 is actually fixed.
-- [ ] Keep the e2e fixture small. The web CI job has a ten-minute timeout and the e2e job
+- [x] Keep the e2e fixture small. The web CI job has a ten-minute timeout and the e2e job
       twenty; a large model would spend the budget on a download.
-- [ ] Tests: the bundle check fails when three.js is imported eagerly (prove it by doing so
+- [x] Tests: the bundle check fails when three.js is imported eagerly (prove it by doing so
       temporarily); the e2e fails if the canvas never draws.
 
 ---
