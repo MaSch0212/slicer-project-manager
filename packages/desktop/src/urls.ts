@@ -52,3 +52,50 @@ export const FILE_URL_BASE = `${RENDERER_ORIGIN}/${RESERVED_PATH_SEGMENT}`
  * in the fragment so it never reaches a log (spec 5.3).
  */
 export const ACTIVATION_URL_BASE = `${RENDERER_ORIGIN}/activate`
+
+/**
+ * What may be navigated to, and where it should go instead.
+ *
+ * Here rather than in `app.ts` for the reason this module exists: `app.ts` imports `electron`, so
+ * nothing in it can be reached by a plain `node --test`, and this is a decision that wants
+ * exhaustive cheap coverage rather than one drive through a GUI.
+ *
+ * **The measurement that put it here.** Task 3's review asked whether the shell needs a
+ * navigation policy. It does, and not marginally: with none, `location.href = 'https://example.com/'`
+ * typed into the renderer's own main world navigated the app's window there, and the page that
+ * arrived reported `typeof window.spm === 'object'` with keys `canStreamFromDisk,invoke` — the
+ * whole IPC bridge, at a remote origin, because a preload is attached to the *webContents* and
+ * follows it wherever it goes. `window.open('https://example.com/')` was worse: a second
+ * `BrowserWindow` at that origin, with the same bridge. Both measured on Electron 44.0.0 before
+ * this function existed.
+ *
+ * Three answers, and each one is a different hook's job — see `createMainWindow`:
+ *
+ * - `allow` — inside the renderer's own origin. Includes `spm://app/_spm/...`, because clicking a
+ *   file name in the project page is a top-level navigation to `rawUrl` and it has to keep
+ *   working (it ends as a download; see `files.ts`).
+ * - `external` — `http:`/`https:`, which the app produces in exactly one place: the project
+ *   website link, `target="_blank"` in `project-detail.page.ts`. It belongs in the user's own
+ *   browser, not in a window holding the bridge.
+ * - `block` — everything else, `file:`, `data:`, `javascript:` and an unparseable string
+ *   included. Nothing legitimate is in this bucket; it is the default because the list of
+ *   schemes worth refusing is open-ended and the list worth allowing is two entries long.
+ *
+ * The host comparison is case-insensitive. `spm` is registered as a *standard* scheme, so
+ * Chromium canonicalises `spm://APP/` and `spm://app/` to one origin, while Node's `URL` leaves
+ * the case alone — matching only the lowercase spelling would refuse a navigation that really is
+ * same-origin.
+ */
+export type NavigationPolicy = 'allow' | 'external' | 'block'
+
+export function navigationPolicy(url: string): NavigationPolicy {
+  let parsed: URL
+  try {
+    parsed = new URL(url)
+  } catch {
+    return 'block'
+  }
+  if (parsed.protocol === 'spm:' && parsed.host.toLowerCase() === RENDERER_HOST) return 'allow'
+  if (parsed.protocol === 'http:' || parsed.protocol === 'https:') return 'external'
+  return 'block'
+}

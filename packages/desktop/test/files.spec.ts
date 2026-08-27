@@ -167,6 +167,44 @@ test.describe('file bytes over spm://', () => {
     expect(got.bytes).toEqual([...CUBE])
   })
 
+  test('an incoming Range is ignored, and the whole file comes back with a 200', async () => {
+    // The other half of `accept-ranges: none`, and it has to live here rather than beside that
+    // assertion in `files.test.ts`: `serveLibraryFile` takes a parsed id and no `Request`, so a
+    // unit test has nowhere to put a header. Only a renderer can send one.
+    //
+    // Measured behaviour, now pinned: Chromium forwards the header, this handler ignores it, and
+    // `fetch` neither synthesises a 206 nor slices the body — a caller that asked for six bytes
+    // gets the file. A handler that grew partial-content support without saying so fails here.
+    const cube = detail.files.find((file) => file.name === 'cube.stl')!
+    expect(
+      await page.evaluate(async (url) => {
+        const response = await fetch(url, { headers: { Range: 'bytes=4-9' } })
+        return {
+          status: response.status,
+          contentRange: response.headers.get('content-range'),
+          length: (await response.arrayBuffer()).byteLength,
+        }
+      }, cube.rawUrl),
+    ).toEqual({ status: 200, contentRange: null, length: CUBE.byteLength })
+  })
+
+  test('the document CSP still names no media-src, which is what makes no ranges safe', async () => {
+    // `accept-ranges: none` is safe because nothing asks — and the one consumer that *would* ask,
+    // a media element, cannot issue a request from the renderer at all. That rests on this
+    // header, so the coupling is asserted rather than left in a comment: adding `media-src spm:`
+    // to `CONTENT_SECURITY_POLICY` turns this line red, which is the point of it.
+    //
+    // Read off the served response rather than off the constant, because what protects the
+    // document is the header that was actually sent.
+    const csp = await page.evaluate(async () => {
+      const response = await fetch('spm://app/')
+      await response.body?.cancel()
+      return response.headers.get('content-security-policy')
+    })
+    expect(csp).toContain("default-src 'none'")
+    expect(csp).not.toContain('media-src')
+  })
+
   test('a traversal is refused over the real protocol, encoded or not', async () => {
     // The brief asks for a percent-encoded traversal, and that is a floor. Each of these names
     // a file that really exists — `app.db` is the library's own database, and reading it back
@@ -225,8 +263,11 @@ test.describe('file bytes over spm://', () => {
       roleImg: 0,
       messages: [`error: ${MISSING_MESSAGE}`],
     })
-    // Not the sentence the other half of this pair must never show.
-    expect(MISSING_MESSAGE).not.toBe(FETCH_FAILED_MESSAGE)
+    // There was an `expect(MISSING_MESSAGE).not.toBe(FETCH_FAILED_MESSAGE)` here, and it is gone:
+    // two string literals declared in this file cannot be made unequal by any production change,
+    // so it was an assertion that could not fail. What catches the two sentences converging is
+    // the line above matching the exact `en.json` copy against the rendered page, and
+    // `messages: []` in the test before it.
   })
 })
 
@@ -262,11 +303,16 @@ async function settledViewer(page: Page): Promise<{ roleImg: number; messages: s
   throw new Error(`the viewer never settled; last reading was ${previous}`)
 }
 
-/** Straight out of `en.json`; if the copy moves, this fails rather than silently matching less. */
+/**
+ * `viewer.missingFile`, straight out of `en.json`. Matched against the rendered page, so a change
+ * to that copy fails here rather than silently matching less of it.
+ *
+ * There is no `FETCH_FAILED_MESSAGE` beside it any more, and the reason is worth the line: the
+ * good case asserts `messages: []`, which excludes *every* message the viewer can render — the
+ * fetch one, the parse one, the WebGL one — so naming a second string here bought nothing.
+ */
 const MISSING_MESSAGE =
   'This file is not part of this project any more. Go back to the project to see what it holds now.'
-const FETCH_FAILED_MESSAGE =
-  'The model could not be downloaded. Check your connection, then reload the page to try again.'
 
 const TRAVERSALS = [
   // One level up from a project folder is the library root, where `.spm/app.db` lives — the
@@ -311,6 +357,208 @@ test('a file request with no library open is a plain 404', async () => {
       return out
     })
     expect(answers).toEqual({ raw: '404 not found', thumb: '404 not found' })
+  } finally {
+    await app.close()
+  }
+})
+
+/**
+ * The review's Important finding, measured and then pinned.
+ *
+ * File bytes are served into `spm://app` — the origin that holds `window.spm` — and the CSP is
+ * attached on the renderer-asset branch alone, so an HTML document produced by the *file* branch
+ * would execute with the IPC bridge and no policy at all. One user click reaches it:
+ * `project-detail.page.ts` renders `<a [href]="file.rawUrl">{{ file.name }}</a>` for every file,
+ * whatever it is.
+ *
+ * What was measured, before `nosniff` existed: `.html`, `.svg` and `.xhtml` all take core's
+ * `application/octet-stream` fallback and Chromium **downloads** them rather than sniffing them
+ * into markup. The navigation never commits, no script runs, and the app's own page is still
+ * there afterwards. The one type that does render is `.txt`, as escaped text with the markup
+ * visible — and that document reported `typeof window.spm === 'object'`, which is what makes the
+ * hazard worth a header rather than a shrug.
+ *
+ * Its own launch: it writes three files into the library and drives the window through three
+ * navigations, neither of which the shared block above should have to survive.
+ */
+test('a library file that looks like a web page downloads instead of becoming a document', async () => {
+  const { app } = await launchApp([
+    { name: 'Payloads', files: { 'real.stl': 'solid s endsolid s' } },
+  ])
+  try {
+    const page = await app.firstWindow()
+    await page.waitForLoadState('domcontentloaded')
+    await page.evaluate(() => globalThis.spm.invoke('projects.rescan', []))
+
+    const payload = '<!doctype html><title>PWNED</title><script>window.__pwned = true</script>'
+    const uploaded = await page.evaluate(async (body: string) => {
+      const listed = (await globalThis.spm.invoke('projects.list', [{}])) as {
+        value: { id: string }[]
+      }
+      const projectId = listed.value[0]!.id
+      const out: boolean[] = []
+      for (const name of ['payload.html', 'payload.svg', 'payload.xhtml']) {
+        const result = await globalThis.spm.invoke('files.upload', [
+          projectId,
+          name,
+          { bytes: new TextEncoder().encode(body) },
+        ])
+        out.push(result.ok)
+      }
+      return out
+    }, payload)
+    expect(uploaded).toEqual([true, true, true])
+
+    await app.evaluate(({ session }) => {
+      const seen: string[] = []
+      ;(globalThis as Record<string, unknown>)['__downloads'] = seen
+      session.defaultSession.on('will-download', (_event, item) => {
+        seen.push(`${item.getMimeType()} ${item.getFilename()}`)
+        item.cancel()
+      })
+    })
+
+    const files = (await page.evaluate(async () => {
+      const listed = (await globalThis.spm.invoke('projects.list', [{}])) as {
+        value: { id: string }[]
+      }
+      const detail = (await globalThis.spm.invoke('projects.get', [listed.value[0]!.id])) as {
+        value: { files: { name: string; rawUrl: string }[] }
+      }
+      return detail.value.files
+    })) as { name: string; rawUrl: string }[]
+
+    const observed: Record<string, unknown> = {}
+    for (const name of ['payload.html', 'payload.svg', 'payload.xhtml']) {
+      const file = files.find((candidate) => candidate.name === name)!
+      // The header the guarantee rests on, first.
+      observed[`${name} headers`] = await page.evaluate(async (url: string) => {
+        const response = await fetch(url)
+        await response.body?.cancel()
+        return `${response.headers.get('content-type')} / ${response.headers.get('x-content-type-options')}`
+      }, file.rawUrl)
+      // Then the navigation a user's click produces. Playwright reports a download as a failed
+      // `goto`, which is already the answer; the assertions are on where the page ended up and on
+      // what did not run, so it does not matter which way it is reported.
+      await page.goto(file.rawUrl).catch(() => {})
+      await page.waitForTimeout(400)
+      observed[`${name} landed`] = await page.evaluate(() => ({
+        origin: location.origin,
+        pathname: location.pathname,
+        executed: (globalThis as Record<string, unknown>)['__pwned'] ?? false,
+      }))
+      await page.goto('spm://app/projects')
+    }
+
+    // Still on the app's own page every time: the navigation became a download and the payload
+    // never became a document. `executed` is the assertion that would go red if it ever did.
+    const stayed = { origin: 'spm://app', pathname: '/projects', executed: false }
+    expect(observed).toEqual({
+      'payload.html headers': 'application/octet-stream / nosniff',
+      'payload.svg headers': 'application/octet-stream / nosniff',
+      'payload.xhtml headers': 'application/octet-stream / nosniff',
+      'payload.html landed': stayed,
+      'payload.svg landed': stayed,
+      'payload.xhtml landed': stayed,
+    })
+    // And Chromium agreed each was a download rather than a page.
+    expect(
+      await app.evaluate(() => (globalThis as Record<string, unknown>)['__downloads']),
+    ).toEqual([
+      'application/octet-stream payload.html',
+      'application/octet-stream payload.svg',
+      'application/octet-stream payload.xhtml',
+    ])
+  } finally {
+    await app.close()
+  }
+})
+
+/**
+ * The window stays on the renderer's origin, and the bridge does not travel.
+ *
+ * The measurement this exists for, taken with no policy in place: `location.href =
+ * 'https://example.com/'` written from the renderer's own main world navigated the app's window
+ * there, and the page that arrived reported `typeof window.spm === 'object'` with keys
+ * `canStreamFromDisk,invoke`. `window.open` was worse — a second `BrowserWindow` at that origin,
+ * also holding the bridge. A preload belongs to a webContents, not to a document, so it follows
+ * the webContents wherever it goes.
+ *
+ * `example.com` and not a local stub, deliberately: a policy that only refuses unreachable hosts
+ * refuses nothing. If the switch were removed and the runner had no network, the assertion below
+ * would still fail — the URL would leave `spm://app` either way.
+ *
+ * `shell.openExternal` is replaced with a recorder rather than left to fire. The alternative is a
+ * test that opens a browser tab on whoever runs it, and the thing worth asserting is the
+ * decision, not that Windows can launch Edge.
+ */
+test('the renderer cannot navigate the window off its own origin, or open a second one', async () => {
+  const { app } = await launchApp()
+  try {
+    const page = await app.firstWindow()
+    await page.waitForLoadState('domcontentloaded')
+    await expect.poll(() => page.url()).toBe('spm://app/projects')
+
+    await app.evaluate(({ shell }) => {
+      const opened: string[] = []
+      ;(globalThis as Record<string, unknown>)['__external'] = opened
+      // Patched on the module object the bundle holds a reference to, since `electron` is
+      // external to it. Restored by the process exiting with the test.
+      ;(shell as unknown as { openExternal: (url: string) => Promise<void> }).openExternal = (
+        url: string,
+      ) => {
+        opened.push(url)
+        return Promise.resolve()
+      }
+    })
+
+    const attempts = [
+      'https://example.com/',
+      'http://example.com/',
+      'file:///C:/Windows/win.ini',
+      'data:text/html,<script>window.__pwned=true</script>',
+    ]
+    for (const url of attempts) {
+      await page.evaluate((target: string) => {
+        location.href = target
+      }, url)
+      await page.waitForTimeout(500)
+    }
+    // Every one of them refused: the document is still the app's, on its own origin, and the
+    // bridge is still only reachable from there.
+    expect(
+      await page.evaluate(() => ({
+        origin: location.origin,
+        pathname: location.pathname,
+        hasBridge: typeof globalThis.spm,
+        pwned: (globalThis as Record<string, unknown>)['__pwned'] ?? false,
+      })),
+    ).toEqual({
+      origin: 'spm://app',
+      pathname: '/projects',
+      hasBridge: 'object',
+      pwned: false,
+    })
+
+    // `window.open` is a separate hook and sees none of the traffic above, so it is driven
+    // separately. The project website link is `target="_blank"`, which is exactly this path.
+    await page.evaluate(() => {
+      window.open('https://example.com/', '_blank')
+      window.open('file:///C:/Windows/win.ini', '_blank')
+    })
+    await page.waitForTimeout(800)
+    expect(
+      await app.evaluate(({ BrowserWindow }) =>
+        BrowserWindow.getAllWindows().map((w) => w.webContents.getURL()),
+      ),
+    ).toEqual(['spm://app/projects'])
+
+    // http(s) went to the user's browser; nothing else was handed to the OS at all. `file:` in
+    // that list would be a vulnerability of its own, which is why the policy answers three
+    // values rather than a boolean.
+    expect(await app.evaluate(() => (globalThis as Record<string, unknown>)['__external'])).toEqual(
+      ['https://example.com/', 'http://example.com/', 'https://example.com/'],
+    )
   } finally {
     await app.close()
   }

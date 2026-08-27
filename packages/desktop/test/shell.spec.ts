@@ -144,8 +144,19 @@ test.describe('the desktop shell', () => {
     // the renderer's own index.html fallback will happily answer it: `_spm/files/<id>/raw` has
     // no extension resolveRendererFile knows, so before the guard every URL task 2 emits came
     // back **200 text/html** with the SPA in the body -- measured, and B2's viewer then reported
-    // an intact model as damaged. Task 3 replaces these 404s with real bytes; until then they
-    // must fail closed.
+    // an intact model as damaged.
+    //
+    // **Two of these entries changed meaning in task 3, and the list did not.** The first two --
+    // `_spm/files/abc/raw` and `.../thumb` -- are now the *canonical* spelling, so they no longer
+    // reach `resolveRendererFile` at all: `parseFileRequest` claims them and `serveLibraryFile`
+    // answers 404 because this library holds no file `abc`. Every other entry is still refused
+    // by the SPA-fallback guard, because it is an alias rather than the canonical spelling, and
+    // an alias must stay a 404 or it would be a second way to name a file. Both branches answer
+    // an identical `404 not found`, which is deliberate -- an id that does not exist and a path
+    // that is not a file request are the same non-answer to a caller -- but it does mean this
+    // test alone cannot tell you which one ran. `files.test.ts` splits them: it asserts
+    // `parseFileRequest` returns null for every alias here, and 404 for a real request with an
+    // id that names nothing.
     //
     // The status *and* the body, because a 200 with HTML is the failure being guarded against
     // and a status-only assertion would pass on any 404-shaped mistake while missing this one.

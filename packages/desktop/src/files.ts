@@ -146,6 +146,24 @@ async function streamFile(
         'content-disposition': `inline; filename*=UTF-8''${encodeURIComponent(fileName)}`,
         // Ranges are not served. See the note in `app.ts` for what was measured to ask for one.
         'accept-ranges': 'none',
+        // These bytes are the user's own files, served *into the app's own origin* — the same
+        // origin that holds `window.spm`. If Chromium ever sniffed one into HTML, that document
+        // would execute with the IPC bridge and, because the CSP is attached on the
+        // renderer-asset branch alone, with no policy at all.
+        //
+        // Measured on Electron 44.0.0 before this header existed, with real payload files in a
+        // fixture library and a top-level navigation to each `rawUrl`: `.html`, `.svg` and
+        // `.xhtml` all take core's `application/octet-stream` fallback and Chromium **downloads**
+        // them (`will-download` fires with that mime type) rather than sniffing. No script ran.
+        // The one file type that does render is `.txt` — `text/plain`, shown as escaped text with
+        // the markup visible, so still no execution — and it confirmed the hazard is real:
+        // `typeof window.spm` on that document is `'object'`.
+        //
+        // So this header changes nothing observable today, and that is the point of it. What is
+        // holding the line today is core's ten-entry content-type map happening to contain
+        // nothing renderable; `files.test.ts` pins that separately, because one entry added there
+        // is the whole difference.
+        'x-content-type-options': 'nosniff',
       },
     })
   } catch (error) {
@@ -172,7 +190,9 @@ async function streamFile(
  * column but `previews/queue.ts`, from an id it generated, and reaching it needs write access to
  * the library database — at which point the attacker already has the library. Left alone rather
  * than patched here, because the fix belongs in core where both shells would get it, and because
- * a guard in one shell would make the two disagree about the same row.
+ * a guard in one shell would make the two disagree about the same row. **Ruling C-13 assigns it
+ * to task 4** — the task that makes previews real, and so the first task in which shipping code
+ * writes that column at all.
  */
 export async function serveLibraryFile(
   lib: Library,

@@ -17,7 +17,7 @@ import {
 } from '@spm/core'
 import { parseFileRequest, serveLibraryFile } from '../src/files.ts'
 import { markPreviewReady } from './preview-fixture.ts'
-import { FILE_URL_BASE, RESERVED_PATH_SEGMENT } from '../src/urls.ts'
+import { navigationPolicy, FILE_URL_BASE, RESERVED_PATH_SEGMENT } from '../src/urls.ts'
 
 /**
  * The file-bytes handler under plain Node, against a real library on disk.
@@ -153,6 +153,55 @@ test('raw answers the exact bytes on disk, with the headers the server sends', a
   assert.equal(response.headers.get('accept-ranges'), 'none')
 })
 
+test('nothing core can name a file resolves to a type Chromium would execute', async () => {
+  /*
+   * These bytes are served into `spm://app` — the origin that holds `window.spm` — and the CSP is
+   * attached on the renderer-asset branch alone, so a document produced *here* would have the
+   * bridge and no policy. Measured through a real navigation (see `files.spec.ts` and the header
+   * comment in `files.ts`): today Chromium downloads all three of these rather than sniffing.
+   *
+   * What is actually holding that line is core's ten-entry content-type map happening to contain
+   * nothing renderable as active content, and one line added to
+   * `packages/core/src/files/usecases.ts` would change it silently. This is that line's alarm.
+   * It is a list and not a proof — the same standing as every other normalisation list in this
+   * subsystem — but it covers every extension a browser will execute.
+   */
+  const ACTIVE_CONTENT = [
+    'text/html',
+    'application/xhtml+xml',
+    'image/svg+xml',
+    'text/xml',
+    'application/xml',
+    'text/javascript',
+    'application/javascript',
+  ]
+  for (const extension of ['html', 'htm', 'xhtml', 'shtml', 'svg', 'svgz', 'xml', 'js', 'mjs']) {
+    const file = await put(`payload.${extension}`, '<script>alert(1)</script>')
+    const response = await serve(under(`files/${file.id}/raw`))
+    const type = response.headers.get('content-type')
+    await response.body?.cancel()
+    assert.equal(type, 'application/octet-stream', `.${extension}`)
+    assert.ok(!ACTIVE_CONTENT.includes(type!), `.${extension} resolved to ${type}`)
+  }
+})
+
+test('every file response carries nosniff, on both routes', async () => {
+  // The guarantee behind the paragraph above: whatever the content type says, Chromium is
+  // forbidden from deciding otherwise. `thumb` too — it is the one route that has to stay
+  // `inline`, since an `<img>` is how it is consumed.
+  const raw = await serve(under(`files/${fileId}/raw`))
+  await raw.body?.cancel()
+  assert.equal(raw.headers.get('x-content-type-options'), 'nosniff')
+
+  // Its own file, not the shared one: the test below asserts that file's thumb is a 404 until a
+  // preview is ready, and marking it ready here would decide that test's outcome from up here.
+  const withPreview = await put('has-preview.stl', STL)
+  markPreviewReady(lib.db, dir, withPreview.id)
+  const thumb = await serve(under(`files/${withPreview.id}/thumb`))
+  await thumb.body?.cancel()
+  assert.equal(thumb.headers.get('x-content-type-options'), 'nosniff')
+})
+
 test('a body larger than one stream chunk arrives whole and in order', async () => {
   // 3 MB, so the read is many chunks rather than one: a handler that answered only the first
   // chunk, or that closed the descriptor early, passes every assertion on the 25-byte file above.
@@ -241,5 +290,59 @@ test('core refusing a path escape comes back as a 403, not as a crash', async ()
   } finally {
     rmSync(outside, { force: true })
     lib.db.prepare('DELETE FROM files WHERE id = ?').run(file.id)
+  }
+})
+
+/* -------------------------------------------------------------------------------------------
+ * navigationPolicy
+ * ---------------------------------------------------------------------------------------- */
+
+test('navigationPolicy allows the renderer origin, externalises http(s), blocks the rest', () => {
+  /*
+   * The exhaustive half of the review's Important finding. The GUI half is in `files.spec.ts`;
+   * this is where the schemes get enumerated, because each one costs nothing here and two
+   * seconds of Electron there.
+   *
+   * The measurement that made this necessary: with no policy at all, a `location.href` written
+   * from the renderer's own main world took the app's window to `https://example.com/`, and the
+   * page that arrived reported `typeof window.spm === 'object'` with `canStreamFromDisk,invoke`.
+   */
+  for (const url of [
+    'spm://app/',
+    'spm://app/projects',
+    `${FILE_URL_BASE}/files/abc/raw`,
+    'spm://app/_spm/files/abc/thumb',
+    'spm://app/index.html?x=1#y',
+    // Chromium canonicalises a standard scheme's host, so this really is the same origin.
+    'spm://APP/projects',
+  ]) {
+    assert.equal(navigationPolicy(url), 'allow', url)
+  }
+
+  for (const url of ['http://example.com/', 'https://example.com/a?b#c', 'HTTPS://EXAMPLE.COM/']) {
+    assert.equal(navigationPolicy(url), 'external', url)
+  }
+
+  for (const url of [
+    // A different host under the same scheme is a different origin, whatever it is named.
+    'spm://file/abc/raw',
+    'spm://evil/',
+    'spm://app.evil.com/',
+    'file:///C:/Windows/win.ini',
+    'file:///etc/passwd',
+    'data:text/html,<script>alert(1)</script>',
+    'javascript:alert(1)',
+    'blob:spm://app/1234',
+    'ws://example.com/',
+    'about:blank',
+    'chrome://settings',
+    'devtools://devtools/bundled/inspector.html',
+    'mailto:someone@example.com',
+    // Not a URL at all. `new URL` throws, and the answer to that is not "allow".
+    'not a url',
+    '',
+    '//example.com/',
+  ]) {
+    assert.equal(navigationPolicy(url), 'block', url)
   }
 })

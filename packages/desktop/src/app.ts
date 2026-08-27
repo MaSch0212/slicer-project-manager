@@ -1,4 +1,4 @@
-import { app, BrowserWindow, protocol } from 'electron'
+import { app, BrowserWindow, protocol, shell } from 'electron'
 import { existsSync, statSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { extname, join, relative, resolve, sep } from 'node:path'
@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url'
 import { closeLibrary, ensureLocalUser, openLibrary, type Ctx, type Library } from '@spm/core'
 import { parseFileRequest, serveLibraryFile } from './files.ts'
 import { registerInvokeHandler } from './ipc.ts'
-import { RENDERER_HOST, RENDERER_ORIGIN, RESERVED_PATH_SEGMENT } from './urls.ts'
+import { navigationPolicy, RENDERER_HOST, RENDERER_ORIGIN, RESERVED_PATH_SEGMENT } from './urls.ts'
 
 /**
  * The Electron main process, minus its entry point.
@@ -256,13 +256,28 @@ export function contentTypeFor(file: string): string {
  * | `<video src=rawUrl>`          | GET    | **`bytes=0-`** |
  *
  * The last row is why this is written down rather than assumed, and it does not change the
- * answer: a `<video>` cannot be pointed at these bytes from the renderer at all. The CSP above
- * has no `media-src` and `default-src 'none'`, so the element never issues a request —
- * `securitypolicyviolation` fires with `media-src <- spm` and the element fails with
- * `MEDIA_ELEMENT_ERROR: Media load rejected by URL safety check`. The `bytes=0-` above was
- * measured from a CSP-free probe document, which is the only place it can happen. If a later
- * task adds `media-src spm:` it inherits range support as a requirement, and this table is the
- * evidence for that.
+ * answer — but the first version of this paragraph got the *scope* of the reason wrong, and the
+ * review caught it. It said "the CSP has no `media-src`, so a `<video>` can never issue a
+ * request". That is true of documents that **carry** the CSP, and this handler attaches one only
+ * on the renderer-asset branch, for `text/html`. A document produced by the *file* branch would
+ * have no policy at all.
+ *
+ * The answer survives the correction, on two legs rather than one:
+ *
+ * - In the renderer's own document — the only place an element can be written that points at a
+ *   `rawUrl` — the CSP does hold: `default-src 'none'` with no `media-src`, so a `<video>` never
+ *   issues a request. Measured: `securitypolicyviolation` fires with `media-src <- spm` and the
+ *   element fails with `MEDIA_ELEMENT_ERROR: Media load rejected by URL safety check`.
+ *   `files.spec.ts` asserts the served header still has no `media-src`, so adding one breaks
+ *   there rather than here.
+ * - The file branch cannot produce a document that could hold a `<video>` in the first place.
+ *   Measured, with real payload files: `.html`, `.svg` and `.xhtml` take core's
+ *   `application/octet-stream` fallback and download rather than render, and `nosniff` on that
+ *   branch now guarantees it. See the header comment in `files.ts`.
+ *
+ * The `bytes=0-` above was measured from a CSP-free probe document, which remains the only place
+ * it can happen. If a later task adds `media-src spm:`, or teaches core to serve a renderable
+ * type, it inherits range support as a requirement — and this table is the evidence for that.
  *
  * The headers are genuinely visible here, which is the thing that would make the table vacuous
  * if it were not true: a `fetch` with a hand-written `x-probe: yes` arrived with it intact. So
@@ -374,8 +389,45 @@ export function createMainWindow(): BrowserWindow {
     },
   })
   window.once('ready-to-show', () => window.show())
+  applyNavigationPolicy(window)
   void window.loadURL(`${RENDERER_ORIGIN}/`)
   return window
+}
+
+/**
+ * Keeps the window on the renderer's own origin, and sends everything else to the user's browser.
+ *
+ * A preload is attached to the *webContents*, not to a document, so it follows that webContents
+ * wherever it navigates. Measured before this existed, on Electron 44.0.0: setting
+ * `location.href = 'https://example.com/'` from the renderer's main world navigated the app's own
+ * window there, and the remote page reported `typeof window.spm === 'object'` with keys
+ * `canStreamFromDisk,invoke` — the whole IPC bridge, at someone else's origin.
+ * `window.open('https://example.com/')` produced a *second* `BrowserWindow` at that origin, with
+ * the same bridge. `navigationPolicy` in `urls.ts` carries the reasoning and the exhaustive unit
+ * coverage; this is the wiring, and the two hooks are both needed because neither sees the other's
+ * traffic — `will-navigate` never fires for a `window.open`.
+ *
+ * `shell.openExternal` and not simply a refusal: the project website link
+ * (`project-detail.page.ts`, `target="_blank"`) is a real feature, and it is only http(s) that is
+ * ever handed to the OS — a `file:` or `javascript:` URL reaching `openExternal` is its own
+ * vulnerability, which is why `navigationPolicy` answers three values rather than a boolean.
+ */
+export function applyNavigationPolicy(window: BrowserWindow): void {
+  window.webContents.on('will-navigate', (event, url) => {
+    const policy = navigationPolicy(url)
+    if (policy === 'allow') return
+    // Prevented first, so an `openExternal` that throws still cannot leave the app on a page it
+    // was not supposed to reach.
+    event.preventDefault()
+    if (policy === 'external') void shell.openExternal(url)
+  })
+  window.webContents.setWindowOpenHandler(({ url }) => {
+    // Deny for `allow` too: nothing in this app opens a second window on its own origin, and a
+    // window that arrived unasked for would have the bridge and no CSP-bearing document to hold
+    // it. If a later task needs one, it opens it from the main process where it can say so.
+    if (navigationPolicy(url) === 'external') void shell.openExternal(url)
+    return { action: 'deny' }
+  })
 }
 
 export function main(): void {
