@@ -3,7 +3,12 @@ import { rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { binaryStl, cubeMesh } from '../../core/test/fixtures/make-mesh.ts'
-import { launchApp, launchWithoutLibrary, type SeedProject } from './fixtures.ts'
+import {
+  launchApp,
+  launchWithoutLibrary,
+  SOFTWARE_WEBGL_ARGS,
+  type SeedProject,
+} from './fixtures.ts'
 import { markPreviewReady, PREVIEW_HEIGHT, PREVIEW_RGB, PREVIEW_WIDTH } from './preview-fixture.ts'
 
 /**
@@ -48,7 +53,8 @@ test.describe('file bytes over spm://', () => {
   let detail: Detail
 
   test.beforeAll(async () => {
-    ;({ app, libraryDir } = await launchApp(SEED))
+    // The viewer tests at the bottom need a WebGL context, and the CI runner has no GPU.
+    ;({ app, libraryDir } = await launchApp(SEED, SOFTWARE_WEBGL_ARGS))
     page = await app.firstWindow()
     await page.waitForLoadState('domcontentloaded')
     await page.evaluate(() => globalThis.spm.invoke('projects.rescan', []))

@@ -30,7 +30,34 @@ export type SeedProject = { name: string; files: Record<string, string | Uint8Ar
  * not exist — so what the app later lists is a library it adopted from disk itself, not rows a
  * test inserted.
  */
-export async function launchApp(seed: SeedProject[] = []): Promise<LaunchedApp> {
+/**
+ * Chromium switches that give the renderer a WebGL context on a machine with no GPU.
+ *
+ * Only the viewer needs one, so only `files.spec.ts` passes these — the rest of the suite runs
+ * the app exactly as a user would start it.
+ *
+ * Measured rather than copied off a wiki. Without them, `deno task test:desktop` on the CI
+ * runner (ubuntu-latest, under `xvfb-run`) settles the viewer on
+ * `"error: This browser could not open a 3D view. WebGL may be switched off…"` with
+ * `roleImg: 0` — and that error hides the whole load-state switch in `viewer.page.ts`, so the
+ * "bytes are gone" half of the pair loses its message too and both tests fail as
+ * `element(s) not found`. It does not reproduce on a Windows development box: `--disable-gpu`
+ * there still yields a `webgl2` context, which is why the reading above had to come from CI.
+ *
+ * `--enable-unsafe-swiftshader` is not optional on this Chromium: since 138 the software
+ * rasteriser is refused for WebGL without it, and the flag is exactly as unsafe as the software
+ * renderer Playwright's own Chromium uses for the `packages/web` viewer suite.
+ */
+export const SOFTWARE_WEBGL_ARGS = [
+  '--use-gl=angle',
+  '--use-angle=swiftshader',
+  '--enable-unsafe-swiftshader',
+]
+
+export async function launchApp(
+  seed: SeedProject[] = [],
+  chromiumArgs: string[] = [],
+): Promise<LaunchedApp> {
   const libraryDir = mkdtempSync(join(tmpdir(), 'spm-desktop-'))
   for (const project of seed) {
     const dir = join(libraryDir, project.name)
@@ -40,7 +67,7 @@ export async function launchApp(seed: SeedProject[] = []): Promise<LaunchedApp> 
     }
   }
   const app = await electron.launch({
-    args: [MAIN_BUNDLE],
+    args: [MAIN_BUNDLE, ...chromiumArgs],
     env: { ...process.env, SPM_LIBRARY_DIR: libraryDir },
   })
   return { app, libraryDir }
