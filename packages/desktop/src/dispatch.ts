@@ -5,7 +5,7 @@ import { Readable } from 'node:stream'
 import { z } from 'zod'
 import type { ApiClient } from '@spm/contract/api-client.ts'
 import { createDecorators } from '@spm/contract/decorate.ts'
-import type { Capabilities } from '@spm/contract/dtos.ts'
+import type { Capabilities, LocalLibraryDto } from '@spm/contract/dtos.ts'
 import { AppError } from '@spm/contract/errors.ts'
 import {
   changePasswordSchema,
@@ -69,6 +69,30 @@ import { ACTIVATION_URL_BASE, FILE_URL_BASE } from './urls.ts'
 export type DispatchSession = { lib: Library; ctx: Ctx }
 
 /**
+ * The part of the shell a dispatch entry may reach that is not a library.
+ *
+ * One method so far, and it is the reason this type exists at all: `library.pick` has to open a
+ * native dialog and swap the library the whole process is serving, neither of which belongs in a
+ * module that must stay importable without `electron`. `app.ts` implements it over `LibraryHost`,
+ * `test/dispatch.test.ts` implements it with a function that answers a fixed folder, and this
+ * file goes on knowing nothing about either.
+ */
+export type ShellApi = {
+  /** Asks the user for a library folder and opens it. Null when they cancelled. */
+  pickLibraryFolder(): Promise<LocalLibraryDto | null>
+}
+
+/**
+ * Everything an entry is handed: the library that is open *right now*, and the shell itself.
+ *
+ * The session is resolved per call rather than captured (ruling C-12), which is what lets task 4
+ * swap the folder without re-registering the IPC handler. It is nullable because `capabilities`
+ * and `library.pick` both have to work before any folder is open — with no library there is no
+ * way for the user to choose one, and no way for the renderer to find out that it may.
+ */
+export type DispatchDeps = { session: DispatchSession | null; shell: ShellApi }
+
+/**
  * The spec-2.4 column for "Electron, local folder", as far as this task can honestly claim it.
  *
  * `requiresAuth: false` is what spec 2.6 says local mode is, and it is asserted on directly. It
@@ -80,15 +104,20 @@ export type DispatchSession = { lib: Library; ctx: Ctx }
  * `ensureLocalUser`'s row is the second. Flipping either one alone leaves the app on `/projects`;
  * task 1 was stuck on `/login` because it had neither.
  *
- * `canPickLocalFolder` is **false** here and not `true`, even though spec 2.4's column for this
- * mode says true: task 4 builds the picker, and until it exists the flag would light up a
- * control that goes nowhere, which is the plan's own stated reason for keeping the slicer flags
- * off. Task 4 flips it and owns the assertion on the whole object.
+ * `canPickLocalFolder` is **true** as of task 4, which is what flipped it: `library.pick` below
+ * opens a real native dialog and reopens the library, and the header control the renderer shows
+ * for this flag reaches it through `ApiClient` like every other affordance. It was deliberately
+ * false in tasks 2 and 3 for the reason the three flags below are still false — a capability
+ * whose feature does not exist lights up UI that goes nowhere.
+ *
+ * The three slicer/browser flags stay false until specs D and E ship them. `test/dispatch.test.ts`
+ * asserts this whole object rather than the flags it happens to care about, so a later task
+ * cannot quietly flip one.
  */
 export const DESKTOP_CAPABILITIES: Capabilities = {
   requiresAuth: false,
   canManageUsers: false,
-  canPickLocalFolder: false,
+  canPickLocalFolder: true,
   canLaunchSlicer: false,
   canConfigureSlicers: false,
   canBrowseModelSites: false,
@@ -136,12 +165,12 @@ type ResultAt<P extends ApiPath> =
   ValueAt<ApiClient, P> extends (...args: never[]) => infer R ? Awaited<R> : never
 
 /**
- * The session is nullable at this signature because `capabilities` must be answerable before any
- * folder is open — it has to be, or the renderer could never get far enough to ask for one. Every
- * other entry is built with `libraryCall`, which refuses a null session rather than dereferencing
- * it.
+ * `deps.session` is nullable at this signature because `capabilities` must be answerable before
+ * any folder is open — it has to be, or the renderer could never get far enough to ask for one —
+ * and because `library.pick` is how it gets one. Both are built with `shellCall`; every other
+ * entry is built with `libraryCall`, which refuses a null session rather than dereferencing it.
  */
-type Dispatched<R> = (session: DispatchSession | null, args: unknown[]) => Promise<R>
+type Dispatched<R> = (deps: DispatchDeps, args: unknown[]) => Promise<R>
 
 export type DispatchTable = { readonly [P in ApiPath]: Dispatched<ResultAt<P>> }
 
@@ -202,7 +231,7 @@ function libraryCall<P extends ApiPath, A extends readonly unknown[]>(
   schema: ArgsSchema<A>,
   run: (session: DispatchSession, ...args: A) => ResultAt<P> | Promise<ResultAt<P>>,
 ): Dispatched<ResultAt<P>> {
-  return async (session, args) => {
+  return async ({ session }, args) => {
     if (!session) throw new AppError('Conflict', 'no library folder is open')
     const parsed = schema.safeParse(args)
     if (!parsed.success) {
@@ -214,20 +243,24 @@ function libraryCall<P extends ApiPath, A extends readonly unknown[]>(
   }
 }
 
-/** For the one route that answers out of the shell itself rather than out of a library. */
+/**
+ * For the two routes that answer out of the shell itself rather than out of a library:
+ * `capabilities`, which the renderer asks for during bootstrap, and `library.pick`, which is how
+ * a shell with no library open gets one. Both must work with `session` null.
+ */
 function shellCall<P extends ApiPath, A extends readonly unknown[]>(
   path: P,
   schema: ArgsSchema<A>,
-  run: (...args: A) => ResultAt<P> | Promise<ResultAt<P>>,
+  run: (shell: ShellApi, ...args: A) => ResultAt<P> | Promise<ResultAt<P>>,
 ): Dispatched<ResultAt<P>> {
-  return async (_session, args) => {
+  return async ({ shell }, args) => {
     const parsed = schema.safeParse(args)
     if (!parsed.success) {
       throw new AppError('Validation', `invalid arguments for ${path}`, {
         issues: parsed.error.issues,
       })
     }
-    return await run(...parsed.data)
+    return await run(shell, ...parsed.data)
   }
 }
 
@@ -426,6 +459,16 @@ const NO_SESSIONS_HERE = 'this library is open locally; it has no accounts and n
 
 export const dispatch: DispatchTable = {
   capabilities: shellCall('capabilities', z.tuple([]), () => DESKTOP_CAPABILITIES),
+
+  /*
+   * The one route that changes which library every other route answers out of.
+   *
+   * It takes no arguments on purpose: a *path* from the renderer would be a filesystem operation
+   * on an attacker-chosen directory (constraint 4), and the renderer is the untrusted side of
+   * this boundary. The folder can only come from the user, through a native dialog the main
+   * process owns; all the renderer can do is ask for the dialog to be shown.
+   */
+  'library.pick': shellCall('library.pick', z.tuple([]), (shell) => shell.pickLibraryFolder()),
 
   /*
    * Local mode has no sessions at all (spec 2.6), and that is what these four say.

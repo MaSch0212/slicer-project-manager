@@ -29,6 +29,7 @@ import {
   isApiPath,
   type ApiPath,
   type DispatchSession,
+  type ShellApi,
 } from '../src/dispatch.ts'
 import {
   FILE_REF_KEY,
@@ -62,9 +63,23 @@ after(() => {
   rmSync(dir, { recursive: true, force: true })
 })
 
+/**
+ * What the shell hands `library.pick`, with a picker that cannot open a dialog.
+ *
+ * `pickedFolders` records the calls, so the one route that reaches outside the table is still
+ * exercised by the exhaustive sweep rather than skipped by it.
+ */
+const pickedFolders: (string | null)[] = []
+const shell: ShellApi = {
+  pickLibraryFolder: () => {
+    pickedFolders.push(null)
+    return Promise.resolve(null)
+  },
+}
+
 /** Calls a route the way `ipc.ts` does, so a test cannot accidentally bypass the validation. */
 function call<P extends ApiPath>(path: P, args: unknown[] = []): Promise<unknown> {
-  return dispatch[path](session, args)
+  return dispatch[path]({ session, shell }, args)
 }
 
 async function rejection(promise: Promise<unknown>): Promise<AppError> {
@@ -124,6 +139,7 @@ function exerciseAll(client: ApiClient): Record<ApiPath, () => Promise<unknown>>
     'files.upload': () => client.files.upload('id', 'a.stl', { blob: new Blob([bytes]) }),
     'files.rename': () => client.files.rename('id', 'b.stl'),
     'files.delete': () => client.files.delete('id'),
+    'library.pick': () => client.library.pick(),
   }
 }
 
@@ -301,21 +317,55 @@ test('capabilities answers without a library, and says auth is not required', as
   // Null session on purpose: the renderer asks for capabilities during bootstrap, and in task 4
   // that happens before a folder has been picked. The whole object, so a later task cannot flip
   // one flag unnoticed.
-  assert.deepEqual(await dispatch.capabilities(null, []), {
+  assert.deepEqual(await dispatch.capabilities({ session: null, shell }, []), {
     requiresAuth: false,
     canManageUsers: false,
-    canPickLocalFolder: false,
+    canPickLocalFolder: true,
     canLaunchSlicer: false,
     canConfigureSlicers: false,
     canBrowseModelSites: false,
   })
-  assert.deepEqual(await dispatch.capabilities(null, []), DESKTOP_CAPABILITIES)
+  assert.deepEqual(await dispatch.capabilities({ session: null, shell }, []), DESKTOP_CAPABILITIES)
+})
+
+/**
+ * The other route that must answer with no folder open, and the reason `capabilities` is not
+ * alone in `shellCall`: with no library there is no way for the user to choose one, so a
+ * `Conflict` here would be a dead end rather than an error.
+ */
+test('library.pick answers without a library, and reaches the shell', async () => {
+  pickedFolders.length = 0
+  const chosen: unknown[] = []
+  const picking: ShellApi = {
+    pickLibraryFolder: () => {
+      chosen.push('asked')
+      return Promise.resolve({ dir: '/tmp/somewhere' })
+    },
+  }
+  assert.deepEqual(await dispatch['library.pick']({ session: null, shell: picking }, []), {
+    dir: '/tmp/somewhere',
+  })
+  assert.deepEqual(chosen, ['asked'])
+
+  // A cancelled picker is a null, not a throw: the library that was open stays open.
+  assert.equal(await dispatch['library.pick']({ session: null, shell }, []), null)
+  assert.deepEqual(pickedFolders, [null])
+})
+
+test('library.pick rejects an argument list, so a path from the renderer cannot reach it', async () => {
+  const error = await rejection(
+    dispatch['library.pick']({ session: null, shell }, ['C:\Windows\System32']),
+  )
+  assert.equal(error.code, 'Validation')
 })
 
 test('every library-backed route refuses when no folder is open', async () => {
+  // The two routes that answer out of the shell itself are the exceptions, and they are asserted
+  // directly above rather than skipped silently here.
+  const fromShell: ApiPath[] = ['capabilities', 'library.pick']
   for (const path of Object.keys(dispatch) as ApiPath[]) {
-    if (path === 'capabilities') continue
-    const error = await rejection(dispatch[path](null, []))
+    if (fromShell.includes(path)) continue
+    const error = await rejection(dispatch[path]({ session: null, shell }, []))
     assert.equal(error.code, 'Conflict', `${path} should report Conflict without a library`)
   }
 })
@@ -747,7 +797,9 @@ test('importer.curaManagerZip reads a picked archive in place, without staging a
   ])
 
   await withFreshLibrary(async (session, freshDir) => {
-    const result = (await dispatch['importer.curaManagerZip'](session, [pickedBody(zipPath)])) as {
+    const result = (await dispatch['importer.curaManagerZip']({ session, shell }, [
+      pickedBody(zipPath),
+    ])) as {
       projectsExtracted: number
       strippedRoot: string | null
     }

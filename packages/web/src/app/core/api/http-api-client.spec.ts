@@ -53,6 +53,20 @@ describe('HttpApiClient', () => {
     expect(url.searchParams.get('dir')).toBe('asc')
   })
 
+  /**
+   * `ApiClient` is one interface and both transports answer the whole of it. Over HTTP there is
+   * no local folder and no route to ask for one, so this refuses in the shape every other method
+   * here fails in — an `AppError` with a code — and, crucially, without inventing a request.
+   */
+  it('refuses to pick a local folder, and does not go to the server to say so', async () => {
+    const fetchMock = vi.fn()
+    const client = new HttpApiClient('', fetchMock)
+
+    await expect(client.library.pick()).rejects.toBeInstanceOf(AppError)
+    await expect(client.library.pick()).rejects.toMatchObject({ code: 'Forbidden' })
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
   it('turns the error envelope back into an AppError with its details', async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       jsonResponse(

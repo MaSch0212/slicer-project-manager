@@ -1,5 +1,6 @@
 import type {
   Capabilities,
+  LocalLibraryDto,
   ProjectDetailDto,
   ProjectDto,
   ProjectQuery,
@@ -40,6 +41,24 @@ export interface ApiClient {
     logout(): Promise<void>
     checkToken(token: string): Promise<{ valid: boolean; username?: string }>
     activate(token: string, newPassword: string): Promise<UserDto>
+  }
+
+  /**
+   * The local library folder, for the shells that have one (spec 2.6).
+   *
+   * Gated by `Capabilities.canPickLocalFolder`, like every other affordance: the UI offers this
+   * where the capability says it exists and nowhere else, so no component has to know which
+   * shell it is running in. `HttpApiClient` implements it by refusing — a browser talking to a
+   * server has no local folder to open, and there is no route for one.
+   */
+  library: {
+    /**
+     * Asks the user for a folder and opens it, closing whatever was open before. Resolves to
+     * `null` when the user cancels, which is not an error and leaves the current library alone.
+     * The shell reloads the window itself on success, because switching the library invalidates
+     * every piece of state the renderer is holding.
+     */
+    pick(): Promise<LocalLibraryDto | null>
   }
 
   account: {

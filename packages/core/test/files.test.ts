@@ -1,5 +1,5 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { basename, join } from 'node:path'
 import type { AppError, QuotaExceededDetails } from '@spm/contract/errors.ts'
 import type { Ctx } from '../src/ctx.ts'
 import { newId } from '../src/db/ids.ts'
@@ -411,3 +411,40 @@ test('resolvePreviewPath returns the absolute path for a ready, present preview'
     assert.equal(resolved?.absPath, png)
   })
 })
+
+/**
+ * Ruling C-13. The column is written by `previews/queue.ts` from an id it generated, so this row
+ * cannot arise from anything core does — which is exactly why the plain `join` that used to be
+ * here went unnoticed. Measured before the fix: this returned
+ * `{ absPath: '<tmp>/outside.png' }`, one directory above the library, and the caller streamed it.
+ */
+for (const [label, spelling] of [
+  ['a relative', (outside: string) => `../${basename(outside)}`],
+  // The other half of the same guard: an absolute png_path is not a way out either.
+  ['an absolute', (outside: string) => outside],
+] as const) {
+  test(`resolvePreviewPath refuses ${label} png_path that escapes the library`, async () => {
+    await withLibrary(async (lib) => {
+      const ctx = seedUser(lib)
+      const project = createProject(lib, ctx, { name: 'Benchy' })
+      const dto = await uploadFile(lib, ctx, project.id, 'benchy.stl', streamOf('solid'))
+
+      // A real file at the escaped target, so the refusal cannot be `existsSync` answering for
+      // an absent one. It sits beside the library folder, not in it, and is removed again.
+      const outside = join(lib.dir, '..', `spm-outside-${dto.id}.png`)
+      writeFileSync(outside, 'not really a png')
+      try {
+        lib.db
+          .prepare("UPDATE previews SET state = 'ready', png_path = ? WHERE file_id = ?")
+          .run(spelling(outside), dto.id)
+
+        assert.throws(
+          () => resolvePreviewPath(lib, ctx, dto.id),
+          (e: unknown) => (e as AppError).code === 'Forbidden',
+        )
+      } finally {
+        rmSync(outside, { force: true })
+      }
+    })
+  })
+}

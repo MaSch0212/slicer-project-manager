@@ -7,6 +7,16 @@ export type Capabilities = {
   canBrowseModelSites: boolean
 }
 
+/**
+ * The local library folder a shell has open (spec 2.6).
+ *
+ * Only the Electron shell in local-folder mode can produce one, which is exactly what
+ * `Capabilities.canPickLocalFolder` says. The absolute path is the only field because it is the
+ * only thing the UI has to show: the folder *is* the library, and everything else about it
+ * already arrives as projects, files and settings.
+ */
+export type LocalLibraryDto = { dir: string }
+
 export type UserStatus = 'pending' | 'active' | 'disabled'
 
 export type UserDto = {

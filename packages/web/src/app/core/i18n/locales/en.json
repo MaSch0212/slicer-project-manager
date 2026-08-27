@@ -1,7 +1,8 @@
 {
   "app": {
     "title": "Slicer Project Manager",
-    "signOut": "Sign out"
+    "signOut": "Sign out",
+    "changeFolder": "Change library folder"
   },
   "auth": {
     "username": "Username",

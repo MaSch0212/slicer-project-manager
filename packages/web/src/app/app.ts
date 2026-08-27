@@ -6,11 +6,13 @@ import { JigIcon } from '@awdlab/jig/icon'
 import { JigMessage } from '@awdlab/jig/message'
 import { JigToolbar } from '@awdlab/jig/toolbar'
 import { JigTooltip } from '@awdlab/jig/tooltip'
+import tablerFolder from '@iconify/icons-tabler/folder'
 import tablerLogout from '@iconify/icons-tabler/logout'
 import tablerSettings from '@iconify/icons-tabler/settings'
 import tablerStack2 from '@iconify/icons-tabler/stack-2'
 import tablerUpload from '@iconify/icons-tabler/upload'
 import tablerUsers from '@iconify/icons-tabler/users'
+import { API_CLIENT } from './core/api/api-client.token'
 import { AuthStore } from './core/auth.store'
 import { CapabilitiesStore } from './core/capabilities.store'
 import { TranslateService } from './core/i18n/translate.service'
@@ -72,6 +74,23 @@ import { SettingsStore } from './core/settings.store'
                     {{ t.translations().admin.title }}
                   </a>
                 }
+                <!-- Spec 2.4's canPickLocalFolder, and the whole of how the desktop shell's
+                     folder picker reaches the UI: a capability, an ApiClient call, and no
+                     component that knows what an Electron is. False in the browser, where the
+                     library lives on a server and there is no folder to choose. The dialog and
+                     the reload both belong to the main process -- all this does is ask. -->
+                @if (capabilities.capabilities().canPickLocalFolder) {
+                  <button
+                    jigButton
+                    kind="icon"
+                    type="button"
+                    [jigTooltip]="t.translations().app.changeFolder"
+                    jigTooltipAutoAriaMode="label"
+                    (click)="onChangeFolder()"
+                  >
+                    <jig-icon [icon]="icons.folder" />
+                  </button>
+                }
                 <!-- Only where there is a session to end. Without this gate the desktop shell
                      shows a sign-out button that drops the user on /login: a page with nothing
                      to sign in to (auth.login answers Forbidden, which the login page renders as
@@ -96,7 +115,7 @@ import { SettingsStore } from './core/settings.store'
         </div>
       </header>
 
-      @if (signOutFailed()) {
+      @if (signOutFailed() || changeFolderFailed()) {
         <div class="spm-header-inner">
           <jig-message color="error" role="alert">{{
             t.translations().errors.generic
@@ -112,6 +131,7 @@ export class App {
   protected readonly auth = inject(AuthStore)
   protected readonly capabilities = inject(CapabilitiesStore)
   protected readonly t = inject(TranslateService)
+  private readonly api = inject(API_CLIENT)
   private readonly settings = inject(SettingsStore)
   // The actual theme hook: @awdlab/jig ships a `dark` class toggle driven by this service,
   // not a `data-theme` attribute. ColorScheme is 'light' | 'dark' | 'system' — the same
@@ -126,15 +146,37 @@ export class App {
     import: tablerUpload,
     settings: tablerSettings,
     users: tablerUsers,
+    folder: tablerFolder,
     signOut: tablerLogout,
   }
 
   readonly signOutFailed = signal(false)
+  readonly changeFolderFailed = signal(false)
 
   constructor() {
     effect(() => {
       this.colorScheme.set(this.settings.settings().theme)
     })
+  }
+
+  /**
+   * Asks the shell for a different library folder.
+   *
+   * Nothing happens here on success, and that is the design rather than an omission: the shell
+   * that opened the folder is the only thing that knows every store in this renderer is now
+   * holding data from a library it has closed, so it reloads the window itself. A cancelled
+   * picker resolves to null and is not a failure — the library that was open stays open.
+   */
+  async onChangeFolder(): Promise<void> {
+    this.changeFolderFailed.set(false)
+    try {
+      await this.api.library.pick()
+    } catch {
+      // A folder that will not open is the realistic case: a file where a folder was, a drive
+      // that is not mounted, a database from a newer schema. The shell has already logged the
+      // detail; this is the user-facing half.
+      this.changeFolderFailed.set(true)
+    }
   }
 
   /**

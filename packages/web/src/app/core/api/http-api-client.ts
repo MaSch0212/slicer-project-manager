@@ -1,6 +1,7 @@
 import type { ApiClient, UploadBody } from '@spm/contract/api-client.ts'
 import type {
   Capabilities,
+  LocalLibraryDto,
   ProjectDetailDto,
   ProjectDto,
   ProjectQuery,
@@ -85,6 +86,20 @@ export class HttpApiClient implements ApiClient {
         `/api/auth/activation/${encodeURIComponent(token)}`,
         this.json('POST', { password: newPassword, confirm: newPassword }),
       ),
+  }
+
+  /**
+   * There is no local folder on this transport, and no route to ask for one.
+   *
+   * A browser talking to the Deno server reports `canPickLocalFolder: false`, so nothing in the
+   * UI offers this — but `ApiClient` is one interface and both implementations answer the whole
+   * of it. Refusing with an `AppError` keeps the promise every method of this class makes: a
+   * rejection is always an `AppError` with a `code` the caller can switch on, never a `TypeError`
+   * from a method that turned out not to be there.
+   */
+  readonly library = {
+    pick: (): Promise<LocalLibraryDto | null> =>
+      Promise.reject(new AppError('Forbidden', 'this shell has no local library folder')),
   }
 
   readonly account = {

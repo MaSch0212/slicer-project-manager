@@ -1,6 +1,5 @@
 import { existsSync, renameSync, rmSync, statSync } from 'node:fs'
 import { open } from 'node:fs/promises'
-import { join } from 'node:path'
 import type { CoreFileDto, FileKind, PreviewState, SlicerId } from '@spm/contract/dtos.ts'
 import { AppError, type QuotaExceededDetails } from '@spm/contract/errors.ts'
 import type { Ctx } from '../ctx.ts'
@@ -237,6 +236,26 @@ export function resolveFilePath(
   }
 }
 
+/**
+ * The PNG for a `ready` preview, or null when there is none.
+ *
+ * **`safeJoin`, not `join` — ruling C-13.** `previews.png_path` is written by
+ * `previews/queue.ts` from an id it generated itself, so in a library this code has always
+ * owned, every value is `.spm/previews/<id>.png` and both spellings agree. A row that says
+ * otherwise does not: measured, by writing `png_path = '../outside.png'` into a real library and
+ * calling this function, the plain `join` returned an `absPath` one directory *above* `lib.dir`,
+ * and the caller then streamed those bytes to the client. Every other path in this module is
+ * assembled with `safeJoin` (see `resolveFilePath` directly above); this one was the exception,
+ * and the reason it was left alone — that nothing writes the column but core — is a claim about
+ * today's writers rather than a property of the function.
+ *
+ * The desktop shell is what made it worth fixing: task C-4 is the first shipping code that runs
+ * the preview queue outside the server, so it is the first task in which those rows are written
+ * on an end user's own machine. `safeJoin` throws `Forbidden`, which both shells already map to
+ * 403 on the thumbnail route. That is a behaviour change for the Deno server in the strictest
+ * sense and not in any useful one: it can only be observed by a row that could not legitimately
+ * exist, and 403 with no bytes is the answer that row deserves.
+ */
 export function resolvePreviewPath(
   lib: Library,
   ctx: Ctx,
@@ -247,6 +266,6 @@ export function resolvePreviewPath(
     .prepare("SELECT png_path FROM previews WHERE file_id = ? AND state = 'ready'")
     .get(fileId) as { png_path: string | null } | undefined
   if (!row?.png_path) return null
-  const absPath = join(lib.dir, ...row.png_path.split(RELATIVE_PATH_SEPARATOR))
+  const absPath = safeJoin(lib.dir, ...row.png_path.split(RELATIVE_PATH_SEPARATOR))
   return existsSync(absPath) ? { absPath } : null
 }

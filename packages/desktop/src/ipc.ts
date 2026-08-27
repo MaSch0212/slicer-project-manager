@@ -1,6 +1,6 @@
 import { ipcMain } from 'electron'
 import { AppError, type AppErrorCode } from '@spm/contract/errors.ts'
-import { dispatch, isApiPath, type DispatchSession } from './dispatch.ts'
+import { dispatch, isApiPath, type DispatchDeps } from './dispatch.ts'
 import { INVOKE_CHANNEL, type IpcResult } from './protocol.ts'
 
 /**
@@ -45,11 +45,12 @@ export function toFailure(error: unknown): IpcResult {
 }
 
 /**
- * `resolveSession` is a function rather than a value because the library the shell has open
- * changes: it is null until one is opened, and task 4 adds a control that swaps it without a
- * restart. A snapshot taken at registration time would keep answering out of the old library.
+ * `resolveDeps` is a function rather than a value because the library the shell has open changes:
+ * it is null until one is opened, and `library.pick` swaps it without a restart (ruling C-12). A
+ * snapshot taken at registration time would keep answering out of the old library — and this
+ * handler is registered before `app.whenReady()`, when there is nothing to snapshot anyway.
  */
-export function registerInvokeHandler(resolveSession: () => DispatchSession | null): void {
+export function registerInvokeHandler(resolveDeps: () => DispatchDeps): void {
   ipcMain.handle(INVOKE_CHANNEL, async (_event, request: unknown): Promise<IpcResult> => {
     try {
       if (typeof request !== 'object' || request === null) {
@@ -62,7 +63,7 @@ export function registerInvokeHandler(resolveSession: () => DispatchSession | nu
       if (!Array.isArray(args)) {
         throw new AppError('Validation', `${path} was called without an argument list`)
       }
-      return { ok: true, value: await dispatch[path](resolveSession(), args) }
+      return { ok: true, value: await dispatch[path](resolveDeps(), args) }
     } catch (error) {
       return toFailure(error)
     }

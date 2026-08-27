@@ -1,11 +1,16 @@
-import { app, BrowserWindow, protocol, shell } from 'electron'
+import { app, BrowserWindow, dialog, protocol, shell } from 'electron'
 import { existsSync, statSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { extname, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { closeLibrary, ensureLocalUser, openLibrary, type Ctx, type Library } from '@spm/core'
 import { parseFileRequest, serveLibraryFile } from './files.ts'
 import { registerInvokeHandler } from './ipc.ts'
+import {
+  LibraryHost,
+  STATE_FILE_NAME,
+  type DesktopSession,
+  type FolderPickerOptions,
+} from './library.ts'
 import { navigationPolicy, RENDERER_HOST, RENDERER_ORIGIN, RESERVED_PATH_SEGMENT } from './urls.ts'
 
 /**
@@ -58,8 +63,18 @@ export const APP_NAME = 'Slicer Project Manager'
  */
 export { RENDERER_HOST, RENDERER_ORIGIN } from './urls.ts'
 
-/** Names the library folder to open. Same variable the Deno server reads, on purpose. */
-export const LIBRARY_DIR_ENV = 'SPM_LIBRARY_DIR'
+/**
+ * Choosing and opening the library folder lives in `library.ts`, which imports no `electron` and
+ * so can be driven by a unit test. These are re-exported because this is where tasks 1-3 put them
+ * and where the specs import them from.
+ */
+export {
+  closeDesktopLibrary,
+  LIBRARY_DIR_ENV,
+  openDesktopLibrary,
+  resolveLibraryDir,
+  type DesktopSession,
+} from './library.ts'
 
 /**
  * `spm://` has to be declared privileged *before* `app.whenReady()`, which is why it is declared
@@ -356,34 +371,6 @@ export function createSpmHandler(
   }
 }
 
-/** A library that is open, migrated, and has its single local user. */
-export type DesktopSession = { lib: Library; ctx: Ctx }
-
-/**
- * Task 4 owns *choosing* the folder; this owns opening it. `openLibrary` already runs the
- * migrations (see db/open.ts), so there is no separate `runMigrations` call here — adding one
- * would be a no-op that reads as if it were doing something.
- */
-export function openDesktopLibrary(dir: string): DesktopSession {
-  const lib = openLibrary(dir)
-  return { lib, ctx: ensureLocalUser(lib) }
-}
-
-export function closeDesktopLibrary(session: DesktopSession): void {
-  closeLibrary(session.lib)
-}
-
-/**
- * Where the library path comes from until task 4 puts a picker in front of it. One source, the
- * environment: a `--library=` switch was written first and then removed, because nothing
- * exercised it and an untested second path into the one thing that decides which folder the app
- * writes to is not worth the convenience.
- */
-export function resolveLibraryDir(env: NodeJS.ProcessEnv = process.env): string | null {
-  const fromEnv = env[LIBRARY_DIR_ENV]
-  return fromEnv ? resolve(fromEnv) : null
-}
-
 export function preloadPath(): string {
   return fileURLToPath(new URL('./preload.js', import.meta.url))
 }
@@ -463,44 +450,113 @@ export function applyNavigationPolicy(window: BrowserWindow): void {
   })
 }
 
+/**
+ * The native folder picker, and the only place in the app that opens one.
+ *
+ * **Parentless**, and the reason is one code path rather than a claim about modality. The same
+ * call serves the header control, which has a window the user is looking at, and the first-run
+ * prompt, which is a question about a window with nothing in it yet; only one of those has a
+ * parent worth naming, so neither passes one.
+ *
+ * What was measured, because the first version of this comment asserted a difference instead:
+ * on Electron 44.0.0 (Windows) a dialog opened *with* a parent window and one opened without both
+ * leave the page fully drivable — a Playwright click on a button behind the dialog lands and its
+ * handler runs, in 49 ms either way — and `electronApp.close()` returns in about 70 ms with a real
+ * dialog still open, either way. So the choice is not load-bearing for the suite, and a test that
+ * meets a real dialog fails rather than hangs.
+ *
+ * `canceled` and the empty-array case are both checked. They are the same answer here, but
+ * `filePaths` is documented as possibly empty and `[chosen]` off an empty array is `undefined`,
+ * which would reach `open()` as a path and fail inside `resolve`.
+ */
+export async function showFolderPicker(options: FolderPickerOptions): Promise<string | null> {
+  const result = await dialog.showOpenDialog({
+    title: options.title,
+    message: options.message,
+    buttonLabel: options.buttonLabel,
+    properties: [...options.properties],
+  })
+  const [chosen] = result.filePaths
+  return result.canceled || chosen === undefined ? null : chosen
+}
+
+/**
+ * Every window, reloaded, after the library underneath them has been swapped.
+ *
+ * The renderer has no way to know: `CapabilitiesStore`, `SettingsStore`, `AuthStore` and every
+ * loaded page are holding data from a library the shell is no longer serving, and the file URLs
+ * on screen name ids that do not exist in the new one. A reload is the whole invalidation, and it
+ * is done here rather than in the renderer so that it also covers the path where the *shell*
+ * opened a folder on its own — the first-run prompt, which resolves after the window has already
+ * loaded with no library at all.
+ *
+ * A no-op at startup, when the library is opened before any window exists.
+ */
+function reloadOpenWindows(): void {
+  for (const window of BrowserWindow.getAllWindows()) window.webContents.reload()
+}
+
 export function main(): void {
   app.setName(APP_NAME)
   registerSpmScheme()
 
-  let session: DesktopSession | null = null
+  // `app.getPath('userData')` is read once, after `setName` (which is what the directory is named
+  // after) and before `whenReady`, which it does not require.
+  const host = new LibraryHost({
+    stateFile: join(app.getPath('userData'), STATE_FILE_NAME),
+    pick: showFolderPicker,
+    onChanged: reloadOpenWindows,
+  })
 
   // Before `whenReady`, and before any window: `ipcMain.handle` is not tied to a window, and
   // registering it first means the renderer cannot possibly load and call into a channel that
-  // is not there yet. The accessor is a closure over `session` rather than the value, because
-  // the value is null until a folder is opened and task 4 swaps it without a restart.
-  registerInvokeHandler(() => session)
+  // is not there yet. Both halves are resolved per call rather than captured, because the library
+  // is null until a folder is opened and `library.pick` swaps it without a restart (ruling C-12).
+  registerInvokeHandler(() => ({
+    session: host.session(),
+    // No reason: this one is the user asking, not the shell explaining itself.
+    shell: { pickLibraryFolder: () => host.prompt(null) },
+  }))
 
   app.whenReady().then(() => {
     try {
-      // The same closure the IPC handler gets, and for the same reason: task 4 swaps the open
-      // library without a restart, and a captured session would pin the protocol handler to the
-      // old one — a re-registration it has no reason to discover it needs.
+      // The same accessor the IPC handler gets, and for the same reason: a captured session would
+      // pin the protocol handler to the library that was open when it was registered — a
+      // re-registration it has no reason to discover it needs.
       protocol.handle(
         'spm',
-        createSpmHandler(defaultRendererDir(), () => session),
+        createSpmHandler(defaultRendererDir(), () => host.session()),
       )
 
-      const libraryDir = resolveLibraryDir()
-      // Task 4 replaces this branch with a folder picker. Until then a shell with no library
-      // still opens, and the bridge answers `capabilities` out of the shell itself while every
-      // library-backed call reports `Conflict: no library folder is open`.
-      if (libraryDir) session = openDesktopLibrary(libraryDir)
+      // Opened *before* the window when there is a folder to open, so the renderer's first
+      // `projects.list` finds a library rather than a `Conflict` it would have to recover from.
+      const started = host.start()
+      const window = createMainWindow()
 
-      createMainWindow()
+      if ('prompt' in started) {
+        // First run, or a remembered folder that is gone. The picker waits for the window to
+        // finish loading: a native dialog in front of a grey rectangle looks like a crash, and
+        // the app behind it is what tells the user what they are choosing a folder for.
+        window.webContents.once('did-finish-load', () => {
+          void host.prompt(started.prompt).catch((error: unknown) => {
+            // A folder that will not open is not a reason to take the app down: the header
+            // control is still there, and `capabilities` still answers. Say so and stop.
+            console.error('desktop: could not open the chosen folder', error)
+          })
+        })
+      }
 
       app.on('activate', () => {
         if (BrowserWindow.getAllWindows().length === 0) createMainWindow()
       })
     } catch (error) {
-      // Without this, a library that will not open leaves an unhandled rejection and a process
-      // with no window at all — and `window-all-closed` never fires for a window that was never
-      // created, so it hangs until something kills it. Task 4 turns this into an explanation
-      // and a return to the picker; for now it is a message and a non-zero exit.
+      // The library failure this still catches is `SPM_LIBRARY_DIR` naming a folder that will
+      // not open, which `LibraryHost.start` rethrows deliberately — a *remembered* folder that
+      // will not open degrades to the picker instead and never reaches here. It also covers
+      // whatever else in this block can throw, which is the reason it stays a `try` around the
+      // whole of it: without it a failure here is an unhandled rejection and a process with no
+      // window at all, and `window-all-closed` never fires for a window that was never created,
+      // so it hangs until something kills it.
       console.error('desktop: startup failed', error)
       app.exit(1)
     }
@@ -511,8 +567,5 @@ export function main(): void {
     if (process.platform !== 'darwin') app.quit()
   })
 
-  app.on('will-quit', () => {
-    if (session) closeDesktopLibrary(session)
-    session = null
-  })
+  app.on('will-quit', () => host.shutdown())
 }

@@ -1,6 +1,7 @@
 import type { ApiClient, UploadBody } from '@spm/contract/api-client.ts'
 import type {
   Capabilities,
+  LocalLibraryDto,
   ProjectDetailDto,
   ProjectDto,
   ProjectQuery,
@@ -186,6 +187,12 @@ export class IpcApiClient implements ApiClient {
       this.invoke('auth.checkToken', [token]),
     activate: (token: string, newPassword: string): Promise<UserDto> =>
       this.invoke('auth.activate', [token, newPassword]),
+  }
+
+  readonly library = {
+    // No arguments, and nothing the renderer could put in them: the folder comes from a native
+    // dialog the main process owns. See the entry in packages/desktop/src/dispatch.ts.
+    pick: (): Promise<LocalLibraryDto | null> => this.invoke('library.pick'),
   }
 
   readonly account = {
