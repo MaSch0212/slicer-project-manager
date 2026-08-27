@@ -322,6 +322,7 @@ test.describe('the desktop shell', () => {
           typeofBridge: typeof bridge,
           keys: bridge ? Object.keys(bridge).sort() : null,
           typeofInvoke: typeof bridge?.['invoke'],
+          mode: bridge?.['mode'],
           answersABoolean: typeof (
             bridge?.['canStreamFromDisk'] as ((f: unknown) => unknown) | undefined
           )?.(new Blob([new Uint8Array([1])])),
@@ -329,8 +330,12 @@ test.describe('the desktop shell', () => {
       }),
     ).toEqual({
       typeofBridge: 'object',
-      keys: ['canStreamFromDisk', 'invoke'],
+      // `mode` is task 5's, and it is a *value* rather than a call for the reason the other two
+      // are calls: `API_CLIENT`'s Angular factory is synchronous, so the transport has to be
+      // readable without awaiting anything. This launch has a library folder, so it is `local`.
+      keys: ['canStreamFromDisk', 'invoke', 'mode'],
       typeofInvoke: 'function',
+      mode: 'local',
       answersABoolean: 'boolean',
     })
   })

@@ -111,8 +111,72 @@ export const FILE_REF_KEY = '__spmFileRef'
  */
 export const LOCAL_PATH_KEY = 'localPath'
 
+/**
+ * The path under the renderer's own origin that belongs to the remote server in remote mode.
+ *
+ * It is `/api` and not something reserved-looking because it is not the shell's choice: the
+ * server decorates its DTOs with `/api/files/<id>/thumb`, a *relative* URL, and a document at
+ * `spm://app` resolves that against its own origin. Serving it from anywhere else would mean
+ * rewriting every URL in every DTO the server sends. See `remote.ts`.
+ */
+export const API_PATH_PREFIX = '/api'
+
+/**
+ * How the renderer tells the shell how many bytes an upload body has.
+ *
+ * Not `content-length`: that is a forbidden header name, so Chromium strips a script-set one, and
+ * measured on Electron 44.0.0 it does not put the body's own length on the `Request` a protocol
+ * handler receives either. The server refuses a body with no length (411, spec 5.6), so remote
+ * uploads need the renderer to say so in a header of its own. Re-declared in
+ * `packages/web/src/app/core/api/ipc-api-client.ts`; `dispatch.test.ts` asserts the two strings
+ * are equal.
+ */
+export const UPLOAD_LENGTH_HEADER = 'x-spm-content-length'
+
+/**
+ * Which transport the window was created with — which is *not* quite the shell's mode.
+ *
+ * Two values, because there are two transports, and the shell has three states: local, remote,
+ * and nothing chosen yet. "Nothing chosen yet" is `'local'` here, deliberately: with no library
+ * open, `IpcApiClient` is exactly what a renderer needs — `capabilities` answers out of the shell,
+ * every library call reports `Conflict`, and `library.pick` and `library.connect` are how the user
+ * gets out of that state. Giving it a third value would mean rebuilding the window when the user
+ * picked a folder, and a rebuild is a new `webContents`: heavier, and visible to anything holding
+ * a handle on the old one.
+ *
+ * So the window is only ever rebuilt when the *transport* has to change, which is local↔remote.
+ */
+export type BridgeMode = 'local' | 'remote'
+
+/** The command-line switch `additionalArguments` carries the mode to the preload in. */
+export const MODE_SWITCH = '--spm-mode='
+
+/**
+ * Reads the mode out of a preload's `process.argv`.
+ *
+ * A switch rather than an IPC call because `API_CLIENT`'s factory is synchronous — Angular
+ * injection is — and `additionalArguments` is the only synchronous channel a sandboxed preload
+ * has. Measured on Electron 44.0.0: `process.argv` in a sandboxed, context-isolated preload
+ * carries the switch, and it survives a `webContents.reload()`. It does **not** change for the
+ * life of a webContents, which is why a mode change replaces the window rather than reloading it.
+ *
+ * Anything that is not exactly `remote` — a missing switch, a stray `--spm-mode=` from somewhere
+ * else, a value from a future version — is `local`. The transports are not symmetric here: IPC
+ * talks only to this process, while remote points the app at a server, so the value that needs a
+ * clear statement to be chosen is the one that leaves the machine.
+ */
+export function modeFromArgv(argv: readonly string[]): BridgeMode {
+  const found = argv.find((argument) => argument.startsWith(MODE_SWITCH))
+  return found?.slice(MODE_SWITCH.length) === 'remote' ? 'remote' : 'local'
+}
+
 /** What `contextBridge.exposeInMainWorld(BRIDGE_KEY, ...)` puts on the renderer's `window`. */
 export type SpmBridge = {
+  /**
+   * Which transport the renderer should use. Read from the window's own arguments, so it is
+   * fixed for the life of the window and cannot disagree with what the shell is serving.
+   */
+  mode: BridgeMode
   /**
    * Whether this value is a `File` with a real file behind it, and so can be streamed off disk
    * instead of buffered. Answers a boolean and nothing else: it holds no state, mints nothing,

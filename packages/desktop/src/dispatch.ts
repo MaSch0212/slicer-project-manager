@@ -5,7 +5,7 @@ import { Readable } from 'node:stream'
 import { z } from 'zod'
 import type { ApiClient } from '@spm/contract/api-client.ts'
 import { createDecorators } from '@spm/contract/decorate.ts'
-import type { Capabilities, LocalLibraryDto } from '@spm/contract/dtos.ts'
+import type { Capabilities, LocalLibraryDto, RemoteLibraryDto } from '@spm/contract/dtos.ts'
 import { AppError } from '@spm/contract/errors.ts'
 import {
   changePasswordSchema,
@@ -80,6 +80,17 @@ export type DispatchSession = { lib: Library; ctx: Ctx }
 export type ShellApi = {
   /** Asks the user for a library folder and opens it. Null when they cancelled. */
   pickLibraryFolder(): Promise<LocalLibraryDto | null>
+  /** Points the shell at a remote server. The URL is untrusted; the shell validates it. */
+  connectRemote(url: string): RemoteLibraryDto
+  /**
+   * Spec 2.4, for whatever the shell is talking to right now.
+   *
+   * A function on the shell rather than the constant this used to be, because the answer is no
+   * longer a property of the *package*: in remote mode it is the union of the shell's column and
+   * the server's own, which means a request. `ShellHost.capabilities` is the one implementation
+   * and `capabilities.ts` is the one place the union is computed.
+   */
+  capabilities(): Promise<Capabilities>
 }
 
 /**
@@ -93,35 +104,14 @@ export type ShellApi = {
 export type DispatchDeps = { session: DispatchSession | null; shell: ShellApi }
 
 /**
- * The spec-2.4 column for "Electron, local folder", as far as this task can honestly claim it.
+ * The shell's local column, re-exported.
  *
- * `requiresAuth: false` is what spec 2.6 says local mode is, and it is asserted on directly. It
- * is *not*, on its own, what gets the renderer off `/login`, and the carried-in ruling that said
- * so is wrong — measured, by flipping this one flag back to `true` and running the desktop suite:
- * the app still lands on `spm://app/projects` and thirteen of fourteen tests stay green. The
- * guard is `!capabilities.requiresAuth || auth.isAuthenticated()` (guards.ts), and the bridge
- * satisfies *both* arms at once: this flag is the first, and `account.me` answering with
- * `ensureLocalUser`'s row is the second. Flipping either one alone leaves the app on `/projects`;
- * task 1 was stuck on `/login` because it had neither.
- *
- * `canPickLocalFolder` is **true** as of task 4, which is what flipped it: `library.pick` below
- * opens a real native dialog and reopens the library, and the header control the renderer shows
- * for this flag reaches it through `ApiClient` like every other affordance. It was deliberately
- * false in tasks 2 and 3 for the reason the three flags below are still false — a capability
- * whose feature does not exist lights up UI that goes nowhere.
- *
- * The three slicer/browser flags stay false until specs D and E ship them. `test/dispatch.test.ts`
- * asserts this whole object rather than the flags it happens to care about, so a later task
- * cannot quietly flip one.
+ * It moved to `capabilities.ts` in task 5, with a second column beside it for remote mode and the
+ * union that combines a column with a backend's. It is re-exported here because this is where
+ * tasks 2-4 put it and where their tests import it from — and because this table's `capabilities`
+ * entry no longer names it at all: the answer now depends on what the shell is talking to.
  */
-export const DESKTOP_CAPABILITIES: Capabilities = {
-  requiresAuth: false,
-  canManageUsers: false,
-  canPickLocalFolder: true,
-  canLaunchSlicer: false,
-  canConfigureSlicers: false,
-  canBrowseModelSites: false,
-}
+export { LOCAL_SHELL_CAPABILITIES as DESKTOP_CAPABILITIES } from './capabilities.ts'
 
 const { decorateFile, decorateProject, decorateProjectDetail } = createDecorators(FILE_URL_BASE)
 
@@ -458,7 +448,7 @@ async function stageArchive(lib: Library, bytes: Uint8Array): Promise<string> {
 const NO_SESSIONS_HERE = 'this library is open locally; it has no accounts and no sessions'
 
 export const dispatch: DispatchTable = {
-  capabilities: shellCall('capabilities', z.tuple([]), () => DESKTOP_CAPABILITIES),
+  capabilities: shellCall('capabilities', z.tuple([]), (shell) => shell.capabilities()),
 
   /*
    * The one route that changes which library every other route answers out of.
@@ -469,6 +459,20 @@ export const dispatch: DispatchTable = {
    * process owns; all the renderer can do is ask for the dialog to be shown.
    */
   'library.pick': shellCall('library.pick', z.tuple([]), (shell) => shell.pickLibraryFolder()),
+
+  /*
+   * The other half of that route, for spec 2.6's other mode.
+   *
+   * It *does* take an argument, where `library.pick` deliberately does not, and the asymmetry is
+   * the point: a folder path from the renderer would be a filesystem operation on an
+   * attacker-chosen directory, while a server URL is a request to a machine the user names — the
+   * one thing the renderer legitimately has to be able to say. `z.string()` only keeps a
+   * non-string out of `parseRemoteOrigin`, which is where the real rules are (http or https, an
+   * origin and nothing else, no credentials) and where a `Validation` failure comes from.
+   */
+  'library.connect': shellCall('library.connect', z.tuple([z.string()]), (shell, url) =>
+    shell.connectRemote(url),
+  ),
 
   /*
    * Local mode has no sessions at all (spec 2.6), and that is what these four say.

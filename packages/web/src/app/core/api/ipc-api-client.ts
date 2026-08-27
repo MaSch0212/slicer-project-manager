@@ -6,6 +6,7 @@ import type {
   ProjectDto,
   ProjectQuery,
   FileDto,
+  RemoteLibraryDto,
   RescanResultDto,
   SettingsDto,
   UserDto,
@@ -45,6 +46,12 @@ export type IpcResult = IpcSuccess | IpcFailure
 
 export type SpmBridge = {
   /**
+   * Which transport this window was built with — `'local'` for IPC, `'remote'` for the proxied
+   * `HttpApiClient`. Fixed at window creation by the main process; see `BridgeMode` in
+   * `packages/desktop/src/protocol.ts`, which is where the two values are explained.
+   */
+  mode: BridgeMode
+  /**
    * Whether this value is a `File` with a real file behind it, and so can be streamed off disk
    * instead of buffered. A boolean and nothing more: the preload holds no state for it and this
    * world is never told *where* the file is.
@@ -52,6 +59,21 @@ export type SpmBridge = {
   canStreamFromDisk(file: unknown): boolean
   invoke(path: string, args: unknown[]): Promise<IpcResult>
 }
+
+/** The renderer's copy of `BridgeMode`; `packages/desktop/test/dispatch.test.ts` ties them. */
+export type BridgeMode = 'local' | 'remote'
+
+/**
+ * The header the proxied `HttpApiClient` declares an upload's length in. Must equal
+ * `UPLOAD_LENGTH_HEADER` in `packages/desktop/src/protocol.ts`; `dispatch.test.ts` asserts the
+ * two strings are the same value.
+ *
+ * It exists because `content-length` is a forbidden header name: Chromium strips a script-set
+ * one, and — measured on Electron 44.0.0 — does not put the body's own length on the `Request`
+ * the shell's protocol handler receives either, so a remote upload would reach the server with
+ * no length and be refused with 411 before a byte was written (spec 5.6).
+ */
+export const UPLOAD_LENGTH_HEADER = 'x-spm-content-length'
 
 /**
  * The key the picked `File` itself travels under, for the preload to swap for a path in its own
@@ -193,6 +215,7 @@ export class IpcApiClient implements ApiClient {
     // No arguments, and nothing the renderer could put in them: the folder comes from a native
     // dialog the main process owns. See the entry in packages/desktop/src/dispatch.ts.
     pick: (): Promise<LocalLibraryDto | null> => this.invoke('library.pick'),
+    connect: (url: string): Promise<RemoteLibraryDto> => this.invoke('library.connect', [url]),
   }
 
   readonly account = {

@@ -12,6 +12,7 @@ import {
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { after, afterEach, before, beforeEach, test } from 'node:test'
+import type { LocalLibraryDto } from '@spm/contract/dtos.ts'
 import type { Library } from '@spm/core'
 import {
   FOLDER_PICKER_PROPERTIES,
@@ -286,22 +287,25 @@ test('an unreadable state file is treated as nothing remembered, not as a crash'
   mkdirSync(join(stateFile, '..'), { recursive: true })
   writeFileSync(stateFile, '{"libraryDir": "C:/half-written')
   assert.equal(readRememberedDir(stateFile), null)
-  assert.deepEqual(planStartup({}, stateFile), { source: 'picker', reason: null })
+  assert.deepEqual(planStartup({}, stateFile), { mode: 'ask' })
 })
 
 /* -------------------------------------------------------------------------------------------
  * Where the folder comes from at startup
  * ---------------------------------------------------------------------------------------- */
 
-test('first run, with nothing remembered, plans a picker and has nothing to explain', () => {
-  assert.deepEqual(planStartup({}, stateFileFor()), { source: 'picker', reason: null })
+test('first run, with nothing remembered, asks which mode this is', () => {
+  // Task 5's mode question comes first: with no `mode` key and no folder there is nothing to
+  // explain and nothing to reopen, so what the shell owes the user is the question, not a dialog
+  // about a folder for a library it has not been told the kind of yet.
+  assert.deepEqual(planStartup({}, stateFileFor()), { mode: 'ask' })
 })
 
 test('a remembered folder that is still there is opened without asking', () => {
   const stateFile = stateFileFor()
   const dir = emptyFolder('remembered')
   rememberDir(stateFile, dir)
-  assert.deepEqual(planStartup({}, stateFile), { source: 'remembered', dir })
+  assert.deepEqual(planStartup({}, stateFile), { mode: 'local', source: 'remembered', dir })
 })
 
 test('a remembered folder that has been deleted returns to the picker, naming it', () => {
@@ -311,7 +315,7 @@ test('a remembered folder that has been deleted returns to the picker, naming it
   rmSync(dir, { recursive: true, force: true })
 
   const plan = planStartup({}, stateFile)
-  assert.deepEqual(plan, { source: 'picker', reason: { kind: 'missing', dir } })
+  assert.deepEqual(plan, { mode: 'local', source: 'picker', reason: { kind: 'missing', dir } })
   assert.match(explainReason({ kind: 'missing', dir }), /no longer there/)
 })
 
@@ -320,7 +324,11 @@ test('a remembered folder that has been renamed away returns to the picker', () 
   const dir = emptyFolder('renamed')
   rememberDir(stateFile, dir)
   renameSync(dir, `${dir}-elsewhere`)
-  assert.equal(planStartup({}, stateFile).source, 'picker')
+  assert.deepEqual(planStartup({}, stateFile), {
+    mode: 'local',
+    source: 'picker',
+    reason: { kind: 'missing', dir },
+  })
 })
 
 test('a remembered path that is now a file returns to the picker', () => {
@@ -329,7 +337,11 @@ test('a remembered path that is now a file returns to the picker', () => {
   rememberDir(stateFile, dir)
   rmSync(dir, { recursive: true, force: true })
   writeFileSync(dir, 'a file where a folder used to be')
-  assert.equal(planStartup({}, stateFile).source, 'picker')
+  assert.deepEqual(planStartup({}, stateFile), {
+    mode: 'local',
+    source: 'picker',
+    reason: { kind: 'missing', dir },
+  })
 })
 
 test('SPM_LIBRARY_DIR overrides whatever is remembered', () => {
@@ -338,6 +350,7 @@ test('SPM_LIBRARY_DIR overrides whatever is remembered', () => {
   const override = emptyFolder('override')
   rememberDir(stateFile, remembered)
   assert.deepEqual(planStartup({ SPM_LIBRARY_DIR: override }, stateFile), {
+    mode: 'local',
     source: 'env',
     dir: resolve(override),
   })
@@ -388,6 +401,26 @@ test('the picker speaks the language the shell was told to speak', () => {
   assert.equal(folderPickerOptions(null, 'en').buttonLabel, 'Open')
 })
 
+/**
+ * Task 4's `LibraryHost.start(env)`, as it now reads.
+ *
+ * The mode question moved to `ShellHost` in task 5, so `LibraryHost` takes an already-decided
+ * local plan. These tests are all about the local half and are kept as they were, with the two
+ * steps spelled out here rather than in each of them: `{ mode: 'ask' }` reaches them as the
+ * `{ prompt: null }` that `start` used to answer for a first run, which is the same thing said
+ * from one level up.
+ */
+function startLocal(
+  host: LibraryHost,
+  env: NodeJS.ProcessEnv,
+  stateFile: string,
+): { opened: LocalLibraryDto } | { prompt: PromptReason | null } {
+  const plan = planStartup(env, stateFile)
+  if (plan.mode === 'ask') return { prompt: null }
+  if (plan.mode === 'remote') return assert.fail('these cases are all local mode')
+  return host.openPlanned(plan)
+}
+
 /* -------------------------------------------------------------------------------------------
  * Opening, remembering, switching
  * ---------------------------------------------------------------------------------------- */
@@ -397,7 +430,7 @@ test('first run shows the picker, and what it opens is remembered for next time'
   const first = harness(() => Promise.resolve(chosen))
   hosts.push(first.host)
 
-  const started = first.host.start({})
+  const started = startLocal(first.host, {}, first.stateFile)
   assert.deepEqual(started, { prompt: null }, 'nothing is remembered, so it must ask')
   assert.equal(first.host.session(), null, 'and nothing is open until it has asked')
 
@@ -423,7 +456,7 @@ test('first run shows the picker, and what it opens is remembered for next time'
     startTicker: () => fakeTicker(),
   })
   hosts.push(second)
-  const restarted = second.start({})
+  const restarted = startLocal(second, {}, first.stateFile)
   assert.deepEqual(restarted, { opened: { dir: resolve(chosen) } })
   assert.equal(second.dir(), resolve(chosen))
   second.shutdown()
@@ -437,7 +470,7 @@ test('a remembered folder that is gone lands in the picker with the explanation'
   rememberDir(h.stateFile, gone)
   rmSync(gone, { recursive: true, force: true })
 
-  const started = h.host.start({})
+  const started = startLocal(h.host, {}, h.stateFile)
   assert.ok('prompt' in started && started.prompt, 'it must have something to explain')
   await h.host.prompt('prompt' in started ? started.prompt : null)
 
@@ -460,7 +493,7 @@ test('the picker is told whether the shell or the user asked', async () => {
   const h = harness(() => Promise.resolve(dir))
   hosts.push(h.host)
 
-  const started = h.host.start({})
+  const started = startLocal(h.host, {}, h.stateFile)
   await h.host.prompt('prompt' in started ? started.prompt : null, 'startup')
   await h.host.prompt(null)
 
@@ -571,7 +604,7 @@ test('a remembered folder that will not open degrades to the picker rather than 
   const host = new LibraryHost({ stateFile, pick: () => Promise.resolve(null) })
   hosts.push(host)
 
-  const started = host.start({})
+  const started = startLocal(host, {}, stateFile)
   assert.ok('prompt' in started, 'it must ask rather than fail the launch')
   const reason = 'prompt' in started ? started.prompt : null
   assert.equal(reason?.kind, 'unopenable', 'and it must say the folder would not open')
@@ -581,16 +614,17 @@ test('a remembered folder that will not open degrades to the picker rather than 
 test('SPM_LIBRARY_DIR naming a folder that will not open is a startup failure, not a prompt', () => {
   const bad = emptyFolder('env-unopenable')
   writeFileSync(join(bad, '.spm'), 'not a directory')
-  const host = new LibraryHost({ stateFile: stateFileFor(), pick: () => Promise.resolve(null) })
+  const stateFile = stateFileFor()
+  const host = new LibraryHost({ stateFile, pick: () => Promise.resolve(null) })
   hosts.push(host)
-  assert.throws(() => host.start({ SPM_LIBRARY_DIR: bad }))
+  assert.throws(() => startLocal(host, { SPM_LIBRARY_DIR: bad }, stateFile))
 })
 
 test('an environment override is not written to state.json', () => {
   const dir = folderWithProject('env', 'Widget')
   const h = harness()
   hosts.push(h.host)
-  h.host.start({ SPM_LIBRARY_DIR: dir })
+  startLocal(h.host, { SPM_LIBRARY_DIR: dir }, h.stateFile)
   assert.equal(h.host.dir(), resolve(dir))
   assert.equal(readRememberedDir(h.stateFile), null, 'one launch is not a choice to remember')
   h.host.shutdown()

@@ -17,6 +17,16 @@ export type Capabilities = {
  */
 export type LocalLibraryDto = { dir: string }
 
+/**
+ * The remote server a shell is pointed at (spec 2.6's other mode).
+ *
+ * The origin and nothing else, for the same reason `LocalLibraryDto` is one path: it *is* the
+ * library, and everything about its contents already arrives as projects, files and settings.
+ * Only the Electron shell can produce one; `HttpApiClient` refuses `library.connect` exactly as
+ * it refuses `library.pick`, because a browser cannot re-point itself at another server.
+ */
+export type RemoteLibraryDto = { origin: string }
+
 export type UserStatus = 'pending' | 'active' | 'disabled'
 
 export type UserDto = {

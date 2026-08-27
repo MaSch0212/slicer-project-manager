@@ -1,5 +1,11 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
-import { BRIDGE_KEY, INVOKE_CHANNEL, type IpcResult, type SpmBridge } from './protocol.ts'
+import {
+  BRIDGE_KEY,
+  INVOKE_CHANNEL,
+  modeFromArgv,
+  type IpcResult,
+  type SpmBridge,
+} from './protocol.ts'
 import { sanitiseArgs, type PickedFile } from './sanitise-args.ts'
 
 /**
@@ -61,6 +67,11 @@ function pickedFileOf(file: unknown): PickedFile | null {
 }
 
 const bridge: SpmBridge = {
+  // Read once, at preload time, from the switch `createMainWindow` put on this window. It cannot
+  // be asked for over IPC because the renderer needs it synchronously — `API_CLIENT`'s factory is
+  // an Angular injection factory — and it cannot change under a live window, which is why the
+  // shell replaces the window instead of reloading it when the mode changes.
+  mode: modeFromArgv(process.argv),
   canStreamFromDisk: (file: unknown): boolean => pickedFileOf(file) !== null,
   invoke: (path: string, args: unknown[]): Promise<IpcResult> =>
     ipcRenderer.invoke(INVOKE_CHANNEL, {

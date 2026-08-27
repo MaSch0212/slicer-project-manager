@@ -230,7 +230,9 @@ test.describe('the IPC bridge', () => {
     expect(forged.syntheticFile).toBe(false)
     expect(forged.blob).toBe(false)
     expect(forged.duckTyped).toBe(false)
-    expect(forged.bridgeKeys).toEqual(['canStreamFromDisk', 'invoke'])
+    // Three members, and no fourth. `mode` is a string the shell decided; the other two are the
+    // whole surface the renderer has, and nothing here holds state it could accumulate.
+    expect(forged.bridgeKeys).toEqual(['canStreamFromDisk', 'invoke', 'mode'])
 
     // Nothing was read. `stolen.txt` exists, from the one legitimate arm, and it is one byte —
     // not the 135 168 of the file that was named. A `Validation` code alone would not say that.

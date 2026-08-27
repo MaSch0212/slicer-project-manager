@@ -6,6 +6,7 @@ import type {
   ProjectDto,
   ProjectQuery,
   FileDto,
+  RemoteLibraryDto,
   RescanResultDto,
   SettingsDto,
   UserDto,
@@ -100,6 +101,8 @@ export class HttpApiClient implements ApiClient {
   readonly library = {
     pick: (): Promise<LocalLibraryDto | null> =>
       Promise.reject(new AppError('Forbidden', 'this shell has no local library folder')),
+    connect: (): Promise<RemoteLibraryDto> =>
+      Promise.reject(new AppError('Forbidden', 'this shell cannot be pointed at another server')),
   }
 
   readonly account = {

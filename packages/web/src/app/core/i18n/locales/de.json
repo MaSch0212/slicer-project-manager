@@ -120,5 +120,18 @@
     "invalidTag": "Ein Schlagwort muss zwischen 1 und 60 Zeichen lang sein",
     "invalidFileName": "Dieser Dateiname ist nicht erlaubt",
     "generic": "Etwas ist schiefgelaufen"
+  },
+  "desktop": {
+    "connectTitle": "Wo liegt Ihre Bibliothek?",
+    "connectLead": "Öffnen Sie einen Ordner auf diesem Computer oder verbinden Sie sich mit einem Slicer-Projektverwaltung-Server.",
+    "localHeading": "Ein Ordner auf diesem Computer",
+    "localLead": "Kein Server und kein Konto. Der Ordner ist die Bibliothek.",
+    "chooseFolder": "Ordner auswählen…",
+    "remoteHeading": "Ein Server",
+    "remoteLead": "Melden Sie sich mit Ihrem Konto auf diesem Server an.",
+    "serverUrl": "Serveradresse",
+    "serverUrlHint": "Zum Beispiel https://print.example.com",
+    "connect": "Verbinden",
+    "connectFailed": "Das ist keine Serveradresse, die diese App verwenden kann"
   }
 }

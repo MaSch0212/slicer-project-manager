@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, protocol, shell } from 'electron'
+import { app, BrowserWindow, dialog, Menu, protocol, shell } from 'electron'
 import { existsSync, statSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { extname, join, relative, resolve, sep } from 'node:path'
@@ -7,13 +7,29 @@ import { parseFileRequest, serveLibraryFile } from './files.ts'
 import { registerInvokeHandler } from './ipc.ts'
 import {
   LibraryHost,
+  modeChoiceAt,
   pickerLanguage,
   STATE_FILE_NAME,
   type DesktopSession,
   type FolderPicker,
   type FolderPickerOptions,
+  type ModeChoice,
+  type ModePicker,
+  type ModePickerOptions,
+  type PickerLanguage,
 } from './library.ts'
+import { API_PATH_PREFIX, MODE_SWITCH, type BridgeMode } from './protocol.ts'
+import type { RemoteHost } from './remote.ts'
+import { ShellHost } from './shell.ts'
 import { navigationPolicy, RENDERER_HOST, RENDERER_ORIGIN, RESERVED_PATH_SEGMENT } from './urls.ts'
+
+/**
+ * The desktop-only route that asks for a server URL, as the shell has to spell it.
+ *
+ * Here rather than in `urls.ts` because it is the *renderer's* route table that owns it
+ * (`routes.electron.ts`), and this is the one place the main process has to know a route at all.
+ */
+export const CONNECT_PATH = '/desktop/connect'
 
 /**
  * The Electron main process, minus its entry point.
@@ -150,10 +166,23 @@ export const CONTENT_SECURITY_POLICY = [
   "frame-ancestors 'none'",
 ].join('; ')
 
-/** Where the Angular electron build lives, relative to this module once it is bundled. */
+/**
+ * Where the Angular electron build lives, relative to this module once it is bundled.
+ *
+ * Two layouts, and the packaged one is checked first because it is the one a user will be in.
+ * `deno task package:desktop` copies the renderer to `renderer/` beside the main bundle, so the
+ * unpacked application directory carries everything it needs and no path leads out of it. In the
+ * repo there is no such directory and the renderer is where `ng build` put it, two levels up.
+ *
+ * The existence check is on `index.html` rather than on the directory: a `renderer/` that exists
+ * and is empty would otherwise be chosen over the real build and every request would 404.
+ */
 export function defaultRendererDir(): string {
   // The bundle is written to packages/desktop/dist/main.js.
-  return resolve(fileURLToPath(new URL('.', import.meta.url)), '../../web/dist/electron/browser')
+  const here = fileURLToPath(new URL('.', import.meta.url))
+  const packaged = resolve(here, 'renderer')
+  if (existsSync(join(packaged, 'index.html'))) return packaged
+  return resolve(here, '../../web/dist/electron/browser')
 }
 
 /**
@@ -325,12 +354,32 @@ export function contentTypeFor(file: string): string {
 export function createSpmHandler(
   rendererDir: string,
   resolveSession: () => DesktopSession | null,
+  resolveRemote: () => RemoteHost | null = () => null,
 ): (request: Request) => Promise<Response> {
   return async (request: Request): Promise<Response> => {
     const url = new URL(request.url)
     if (url.hostname !== RENDERER_HOST) {
       // Nothing legitimate reaches here: every URL this app emits is under spm://app.
       return new Response('not found', { status: 404 })
+    }
+    // Remote mode (spec 2.6): `/api/...` under this origin belongs to the configured server, and
+    // this is the whole of how the renderer reaches it — the API calls `HttpApiClient` makes and
+    // the `/api/files/<id>/thumb` URLs the server puts in its own DTOs, which a document at
+    // `spm://app` resolves against this origin whether anyone planned it or not.
+    //
+    // The host is resolved per call and never captured (ruling C-12), for the reason task 4 had
+    // to learn once: a captured one would go on answering out of a server the user has left,
+    // which is exactly the leak this task exists to avoid. With no remote — local mode, or
+    // nothing chosen yet — the branch is not taken at all and `/api/...` falls through to the
+    // renderer. It is refused there rather than falling through, and that is not tidiness: the
+    // SPA fallback answers anything without a known extension with **index.html and status 200**,
+    // so a `/api/projects` left to it would hand `HttpApiClient` an HTML body with a success
+    // status — the same failure ruling C-7's reserved prefix exists to prevent, in a second
+    // place. Nothing the Angular build emits lives under `/api`, so nothing legitimate is lost.
+    if (url.pathname.startsWith(`${API_PATH_PREFIX}/`)) {
+      const remote = resolveRemote()
+      if (!remote) return new Response('not found', { status: 404 })
+      return await remote.proxy(request)
     }
     const fileRequest = parseFileRequest(url.pathname)
     if (fileRequest) {
@@ -387,7 +436,7 @@ export function preloadPath(): string {
  * sees them: with `contextIsolation` on, a renderer-side `typeof require` check stays green even
  * with `nodeIntegration` turned back on, so the obvious test is also the wrong one.
  */
-export function createMainWindow(): BrowserWindow {
+export function createMainWindow(mode: BridgeMode = 'local', path = '/'): BrowserWindow {
   const window = new BrowserWindow({
     width: 1280,
     height: 860,
@@ -399,11 +448,19 @@ export function createMainWindow(): BrowserWindow {
       contextIsolation: true,
       sandbox: true,
       preload: preloadPath(),
+      // Which transport the renderer builds its `ApiClient` with (spec 2.6). It travels as a
+      // command-line switch because `API_CLIENT`'s Angular factory is synchronous and this is the
+      // only synchronous channel a sandboxed preload has — measured: `process.argv` in a
+      // sandboxed, context-isolated preload carries it, and it survives a reload. Being fixed for
+      // the life of the webContents is the point rather than a limitation: it is why a change of
+      // transport replaces the window, and why a stale client from the previous mode cannot
+      // outlive the switch.
+      additionalArguments: [`${MODE_SWITCH}${mode}`],
     },
   })
   window.once('ready-to-show', () => window.show())
   applyNavigationPolicy(window)
-  void window.loadURL(`${RENDERER_ORIGIN}/`)
+  void window.loadURL(`${RENDERER_ORIGIN}${path}`)
   return window
 }
 
@@ -540,6 +597,99 @@ export function resolveFolderPicker(env: NodeJS.ProcessEnv = process.env): Folde
 }
 
 /**
+ * The native mode question, and the only place in the app that opens one.
+ *
+ * `dialog.showMessageBox` and not a page in the renderer, for the same reason the folder chooser
+ * is a native dialog: it is asked before there is anything for a page to be *about*, and it is
+ * the shell asking, not the library. Its remote answer does go on to a page — the server URL
+ * needs a text field, which a message box has no way to offer — and that page is
+ * `features/desktop/connect.page.ts`.
+ *
+ * `cancelId` is honoured by Electron for the escape key and for the window's close button, so an
+ * answer this never returns cannot be produced by dismissing it.
+ */
+export async function showModePicker(options: ModePickerOptions): Promise<ModeChoice> {
+  const { response } = await dialog.showMessageBox({
+    type: options.type,
+    title: options.title,
+    message: options.message,
+    buttons: options.buttons,
+    defaultId: options.defaultId,
+    cancelId: options.cancelId,
+  })
+  return modeChoiceAt(response)
+}
+
+/** Answers the shell's *startup* mode question without a dialog. See `resolveModePicker`. */
+export const FAKE_MODE_ENV = 'SPM_FAKE_MODE'
+
+/**
+ * The mode picker, or the answer an automated run wants for it.
+ *
+ * The same shape, and the same reason, as `SPM_FAKE_PICKER`: the startup mode question fires on
+ * `did-finish-load`, so a suite that replaced `dialog.showMessageBox` after launch would be
+ * racing the app's own startup, and the price of losing that race on a CI runner is a real native
+ * modal nothing can dismiss.
+ *
+ * `SPM_FAKE_MODE=local|remote|cancel` answers it with that choice. An unrecognised value is a
+ * `cancel`, which is the answer that changes nothing. Unlike `SPM_FAKE_PICKER` there is no
+ * `trigger` to discriminate on, because there is only one mode question and it is always the
+ * shell's: a *user* raising it from the menu in a launch that set this would get the same
+ * answer — which is what a suite driving the menu wants, and is why the options are recorded.
+ *
+ * The options are recorded on `globalThis` because that is the only main-process value an
+ * `electronApp.evaluate` can reach, exactly as the folder picker records its own.
+ */
+export function resolveModePicker(env: NodeJS.ProcessEnv = process.env): ModePicker {
+  const answer = env[FAKE_MODE_ENV]
+  if (answer === undefined) return showModePicker
+  console.warn(`desktop: ${FAKE_MODE_ENV} is set; the mode question will be answered as ${answer}`)
+  return (options) => {
+    const recorder = globalThis as { __spmModeCalls?: unknown[] }
+    recorder.__spmModeCalls = [...(recorder.__spmModeCalls ?? []), options]
+    return Promise.resolve(
+      answer === 'local' || answer === 'remote' ? (answer as ModeChoice) : 'cancel',
+    )
+  }
+}
+
+/**
+ * The application menu.
+ *
+ * It exists for two things the shell has no other surface for, and neither is decoration:
+ *
+ * - **Changing mode after the first run.** In remote mode `canPickLocalFolder` is false (spec
+ *   2.4), so the header control the renderer offers in local mode is correctly absent — and
+ *   without a menu there would be no way back to a local folder at all. A capability-gated
+ *   control cannot serve here, because the whole point is that the capability says no.
+ * - **Devtools**, which is what `dev:desktop` means by "with devtools available". Electron's
+ *   default menu carries them; replacing that menu without `role: 'toggleDevTools'` would take
+ *   them away, which is how a custom menu usually breaks this.
+ *
+ * Built from roles wherever a role exists, so the accelerators, the platform-specific ordering
+ * and the translations are Electron's rather than this file's guesses at them.
+ */
+export function buildMenu(onChooseMode: () => void): Menu {
+  return Menu.buildFromTemplate([
+    ...(process.platform === 'darwin' ? [{ role: 'appMenu' as const }] : []),
+    {
+      label: 'Library',
+      submenu: [
+        // The id is how `remote.spec.ts` reaches it: a native menu has no automation surface, and
+        // driving the item Electron itself would invoke is the difference between testing the
+        // menu and testing a function the menu happens to call.
+        { id: 'spm-choose-library', label: 'Choose library…', click: onChooseMode },
+        { type: 'separator' as const },
+        { role: 'quit' as const },
+      ],
+    },
+    { role: 'editMenu' },
+    { role: 'viewMenu' },
+    { role: 'windowMenu' },
+  ])
+}
+
+/**
  * Every window, reloaded, after the library underneath them has been swapped.
  *
  * The renderer has no way to know: `CapabilitiesStore`, `SettingsStore`, `AuthStore` and every
@@ -555,71 +705,137 @@ function reloadOpenWindows(): void {
   for (const window of BrowserWindow.getAllWindows()) window.webContents.reload()
 }
 
+/**
+ * Replaces the window because the transport changed, new one first.
+ *
+ * **The order is a measurement, not a preference.** Destroying the last window is what makes
+ * Electron quit — `window-all-closed` fires, `app.quit()` runs, and a `loadURL` on the window
+ * created afterwards dies with `ERR_FAILED (-2)`. Creating the replacement first means there are
+ * two windows for a moment and none of that happens; closing the old one on the new one's
+ * `ready-to-show` is also what keeps something on screen the whole time, since a new window is
+ * hidden until it paints.
+ *
+ * A replacement and not a reload, because `additionalArguments` is fixed for the life of a
+ * webContents: a reloaded window would rebuild the renderer with the *previous* transport, which
+ * is precisely the stale-client failure this task exists to rule out.
+ */
+function replaceWindows(mode: BridgeMode, path: string): void {
+  const previous = BrowserWindow.getAllWindows()
+  const replacement = createMainWindow(mode, path)
+  const closePrevious = (): void => {
+    for (const window of previous) if (!window.isDestroyed()) window.destroy()
+  }
+  replacement.once('ready-to-show', closePrevious)
+  // A window that never paints — a renderer that failed to load — would otherwise leave the old
+  // one up for ever, showing a library the shell no longer serves. `closed` covers the case where
+  // the user closes the replacement before it ever showed.
+  replacement.once('closed', closePrevious)
+}
+
 export function main(): void {
   app.setName(APP_NAME)
   registerSpmScheme()
 
   // `app.getPath('userData')` is read once, after `setName` (which is what the directory is named
   // after) and before `whenReady`, which it does not require.
-  const host = new LibraryHost({
-    stateFile: join(app.getPath('userData'), STATE_FILE_NAME),
+  const stateFile = join(app.getPath('userData'), STATE_FILE_NAME)
+  // Resolved per call: `app.getLocale()` is only dependable once Electron is ready, and this runs
+  // before that. The dialogs are the one thing this process says to a user in their own words —
+  // see `PICKER_STRINGS` and `MODE_STRINGS`.
+  const language = (): PickerLanguage => pickerLanguage(app.getLocale())
+  const library = new LibraryHost({
+    stateFile,
     pick: resolveFolderPicker(),
     onChanged: reloadOpenWindows,
-    // Resolved per call: `app.getLocale()` is only dependable once Electron is ready, and this
-    // runs before that. The dialog is the one thing this process says to a user in their own
-    // words — see `PICKER_STRINGS`.
-    language: () => pickerLanguage(app.getLocale()),
+    language,
+  })
+  const shell = new ShellHost({
+    stateFile,
+    library,
+    askMode: resolveModePicker(),
+    language,
+    // The transport changed, so the renderer has to be rebuilt rather than reloaded. Always back
+    // at the root: the route the user was on belongs to the library they have just left.
+    onTransportChanged: () => replaceWindows(shell.transport(), '/'),
+    // The mode question's remote answer. A navigation and not a replacement, because the connect
+    // page runs on the IPC transport the window already has.
+    onNavigate: (route) => {
+      const path = route === 'connect' ? CONNECT_PATH : '/'
+      for (const window of BrowserWindow.getAllWindows())
+        void window.loadURL(`${RENDERER_ORIGIN}${path}`)
+    },
   })
 
   // Before `whenReady`, and before any window: `ipcMain.handle` is not tied to a window, and
   // registering it first means the renderer cannot possibly load and call into a channel that
-  // is not there yet. Both halves are resolved per call rather than captured, because the library
-  // is null until a folder is opened and `library.pick` swaps it without a restart (ruling C-12).
+  // is not there yet. Every half is resolved per call rather than captured, because the library
+  // is null until a folder is opened and `library.pick` and `library.connect` both swap what the
+  // shell is serving without a restart (ruling C-12).
   registerInvokeHandler(() => ({
-    session: host.session(),
-    // No reason: this one is the user asking, not the shell explaining itself.
-    shell: { pickLibraryFolder: () => host.prompt(null) },
+    session: shell.session(),
+    shell: {
+      pickLibraryFolder: () => shell.pickLocalFolder(),
+      connectRemote: (url) => shell.connectRemote(url),
+      capabilities: () => shell.capabilities(),
+    },
   }))
 
   app.whenReady().then(() => {
     try {
-      // The same accessor the IPC handler gets, and for the same reason: a captured session would
-      // pin the protocol handler to the library that was open when it was registered — a
-      // re-registration it has no reason to discover it needs.
+      // The same accessors the IPC handler gets, and for the same reason: a captured session or
+      // remote host would pin the protocol handler to whatever was open when it was registered —
+      // a re-registration it has no reason to discover it needs.
       protocol.handle(
         'spm',
-        createSpmHandler(defaultRendererDir(), () => host.session()),
+        createSpmHandler(
+          defaultRendererDir(),
+          () => shell.session(),
+          () => shell.remote(),
+        ),
       )
 
-      // Opened *before* the window when there is a folder to open, so the renderer's first
+      Menu.setApplicationMenu(buildMenu(() => void shell.askForMode()))
+
+      // Opened *before* the window when there is something to open, so the renderer's first
       // `projects.list` finds a library rather than a `Conflict` it would have to recover from.
-      const started = host.start()
-      const window = createMainWindow()
+      const started = shell.start()
+      const window = createMainWindow(shell.transport())
 
       if ('prompt' in started) {
-        // First run, or a remembered folder that is gone. The picker waits for the window to
-        // finish loading: a native dialog in front of a grey rectangle looks like a crash, and
-        // the app behind it is what tells the user what they are choosing a folder for.
+        // First run, a remembered folder that is gone, or a state file that no longer says which
+        // mode this is. The question waits for the window to finish loading: a native dialog in
+        // front of a grey rectangle looks like a crash, and the app behind it is what tells the
+        // user what they are answering about.
+        //
+        // `prompt: null` is the *mode* question — nothing is known yet. A reason means the mode
+        // is not in doubt and only the folder is, so that goes straight to the folder picker as
+        // task 4 built it, with its explanation.
         window.webContents.once('did-finish-load', () => {
-          void host.prompt(started.prompt, 'startup').catch((error: unknown) => {
-            // A folder that will not open is not a reason to take the app down: the header
-            // control is still there, and `capabilities` still answers. Say so and stop.
-            console.error('desktop: could not open the chosen folder', error)
+          const asked =
+            started.prompt === null
+              ? shell.askForMode('startup')
+              : library.prompt(started.prompt, 'startup')
+          void asked.catch((error: unknown) => {
+            // A folder that will not open is not a reason to take the app down: the menu is still
+            // there, and `capabilities` still answers. Say so and stop.
+            console.error('desktop: could not open the chosen library', error)
           })
         })
       }
 
       app.on('activate', () => {
-        if (BrowserWindow.getAllWindows().length === 0) createMainWindow()
+        if (BrowserWindow.getAllWindows().length === 0) createMainWindow(shell.transport())
       })
     } catch (error) {
-      // The library failure this still catches is `SPM_LIBRARY_DIR` naming a folder that will
-      // not open, which `LibraryHost.start` rethrows deliberately — a *remembered* folder that
-      // will not open degrades to the picker instead and never reaches here. It also covers
-      // whatever else in this block can throw, which is the reason it stays a `try` around the
-      // whole of it: without it a failure here is an unhandled rejection and a process with no
-      // window at all, and `window-all-closed` never fires for a window that was never created,
-      // so it hangs until something kills it.
+      // The failures this still catches are the environment's: `SPM_LIBRARY_DIR` naming a folder
+      // that will not open, `SPM_REMOTE_URL` that is not a URL, and the two of them set at once —
+      // all three are somebody stating what this launch is for, and `planStartup` and
+      // `LibraryHost.openPlanned` rethrow rather than quietly asking something else. A
+      // *remembered* choice that will not work degrades to a question instead and never reaches
+      // here. It also covers whatever else in this block can throw, which is the reason it stays
+      // a `try` around the whole of it: without it a failure here is an unhandled rejection and a
+      // process with no window at all, and `window-all-closed` never fires for a window that was
+      // never created, so it hangs until something kills it.
       console.error('desktop: startup failed', error)
       app.exit(1)
     }
@@ -630,5 +846,5 @@ export function main(): void {
     if (process.platform !== 'darwin') app.quit()
   })
 
-  app.on('will-quit', () => host.shutdown())
+  app.on('will-quit', () => shell.shutdown())
 }

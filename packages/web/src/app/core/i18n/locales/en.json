@@ -120,5 +120,18 @@
     "invalidTag": "A tag must be between 1 and 60 characters",
     "invalidFileName": "That file name is not allowed",
     "generic": "Something went wrong"
+  },
+  "desktop": {
+    "connectTitle": "Where is your library?",
+    "connectLead": "Open a folder on this computer, or connect to a Slicer Project Manager server.",
+    "localHeading": "A folder on this computer",
+    "localLead": "No server and no account. The folder is the library.",
+    "chooseFolder": "Choose a folder…",
+    "remoteHeading": "A server",
+    "remoteLead": "Sign in with your account on that server.",
+    "serverUrl": "Server address",
+    "serverUrlHint": "For example https://print.example.com",
+    "connect": "Connect",
+    "connectFailed": "That is not a server address this app can use"
   }
 }

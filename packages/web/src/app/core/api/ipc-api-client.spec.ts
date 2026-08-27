@@ -15,6 +15,9 @@ import {
  */
 function bridgeReturning(result: IpcResult) {
   return {
+    // The transport this client is *for*. A window built in remote mode gets `HttpApiClient`
+    // instead, which is `api-client.token.electron.ts`'s decision and not this class's.
+    mode: 'local' as const,
     canStreamFromDisk: vi.fn().mockReturnValue(false),
     invoke: vi.fn().mockResolvedValue(result),
   }
@@ -77,6 +80,7 @@ describe('IpcApiClient', () => {
     // The main process answers failures as values, so this only happens when the channel itself
     // is gone. Callers must still see one failure shape, exactly as HttpApiClient promises.
     const bridge = {
+      mode: 'local' as const,
       canStreamFromDisk: vi.fn().mockReturnValue(false),
       invoke: vi.fn().mockRejectedValue(new Error('No handler registered')),
     }

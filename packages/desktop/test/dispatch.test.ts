@@ -21,6 +21,8 @@ import { writeZip } from '../../core/test/fixtures/make-3mf.ts'
 import {
   IpcApiClient,
   FILE_REF_KEY as WEB_FILE_REF_KEY,
+  UPLOAD_LENGTH_HEADER as WEB_UPLOAD_LENGTH_HEADER,
+  type BridgeMode as WebBridgeMode,
   type IpcResult as WebIpcResult,
 } from '../../web/src/app/core/api/ipc-api-client.ts'
 import {
@@ -34,6 +36,10 @@ import {
 import {
   FILE_REF_KEY,
   LOCAL_PATH_KEY,
+  modeFromArgv,
+  MODE_SWITCH,
+  UPLOAD_LENGTH_HEADER,
+  type BridgeMode,
   type IpcResult as DesktopIpcResult,
   type WireUploadBody,
 } from '../src/protocol.ts'
@@ -70,11 +76,17 @@ after(() => {
  * exercised by the exhaustive sweep rather than skipped by it.
  */
 const pickedFolders: (string | null)[] = []
+const connected: string[] = []
 const shell: ShellApi = {
   pickLibraryFolder: () => {
     pickedFolders.push(null)
     return Promise.resolve(null)
   },
+  connectRemote: (url) => {
+    connected.push(url)
+    return { origin: 'https://example.invalid' }
+  },
+  capabilities: () => Promise.resolve(DESKTOP_CAPABILITIES),
 }
 
 /** Calls a route the way `ipc.ts` does, so a test cannot accidentally bypass the validation. */
@@ -140,12 +152,14 @@ function exerciseAll(client: ApiClient): Record<ApiPath, () => Promise<unknown>>
     'files.rename': () => client.files.rename('id', 'b.stl'),
     'files.delete': () => client.files.delete('id'),
     'library.pick': () => client.library.pick(),
+    'library.connect': () => client.library.connect('https://example.invalid'),
   }
 }
 
 test('the table implements exactly the interface, and IpcApiClient reaches every entry', async () => {
   const sent: string[] = []
   const client = new IpcApiClient({
+    mode: 'local',
     // No file behind these Blobs, which is what a real preload would answer for them too.
     canStreamFromDisk: () => false,
     invoke: (path) => {
@@ -166,6 +180,35 @@ test('the table implements exactly the interface, and IpcApiClient reaches every
     await invoke()
     assert.deepEqual(sent, [path], `IpcApiClient sent the wrong path for ${path}`)
   }
+})
+
+test('the renderer and main-process declarations of the transport mode agree', () => {
+  const fromDesktop: WebBridgeMode = 'remote' as BridgeMode
+  const fromWeb: BridgeMode = 'local' as WebBridgeMode
+  assert.ok(fromDesktop !== undefined && fromWeb !== undefined)
+
+  // The header a remote-mode upload declares its length in. Drift here is not a compile error on
+  // either side — the renderer sets a header nobody reads — and the failure it produces is the
+  // server answering 411 for every upload in remote mode, which looks nothing like a typo.
+  assert.equal(WEB_UPLOAD_LENGTH_HEADER, UPLOAD_LENGTH_HEADER)
+})
+
+/**
+ * The switch the window carries its transport to the preload in.
+ *
+ * Anything that is not exactly `remote` is `local`, and that asymmetry is the point: IPC talks
+ * only to this process, while remote points the app at a server, so the value that has to be
+ * stated clearly is the one that leaves the machine.
+ */
+test('the transport is read out of the window arguments, and defaults to the local one', () => {
+  assert.equal(modeFromArgv([`${MODE_SWITCH}remote`]), 'remote')
+  assert.equal(modeFromArgv(['--other', `${MODE_SWITCH}remote`, '/prefetch:1']), 'remote')
+  assert.equal(modeFromArgv([`${MODE_SWITCH}local`]), 'local')
+  assert.equal(modeFromArgv([]), 'local')
+  assert.equal(modeFromArgv([MODE_SWITCH]), 'local')
+  assert.equal(modeFromArgv(['--spm-mode']), 'local')
+  assert.equal(modeFromArgv([`${MODE_SWITCH}REMOTE`]), 'local')
+  assert.equal(modeFromArgv([`${MODE_SWITCH}something-new`]), 'local')
 })
 
 test('the renderer and main-process declarations of the wire result agree', () => {
@@ -337,6 +380,7 @@ test('library.pick answers without a library, and reaches the shell', async () =
   pickedFolders.length = 0
   const chosen: unknown[] = []
   const picking: ShellApi = {
+    ...shell,
     pickLibraryFolder: () => {
       chosen.push('asked')
       return Promise.resolve({ dir: '/tmp/somewhere' })
@@ -359,10 +403,31 @@ test('library.pick rejects an argument list, so a path from the renderer cannot 
   assert.equal(error.code, 'Validation')
 })
 
+test('library.connect answers without a library, and hands the URL to the shell to validate', async () => {
+  connected.length = 0
+  assert.deepEqual(
+    await dispatch['library.connect']({ session: null, shell }, ['https://print.example.com']),
+    { origin: 'https://example.invalid' },
+  )
+  assert.deepEqual(connected, ['https://print.example.com'])
+
+  // The schema only keeps a non-string out; the rules live in `parseRemoteOrigin`, which is what
+  // the shell applies. Both failures are `Validation`, and the arity check is the one that stops
+  // a second argument arriving with it.
+  for (const args of [[], [42], ['https://a', 'https://b']]) {
+    assert.equal(
+      (await rejection(dispatch['library.connect']({ session: null, shell }, args))).code,
+      'Validation',
+      JSON.stringify(args),
+    )
+  }
+})
+
 test('every library-backed route refuses when no folder is open', async () => {
-  // The two routes that answer out of the shell itself are the exceptions, and they are asserted
-  // directly above rather than skipped silently here.
-  const fromShell: ApiPath[] = ['capabilities', 'library.pick']
+  // The three routes that answer out of the shell itself are the exceptions, and they are
+  // asserted directly above rather than skipped silently here. `library.connect` is one of them
+  // for the same reason `library.pick` is: with nothing open, they are the only ways out.
+  const fromShell: ApiPath[] = ['capabilities', 'library.pick', 'library.connect']
   for (const path of Object.keys(dispatch) as ApiPath[]) {
     if (fromShell.includes(path)) continue
     const error = await rejection(dispatch[path]({ session: null, shell }, []))

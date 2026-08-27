@@ -1,15 +1,5 @@
-import {
-  closeSync,
-  fsyncSync,
-  mkdirSync,
-  openSync,
-  readFileSync,
-  renameSync,
-  rmSync,
-  statSync,
-  writeFileSync,
-} from 'node:fs'
-import { dirname, resolve } from 'node:path'
+import { statSync } from 'node:fs'
+import { resolve } from 'node:path'
 import type { LocalLibraryDto } from '@spm/contract/dtos.ts'
 import {
   closeLibrary,
@@ -20,6 +10,14 @@ import {
   type Library,
 } from '@spm/core'
 import { startPreviewTicker, type PreviewTicker } from './previews.ts'
+import { parseRemoteOrigin, REMOTE_URL_ENV } from './remote.ts'
+import {
+  readRememberedDir,
+  readRememberedMode,
+  readRememberedRemote,
+  rememberDir,
+  STATE_FILE_NAME,
+} from './state.ts'
 
 /**
  * Which folder is open, how it was chosen, and what happens when it is swapped.
@@ -65,92 +63,20 @@ export function resolveLibraryDir(env: NodeJS.ProcessEnv = process.env): string 
   return fromEnv ? resolve(fromEnv) : null
 }
 
-/** The file under `app.getPath('userData')` that remembers the last folder. */
-export const STATE_FILE_NAME = 'state.json'
-
-/** Its one key so far. Task 5 adds the remote-server mode beside it, in the same object. */
-export const REMEMBERED_DIR_KEY = 'libraryDir'
-
-type ShellState = Record<string, unknown>
-
-function readState(stateFile: string): ShellState {
-  let text: string
-  try {
-    text = readFileSync(stateFile, 'utf8')
-  } catch (error) {
-    // `ENOENT` is first run, or a userData directory that has just been wiped, and is the one
-    // case worth no words. Everything else — `EACCES`, `EISDIR`, an I/O error — returns the user
-    // to the picker with their folder apparently forgotten, and a silent catch would leave that
-    // with no explanation in any log.
-    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-      console.warn(`desktop: could not read ${STATE_FILE_NAME}`, error)
-    }
-    return {}
-  }
-  try {
-    const parsed: unknown = JSON.parse(text)
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed))
-      throw new Error('not an object')
-    return parsed as ShellState
-  } catch (error) {
-    // A truncated or hand-edited state file must not stop the app from starting. Say so once:
-    // silently treating it as empty would make the folder the user chose look forgotten with no
-    // explanation anywhere.
-    console.warn(`desktop: ignoring an unreadable ${STATE_FILE_NAME}`, error)
-    return {}
-  }
-}
-
-export function readRememberedDir(stateFile: string): string | null {
-  const value = readState(stateFile)[REMEMBERED_DIR_KEY]
-  return typeof value === 'string' && value !== '' ? value : null
-}
-
 /**
- * Remembers the folder, preserving anything else in the file.
+ * The state file, and the two helpers `LibraryHost` uses out of it, re-exported.
  *
- * Read-modify-write rather than a fresh object: task 5 puts the shell's *mode* and a remote
- * server URL in this same file, and a writer that only knows about its own key would drop the
- * others every time the user changed folders.
+ * Task 5 moved the state file to `state.ts`: it stopped being about the library folder when the
+ * shell gained a mode and a remote server to remember beside it. They are re-exported here
+ * because this is where tasks 4's tests and `app.ts` import them from.
  */
-export function rememberDir(stateFile: string, dir: string): void {
-  const state = readState(stateFile)
-  state[REMEMBERED_DIR_KEY] = dir
-  mkdirSync(dirname(stateFile), { recursive: true })
-  // Write to a temp file, flush it, then rename over the real one. A torn file costs one
-  // forgotten folder today, which `readState` already degrades to first run — but task 5 is
-  // putting the shell's mode and a remote server URL into this same object, and then half a file
-  // loses the whole configuration rather than one path. `renameSync` replaces an existing file on
-  // Windows as well as on POSIX, which is what lets this be a rename and not a delete-then-write.
-  //
-  // **The `fsync` is the half that makes it survive a crash and not only a concurrent reader.**
-  // Without it the rename can reach the directory before the data reaches the disk — ext4's
-  // `data=ordered` and NTFS both allow it — and what a reader finds afterwards is a zero-length
-  // `state.json`, which is the exact outcome the paragraph above says this prevents.
-  //
-  // What is still not forced is the *directory* entry: an fsync on the containing directory (not
-  // possible on Windows) is what would make the rename itself durable. Left, and stated: the
-  // failure it guards is a power cut in the millisecond after the rename, and its cost is one
-  // forgotten folder, not a corrupt one.
-  const temp = `${stateFile}.${process.pid}.tmp`
-  try {
-    const handle = openSync(temp, 'w')
-    try {
-      writeFileSync(handle, `${JSON.stringify(state, null, 2)}\n`)
-      fsyncSync(handle)
-    } finally {
-      closeSync(handle)
-    }
-    renameSync(temp, stateFile)
-  } catch (error) {
-    // A temp file that never became the state file is litter in the user's `userData`. This
-    // removes the one this call made; a hard kill *between* the flush and the rename still leaves
-    // one behind, and nothing sweeps those — a sweep would race a second instance of the app
-    // mid-write, and the litter is one short file per crash.
-    rmSync(temp, { force: true })
-    throw error
-  }
-}
+export {
+  readRememberedDir,
+  REMEMBERED_DIR_KEY,
+  rememberDir,
+  STATE_FILE_NAME,
+  type ShellMode,
+} from './state.ts'
 
 /**
  * What `dialog.showOpenDialog` is asked for. A folder, and the user may create one on the spot —
@@ -248,6 +174,87 @@ export function folderPickerOptions(
 }
 
 /**
+ * What the user can answer when the shell asks which of spec 2.6's two modes this is.
+ *
+ * `cancel` is a real answer and not an error: closing the question leaves the shell with nothing
+ * open, which is the same state a cancelled folder dialog leaves it in — a usable window, no
+ * library, and the menu still there.
+ */
+export type ModeChoice = 'local' | 'remote' | 'cancel'
+
+type ModeStrings = { title: string; message: string; local: string; remote: string; cancel: string }
+
+/**
+ * The mode question, in the two languages the picker speaks.
+ *
+ * A native message box and not a page in the renderer, for the same reason the folder dialog is
+ * native: it is asked before there is anything for a page to be *about*, and the answer decides
+ * which transport the renderer will be built with. The *server URL* does need a text field, which
+ * a message box has no way to offer — that half is the desktop-only connect page, which this
+ * answer navigates to.
+ */
+const MODE_STRINGS: Readonly<Record<PickerLanguage, ModeStrings>> = {
+  en: {
+    title: 'Slicer Project Manager',
+    message: 'Where is your library?',
+    local: 'Open a local folder…',
+    remote: 'Connect to a server…',
+    cancel: 'Not now',
+  },
+  de: {
+    title: 'Slicer Project Manager',
+    message: 'Wo liegt Ihre Bibliothek?',
+    local: 'Lokalen Ordner öffnen…',
+    remote: 'Mit einem Server verbinden…',
+    cancel: 'Später',
+  },
+}
+
+export type ModePickerOptions = {
+  type: 'question'
+  title: string
+  message: string
+  buttons: string[]
+  defaultId: number
+  cancelId: number
+}
+
+/**
+ * The `dialog.showMessageBox` options, built here so the copy and the button order are covered by
+ * a unit test rather than by a native modal.
+ *
+ * The button *order* is load-bearing, because the answer comes back as an index: `MODE_CHOICES`
+ * below is the one place that mapping exists, and `modePickerOptions` builds its buttons from it,
+ * so a reordering cannot leave the two disagreeing.
+ */
+export const MODE_CHOICES: readonly ModeChoice[] = ['local', 'remote', 'cancel']
+
+export function modePickerOptions(language: PickerLanguage = 'en'): ModePickerOptions {
+  const strings = MODE_STRINGS[language]
+  return {
+    type: 'question',
+    title: strings.title,
+    message: strings.message,
+    buttons: MODE_CHOICES.map((choice) => strings[choice]),
+    // Local is the default because it is the mode that needs no server, and the escape key must
+    // land on the answer that changes nothing.
+    defaultId: MODE_CHOICES.indexOf('local'),
+    cancelId: MODE_CHOICES.indexOf('cancel'),
+  }
+}
+
+/** The index a message box answers with, as a choice. Anything out of range is a cancel. */
+export function modeChoiceAt(index: number): ModeChoice {
+  return MODE_CHOICES[index] ?? 'cancel'
+}
+
+/**
+ * Shows the mode question and answers it. A function, like `FolderPicker`, so everything either
+ * side of the native dialog is testable without Electron running.
+ */
+export type ModePicker = (options: ModePickerOptions) => Promise<ModeChoice>
+
+/**
  * Which prompt a picker is being asked to answer.
  *
  * `startup` is the one the shell raises by itself, on first run or when the remembered folder has
@@ -277,14 +284,31 @@ export function unopenableReason(dir: string, error: unknown): PromptReason {
 }
 
 /**
- * Where the library comes from at startup, decided before anything is opened.
+ * What the shell opens at startup, decided before anything is opened.
  *
- * Three sources in a fixed order, and the order is the whole content of the function: an
- * environment override beats a remembered folder, and a remembered folder that is not a usable
- * directory any more is not a failure — it is a reason to ask.
+ * Task 4 answered "which folder"; task 5 answers "which of spec 2.6's two modes, and then which
+ * folder or which server". The order is the whole content of the function:
+ *
+ * 1. **The environment**, which beats everything and is never remembered. `SPM_LIBRARY_DIR` and
+ *    `SPM_REMOTE_URL` are the same statement in the two modes — "this launch is for that" — so
+ *    setting *both* is a contradiction and is refused rather than resolved by precedence: an
+ *    operator who names two libraries has made a mistake, and picking one of them silently would
+ *    open the wrong one on somebody's machine.
+ * 2. **What was remembered**, which is a mode and the target that goes with it. A `state.json`
+ *    written by task 4 has a folder and no mode; `readRememberedMode` reads that as local, so
+ *    upgrading does not throw anyone back to a question they already answered.
+ * 3. **Ask**, which is now the *mode* picker and not the folder picker — a remembered folder that
+ *    has gone still goes straight to the folder picker with its explanation, because the mode is
+ *    not in doubt there.
  */
 export type StartupPlan =
-  { source: 'env' | 'remembered'; dir: string } | { source: 'picker'; reason: PromptReason | null }
+  | { mode: 'local'; source: 'env' | 'remembered'; dir: string }
+  | { mode: 'remote'; source: 'env' | 'remembered'; origin: string }
+  | { mode: 'local'; source: 'picker'; reason: PromptReason }
+  | { mode: 'ask' }
+
+/** The arm of the plan `LibraryHost` can act on; everything else belongs to `ShellHost`. */
+export type LocalStartupPlan = Extract<StartupPlan, { mode: 'local' }>
 
 export function planStartup(
   env: NodeJS.ProcessEnv,
@@ -292,15 +316,43 @@ export function planStartup(
   isDirectory: (path: string) => boolean = defaultIsDirectory,
 ): StartupPlan {
   const fromEnv = resolveLibraryDir(env)
-  if (fromEnv) return { source: 'env', dir: fromEnv }
+  const remoteFromEnv = env[REMOTE_URL_ENV]
+  if (fromEnv && remoteFromEnv) {
+    throw new Error(
+      `${LIBRARY_DIR_ENV} and ${REMOTE_URL_ENV} are both set; they name two different libraries`,
+    )
+  }
+  if (fromEnv) return { mode: 'local', source: 'env', dir: fromEnv }
+  // Parsed here rather than at the point of use, so a malformed override fails at startup with a
+  // sentence naming the variable — the same treatment `SPM_LIBRARY_DIR` gets from `open()`.
+  if (remoteFromEnv) {
+    return { mode: 'remote', source: 'env', origin: parseRemoteOrigin(remoteFromEnv) }
+  }
+
+  const mode = readRememberedMode(stateFile)
+  if (mode === 'remote') {
+    const origin = readRememberedRemote(stateFile)
+    // A `mode: 'remote'` with no usable URL beside it is a state file somebody edited: there is
+    // nothing to connect to and no folder was chosen either, so the only honest answer is to ask
+    // again rather than to guess a mode from half a record.
+    if (origin === null) return { mode: 'ask' }
+    try {
+      return { mode: 'remote', source: 'remembered', origin: parseRemoteOrigin(origin) }
+    } catch {
+      console.warn(`desktop: ignoring an unusable remembered server URL (${origin})`)
+      return { mode: 'ask' }
+    }
+  }
+  if (mode === null) return { mode: 'ask' }
+
   const remembered = readRememberedDir(stateFile)
-  if (!remembered) return { source: 'picker', reason: null }
+  if (!remembered) return { mode: 'ask' }
   // Deleted, renamed, on an unmounted drive, or replaced by a file — all one answer, because the
   // user's next step is the same in every case and none of them is a crash.
   if (!isDirectory(remembered)) {
-    return { source: 'picker', reason: { kind: 'missing', dir: remembered } }
+    return { mode: 'local', source: 'picker', reason: { kind: 'missing', dir: remembered } }
   }
-  return { source: 'remembered', dir: remembered }
+  return { mode: 'local', source: 'remembered', dir: remembered }
 }
 
 function defaultIsDirectory(path: string): boolean {
@@ -490,19 +542,21 @@ export class LibraryHost {
   }
 
   /**
-   * Runs the startup plan. Answers what happened, so `main()` can create the window first and ask
-   * for a folder afterwards rather than leaving a native dialog in front of nothing.
+   * Runs the local half of the startup plan. Answers what happened, so the caller can create the
+   * window first and ask for a folder afterwards rather than leaving a native dialog in front of
+   * nothing.
    *
    * A remembered folder that will not open — a database from a newer schema, a permission error,
    * a drive that is mounted but unreadable — degrades to the picker exactly as a deleted one
    * does, with the failure as the explanation. An **environment** override that will not open is
    * rethrown instead: `SPM_LIBRARY_DIR` is somebody stating which folder this launch is for, and
    * silently asking for a different one would be answering a question they did not ask.
+   *
+   * It takes a plan rather than reading the environment itself, because since task 5 the first
+   * question at startup is *which mode*, and that is `ShellHost`'s to answer — this class has no
+   * opinion about remote servers and should not grow one.
    */
-  start(
-    env: NodeJS.ProcessEnv = process.env,
-  ): { opened: LocalLibraryDto } | { prompt: PromptReason | null } {
-    const plan = planStartup(env, this.#stateFile)
+  openPlanned(plan: LocalStartupPlan): { opened: LocalLibraryDto } | { prompt: PromptReason } {
     if (plan.source === 'picker') return { prompt: plan.reason }
     try {
       return { opened: this.open(plan.dir, { remember: plan.source !== 'env' }) }
@@ -510,6 +564,25 @@ export class LibraryHost {
       if (plan.source === 'env') throw error
       return { prompt: unopenableReason(plan.dir, error) }
     }
+  }
+
+  /**
+   * Lets go of the folder that is open, with nothing taking its place.
+   *
+   * This is the mode switch's half of `open()`. Without it, connecting to a server would leave
+   * the local library open behind the new one: its preview ticker would go on rendering
+   * thumbnails into a folder the user has left, and its SQLite handle would go on holding the
+   * directory — which is the *exact* failure task 4 measured when a chained release let a stopped
+   * folder's ticker keep firing, only reached from the other direction.
+   *
+   * It goes through the same deferred release `open()` uses, so a rescan or a preview batch that
+   * is in flight finishes against a database that is still open, and `whenSettled()` still covers
+   * it.
+   */
+  closeCurrent(): void {
+    const current = this.#current
+    this.#current = null
+    if (current) this.#release(current)
   }
 
   /**
