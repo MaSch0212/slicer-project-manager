@@ -257,16 +257,21 @@ jobs:
           # that answer. Those four failures left no artifact at all, which is why each had to be
           # shrugged at rather than diagnosed.
           SPM_ELECTRON_LOG_DIR: ${{ runner.temp }}/electron-logs
-      # `if: failure()`, not `always()`: a green run uploads nothing.
+      # `always()`, and that is the whole point of the artifact. The stall C-21 targets is the one
+      # that **passes on retry** -- 4 of 4 did -- and `retries: 1` makes this step exit 0, so
+      # `if: failure()` would never upload for the exact pattern this was built to diagnose.
+      # `describeStalledApp`'s answer still lands in the failed first attempt's step log either
+      # way; the environment-side half only exists if it is kept here. `if-no-files-found: ignore`
+      # is what keeps a clean run from failing on an empty directory.
       - name: electron logs
-        if: failure()
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: electron-logs
           path: ${{ runner.temp }}/electron-logs
           if-no-files-found: ignore
       - name: desktop playwright output
-        if: failure()
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: desktop-test-results

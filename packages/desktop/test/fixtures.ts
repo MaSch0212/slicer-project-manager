@@ -174,8 +174,9 @@ let launchCount = 0
  * instrument — `describeStalledApp` above is, because it asks the live main process what state it
  * is in. This is the environment-side evidence to read beside that answer.
  *
- * A file per launch, because `--log-file` does not template and 45 launches would otherwise leave
- * one. Off unless the environment names a directory, so a local run writes nothing.
+ * A file per launch, because `--log-file` does not template and every launch in the suite would
+ * otherwise leave one. Off unless the environment names a directory, so a local run writes
+ * nothing.
  */
 function loggingArgs(): string[] {
   const dir = process.env[LOG_DIR_ENV]
@@ -356,7 +357,21 @@ export async function firstWindowOf(app: ElectronApplication): Promise<Page> {
  * **`electron.launch()` succeeded in every one of those failures.** The error was a `firstWindow`
  * timeout, not a launch timeout, so Playwright had a live connection to the main process the
  * whole time and the diagnosis was one `evaluate` away rather than a packet capture. Four
- * occurrences were shrugged at for want of these six values.
+ * occurrences were shrugged at for want of `isReady`, `windowCount`, `urls`, `uptimeMs` and
+ * `gpu` — named rather than counted, because the count is what went stale the last time this
+ * sentence was written.
+ *
+ * **Two things make it survive the cases it exists for**, neither of which the first version had:
+ *
+ * - `gpu` and `urls` are wrapped on their own. They are the two fields that can throw — a torn
+ *   down window has no `webContents.getURL()`, and GPU state is least likely to be available in
+ *   exactly the `isReady: false` case this is most needed for. One throwing field used to discard
+ *   the other four and print "could not be inspected either" instead.
+ * - The `evaluate` races a timer. A main process wedged *synchronously* — hypothesis 2 below —
+ *   cannot answer an `evaluate` at all, and with a 90 s wait inside a 120 s budget there is only
+ *   about 30 s of slack, so an unbounded call would take the test out on its own timeout and lose
+ *   even the original `firstWindow` message. Ten seconds makes this strictly better than saying
+ *   nothing, under all three hypotheses.
  *
  * How to read what it prints:
  *
@@ -373,19 +388,54 @@ export async function firstWindowOf(app: ElectronApplication): Promise<Page> {
  * the thing it was called about.
  */
 async function describeStalledApp(app: ElectronApplication): Promise<string> {
-  try {
-    const state = await app.evaluate(({ app: electronApp, BrowserWindow }) => ({
+  const asked = app.evaluate(({ app: electronApp, BrowserWindow }) => {
+    const windows = BrowserWindow.getAllWindows()
+    // Each fallible field on its own, so one of them throwing costs one value and not the report.
+    let urls: string[] | string
+    try {
+      urls = windows.map((window) => window.webContents.getURL())
+    } catch (error) {
+      urls = `unavailable: ${String(error)}`
+    }
+    let gpu: unknown
+    try {
+      gpu = electronApp.getGPUFeatureStatus()
+    } catch (error) {
+      gpu = `unavailable: ${String(error)}`
+    }
+    return {
       isReady: electronApp.isReady(),
-      windowCount: BrowserWindow.getAllWindows().length,
-      urls: BrowserWindow.getAllWindows().map((window) => window.webContents.getURL()),
+      windowCount: windows.length,
+      urls,
       uptimeMs: Math.round(process.uptime() * 1000),
-      gpu: electronApp.getGPUFeatureStatus(),
-    }))
+      gpu,
+    }
+  })
+
+  const timedOut = Symbol('timed out')
+  let timer: NodeJS.Timeout | undefined
+  const expiry = new Promise<typeof timedOut>((settle) => {
+    timer = setTimeout(() => settle(timedOut), INSPECT_TIMEOUT_MS)
+  })
+
+  try {
+    const state = await Promise.race([asked, expiry])
+    if (state === timedOut) {
+      // The most informative answer this function can give, and only reachable when the main
+      // process cannot answer at all — which is itself the finding.
+      return `main process did not answer an evaluate within ${INSPECT_TIMEOUT_MS} ms, so it is wedged rather than merely slow`
+    }
     return `main process at the moment of the timeout: ${JSON.stringify(state)}`
   } catch (error) {
     return `main process could not be inspected either: ${String(error)}`
+  } finally {
+    clearTimeout(timer)
+    // The losing branch must not surface as an unhandled rejection after the test has failed.
+    void asked.catch(() => {})
   }
 }
+
+const INSPECT_TIMEOUT_MS = 10_000
 
 const FIRST_WINDOW_TIMEOUT_MS = 90_000
 
