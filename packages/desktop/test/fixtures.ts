@@ -327,29 +327,64 @@ function pipeProcessOutput(app: ElectronApplication, label: string): void {
 }
 
 /**
- * The app's first window, with more patience than Playwright's 30-second default.
+ * The app's first window — from the event if it arrives, and from the window *list* if it does
+ * not.
  *
- * **Measured on CI, three first-attempt failures in a row, each green on a re-run of the same
- * commit**: `electronApplication.firstWindow: Timeout 30000ms exceeded while waiting for event
- * "window"`. The first was the software-WebGL launch, which made it look like a property of the
- * heaviest launch in the suite; the third was an ordinary one, which settled it — it is the
- * runner, which sometimes needs longer than thirty seconds to bring up an Electron process, and
- * every launch here is exposed to it.
+ * **This is a harness bug, and ruling C-21's instrumentation is what proved it.** Five CI runs
+ * failed on `firstWindow: Timeout … waiting for event "window"`, each passing on a re-run of the
+ * same commit, and each was shrugged at for want of evidence. The diagnostic below finally
+ * produced some, and it was unambiguous:
  *
- * Patience, not a weaker assertion. A shell that never opens a window still fails, later; the
- * job's own `timeout-minutes` is the backstop for a genuine hang, and the whole suite runs in
- * about a minute and a half, so this ceiling is nowhere near the normal path.
+ * ```
+ * main process at the moment of the timeout:
+ *   {"isReady":true,"windowCount":1,"urls":["spm://app/projects"],"uptimeMs":92396, …}
+ * ```
  *
- * Every spec goes through this rather than calling `firstWindow()` directly, so the number lives
- * in one place and a fourth failure has one line to change.
+ * The window **existed**, had loaded, and had routed itself to `/projects` — for the whole ninety
+ * seconds Playwright spent waiting for the event announcing it. So it is not the environment
+ * (`isReady: true`), and it is not this app (a window, at the right URL): the `window` event was
+ * missed, which is the third of the three readings the diagnostic's own docblock lists.
+ *
+ * The fix follows from that directly: **ask the authoritative thing.** `app.windows()` is the
+ * list Playwright itself maintains, and a window that is in it is a window, whether or not the
+ * event that should have announced it arrived. Polling it beside the event also ends the ninety
+ * seconds — the loser of the race is whichever one is slow, and in the failing case the list has
+ * the answer within a tick.
+ *
+ * It is not weaker than what it replaces. A launch that never opens a window still fails, because
+ * both the event and the list stay empty, and it fails with the main process's own state
+ * attached. What it no longer does is fail when the window is right there.
  */
 export async function firstWindowOf(app: ElectronApplication): Promise<Page> {
-  try {
-    return await app.firstWindow({ timeout: FIRST_WINDOW_TIMEOUT_MS })
-  } catch (error) {
-    throw new Error(`${(error as Error).message}\n${await describeStalledApp(app)}`)
+  const fromEvent = app.firstWindow({ timeout: FIRST_WINDOW_TIMEOUT_MS })
+  // The rejection is handled by the race below; this keeps the loser from surfacing as an
+  // unhandled rejection when the poll wins.
+  const settled = fromEvent.catch(() => null)
+
+  const deadline = Date.now() + FIRST_WINDOW_TIMEOUT_MS
+  for (;;) {
+    const [existing] = app.windows()
+    if (existing) return existing
+    const raced = await Promise.race([settled, sleep(WINDOW_POLL_MS)])
+    if (raced) return raced
+    if (Date.now() > deadline) break
   }
+
+  // Neither the event nor the list ever had a window. That is the case worth a report.
+  const failure = await fromEvent.then(
+    (window) => window,
+    (error: unknown) => error as Error,
+  )
+  if (!(failure instanceof Error)) return failure
+  throw new Error(`${failure.message}\n${await describeStalledApp(app)}`)
 }
+
+function sleep(ms: number): Promise<null> {
+  return new Promise((settle) => setTimeout(() => settle(null), ms))
+}
+
+/** How often the window list is consulted while the event is outstanding. */
+const WINDOW_POLL_MS = 250
 
 /**
  * What the main process looks like at the moment `firstWindow` gave up — ruling C-21.
