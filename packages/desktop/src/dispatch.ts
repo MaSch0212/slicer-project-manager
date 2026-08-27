@@ -156,9 +156,10 @@ type ResultAt<P extends ApiPath> =
 
 /**
  * `deps.session` is nullable at this signature because `capabilities` must be answerable before
- * any folder is open — it has to be, or the renderer could never get far enough to ask for one —
- * and because `library.pick` is how it gets one. Both are built with `shellCall`; every other
- * entry is built with `libraryCall`, which refuses a null session rather than dereferencing it.
+ * anything is open — it has to be, or the renderer could never get far enough to choose — and
+ * because `library.pick` and `library.connect` are the two ways it gets something. Those are the
+ * `shellCall` entries; every other entry is built with `libraryCall`, which refuses a null
+ * session rather than dereferencing it.
  */
 type Dispatched<R> = (deps: DispatchDeps, args: unknown[]) => Promise<R>
 
@@ -234,9 +235,11 @@ function libraryCall<P extends ApiPath, A extends readonly unknown[]>(
 }
 
 /**
- * For the two routes that answer out of the shell itself rather than out of a library:
- * `capabilities`, which the renderer asks for during bootstrap, and `library.pick`, which is how
- * a shell with no library open gets one. Both must work with `session` null.
+ * For the routes that answer out of the shell itself rather than out of a library, all of which
+ * must work with `session` null: `capabilities`, which the renderer asks for during bootstrap,
+ * and `library.pick` and `library.connect`, which are how a shell with nothing open gets
+ * something. (It said "the two routes" until `library.connect` joined them and nothing here
+ * moved; `dispatch.test.ts` enumerates all three and is what keeps the two lists honest.)
  */
 function shellCall<P extends ApiPath, A extends readonly unknown[]>(
   path: P,

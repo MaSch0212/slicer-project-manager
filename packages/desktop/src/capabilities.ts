@@ -23,8 +23,10 @@ import type { Capabilities } from '@spm/contract/dtos.ts'
  * so is wrong — measured in task 4, by flipping this one flag back to `true` and running the
  * desktop suite: the app still landed on `spm://app/projects` and almost every test stayed green.
  * (The count that used to be here was of a suite that has since more than tripled, so it said
- * less each round; what matters is that flipping the flag did not move the app.) The guard is `!capabilities.requiresAuth || auth.isAuthenticated()` (guards.ts), and the
- * bridge satisfies *both* arms at once: this flag is the first, and `account.me` answering with
+ * less each round; what matters is that flipping the flag did not move the app.)
+ *
+ * The guard is `!capabilities.requiresAuth || auth.isAuthenticated()` (guards.ts), and the bridge
+ * satisfies *both* arms at once: this flag is the first, and `account.me` answering with
  * `ensureLocalUser`'s row is the second.
  *
  * `canPickLocalFolder` is true because `library.pick` opens a real native dialog and reopens the
