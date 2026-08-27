@@ -192,10 +192,16 @@ export class RemoteHost {
   /**
    * Answers one `spm://app/api/...` request out of the remote server.
    *
-   * The path is taken from the request and appended to the configured origin, with no way to
-   * reach anything but `/api/...` on it: a request for `/api/../admin` never gets here, because
-   * Chromium canonicalises `..` in a standard-scheme URL before the protocol handler sees it (the
-   * same fact `resolveRendererFile` rests on), and the prefix check below refuses what is left.
+   * The path is taken from the request and appended to the configured origin, and **every
+   * response the renderer sees comes from that origin on a path under `/api`**. Two separate
+   * things hold that up, and an earlier version of this comment claimed the property while only
+   * one of them was true:
+   *
+   * - A request for `/api/../admin` never gets here, because Chromium canonicalises `..` in a
+   *   standard-scheme URL before the protocol handler sees it (the same fact
+   *   `resolveRendererFile` rests on), and the prefix check below refuses what is left.
+   * - **Redirects are not followed** — see `#send`. Without that, the confinement was true of the
+   *   first hop only.
    */
   async proxy(request: Request): Promise<Response> {
     const url = new URL(request.url)
@@ -297,7 +303,19 @@ export class RemoteHost {
     const cookie = this.#cookieHeader()
     if (cookie) headers.set('cookie', cookie)
 
-    const init: RequestInit & { duplex?: 'half' } = { method: request.method, headers }
+    // **`manual`, and this is the security boundary the rest of the file rests on.** The default
+    // is `follow`, and measured against a server answering `302 Location:
+    // http://127.0.0.1:<other>/_cluster/health`, undici fetched that other host and handed back
+    // its body with **status 200** and `response.url` pointing at it — a general read primitive
+    // for whatever the renderer could get the shell pointed at, on any host and any path, wearing
+    // the configured server's identity. With `manual` the same request comes back as a 302 with
+    // its `Location` intact and nothing else is fetched, which is what `#refuseRedirect` then
+    // turns into an error the user can act on.
+    const init: RequestInit & { duplex?: 'half' } = {
+      method: request.method,
+      headers,
+      redirect: 'manual',
+    }
     if (request.body) {
       // Streamed, never buffered: an upload may be a whole CuraManager archive, and the shell
       // holding a copy of it in memory to count its bytes would be a worse answer than the 411
@@ -318,7 +336,31 @@ export class RemoteHost {
       return this.#failure(502, 'Internal', `could not reach ${this.origin}: ${detail}`)
     }
     this.#absorbCookies(response)
+    if (response.status >= 300 && response.status < 400) return this.#refuseRedirect(response)
     return this.#forward(response)
+  }
+
+  /**
+   * A redirect is refused, and named, rather than followed or passed on.
+   *
+   * Refused because following it leaves the origin the user named (see `#send`). Not passed on
+   * either: the renderer's own `fetch` would follow it, and a `Location` on another origin is
+   * then a request from the renderer to that origin — the same escape one layer out, stopped
+   * only by a CSP that is not this module's to depend on.
+   *
+   * The message names the target, because the one legitimate way to meet this is a reverse proxy
+   * redirecting `http://host` to `https://host`, and then the fix is for the user to type the
+   * address it named. `Internal` rather than a new code: `AppErrorCode` is a closed union and
+   * this is not a failure any UI branches on.
+   */
+  #refuseRedirect(response: Response): Response {
+    const location = response.headers.get('location') ?? 'somewhere else'
+    return this.#failure(
+      502,
+      'Internal',
+      `${this.origin} redirected to ${location}; this app talks to one server and does not ` +
+        'follow redirects. Use that address directly if it is the right one.',
+    )
   }
 
   #forward(response: Response): Response {

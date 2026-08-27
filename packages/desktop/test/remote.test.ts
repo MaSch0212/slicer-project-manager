@@ -27,6 +27,8 @@ type Received = {
 
 let server: Server
 let origin: string
+/** Requests the redirect target received. It must stay at zero. */
+let elsewhereHits = 0
 const received: Received[] = []
 /** What the next request will be answered with, so one server can play every case. */
 let reply: (request: Received, response: ServerResponse) => void
@@ -217,6 +219,76 @@ test('a method HttpApiClient never uses is refused before anything leaves', asyn
   assert.equal(received.length, 0)
 })
 
+/**
+ * The confinement the whole design rests on, and the one hop that used to escape it.
+ *
+ * `remote.ts` says every response the renderer sees comes from the configured origin on a path
+ * under `/api`. Chromium's canonicalisation and the prefix check cover the request; **redirects
+ * covered nothing at all** until review found it. Measured with undici's default (`follow`),
+ * against a configured server answering `302 Location:
+ * http://127.0.0.1:<other>/_cluster/health`:
+ *
+ * ```
+ * redirect=(default) -> status 200 | response.url http://127.0.0.1:50924/_cluster/health
+ *                     | location null | body "{\"secret\":\"internal service body\", ...}"
+ * redirect=manual    -> status 302 | response.url http://127.0.0.1:50925/api/projects
+ *                     | location "http://127.0.0.1:50924/_cluster/health" | body ""
+ * ```
+ *
+ * So the default handed the renderer another host's body, on another path, with a success status
+ * and the redirect invisible — a general read primitive wearing the configured server's identity.
+ * These tests use a second HTTP server as the redirect target, and assert it was never asked for
+ * anything: that is the assertion `redirect: 'manual'` exists to keep true.
+ */
+test('a redirect is refused, named, and never followed', async () => {
+  const elsewhere = createServer((_request, response) => {
+    elsewhereHits += 1
+    response.writeHead(200, { 'content-type': 'application/json' })
+    response.end(JSON.stringify({ secret: 'internal service body' }))
+  })
+  await new Promise<void>((done) => elsewhere.listen(0, '127.0.0.1', done))
+  const address = elsewhere.address()
+  assert.ok(address && typeof address === 'object')
+  const target = `http://127.0.0.1:${address.port}/_cluster/health`
+
+  try {
+    for (const status of [301, 302, 303, 307, 308]) {
+      elsewhereHits = 0
+      const remote = host()
+      reply = (_request, response) => {
+        response.writeHead(status, { location: target })
+        response.end()
+      }
+
+      const response = await remote.proxy(ask('/projects'))
+
+      assert.equal(response.status, 502, String(status))
+      const body = (await response.json()) as { error: { code: string; message: string } }
+      assert.equal(body.error.code, 'Internal', String(status))
+      // Named, because the one legitimate way to meet this is a proxy sending http to https, and
+      // then the fix is for the user to type the address the message quotes.
+      assert.match(body.error.message, /redirected to http:\/\/127\.0\.0\.1/, String(status))
+      assert.equal(elsewhereHits, 0, `nothing was fetched from the redirect target (${status})`)
+    }
+  } finally {
+    elsewhere.close()
+  }
+})
+
+test('a redirect is not handed to the renderer to follow either', async () => {
+  const remote = host()
+  reply = (_request, response) => {
+    response.writeHead(302, { location: 'https://example.invalid/anything' })
+    response.end()
+  }
+  const response = await remote.proxy(ask('/projects'))
+  // A 3xx with its `Location` intact would move the escape one layer out: the renderer's own
+  // `fetch` follows redirects, and the only thing left standing between it and another origin
+  // would be a CSP this module does not own.
+  assert.equal(response.status, 502)
+  assert.equal(response.headers.get('location'), null)
+})
+
 /* -------------------------------------------------------------------------------------------
  * The session
  * ---------------------------------------------------------------------------------------- */
@@ -318,7 +390,6 @@ test('a declared upload length becomes a real content-length upstream', async ()
   assert.equal(received[0]!.headers['transfer-encoding'], undefined)
   assert.equal(received[0]!.body.length, 64)
   // The shell's own header does not travel on: the server knows nothing about it.
-  assert.equal(received[0]![UPLOAD_LENGTH_HEADER as keyof Received], undefined)
   assert.equal(received[0]!.headers[UPLOAD_LENGTH_HEADER], undefined)
 })
 
