@@ -84,7 +84,7 @@ const shell: ShellApi = {
   },
   connectRemote: (url) => {
     connected.push(url)
-    return { origin: 'https://example.invalid' }
+    return Promise.resolve({ origin: 'https://example.invalid' })
   },
   capabilities: () => Promise.resolve(DESKTOP_CAPABILITIES),
 }

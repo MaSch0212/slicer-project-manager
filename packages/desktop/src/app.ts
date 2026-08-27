@@ -6,10 +6,12 @@ import { fileURLToPath } from 'node:url'
 import { parseFileRequest, serveLibraryFile } from './files.ts'
 import { registerInvokeHandler } from './ipc.ts'
 import {
+  confirmedAt,
   LibraryHost,
   modeChoiceAt,
   pickerLanguage,
   STATE_FILE_NAME,
+  type ConfirmOptions,
   type DesktopSession,
   type FolderPicker,
   type FolderPickerOptions,
@@ -17,10 +19,11 @@ import {
   type ModePicker,
   type ModePickerOptions,
   type PickerLanguage,
+  type RemoteConfirmer,
 } from './library.ts'
 import { API_PATH_PREFIX, MODE_SWITCH, type BridgeMode } from './protocol.ts'
 import type { RemoteHost } from './remote.ts'
-import { ShellHost } from './shell.ts'
+import { ShellHost, type ShellRoute } from './shell.ts'
 import { navigationPolicy, RENDERER_HOST, RENDERER_ORIGIN, RESERVED_PATH_SEGMENT } from './urls.ts'
 
 /**
@@ -621,6 +624,32 @@ export async function showModePicker(options: ModePickerOptions): Promise<ModeCh
   return modeChoiceAt(response)
 }
 
+/**
+ * Ruling C-20's gate: the user's answer to "point this app at that server?".
+ *
+ * A native dialog and not a page, for the reason the whole ruling exists: the *renderer* is what
+ * asked, and a confirmation the renderer draws is one the renderer can also draw a lie over. This
+ * one is drawn by the main process, names the origin, and defaults to refusing.
+ *
+ * It has **no environment override**, unlike the two questions above, and that is not an
+ * oversight: it is raised in answer to a call a test makes, not on `did-finish-load`, so there is
+ * no race to lose and the Playwright suite stubs `dialog.showMessageBox` after launch like any
+ * other user-triggered dialog. An env var that could pre-answer it would also be a way to switch
+ * the gate off, which is the one thing it must not have.
+ */
+export const showRemoteConfirmation: RemoteConfirmer = async (options: ConfirmOptions) => {
+  const { response } = await dialog.showMessageBox({
+    type: options.type,
+    title: options.title,
+    message: options.message,
+    detail: options.detail,
+    buttons: options.buttons,
+    defaultId: options.defaultId,
+    cancelId: options.cancelId,
+  })
+  return confirmedAt(response)
+}
+
 /** Answers the shell's *startup* mode question without a dialog. See `resolveModePicker`. */
 export const FAKE_MODE_ENV = 'SPM_FAKE_MODE'
 
@@ -717,9 +746,25 @@ const MENU_STRINGS: Readonly<Record<PickerLanguage, { library: string; choose: s
  * loaded with no library at all.
  *
  * A no-op at startup, when the library is opened before any window exists.
+ *
+ * **A window on the connect page is sent home instead of reloaded**, and that is not cosmetic. It
+ * is the one route in the app that is a *question*: reloading it after the question has been
+ * answered puts the user back in front of "where is your library?" with the library already open
+ * behind it. Found by the spec that drives the connect page's own folder button — before this,
+ * the folder opened and the page did not move.
  */
 function reloadOpenWindows(): void {
-  for (const window of BrowserWindow.getAllWindows()) window.webContents.reload()
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (isOnConnectPage(window)) void window.loadURL(`${RENDERER_ORIGIN}/`)
+    else window.webContents.reload()
+  }
+}
+
+function isOnConnectPage(window: BrowserWindow): boolean {
+  // `getURL()` is the empty string for a webContents that has not committed a document yet, which
+  // `new URL` throws on rather than reporting as "not that page".
+  const current = window.webContents.getURL()
+  return current !== '' && URL.parse(current)?.pathname === CONNECT_PATH
 }
 
 /**
@@ -736,7 +781,12 @@ function reloadOpenWindows(): void {
  * webContents: a reloaded window would rebuild the renderer with the *previous* transport, which
  * is precisely the stale-client failure this task exists to rule out.
  */
-function replaceWindows(mode: BridgeMode, path: string): void {
+function pathFor(route: ShellRoute): string {
+  return route === 'connect' ? CONNECT_PATH : '/'
+}
+
+function replaceWindows(mode: BridgeMode, route: ShellRoute): void {
+  const path = pathFor(route)
   const previous = BrowserWindow.getAllWindows()
   const replacement = createMainWindow(mode, path)
   const closePrevious = (): void => {
@@ -765,7 +815,11 @@ export function main(): void {
   const library = new LibraryHost({
     stateFile,
     pick: resolveFolderPicker(),
-    onChanged: reloadOpenWindows,
+    // Through the shell rather than straight to `reloadOpenWindows`: a library that opens while a
+    // server is still attached is the first half of a mode switch, and reloading a window that is
+    // about to be replaced only sends its requests at a host that is closing. `ShellHost`
+    // declines it in that one case and forwards it in every other.
+    onChanged: () => shellHost.libraryChanged(),
     language,
   })
   // `shellHost` and not `shell`: `electron`'s own `shell` is imported at the top of this file and
@@ -777,16 +831,17 @@ export function main(): void {
     library,
     askMode: resolveModePicker(),
     language,
-    // The transport changed, so the renderer has to be rebuilt rather than reloaded. Always back
-    // at the root: the route the user was on belongs to the library they have just left.
-    onTransportChanged: () => replaceWindows(shellHost.transport(), '/'),
-    // The mode question's remote answer. A navigation and not a replacement, because the connect
-    // page runs on the IPC transport the window already has.
+    confirmRemote: showRemoteConfirmation,
+    // The transport changed, so the renderer has to be rebuilt rather than reloaded. The route
+    // comes with it: usually home, but the connect flow's own release lands on the connect page.
+    onTransportChanged: (route) => replaceWindows(shellHost.transport(), route),
+    // A navigation and not a replacement, for the case where the transport did *not* change —
+    // the connect page runs on the IPC transport a local or unset window already has.
     onNavigate: (route) => {
-      const path = route === 'connect' ? CONNECT_PATH : '/'
       for (const window of BrowserWindow.getAllWindows())
-        void window.loadURL(`${RENDERER_ORIGIN}${path}`)
+        void window.loadURL(`${RENDERER_ORIGIN}${pathFor(route)}`)
     },
+    onLibraryChanged: reloadOpenWindows,
   })
 
   // Before `whenReady`, and before any window: `ipcMain.handle` is not tied to a window, and

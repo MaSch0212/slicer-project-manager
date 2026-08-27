@@ -62,19 +62,22 @@ export interface ApiClient {
     pick(): Promise<LocalLibraryDto | null>
 
     /**
-     * Points the shell at a remote server instead of a folder (spec 2.6's other mode), and
-     * resolves with the origin it settled on.
+     * Points the shell at a remote server instead of a folder (spec 2.6's other mode). Resolves
+     * with the origin it settled on, or `null` when the user declined — the same shape as `pick`,
+     * and for the same reason: a refusal is not an error and leaves everything as it was.
      *
      * Ungated by any capability, and deliberately: it is not an affordance the UI offers beside
      * the library, it is the *desktop-only* page that answers "which library is this" in the
      * first place, reachable from the shell's own menu. `HttpApiClient` refuses it — a browser
      * cannot re-point itself at another server — for the same reason it refuses `pick`.
      *
-     * The URL is untrusted input at the shell's boundary: the main process validates it and
-     * throws `Validation` for anything that is not a bare http(s) origin. The shell replaces the
-     * window on success, because the transport itself has changed.
+     * **The URL is untrusted and so is the call** (ruling C-20). The main process validates the
+     * string — http or https, an origin and nothing else — and then asks the user to confirm the
+     * origin in a native dialog before pointing anything at it, because nothing on this channel
+     * ties the call to a user gesture. The shell replaces the window on success, because the
+     * transport itself has changed.
      */
-    connect(url: string): Promise<RemoteLibraryDto>
+    connect(url: string): Promise<RemoteLibraryDto | null>
   }
 
   account: {

@@ -104,6 +104,9 @@ export class DesktopConnectPage {
     this.failed.set(false)
     this.busy.set(true)
     try {
+      // `null` is the user declining the shell's own confirmation (ruling C-20), which is not a
+      // failure and needs no message: they were just shown the dialog they said no to, and the
+      // address they typed is still in the field for them to change.
       await this.shell.library.connect(this.url())
     } catch (error) {
       // The shell validates the URL (`parseRemoteOrigin`), so a `Validation` failure is the user's

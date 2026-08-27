@@ -80,8 +80,11 @@ export type DispatchSession = { lib: Library; ctx: Ctx }
 export type ShellApi = {
   /** Asks the user for a library folder and opens it. Null when they cancelled. */
   pickLibraryFolder(): Promise<LocalLibraryDto | null>
-  /** Points the shell at a remote server. The URL is untrusted; the shell validates it. */
-  connectRemote(url: string): RemoteLibraryDto
+  /**
+   * Points the shell at a remote server. Null when the user declines the shell's confirmation.
+   * The URL is untrusted, and so is the call — see `ShellHost.connectRemote` (ruling C-20).
+   */
+  connectRemote(url: string): Promise<RemoteLibraryDto | null>
   /**
    * Spec 2.4, for whatever the shell is talking to right now.
    *
@@ -465,10 +468,16 @@ export const dispatch: DispatchTable = {
    *
    * It *does* take an argument, where `library.pick` deliberately does not, and the asymmetry is
    * the point: a folder path from the renderer would be a filesystem operation on an
-   * attacker-chosen directory, while a server URL is a request to a machine the user names — the
-   * one thing the renderer legitimately has to be able to say. `z.string()` only keeps a
-   * non-string out of `parseRemoteOrigin`, which is where the real rules are (http or https, an
-   * origin and nothing else, no credentials) and where a `Validation` failure comes from.
+   * attacker-chosen directory, while a server URL is the one thing the renderer legitimately has
+   * to be able to say. `z.string()` only keeps a non-string out of `parseRemoteOrigin`, which is
+   * where the shape rules are (http or https, an origin and nothing else, no credentials) and
+   * where a `Validation` failure comes from.
+   *
+   * **What the schema cannot do is make this a user's request rather than the renderer's**, and
+   * an earlier version of this comment said "a machine the user names" as though it did. Nothing
+   * on this channel carries a gesture: `spm.invoke('library.connect', ['http://169.254.169.254'])`
+   * is a call any renderer can make. Ruling C-20 put a native confirmation naming the origin in
+   * front of it, in `ShellHost.connectRemote`, which is why that method is the async one.
    */
   'library.connect': shellCall('library.connect', z.tuple([z.string()]), (shell, url) =>
     shell.connectRemote(url),

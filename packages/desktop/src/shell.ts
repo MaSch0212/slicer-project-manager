@@ -1,6 +1,7 @@
 import type { Capabilities, LocalLibraryDto, RemoteLibraryDto } from '@spm/contract/dtos.ts'
 import { LOCAL_SHELL_CAPABILITIES } from './capabilities.ts'
 import {
+  confirmRemoteOptions,
   modePickerOptions,
   planStartup,
   type DesktopSession,
@@ -8,6 +9,7 @@ import {
   type ModeChoice,
   type ModePicker,
   type PickerLanguage,
+  type RemoteConfirmer,
   type PromptReason,
   type PromptTrigger,
 } from './library.ts'
@@ -17,6 +19,11 @@ import { rememberChoice, type ShellMode } from './state.ts'
 
 /**
  * Which of spec 2.6's two modes the shell is in, and the swap between them.
+ *
+ * `ActiveMode` is the runtime answer — the two modes, plus the state where nothing is open.
+ * `state.ts`'s `ShellMode` is the on-disk half and has only the two, because "nothing chosen" is
+ * spelled there by the absence of the key. They were both called `ShellState` at first, in one
+ * package, which is exactly as confusing as it sounds.
  *
  * `LibraryHost` owns "which folder is open"; this owns "a folder at all, or a server". It exists
  * as its own object for the reason `LibraryHost` does: `app.ts` imports `electron` and cannot be
@@ -35,7 +42,7 @@ import { rememberChoice, type ShellMode } from './state.ts'
  *   folder's SQLite handle. Task 4 measured that second failure from the other direction. Both
  *   are closed here, in one place, and asserted in `test/shell.test.ts`.
  */
-export type ShellState = ShellMode | 'unset'
+export type ActiveMode = ShellMode | 'unset'
 
 /**
  * Where the shell wants the window, when the answer is not simply "reload it".
@@ -50,14 +57,30 @@ export type ShellHostOptions = {
   library: LibraryHost
   askMode: ModePicker
   /**
+   * Ruling C-20's gate: confirms the origin the *renderer* asked to be connected to, before the
+   * shell's network stack is pointed at it. Defaulted to a refusal rather than to a stub, so a
+   * caller that forgets to wire it cannot silently be more permissive than the real shell.
+   */
+  confirmRemote?: RemoteConfirmer
+  /**
    * The window has to be replaced: the transport changed. `app.ts` builds a new one with the new
    * `BridgeMode` and closes the old — in that order, because destroying the last window is what
    * makes Electron quit (measured: `window-all-closed` fires and a `loadURL` on the next window
    * dies with `ERR_FAILED`).
+   *
+   * It carries the route, because a transport change is not always a return to the library: the
+   * connect flow *starts* by dropping a live server, and the window it needs afterwards is the
+   * connect page on the new transport, not the home page on it.
    */
-  onTransportChanged?: () => void
-  /** The window should go somewhere without being replaced. */
+  onTransportChanged?: (route: ShellRoute) => void
+  /** The window should go somewhere without being replaced — the transport has not changed. */
   onNavigate?: (route: ShellRoute) => void
+  /**
+   * The library under the windows has changed and they should be reloaded. Routed through here
+   * rather than wired straight from `LibraryHost` so that `libraryChanged` below can decline it
+   * when a window replacement is already on its way.
+   */
+  onLibraryChanged?: () => void
   /** The language the native dialogs speak, resolved per call — see `LibraryHostOptions`. */
   language?: () => PickerLanguage
   /** Injected so `test/shell.test.ts` can point at a server it started. */
@@ -68,8 +91,10 @@ export class ShellHost {
   readonly #stateFile: string
   readonly #library: LibraryHost
   readonly #askMode: ModePicker
-  readonly #onTransportChanged: () => void
+  readonly #confirmRemote: RemoteConfirmer
+  readonly #onTransportChanged: (route: ShellRoute) => void
   readonly #onNavigate: (route: ShellRoute) => void
+  readonly #onLibraryChanged: () => void
   readonly #language: () => PickerLanguage
   readonly #makeRemote: (origin: string) => RemoteHost
   #remote: RemoteHost | null = null
@@ -80,8 +105,10 @@ export class ShellHost {
     this.#stateFile = options.stateFile
     this.#library = options.library
     this.#askMode = options.askMode
+    this.#confirmRemote = options.confirmRemote ?? ((): Promise<boolean> => Promise.resolve(false))
     this.#onTransportChanged = options.onTransportChanged ?? ((): void => {})
     this.#onNavigate = options.onNavigate ?? ((): void => {})
+    this.#onLibraryChanged = options.onLibraryChanged ?? ((): void => {})
     this.#language = options.language ?? ((): PickerLanguage => 'en')
     this.#makeRemote = options.makeRemote ?? ((origin): RemoteHost => new RemoteHost(origin))
   }
@@ -95,7 +122,7 @@ export class ShellHost {
    * the transport, the `/api` branch of the protocol handler — is then answering about a shell
    * state that does not exist. There is no such gap to close if there is no second copy.
    */
-  mode(): ShellState {
+  mode(): ActiveMode {
     if (this.#remote) return 'remote'
     return this.#library.session() ? 'local' : 'unset'
   }
@@ -143,14 +170,17 @@ export class ShellHost {
     if (plan.mode === 'remote') {
       // No request is made here, on purpose: a server that is down must not stop the app from
       // starting, and the login screen the renderer lands on is a better place to find out than
-      // a dialog in front of nothing. `remember: false` for an env override, exactly as the
-      // library folder's override is not remembered.
+      // a dialog in front of nothing.
+      //
+      // `remember: false` for **both** sources. An environment override is not a choice the user
+      // made in the app, and a *remembered* origin is already on disk — writing it again would
+      // be an fsync per launch to produce a byte-identical file.
       //
       // `replaceWindow: false` because there is no window yet — `main()` creates the first one
       // from `transport()` immediately after this returns. Measured with it firing: two windows
       // at every remote-mode launch, one from the callback and one from `main()`, and every
       // assertion in `remote.spec.ts` still green because `firstWindow()` answered the first.
-      this.#adoptRemote(plan.origin, { remember: plan.source !== 'env', replaceWindow: false })
+      this.#adoptRemote(plan.origin, { remember: false, replaceWindow: false })
       return { opened: true }
     }
     const started = this.#library.openPlanned(plan)
@@ -166,9 +196,16 @@ export class ShellHost {
    * dialog", with one question in front of it. `remote` sends the window to the connect page,
    * because a message box cannot hold a text field. `cancel` leaves the shell exactly as it was.
    *
-   * **Choosing `remote` disconnects first.** The connect page needs the IPC transport to reach
-   * `library.connect` at all, and leaving a live server behind a page that is asking which server
-   * to use is the stale-client failure wearing a different hat.
+   * **Choosing `remote` disconnects first, and that is a change of transport.** The connect page
+   * needs the IPC transport to reach `library.connect` at all, and leaving a live server behind a
+   * page that is asking which server to use is the stale-client failure wearing a different hat.
+   *
+   * Review found the half of that which was missing: dropping the server was done, but the window
+   * was only *navigated*, so it kept `--spm-mode=remote` and went on running `HttpApiClient`
+   * against a proxy that now 404s everything. Worse, the "choose a folder" button on that page
+   * then reached `#becomeLocal` with the transport *already* reading `local`, so no replacement
+   * fired there either and the reload rebuilt the same stale client. The window is replaced here
+   * instead, on the connect route, whenever the release actually changed the transport.
    */
   askForMode(trigger: PromptTrigger = 'user'): Promise<ModeChoice> {
     // One question at a time, the same rule `LibraryHost.prompt` applies to the folder dialog:
@@ -189,17 +226,33 @@ export class ShellHost {
     // different things in an automated run (see `resolveFolderPicker`).
     if (choice === 'local') await this.pickLocalFolder(trigger)
     if (choice === 'remote') {
+      const previousTransport = this.transport()
       this.#releaseRemote()
-      this.#onNavigate('connect')
+      if (this.transport() !== previousTransport) this.#onTransportChanged('connect')
+      else this.#onNavigate('connect')
     }
     return choice
   }
 
   /**
+   * The library under the windows changed, so they should be reloaded — unless a replacement is
+   * already coming.
+   *
+   * `LibraryHost` raises this from `open()`, which during a remote→local switch runs *before*
+   * `#becomeLocal` has swapped the transport. Reloading there sends the old window's in-flight
+   * requests at a `RemoteHost` that is about to close, which answers them 503, and then destroys
+   * the window anyway. A live server at this moment can only mean that switch is in progress.
+   */
+  libraryChanged(): void {
+    if (this.#remote) return
+    this.#onLibraryChanged()
+  }
+
+  /**
    * The folder dialog, and the mode change that goes with a folder being opened.
    *
-   * `LibraryHost` reloads the window itself when the library changes; the transport callback
-   * fires as well, and only, when this is also a change of mode.
+   * The windows are reloaded through `libraryChanged` above when the library changes; the
+   * transport callback fires as well, and only, when this is also a change of mode.
    */
   async pickLocalFolder(trigger: PromptTrigger = 'user'): Promise<LocalLibraryDto | null> {
     const opened = await this.#library.prompt(null, trigger)
@@ -208,19 +261,32 @@ export class ShellHost {
   }
 
   /**
-   * Points the shell at a server. The renderer calls this from the connect page, so `url` is
-   * untrusted input and `parseRemoteOrigin` is where that is dealt with.
+   * Points the shell at a server. Null when the user refuses, exactly as `pickLocalFolder` is null
+   * when they cancel the folder dialog.
    *
-   * Nothing is asked of the server here. A `connect` that required the server to answer would
-   * fail on a laptop that is not on the network yet and leave the user with no way to write the
-   * URL down; the login screen the window lands on is where an unreachable server is reported,
-   * and it is reported by the same code path that reports one going away later.
+   * **Ruling C-20: the URL is untrusted and so is the call itself.** `parseRemoteOrigin` bounds
+   * what the string may be — http or https, an origin and nothing else, no credentials — and that
+   * is where a malformed one is refused. What it cannot bound is *which* host, because the
+   * documented use case is a server on the user's own LAN: `http://192.168.1.5:8000` has to be
+   * allowed, and `http://169.254.169.254` looks exactly like it. Nothing in the IPC channel ties
+   * this call to a user gesture — any renderer holding `window.spm` can make it — so the gesture
+   * is asked for here, in a native dialog the main process owns, naming the origin.
+   *
+   * The gate is on **this** method and not on `#adoptRemote`, which is the distinction that makes
+   * it worth having: a remembered origin and `SPM_REMOTE_URL` are the user's own earlier answer
+   * and this process's environment, and re-asking about them on every launch would train people
+   * to dismiss the one question that matters.
+   *
+   * Nothing is asked of the *server* here. A `connect` that required it to answer would fail on a
+   * laptop that is not on the network yet and leave the user with no way to write the URL down;
+   * the login screen the window lands on is where an unreachable server is reported.
    */
-  connectRemote(url: unknown): RemoteLibraryDto {
+  async connectRemote(url: unknown): Promise<RemoteLibraryDto | null> {
     const origin = parseRemoteOrigin(url)
     // Reconnecting to the server that is already open would throw the renderer away and log the
-    // user out of it, for nothing.
+    // user out of it, for nothing — and would ask a question whose answer is already on screen.
     if (this.#remote?.origin === origin) return { origin }
+    if (!(await this.#confirmRemote(confirmRemoteOptions(origin, this.#language())))) return null
     this.#adoptRemote(origin, { remember: true })
     return { origin }
   }
@@ -241,14 +307,14 @@ export class ShellHost {
     this.#remote = this.#makeRemote(origin)
     if (options.remember) this.#remember('remote', origin)
     if ((options.replaceWindow ?? true) && this.transport() !== previousTransport) {
-      this.#onTransportChanged()
+      this.#onTransportChanged('home')
     }
   }
 
   #becomeLocal(): void {
     const previousTransport = this.transport()
     this.#releaseRemote()
-    if (this.transport() !== previousTransport) this.#onTransportChanged()
+    if (this.transport() !== previousTransport) this.#onTransportChanged('home')
   }
 
   #releaseRemote(): void {

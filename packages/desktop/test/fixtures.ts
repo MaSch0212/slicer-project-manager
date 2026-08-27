@@ -182,6 +182,45 @@ export async function launchWithUserData(
   return app
 }
 
+/**
+ * Answers the shell's *connect confirmation* (ruling C-20) without a native dialog.
+ *
+ * Unlike the two startup questions this one has no environment override, deliberately: it is
+ * raised in answer to a call the renderer makes, so there is no `did-finish-load` race to lose,
+ * and an environment variable that could pre-answer it would also be a way to switch the gate
+ * off. It is stubbed at the dialog, after launch, the way `stubFolderPicker` stubs the folder
+ * chooser — and it records what it was shown, so a test can assert the origin was named.
+ *
+ * It replaces `dialog.showMessageBox` wholesale, which in a launch that also raises the *mode*
+ * question would answer that one too. Every spec that uses this sets `SPM_FAKE_MODE`, so the
+ * mode question never reaches the dialog at all.
+ */
+export async function stubRemoteConfirmation(
+  app: ElectronApplication,
+  confirm: boolean,
+): Promise<void> {
+  await app.evaluate(({ dialog }, allow) => {
+    const recorder = globalThis as unknown as { __spmConfirmCalls?: unknown[] }
+    recorder.__spmConfirmCalls ??= []
+    const stub = (...args: unknown[]): Promise<{ response: number }> => {
+      recorder.__spmConfirmCalls?.push(args.length > 1 ? args[1] : args[0])
+      // Index 1 is Connect and index 0 is Cancel — see `CONFIRM_CHOICES` in library.ts.
+      return Promise.resolve({ response: allow ? 1 : 0 })
+    }
+    ;(dialog as unknown as { showMessageBox: unknown }).showMessageBox = stub
+  }, confirm)
+}
+
+/** What that stub recorded: one entry per confirmation the shell raised, in order. */
+export async function confirmationCalls(
+  app: ElectronApplication,
+): Promise<Record<string, unknown>[]> {
+  return await app.evaluate(() => {
+    const recorder = globalThis as unknown as { __spmConfirmCalls?: Record<string, unknown>[] }
+    return recorder.__spmConfirmCalls ?? []
+  })
+}
+
 /** What the fake mode picker recorded: one entry per question the shell raised, in order. */
 export async function modeCalls(app: ElectronApplication): Promise<Record<string, unknown>[]> {
   return await app.evaluate(() => {

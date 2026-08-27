@@ -215,7 +215,8 @@ export class IpcApiClient implements ApiClient {
     // No arguments, and nothing the renderer could put in them: the folder comes from a native
     // dialog the main process owns. See the entry in packages/desktop/src/dispatch.ts.
     pick: (): Promise<LocalLibraryDto | null> => this.invoke('library.pick'),
-    connect: (url: string): Promise<RemoteLibraryDto> => this.invoke('library.connect', [url]),
+    connect: (url: string): Promise<RemoteLibraryDto | null> =>
+      this.invoke('library.connect', [url]),
   }
 
   readonly account = {

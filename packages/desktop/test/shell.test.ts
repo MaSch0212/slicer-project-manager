@@ -1,15 +1,18 @@
 import assert from 'node:assert/strict'
 import { createServer, type Server } from 'node:http'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { after, afterEach, before, test } from 'node:test'
 import { LOCAL_SHELL_CAPABILITIES } from '../src/capabilities.ts'
 import {
+  confirmedAt,
+  confirmRemoteOptions,
   LibraryHost,
   MODE_CHOICES,
   modeChoiceAt,
   modePickerOptions,
+  type ConfirmOptions,
   type ModeChoice,
   type ModePickerOptions,
 } from '../src/library.ts'
@@ -17,7 +20,7 @@ import type { PreviewTicker } from '../src/previews.ts'
 import { API_PATH_PREFIX } from '../src/protocol.ts'
 import { RemoteHost } from '../src/remote.ts'
 import { ShellHost, type ShellRoute } from '../src/shell.ts'
-import { rememberChoice, STATE_FILE_NAME, writeState } from '../src/state.ts'
+import { readState, rememberChoice, STATE_FILE_NAME, writeState } from '../src/state.ts'
 import { RENDERER_ORIGIN } from '../src/urls.ts'
 
 /**
@@ -98,10 +101,14 @@ type Harness = {
   library: LibraryHost
   stateFile: string
   tickers: FakeTicker[]
-  /** Every window replacement the shell asked for, and every navigation. */
-  replacements: number
+  /** Every window replacement the shell asked for, with the route it asked to land on. */
+  replacements: ShellRoute[]
   navigations: ShellRoute[]
   modeQuestions: ModePickerOptions[]
+  /** Every origin the shell asked the user to confirm, and the message it showed them. */
+  confirmations: ConfirmOptions[]
+  /** Reloads the shell forwarded, as opposed to the ones it declined mid-switch. */
+  reloads: number
 }
 
 const openHosts: LibraryHost[] = []
@@ -110,15 +117,23 @@ function harness(options: {
   answerMode?: ModeChoice
   folder?: string | null
   stateFile?: string
+  /** Whether the user says yes to the connect confirmation. Defaults to yes. */
+  confirm?: boolean
 }): Harness {
   const tickers: FakeTicker[] = []
   const navigations: ShellRoute[] = []
+  const replacements: ShellRoute[] = []
   const modeQuestions: ModePickerOptions[] = []
-  const counters = { replacements: 0 }
+  const confirmations: ConfirmOptions[] = []
+  const counters = { reloads: 0 }
   const stateFile = options.stateFile ?? stateFileFor()
+  // Wired exactly as `main()` wires it: the library's change goes *through* the shell, which is
+  // what lets it decline a reload that a window replacement is about to make pointless. A harness
+  // that called the reload directly would test a shape the app does not have.
   const library = new LibraryHost({
     stateFile,
     pick: () => Promise.resolve(options.folder ?? null),
+    onChanged: () => shell.libraryChanged(),
     startTicker: () => {
       const ticker = fakeTicker()
       tickers.push(ticker)
@@ -126,17 +141,22 @@ function harness(options: {
     },
   })
   openHosts.push(library)
-  const shell = new ShellHost({
+  const shell: ShellHost = new ShellHost({
     stateFile,
     library,
     askMode: (asked) => {
       modeQuestions.push(asked)
       return Promise.resolve(options.answerMode ?? 'cancel')
     },
-    onTransportChanged: () => {
-      counters.replacements += 1
+    confirmRemote: (asked) => {
+      confirmations.push(asked)
+      return Promise.resolve(options.confirm ?? true)
     },
+    onTransportChanged: (route) => replacements.push(route),
     onNavigate: (route) => navigations.push(route),
+    onLibraryChanged: () => {
+      counters.reloads += 1
+    },
     // Pointed at the test's own server, so `capabilities()` is a real request and the union is a
     // real answer rather than a stub agreeing with the code under test.
     makeRemote: (target) => new RemoteHost(target),
@@ -147,9 +167,11 @@ function harness(options: {
     stateFile,
     tickers,
     navigations,
+    replacements,
     modeQuestions,
-    get replacements(): number {
-      return counters.replacements
+    confirmations,
+    get reloads(): number {
+      return counters.reloads
     },
   }
 }
@@ -161,10 +183,6 @@ afterEach(async () => {
   }
   requests = []
 })
-
-function readState(stateFile: string): Record<string, unknown> {
-  return JSON.parse(readFileSync(stateFile, 'utf8')) as Record<string, unknown>
-}
 
 /* -------------------------------------------------------------------------------------------
  * The mode question
@@ -212,8 +230,9 @@ test('answering local goes on to the folder dialog, and remembers the mode with 
   assert.equal(h.library.dir(), resolve(chosen))
   assert.deepEqual(readState(h.stateFile), { libraryDir: resolve(chosen), mode: 'local' })
   // The transport did not change — a shell with nothing open already serves the IPC one — so the
-  // window is reloaded (by `LibraryHost`) rather than replaced.
-  assert.equal(h.replacements, 0)
+  // window is reloaded rather than replaced.
+  assert.deepEqual(h.replacements, [])
+  assert.equal(h.reloads, 1)
 })
 
 test('answering remote sends the window to the connect page and opens nothing yet', async () => {
@@ -231,7 +250,7 @@ test('answering remote sends the window to the connect page and opens nothing ye
 test('cancelling changes nothing at all', async () => {
   const chosen = folderWithProject('kept', 'Widget')
   const h = harness({ answerMode: 'cancel', folder: chosen })
-  h.shell.connectRemote(origin)
+  await h.shell.connectRemote(origin)
 
   assert.equal(await h.shell.askForMode(), 'cancel')
 
@@ -265,7 +284,10 @@ test('a remembered server is reconnected at startup without asking, and asks for
   // straight after this. Measured with the callback firing here anyway — two windows at every
   // remote-mode launch, and every Playwright assertion still green, because `firstWindow()`
   // answered the first of them.
-  assert.equal(h.replacements, 0)
+  assert.deepEqual(h.replacements, [])
+  // And nothing is rewritten either: the origin came off disk and putting it back would be an
+  // fsync per launch to produce a byte-identical file.
+  assert.deepEqual(readState(stateFile), { mode: 'remote', remoteUrl: origin })
 })
 
 test('a state file from task 4 — a folder and no mode — still opens its folder', () => {
@@ -297,13 +319,13 @@ test('a remembered remote mode with no usable URL asks again rather than guessin
   }
 })
 
-test('switching modes keeps the other mode target written down', () => {
+test('switching modes keeps the other mode target written down', async () => {
   const stateFile = stateFileFor()
   const dir = folderWithProject('kept-folder', 'Widget')
   const h = harness({ stateFile, folder: dir })
   rememberChoice(stateFile, 'local', dir)
 
-  h.shell.connectRemote(origin)
+  await h.shell.connectRemote(origin)
 
   // The folder is still in the file: switching to a server and back should not make the shell
   // forget which folder it was. Only `mode` decides which is read at startup.
@@ -343,7 +365,7 @@ test('connecting to a server lets go of the local library, and of its preview ti
   const session = h.library.session()
   assert.ok(session)
 
-  h.shell.connectRemote(origin)
+  await h.shell.connectRemote(origin)
   await h.library.whenSettled()
 
   // The ticker is the failure task 4 measured from the other direction: left running, it renders
@@ -362,7 +384,7 @@ test('connecting to a server lets go of the local library, and of its preview ti
 test('opening a folder lets go of the server, its session, and the /api route with it', async () => {
   const dir = folderWithProject('back-to-local', 'Widget')
   const h = harness({ answerMode: 'local', folder: dir })
-  h.shell.connectRemote(origin)
+  await h.shell.connectRemote(origin)
   const remote = h.shell.remote()
   assert.ok(remote)
 
@@ -387,24 +409,26 @@ test('the transport callback fires exactly on a change of transport, and not oth
   const h = harness({ folder: first })
 
   h.library.open(first)
-  assert.equal(h.replacements, 0, 'nothing open to a local library is not a change of transport')
+  assert.deepEqual(h.replacements, [], 'nothing open to a local library is not a change')
 
-  h.shell.connectRemote(origin)
-  assert.equal(h.replacements, 1)
+  await h.shell.connectRemote(origin)
+  assert.deepEqual(h.replacements, ['home'])
 
-  // The same server again is not a change, and must not throw the renderer away.
-  h.shell.connectRemote(`${origin}/`)
-  assert.equal(h.replacements, 1)
+  // The same server again is not a change, and must not throw the renderer away — nor ask the
+  // user to confirm a server they are already looking at.
+  await h.shell.connectRemote(`${origin}/`)
+  assert.deepEqual(h.replacements, ['home'])
+  assert.equal(h.confirmations.length, 1)
 
   await h.shell.pickLocalFolder()
-  assert.equal(h.replacements, 2)
+  assert.deepEqual(h.replacements, ['home', 'home'])
 
-  // A second folder is a library change, which `LibraryHost` handles with a reload.
+  // A second folder is a library change, which is a reload.
   h.library.open(second)
-  assert.equal(h.replacements, 2)
+  assert.deepEqual(h.replacements, ['home', 'home'])
 })
 
-test('the transport is what a window must be built with, in each state', () => {
+test('the transport is what a window must be built with, in each state', async () => {
   const dir = folderWithProject('transport', 'Widget')
   const h = harness({ folder: dir })
   // Nothing chosen yet is the IPC transport, deliberately: `capabilities` answers out of the
@@ -412,7 +436,7 @@ test('the transport is what a window must be built with, in each state', () => {
   assert.equal(h.shell.transport(), 'local')
   h.library.open(dir)
   assert.equal(h.shell.transport(), 'local')
-  h.shell.connectRemote(origin)
+  await h.shell.connectRemote(origin)
   assert.equal(h.shell.transport(), 'remote')
 })
 
@@ -428,7 +452,7 @@ test('capabilities are the shell column in local mode and the union in remote mo
   h.library.open(dir)
   assert.deepEqual(await h.shell.capabilities(), LOCAL_SHELL_CAPABILITIES)
 
-  h.shell.connectRemote(origin)
+  await h.shell.connectRemote(origin)
   assert.deepEqual(await h.shell.capabilities(), {
     // From the server, which the test's own HTTP server really answered — `requests` proves the
     // request happened rather than a constant being returned.
@@ -444,14 +468,153 @@ test('capabilities are the shell column in local mode and the union in remote mo
   assert.deepEqual(requests, ['/api/capabilities'])
 })
 
-test('a bad server URL from the renderer is a Validation failure and changes nothing', () => {
+test('a bad server URL from the renderer is a Validation failure and changes nothing', async () => {
   const dir = folderWithProject('unchanged', 'Widget')
   const h = harness({ folder: dir })
   h.library.open(dir)
 
-  assert.throws(() => h.shell.connectRemote('file:///C:/Windows'), /http or https/)
+  await assert.rejects(() => h.shell.connectRemote('file:///C:/Windows'), /http or https/)
 
   assert.equal(h.shell.mode(), 'local')
   assert.ok(h.shell.session(), 'the library that was open must still be open')
-  assert.equal(h.replacements, 0)
+  assert.deepEqual(h.replacements, [])
+  // Refused before the user was troubled with a question about it.
+  assert.deepEqual(h.confirmations, [])
+})
+
+/* -------------------------------------------------------------------------------------------
+ * Ruling C-20: the renderer may ask, and only the user may answer
+ * ---------------------------------------------------------------------------------------- */
+
+/**
+ * The gate, and the reason it is not the URL rules.
+ *
+ * `parseRemoteOrigin` deliberately accepts loopback, link-local and RFC1918, because
+ * `http://192.168.1.5:8000` is the documented use case and `http://169.254.169.254` is
+ * indistinguishable from it by shape. Nothing on the IPC channel carries a user gesture, so the
+ * gesture is asked for.
+ */
+test('a server the renderer named is not connected to until the user says so', async () => {
+  const h = harness({ confirm: false })
+
+  assert.equal(await h.shell.connectRemote('http://169.254.169.254'), null)
+
+  assert.equal(h.shell.remote(), null, 'nothing was pointed at it')
+  assert.equal(h.shell.mode(), 'unset')
+  assert.deepEqual(h.replacements, [])
+  assert.equal(existsSync(h.stateFile), false, 'and nothing was written down')
+  assert.equal(requests.length, 0)
+
+  // The user was asked, and the question named the host — a confirmation that did not would be
+  // worse than none, because it would train people to accept an unnamed one.
+  assert.equal(h.confirmations.length, 1)
+  assert.match(h.confirmations[0]!.message, /169\.254\.169\.254/)
+})
+
+test('the confirmation defaults to refusing, and is refused by dismissal', () => {
+  const options = confirmRemoteOptions('http://192.168.1.5:8000', 'en')
+  assert.deepEqual(options.buttons, ['Cancel', 'Connect'])
+  assert.match(options.message, /http:\/\/192\.168\.1\.5:8000/)
+  // Both the default *and* the cancel id, unlike the other dialogs in this shell: those are
+  // opened by the user, and this one can be raised by a renderer with no gesture at all, so the
+  // answer a stray return key or an escape gives has to be "no".
+  assert.equal(options.defaultId, 0)
+  assert.equal(options.cancelId, 0)
+  assert.equal(confirmedAt(0), false)
+  assert.equal(confirmedAt(1), true)
+  assert.equal(confirmedAt(-1), false)
+  assert.equal(confirmedAt(9), false)
+  assert.match(confirmRemoteOptions('https://x.example', 'de').message, /verbinden\?/)
+})
+
+/**
+ * The gate is on the renderer's call and not on adopting a server, which is the distinction that
+ * makes it worth having: re-asking about the user's own earlier answer on every launch is how a
+ * confirmation becomes something people dismiss without reading.
+ */
+test('a remembered server and an environment override are not re-confirmed', () => {
+  const stateFile = stateFileFor()
+  rememberChoice(stateFile, 'remote', origin)
+  const remembered = harness({ stateFile })
+  remembered.shell.start({})
+  assert.equal(remembered.shell.remote()?.origin, origin)
+  assert.deepEqual(remembered.confirmations, [])
+
+  const fromEnv = harness({})
+  fromEnv.shell.start({ SPM_REMOTE_URL: origin })
+  assert.equal(fromEnv.shell.remote()?.origin, origin)
+  assert.deepEqual(fromEnv.confirmations, [])
+})
+
+/* -------------------------------------------------------------------------------------------
+ * The connect flow, from a live server
+ * ---------------------------------------------------------------------------------------- */
+
+/**
+ * Review found this one: answering "a server" while already in remote mode released the server
+ * but only *navigated* the window, so it kept `--spm-mode=remote` and went on running
+ * `HttpApiClient` against a proxy that now 404s everything — the stale client the plan names.
+ *
+ * Worse, it was sticky: the connect page's own "choose a folder" button then reached
+ * `#becomeLocal` with the transport already reading `local`, so no replacement fired there
+ * either and the reload rebuilt the same stale client.
+ */
+test('asking to connect while a server is live replaces the window on the connect page', async () => {
+  const h = harness({ answerMode: 'remote' })
+  await h.shell.connectRemote(origin)
+  assert.equal(h.shell.transport(), 'remote')
+
+  assert.equal(await h.shell.askForMode(), 'remote')
+
+  assert.equal(h.shell.remote(), null, 'the server is let go of')
+  assert.equal(h.shell.transport(), 'local')
+  // The window must be *replaced* and land on the connect page: navigating it would leave a
+  // renderer built for the remote transport talking to a proxy that no longer answers.
+  assert.deepEqual(h.replacements, ['home', 'connect'])
+  assert.deepEqual(h.navigations, [], 'and not merely navigated')
+})
+
+test('the same question with nothing open only navigates, because the transport has not changed', async () => {
+  const h = harness({ answerMode: 'remote' })
+  assert.equal(await h.shell.askForMode(), 'remote')
+  assert.deepEqual(h.navigations, ['connect'])
+  assert.deepEqual(h.replacements, [])
+})
+
+test('choosing a folder from the connect page still gets there from a local transport', async () => {
+  const dir = folderWithProject('after-connect-flow', 'Widget')
+  const h = harness({ answerMode: 'remote', folder: dir })
+  await h.shell.connectRemote(origin)
+  await h.shell.askForMode()
+
+  // The sequence review walked: remote → menu → "connect to a server" → "choose a folder".
+  const opened = await h.shell.pickLocalFolder()
+
+  assert.deepEqual(opened, { dir: resolve(dir) })
+  assert.equal(h.shell.mode(), 'local')
+  // No *further* replacement: the connect flow already put the window on the local transport, so
+  // what this needs is the reload a library change always gets.
+  assert.deepEqual(h.replacements, ['home', 'connect'])
+  assert.equal(h.reloads, 1)
+})
+
+/**
+ * The other half of that reload: during a remote→local switch, `LibraryHost.open` raises its
+ * change *before* the transport has swapped, and the window it would reload is one that is about
+ * to be destroyed — its in-flight requests landing on a `RemoteHost` that is closing.
+ */
+test('the reload is declined while a mode switch is still in flight', async () => {
+  const dir = folderWithProject('mid-switch', 'Widget')
+  const h = harness({ folder: dir })
+  await h.shell.connectRemote(origin)
+  assert.equal(h.reloads, 0)
+
+  await h.shell.pickLocalFolder()
+
+  assert.deepEqual(h.replacements, ['home', 'home'])
+  assert.equal(h.reloads, 0, 'the replacement is the invalidation; a reload would race it')
+
+  // And an ordinary library change, with no switch under way, still reloads.
+  h.library.open(folderWithProject('ordinary', 'Gadget'))
+  assert.equal(h.reloads, 1)
 })

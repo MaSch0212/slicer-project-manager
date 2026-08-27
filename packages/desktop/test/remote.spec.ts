@@ -7,7 +7,13 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { Capabilities } from '@spm/contract/dtos.ts'
 import { activateAccount, closeLibrary, ensureBootstrapAdmin, openLibrary, rescan } from '@spm/core'
-import { launchShell, newUserDataDir, stubFolderPicker } from './fixtures.ts'
+import {
+  confirmationCalls,
+  launchShell,
+  newUserDataDir,
+  stubFolderPicker,
+  stubRemoteConfirmation,
+} from './fixtures.ts'
 
 /**
  * Remote-server mode (spec 2.6), against **a real Deno server this file starts**, through a real
@@ -219,6 +225,7 @@ test('a restart keeps the server but deliberately not the session', async () => 
   const connectPage = await first.firstWindow()
   await connectPage.waitForLoadState('domcontentloaded')
   await expect.poll(() => connectPage.url(), { timeout: 20_000 }).toBe('spm://app/desktop/connect')
+  await stubRemoteConfirmation(first, true)
   await connectPage.getByLabel('Server address').fill(server.origin)
   const afterConnect = first.waitForEvent('window')
   await connectPage.getByRole('button', { name: 'Connect', exact: true }).click()
@@ -365,6 +372,7 @@ test('the mode question is what first run asks, before any folder dialog', async
   await expect.poll(() => page.url(), { timeout: 20_000 }).toBe('spm://app/desktop/connect')
   await expect(page.getByRole('heading', { name: 'Where is your library?' })).toBeVisible()
 
+  await stubRemoteConfirmation(app, true)
   await page.getByLabel('Server address').fill(server.origin)
   const replaced = app.waitForEvent('window')
   await page.getByRole('button', { name: 'Connect', exact: true }).click()
@@ -373,6 +381,95 @@ test('the mode question is what first run asks, before any folder dialog', async
   await connected.waitForLoadState('domcontentloaded')
   expect(await connected.evaluate(() => globalThis.spm.mode)).toBe('remote')
   await expect.poll(() => connected.url()).toBe('spm://app/login')
+
+  // The user was asked first, and the question named the origin.
+  const asked = await confirmationCalls(app)
+  expect(asked).toHaveLength(1)
+  expect(String(asked[0]!['message'])).toContain(server.origin)
+})
+
+/**
+ * Ruling C-20, through the whole boundary: the renderer may ask, and only the user may answer.
+ *
+ * Driven with the bare bridge rather than through the connect page, because the page is not the
+ * threat — a compromised renderer that never renders that page can make this call, and the gate
+ * has to be in front of the *channel*.
+ */
+test('a server the renderer names is not connected to until the user confirms it', async () => {
+  const app = await launchShell(newUserDataDir(), { fakeMode: 'cancel' })
+  running.push(app)
+  const page = await app.firstWindow()
+  await page.waitForLoadState('domcontentloaded')
+  await stubRemoteConfirmation(app, false)
+
+  const refused = await page.evaluate(
+    (origin) => globalThis.spm.invoke('library.connect', [origin]),
+    server.origin,
+  )
+
+  // Null, not an error: a refusal is not a failure. And nothing was pointed anywhere — with no
+  // remote host, the `/api` branch of the protocol handler 404s.
+  expect(refused).toEqual({ ok: true, value: null })
+  expect(await page.evaluate(async () => (await fetch('/api/capabilities')).status)).toBe(404)
+
+  const asked = await confirmationCalls(app)
+  expect(asked).toHaveLength(1)
+  expect(String(asked[0]!['message'])).toContain(server.origin)
+
+  // And the same call, confirmed, does connect — so what the test above measured is the answer
+  // and not some other reason the connection did not happen.
+  await stubRemoteConfirmation(app, true)
+  const replaced = app.waitForEvent('window')
+  await page.evaluate((origin) => globalThis.spm.invoke('library.connect', [origin]), server.origin)
+  const connected = await replaced
+  await connected.waitForLoadState('domcontentloaded')
+  expect(await connected.evaluate(() => globalThis.spm.mode)).toBe('remote')
+})
+
+/**
+ * The sequence review walked, end to end: remote mode → menu → "connect to a server" → "choose a
+ * folder". Every step of it left the renderer running `HttpApiClient` against a proxy that had
+ * stopped answering, and no test covered it.
+ */
+test('leaving a live server for the connect page rebuilds the renderer on the way', async () => {
+  const app = await launchShell(newUserDataDir(), {
+    remoteUrl: server.origin,
+    fakeMode: 'remote',
+  })
+  running.push(app)
+  const page = await app.firstWindow()
+  await page.waitForLoadState('domcontentloaded')
+  expect(await page.evaluate(() => globalThis.spm.mode)).toBe('remote')
+
+  // Library → Choose library… → "Connect to a server…" (answered by SPM_FAKE_MODE).
+  const onConnectPage = app.waitForEvent('window')
+  await app.evaluate(({ Menu }) => {
+    const item = Menu.getApplicationMenu()?.getMenuItemById('spm-choose-library')
+    if (!item?.click) throw new Error('the Library menu item is missing')
+    item.click()
+  })
+
+  const connect = await onConnectPage
+  await connect.waitForLoadState('domcontentloaded')
+  await expect.poll(() => connect.url(), { timeout: 20_000 }).toBe('spm://app/desktop/connect')
+  // The window was replaced, not navigated: a navigated one would still carry
+  // `--spm-mode=remote` and rebuild `HttpApiClient` against a proxy with no server behind it.
+  expect(await connect.evaluate(() => globalThis.spm.mode)).toBe('local')
+  expect(await connect.evaluate(async () => (await fetch('/api/capabilities')).status)).toBe(404)
+
+  // And the page's own folder button — the one its comment exists for — really opens a library.
+  const localFolder = mkdtempSync(join(tmpdir(), 'spm-connect-local-'))
+  mkdirSync(join(localFolder, 'From Connect Page'), { recursive: true })
+  writeFileSync(join(localFolder, 'From Connect Page', 'part.stl'), 'solid p\nendsolid p\n')
+  await stubFolderPicker(app, localFolder)
+  await connect.getByRole('button', { name: 'Choose a folder…' }).click()
+
+  await expect.poll(() => connect.url(), { timeout: 20_000 }).toBe('spm://app/projects')
+  await expect(connect.locator('.spm-projects .spm-project-title')).toHaveText(
+    ['From Connect Page'],
+    { timeout: 20_000 },
+  )
+  expect(await connect.evaluate(() => globalThis.spm.mode)).toBe('local')
 })
 
 test('a server address the shell will not accept is reported, and nothing changes', async () => {

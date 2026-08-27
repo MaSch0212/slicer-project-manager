@@ -101,7 +101,7 @@ export class HttpApiClient implements ApiClient {
   readonly library = {
     pick: (): Promise<LocalLibraryDto | null> =>
       Promise.reject(new AppError('Forbidden', 'this shell has no local library folder')),
-    connect: (): Promise<RemoteLibraryDto> =>
+    connect: (): Promise<RemoteLibraryDto | null> =>
       Promise.reject(new AppError('Forbidden', 'this shell cannot be pointed at another server')),
   }
 

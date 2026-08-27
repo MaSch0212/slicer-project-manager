@@ -255,6 +255,84 @@ export function modeChoiceAt(index: number): ModeChoice {
 export type ModePicker = (options: ModePickerOptions) => Promise<ModeChoice>
 
 /**
+ * What the user is asked before the shell points its network stack at a server the *renderer*
+ * named — ruling C-20.
+ *
+ * `library.connect` is the one call in this app that takes a host from the untrusted side of the
+ * IPC boundary and makes the main process fetch from it. `parseRemoteOrigin` bounds the scheme
+ * and the shape, and deliberately accepts loopback, link-local and RFC1918, because
+ * `http://192.168.1.5:8000` is the documented use case — so the bound cannot come from the URL.
+ * It comes from here instead: a native dialog, owned by the main process, naming the origin, with
+ * the safe answer as the default. A compromised renderer can still *ask*; it cannot answer.
+ *
+ * The origin is interpolated rather than pre-rendered by the caller so that the sentence and the
+ * value are built in one place, and `test/shell.test.ts` can assert the origin really appears in
+ * what the user is shown — a confirmation that did not name the host would be worse than none.
+ */
+type ConfirmStrings = { title: string; message: (origin: string) => string; detail: string }
+
+const CONFIRM_STRINGS: Readonly<Record<PickerLanguage, ConfirmStrings>> = {
+  en: {
+    title: 'Connect to a server',
+    message: (origin) => `Connect this app to ${origin}?`,
+    detail:
+      'The app will send your sign-in and every request to that address until you change it. ' +
+      'Only continue if you recognise it.',
+  },
+  de: {
+    title: 'Mit einem Server verbinden',
+    message: (origin) => `Diese App mit ${origin} verbinden?`,
+    detail:
+      'Die App sendet Ihre Anmeldung und jede Anfrage an diese Adresse, bis Sie sie ändern. ' +
+      'Fahren Sie nur fort, wenn Sie die Adresse kennen.',
+  },
+}
+
+export type ConfirmOptions = {
+  type: 'warning'
+  title: string
+  message: string
+  detail: string
+  buttons: string[]
+  defaultId: number
+  cancelId: number
+}
+
+/**
+ * The buttons, in the order the answer's index refers to.
+ *
+ * Cancel is **first**, and is both the default and the cancel id. The other dialogs in this shell
+ * default to the affirmative because the user opened them; this one can be raised by the renderer
+ * without any gesture at all, so the answer a stray return key gives has to be "no".
+ */
+export const CONFIRM_CHOICES = ['cancel', 'connect'] as const
+
+export function confirmRemoteOptions(
+  origin: string,
+  language: PickerLanguage = 'en',
+): ConfirmOptions {
+  const strings = CONFIRM_STRINGS[language]
+  const buttons = language === 'de' ? ['Abbrechen', 'Verbinden'] : ['Cancel', 'Connect']
+  return {
+    type: 'warning',
+    title: strings.title,
+    message: strings.message(origin),
+    detail: strings.detail,
+    buttons,
+    defaultId: CONFIRM_CHOICES.indexOf('cancel'),
+    cancelId: CONFIRM_CHOICES.indexOf('cancel'),
+  }
+}
+
+/** True only for the affirmative button. Anything out of range is a refusal. */
+export function confirmedAt(index: number): boolean {
+  return CONFIRM_CHOICES[index] === 'connect'
+}
+
+/** Shows the confirmation and answers it. A function, so the shell is testable without Electron. */
+export type RemoteConfirmer = (options: ConfirmOptions) => Promise<boolean>
+
+/**
  * Which prompt a picker is being asked to answer.
  *
  * `startup` is the one the shell raises by itself, on first run or when the remembered folder has
