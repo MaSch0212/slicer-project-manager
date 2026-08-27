@@ -540,24 +540,42 @@ test('the renderer cannot navigate the window off its own origin, or open a seco
       pwned: false,
     })
 
-    // `window.open` is a separate hook and sees none of the traffic above, so it is driven
-    // separately. The project website link is `target="_blank"`, which is exactly this path.
+    // `window.open` is the other hook, and it sees none of the traffic above. The project website
+    // link is `target="_blank"`, which is exactly this path.
+    //
+    // `_self` is here because the two hooks split by target, not by API: measured, `_blank`
+    // reaches `setWindowOpenHandler` alone and `_self` reaches `will-navigate` alone. A policy
+    // wired to only one of them would let the other through, and `_self` is the arm an earlier
+    // version of the comment in `app.ts` said could not happen.
     await page.evaluate(() => {
       window.open('https://example.com/', '_blank')
       window.open('file:///C:/Windows/win.ini', '_blank')
+      window.open('https://example.com/self', '_self')
     })
-    await page.waitForTimeout(800)
+    await page.waitForTimeout(1200)
+    // Neither target moved the app off its own page.
+    expect(await page.evaluate(() => location.href)).toBe('spm://app/projects')
     expect(
       await app.evaluate(({ BrowserWindow }) =>
         BrowserWindow.getAllWindows().map((w) => w.webContents.getURL()),
       ),
     ).toEqual(['spm://app/projects'])
 
-    // http(s) went to the user's browser; nothing else was handed to the OS at all. `file:` in
-    // that list would be a vulnerability of its own, which is why the policy answers three
-    // values rather than a boolean.
+    // http(s) went to the user's browser; nothing else was handed to the OS at all. `file:` and
+    // `data:` in that list would be vulnerabilities of their own, which is why the policy answers
+    // three values rather than a boolean — and this list being non-empty is also what says the
+    // `openExternal` patch above took, since an unpatched one would leave it `[]`.
     expect(await app.evaluate(() => (globalThis as Record<string, unknown>)['__external'])).toEqual(
-      ['https://example.com/', 'http://example.com/', 'https://example.com/'],
+      [
+        // The four `location.href` attempts: only the two http(s) ones reach the OS.
+        'https://example.com/',
+        'http://example.com/',
+        // `window.open(..., '_blank')` — the `file:` sibling is absent, as it must be.
+        'https://example.com/',
+        // `window.open(..., '_self')`, which arrives through `will-navigate` rather than the
+        // window-open hook. Its presence here is the assertion that the other hook covers it.
+        'https://example.com/self',
+      ],
     )
   } finally {
     await app.close()

@@ -1,6 +1,7 @@
 import { expect, test, type ElectronApplication, type Page } from '@playwright/test'
 import { DatabaseSync } from 'node:sqlite'
 import { join } from 'node:path'
+import { parseFileRequest } from '../src/files.ts'
 import { launchApp } from './fixtures.ts'
 
 /**
@@ -146,17 +147,27 @@ test.describe('the desktop shell', () => {
     // back **200 text/html** with the SPA in the body -- measured, and B2's viewer then reported
     // an intact model as damaged.
     //
-    // **Two of these entries changed meaning in task 3, and the list did not.** The first two --
-    // `_spm/files/abc/raw` and `.../thumb` -- are now the *canonical* spelling, so they no longer
-    // reach `resolveRendererFile` at all: `parseFileRequest` claims them and `serveLibraryFile`
-    // answers 404 because this library holds no file `abc`. Every other entry is still refused
-    // by the SPA-fallback guard, because it is an alias rather than the canonical spelling, and
-    // an alias must stay a 404 or it would be a second way to name a file. Both branches answer
-    // an identical `404 not found`, which is deliberate -- an id that does not exist and a path
-    // that is not a file request are the same non-answer to a caller -- but it does mean this
-    // test alone cannot tell you which one ran. `files.test.ts` splits them: it asserts
-    // `parseFileRequest` returns null for every alias here, and 404 for a real request with an
-    // id that names nothing.
+    // **Four of these entries changed meaning in task 3, and the list did not.** A first attempt
+    // at this paragraph said two, counted by eye; it was wrong, and the count is now *derived*
+    // below instead of written down, because this is the third time in this subsystem that a
+    // comment has described a list more confidently than it could support.
+    //
+    // The four are the ones whose pathname, once canonicalised, *is* the canonical spelling:
+    // `_spm/files/abc/{raw,thumb}` plainly, and `./_spm/…` and `x/../_spm/…` because Chromium
+    // resolves `.` and `..` before the handler sees anything -- exactly as the inline comment
+    // further down already said. Those four are claimed by `parseFileRequest` and answered by
+    // `serveLibraryFile`, which 404s because this library holds no file `abc`. The other
+    // thirteen are still refused by the SPA-fallback guard, and must stay refused: an alias that
+    // answered would be a second way to name a file.
+    //
+    // Both branches answer an identical `404 not found` -- deliberate, since "no such id" and
+    // "not a file request" are the same non-answer to a caller -- so the status assertion below
+    // cannot tell them apart. That is what the derived split is for.
+    //
+    // Measured rather than reasoned, with a temporary marker body on the SPA branch and every
+    // URL below fetched through the real protocol: four came back from the file branch and
+    // thirteen from the guard. `new URL(...).pathname` in Node agreed with Chromium's own
+    // canonicalisation on all seventeen, which is what makes the derivation below trustworthy.
     //
     // The status *and* the body, because a 200 with HTML is the failure being guarded against
     // and a status-only assertion would pass on any 404-shaped mistake while missing this one.
@@ -208,6 +219,27 @@ test.describe('the desktop shell', () => {
       'spm://app/_spm%09/files/abc/raw',
       'spm://app/_spm%c2%a0/files/abc/raw',
     ]
+
+    // Which branch answers which, derived from the parser itself rather than asserted by hand.
+    // This is the count the paragraph above used to get wrong, and now it cannot: adding an
+    // alias that canonicalises onto the reserved path, or changing `parseFileRequest` so it
+    // claims one more spelling, moves an entry between the two lists and fails here.
+    const claimedByFileBranch = RESERVED_URLS.filter(
+      (url) => parseFileRequest(new URL(url).pathname) !== null,
+    )
+    expect(claimedByFileBranch).toEqual([
+      'spm://app/_spm/files/abc/raw',
+      'spm://app/_spm/files/abc/thumb',
+      // `.` and `x/..` are gone by the time the handler sees the path.
+      'spm://app/./_spm/files/abc/raw',
+      'spm://app/x/../_spm/files/abc/raw',
+    ])
+    // And every alias that is *not* claimed has its canonicalised pathname in `files.test.ts`'s
+    // not-a-file-request list, so the parser's refusal of it is covered there directly. Checked
+    // when this was written and kept honest by the assertion above, which is what would show up
+    // red if a new alias joined the list without joining that one.
+    expect(RESERVED_URLS.length - claimedByFileBranch.length).toBe(13)
+
     const answers = await page.evaluate(
       async (urls: string[]) => {
         const out: Record<string, string> = {}

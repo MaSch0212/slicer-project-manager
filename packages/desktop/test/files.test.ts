@@ -105,6 +105,13 @@ test('nothing but the one canonical spelling is a file request', () => {
     '/_spm%20/files/abc/raw',
     '/_spmx/files/abc/raw',
     '/x/..%2f_spm/files/abc/raw',
+    '/x/..%5c_spm/files/abc/raw',
+    // A NUL in the *prefix* rather than in the id: Win32 truncates at it, so `_spm%00` names the
+    // reserved directory as surely as `_spm.` does. It is not the canonical spelling either way.
+    '/_spm%00/files/abc/raw',
+    '/_spm%00x/files/abc/raw',
+    // Chromium does not collapse a double slash, so this stays six segments and never parses.
+    '//_spm/files/abc/raw',
     // An encoded separator cannot invent a segment: this is four segments, not five.
     '/_spm%2ffiles/abc/raw',
     '/_spm/files%2fabc/raw',
@@ -166,22 +173,18 @@ test('nothing core can name a file resolves to a type Chromium would execute', a
    * It is a list and not a proof — the same standing as every other normalisation list in this
    * subsystem — but it covers every extension a browser will execute.
    */
-  const ACTIVE_CONTENT = [
-    'text/html',
-    'application/xhtml+xml',
-    'image/svg+xml',
-    'text/xml',
-    'application/xml',
-    'text/javascript',
-    'application/javascript',
-  ]
   for (const extension of ['html', 'htm', 'xhtml', 'shtml', 'svg', 'svgz', 'xml', 'js', 'mjs']) {
     const file = await put(`payload.${extension}`, '<script>alert(1)</script>')
     const response = await serve(under(`files/${file.id}/raw`))
     const type = response.headers.get('content-type')
     await response.body?.cancel()
+    // The equality and nothing else. A first version also checked the value against a list of
+    // active-content types, which could never be reached in a failing state — the equality is
+    // strictly stronger, so the list was documentation wearing an assertion's clothes. Measured:
+    // all nine take the fallback today, so any entry added to core's map turns this red, even a
+    // harmless-looking one. That is the intended sensitivity: the decision should be made
+    // deliberately, here, rather than inherited.
     assert.equal(type, 'application/octet-stream', `.${extension}`)
-    assert.ok(!ACTIVE_CONTENT.includes(type!), `.${extension} resolved to ${type}`)
   }
 })
 

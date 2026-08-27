@@ -271,9 +271,25 @@ export function contentTypeFor(file: string): string {
  *   `files.spec.ts` asserts the served header still has no `media-src`, so adding one breaks
  *   there rather than here.
  * - The file branch cannot produce a document that could hold a `<video>` in the first place.
- *   Measured, with real payload files: `.html`, `.svg` and `.xhtml` take core's
- *   `application/octet-stream` fallback and download rather than render, and `nosniff` on that
- *   branch now guarantees it. See the header comment in `files.ts`.
+ *   A first version of this leg cited only `.html`, `.svg` and `.xhtml` — which are precisely the
+ *   extensions that *don't* commit, so it proved the narrower half of what it claimed. The whole
+ *   of core's map was then driven, one navigation per type, and this is what came back:
+ *
+ *   | content type                  | extensions        | navigation | script ran |
+ *   | ----------------------------- | ----------------- | ---------- | ---------- |
+ *   | `text/plain; charset=utf-8`   | `txt`, `gcode`    | commits    | no         |
+ *   | `application/json`            | `json`            | commits    | no         |
+ *   | `image/png`                   | `png`             | commits    | no         |
+ *   | `image/jpeg`                  | `jpg`, `jpeg`     | commits    | no         |
+ *   | `application/pdf`             | `pdf`             | commits    | no         |
+ *   | `model/stl`, `model/obj`, `model/3mf` | `stl`, `obj`, `3mf` | downloads | no |
+ *   | `application/octet-stream`    | everything else   | downloads  | no         |
+ *
+ *   So six of the ten extensions really do commit as documents, and the payload's
+ *   `<script>window.__p=1</script>` executed in **none** of them — a plain-text, JSON, image or
+ *   PDF document cannot run script or hold a `<video>` element. The types that could are the
+ *   ones that download, and `nosniff` on that branch is what stops Chromium reconsidering. See
+ *   the header comment in `files.ts`.
  *
  * The `bytes=0-` above was measured from a CSP-free probe document, which remains the only place
  * it can happen. If a later task adds `media-src spm:`, or teaches core to serve a renderable
@@ -322,6 +338,14 @@ export function createSpmHandler(
       const headers: Record<string, string> = { 'content-type': contentType }
       // Only on the document: a CSP header on a stylesheet or a script is inert, and putting it
       // everywhere would suggest it does something there.
+      //
+      // No `x-content-type-options` here either, and that asymmetry with the file branch is
+      // deliberate rather than an oversight. This branch serves the Angular build's own output
+      // out of `rendererDir` through the fixed nine-entry `CONTENT_TYPES` map above — every type
+      // explicit, no user bytes reachable, nothing falling through to a guess. The file branch
+      // serves whatever a user dropped in a folder, under a name they chose, and that is what
+      // makes sniffing worth forbidding there. Adding it here is defensible and untested; it is
+      // left out rather than added unmeasured.
       if (contentType.startsWith('text/html')) {
         headers['content-security-policy'] = CONTENT_SECURITY_POLICY
       }
@@ -404,8 +428,17 @@ export function createMainWindow(): BrowserWindow {
  * `canStreamFromDisk,invoke` — the whole IPC bridge, at someone else's origin.
  * `window.open('https://example.com/')` produced a *second* `BrowserWindow` at that origin, with
  * the same bridge. `navigationPolicy` in `urls.ts` carries the reasoning and the exhaustive unit
- * coverage; this is the wiring, and the two hooks are both needed because neither sees the other's
- * traffic — `will-navigate` never fires for a `window.open`.
+ * coverage; this is the wiring.
+ *
+ * **Both hooks, because neither one covers the whole surface** — which is not the same as saying
+ * they never overlap, as an earlier version of this sentence did. It claimed `will-navigate`
+ * never fires for a `window.open`. Measured, and it is nearly right but not absolute:
+ * `window.open(url, '_blank')` reaches `setWindowOpenHandler` alone, while
+ * `window.open(url, '_self')` navigates the current frame and reaches **`will-navigate` alone**.
+ * Discriminated without inference, by opening a same-origin URL the two hooks disagree about:
+ * `window.open('spm://app/import', '_self')` landed on `/import` — so the deny-everything window
+ * handler never saw it — and the same URL with `_blank` left the page where it was and opened no
+ * window. Either way one hook covers it; the point stands, the absolute did not.
  *
  * `shell.openExternal` and not simply a refusal: the project website link
  * (`project-detail.page.ts`, `target="_blank"`) is a real feature, and it is only http(s) that is
