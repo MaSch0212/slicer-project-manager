@@ -2,7 +2,7 @@ import { expect, test, type ElectronApplication, type Page } from '@playwright/t
 import { DatabaseSync } from 'node:sqlite'
 import { join } from 'node:path'
 import { parseFileRequest } from '../src/files.ts'
-import { launchApp } from './fixtures.ts'
+import { firstWindowOf, launchApp } from './fixtures.ts'
 
 /**
  * What "the shell works" means, asserted on what the app actually rendered.
@@ -28,7 +28,7 @@ test.describe('the desktop shell', () => {
   // `launchApp()`, the way the exit-status test at the bottom does.
   test.beforeAll(async () => {
     ;({ app, libraryDir } = await launchApp())
-    page = await app.firstWindow()
+    page = await firstWindowOf(app)
     await page.waitForLoadState('domcontentloaded')
   })
 
@@ -382,7 +382,7 @@ test('the renderer boots without a console error or warning', async () => {
   // that Chromium and Electron between them had nothing to complain about. It doubles as a
   // tripwire for the renderer's own errors, of which there are currently none.
   const { app } = await launchApp()
-  const page = await app.firstWindow()
+  const page = await firstWindowOf(app)
   const complaints: string[] = []
   page.on('console', (message) => {
     if (message.type() === 'error' || message.type() === 'warning') {
@@ -398,7 +398,7 @@ test('the renderer boots without a console error or warning', async () => {
 
 test('the process exits 0 when the last window closes', async () => {
   const { app } = await launchApp()
-  await app.firstWindow()
+  await firstWindowOf(app)
   const exited = new Promise<number | null>((resolveExit) => {
     app.process().once('exit', (code) => resolveExit(code))
   })

@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { writeZip } from '../../core/test/fixtures/make-3mf.ts'
-import { launchApp, type SeedProject } from './fixtures.ts'
+import { firstWindowOf, launchApp, type SeedProject } from './fixtures.ts'
 
 /**
  * The bridge, end to end: a real preload, a real `ipcMain.handle`, a real library on disk, and
@@ -30,7 +30,7 @@ test.describe('the IPC bridge', () => {
 
   test.beforeAll(async () => {
     ;({ app, libraryDir } = await launchApp(SEED))
-    page = await app.firstWindow()
+    page = await firstWindowOf(app)
     await page.waitForLoadState('domcontentloaded')
   })
 
@@ -283,7 +283,7 @@ test('the import page imports a picked archive without copying it into the libra
 
   const { app, libraryDir } = await launchApp()
   try {
-    const page = await app.firstWindow()
+    const page = await firstWindowOf(app)
     await page.waitForLoadState('domcontentloaded')
 
     await page.getByRole('link', { name: 'Import' }).click()
@@ -326,7 +326,7 @@ test('the import page imports a picked archive without copying it into the libra
 test('the desktop shell offers no sign-out, and still shows the rest of the navigation', async () => {
   const { app } = await launchApp()
   try {
-    const page = await app.firstWindow()
+    const page = await firstWindowOf(app)
     await page.waitForLoadState('domcontentloaded')
     await expect.poll(() => page.url()).toBe('spm://app/projects')
 
@@ -366,7 +366,7 @@ test('the project page uploads a picked file, and refuses one that changed since
     { name: 'Uploads', files: { 'existing.stl': 'solid e endsolid e' } },
   ])
   try {
-    const page = await app.firstWindow()
+    const page = await firstWindowOf(app)
     await page.waitForLoadState('domcontentloaded')
     await page.evaluate(() => globalThis.spm.invoke('projects.rescan', []))
     await page.reload()
@@ -450,7 +450,7 @@ test('an AppError arrives in the UI with its code and its details intact', async
     { name: 'Quota Project', files: { 'small.stl': 'solid s endsolid s' } },
   ])
   try {
-    const page = await app.firstWindow()
+    const page = await firstWindowOf(app)
     await page.waitForLoadState('domcontentloaded')
     await page.evaluate(() => globalThis.spm.invoke('projects.rescan', []))
 

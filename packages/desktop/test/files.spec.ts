@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { binaryStl, cubeMesh } from '../../core/test/fixtures/make-mesh.ts'
 import {
+  firstWindowOf,
   launchApp,
   launchWithoutLibrary,
   SOFTWARE_WEBGL_ARGS,
@@ -53,20 +54,9 @@ test.describe('file bytes over spm://', () => {
   let detail: Detail
 
   test.beforeAll(async () => {
-    // **The heaviest launch in the suite, and the only one that needs more patience than the
-    // default.** Electron plus ANGLE's software rasteriser has to bring up a GL stack in
-    // software before the first window appears, and on a shared CI runner that has exceeded
-    // `firstWindow`'s 30-second default — measured: one run where this hook timed out while 37
-    // other Electron launches in the same run came up fine, and which passed on a re-run of the
-    // same commit.
-    //
-    // Patience, not a weaker assertion: a shell that never opens a window still fails here, one
-    // minute later. The hook's own budget is raised with it, or the wait would simply hit that
-    // instead and report the same slowness as a different failure.
-    test.setTimeout(120_000)
     // The viewer tests at the bottom need a WebGL context, and the CI runner has no GPU.
     ;({ app, libraryDir } = await launchApp(SEED, SOFTWARE_WEBGL_ARGS))
-    page = await app.firstWindow({ timeout: 90_000 })
+    page = await firstWindowOf(app)
     await page.waitForLoadState('domcontentloaded')
     await page.evaluate(() => globalThis.spm.invoke('projects.rescan', []))
     detail = await readDetail(page)
@@ -353,7 +343,7 @@ const TRAVERSALS = [
 test('a file request with no library open is a plain 404', async () => {
   const app = await launchWithoutLibrary()
   try {
-    const page = await app.firstWindow()
+    const page = await firstWindowOf(app)
     await page.waitForLoadState('domcontentloaded')
     // The renderer still boots — the shell answers `capabilities` out of itself — so the fetch
     // below really is going through the loaded document and not into a dead window.
@@ -397,7 +387,7 @@ test('a library file that looks like a web page downloads instead of becoming a 
     { name: 'Payloads', files: { 'real.stl': 'solid s endsolid s' } },
   ])
   try {
-    const page = await app.firstWindow()
+    const page = await firstWindowOf(app)
     await page.waitForLoadState('domcontentloaded')
     await page.evaluate(() => globalThis.spm.invoke('projects.rescan', []))
 
@@ -506,7 +496,7 @@ test('a library file that looks like a web page downloads instead of becoming a 
 test('the renderer cannot navigate the window off its own origin, or open a second one', async () => {
   const { app } = await launchApp()
   try {
-    const page = await app.firstWindow()
+    const page = await firstWindowOf(app)
     await page.waitForLoadState('domcontentloaded')
     await expect.poll(() => page.url()).toBe('spm://app/projects')
 

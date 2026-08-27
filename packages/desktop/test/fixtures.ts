@@ -1,4 +1,4 @@
-import { _electron as electron, type ElectronApplication } from '@playwright/test'
+import { _electron as electron, type ElectronApplication, type Page } from '@playwright/test'
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
@@ -256,6 +256,29 @@ function envWithoutLibraryDir(): Record<string, string> {
   }
   return env
 }
+
+/**
+ * The app's first window, with more patience than Playwright's 30-second default.
+ *
+ * **Measured on CI, three first-attempt failures in a row, each green on a re-run of the same
+ * commit**: `electronApplication.firstWindow: Timeout 30000ms exceeded while waiting for event
+ * "window"`. The first was the software-WebGL launch, which made it look like a property of the
+ * heaviest launch in the suite; the third was an ordinary one, which settled it — it is the
+ * runner, which sometimes needs longer than thirty seconds to bring up an Electron process, and
+ * every launch here is exposed to it.
+ *
+ * Patience, not a weaker assertion. A shell that never opens a window still fails, later; the
+ * job's own `timeout-minutes` is the backstop for a genuine hang, and the whole suite runs in
+ * about a minute and a half, so this ceiling is nowhere near the normal path.
+ *
+ * Every spec goes through this rather than calling `firstWindow()` directly, so the number lives
+ * in one place and a fourth failure has one line to change.
+ */
+export async function firstWindowOf(app: ElectronApplication): Promise<Page> {
+  return await app.firstWindow({ timeout: FIRST_WINDOW_TIMEOUT_MS })
+}
+
+const FIRST_WINDOW_TIMEOUT_MS = 90_000
 
 export type ShellLaunch = {
   /** `SPM_REMOTE_URL`: this launch is for that server, and it is not remembered. */

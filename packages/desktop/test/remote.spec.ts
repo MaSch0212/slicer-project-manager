@@ -10,6 +10,7 @@ import { activateAccount, closeLibrary, ensureBootstrapAdmin, openLibrary, resca
 import {
   confirmationCalls,
   confirmationsWereParented,
+  firstWindowOf,
   launchShell,
   newUserDataDir,
   stubFolderPicker,
@@ -144,7 +145,7 @@ test.afterEach(async () => {
 test('remote mode reaches a real server, and lists the projects that are on it', async () => {
   const app = await launchShell(newUserDataDir(), { remoteUrl: server.origin })
   running.push(app)
-  const page = await app.firstWindow()
+  const page = await firstWindowOf(app)
   await page.waitForLoadState('domcontentloaded')
 
   // The transport is the browser's `HttpApiClient`, not the IPC one — chosen by the renderer off
@@ -174,7 +175,7 @@ test('remote mode reaches a real server, and lists the projects that are on it',
 test('the capability set in remote mode is the union, and the UI keys off it', async () => {
   const app = await launchShell(newUserDataDir(), { remoteUrl: server.origin })
   running.push(app)
-  const page = await app.firstWindow()
+  const page = await firstWindowOf(app)
   await page.waitForLoadState('domcontentloaded')
   await expect.poll(() => page.url()).toBe('spm://app/login')
 
@@ -223,7 +224,7 @@ test('a restart keeps the server but deliberately not the session', async () => 
   // *remembers*. `SPM_REMOTE_URL` deliberately does not, being an override for one launch.
   const first = await launchShell(userDataDir, { fakeMode: 'remote' })
   running.push(first)
-  const connectPage = await first.firstWindow()
+  const connectPage = await firstWindowOf(first)
   await connectPage.waitForLoadState('domcontentloaded')
   await expect.poll(() => connectPage.url(), { timeout: 20_000 }).toBe('spm://app/desktop/connect')
   await stubRemoteConfirmation(first, true)
@@ -255,7 +256,7 @@ test('a restart keeps the server but deliberately not the session', async () => 
   // No environment override at all: what reconnects this launch is `state.json` alone.
   const second = await launchShell(userDataDir)
   running.push(second)
-  const secondPage = await second.firstWindow()
+  const secondPage = await firstWindowOf(second)
   await secondPage.waitForLoadState('domcontentloaded')
 
   // Still the same server, and still asking who you are.
@@ -277,7 +278,7 @@ test('switching to a local folder leaves nothing of the server behind', async ()
     fakeMode: 'local',
   })
   running.push(app)
-  const page = await app.firstWindow()
+  const page = await firstWindowOf(app)
   await page.waitForLoadState('domcontentloaded')
   await signIn(page)
   await expect(page.locator('.spm-projects .spm-project-title')).toHaveText(['Server Widget'], {
@@ -334,7 +335,7 @@ test('switching to a local folder leaves nothing of the server behind', async ()
 test('an upload in remote mode reaches the server, length and all', async () => {
   const app = await launchShell(newUserDataDir(), { remoteUrl: server.origin })
   running.push(app)
-  const page = await app.firstWindow()
+  const page = await firstWindowOf(app)
   await page.waitForLoadState('domcontentloaded')
   await signIn(page)
   await expect(page.locator('.spm-projects .spm-project-title')).toHaveText(['Server Widget'], {
@@ -363,7 +364,7 @@ test('an upload in remote mode reaches the server, length and all', async () => 
 test('the mode question is what first run asks, before any folder dialog', async () => {
   const app = await launchShell(newUserDataDir(), { fakeMode: 'remote' })
   running.push(app)
-  const page = await app.firstWindow()
+  const page = await firstWindowOf(app)
   await page.waitForLoadState('domcontentloaded')
 
   // Answering "a server" sends the window to the desktop-only connect page, which is the only
@@ -399,7 +400,7 @@ test('the mode question is what first run asks, before any folder dialog', async
 test('a server the renderer names is not connected to until the user confirms it', async () => {
   const app = await launchShell(newUserDataDir(), { fakeMode: 'cancel' })
   running.push(app)
-  const page = await app.firstWindow()
+  const page = await firstWindowOf(app)
   await page.waitForLoadState('domcontentloaded')
   await stubRemoteConfirmation(app, false)
 
@@ -444,7 +445,7 @@ test('leaving a live server for the connect page rebuilds the renderer on the wa
     fakeMode: 'remote',
   })
   running.push(app)
-  const page = await app.firstWindow()
+  const page = await firstWindowOf(app)
   await page.waitForLoadState('domcontentloaded')
   expect(await page.evaluate(() => globalThis.spm.mode)).toBe('remote')
 
@@ -482,7 +483,7 @@ test('leaving a live server for the connect page rebuilds the renderer on the wa
 test('a server address the shell will not accept is reported, and nothing changes', async () => {
   const app = await launchShell(newUserDataDir(), { fakeMode: 'remote' })
   running.push(app)
-  const page = await app.firstWindow()
+  const page = await firstWindowOf(app)
   await page.waitForLoadState('domcontentloaded')
   await expect.poll(() => page.url(), { timeout: 20_000 }).toBe('spm://app/desktop/connect')
 
@@ -497,7 +498,7 @@ test('a server address the shell will not accept is reported, and nothing change
 test('the application menu carries the way back, and the developer tools', async () => {
   const app = await launchShell(newUserDataDir(), { remoteUrl: server.origin })
   running.push(app)
-  await app.firstWindow()
+  await firstWindowOf(app)
 
   const menu = await app.evaluate(({ Menu }) =>
     (Menu.getApplicationMenu()?.items ?? []).map((item) => ({

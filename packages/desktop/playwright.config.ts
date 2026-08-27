@@ -20,6 +20,17 @@ export default defineConfig({
   workers: 1,
   fullyParallel: false,
   /* A launch that never produces a window would otherwise sit on Playwright's 30s default and
-     then fail with nothing useful; 60s is room for a cold Electron start on a loaded runner. */
-  timeout: 60_000,
+     then fail with nothing useful.
+
+     60s was "room for a cold Electron start on a loaded runner" and turned out not to be, three
+     times in a row: the desktop job failed on first attempt with
+     `firstWindow: Timeout 30000ms exceeded` and passed on a re-run of the same commit, once on
+     the software-WebGL launch and twice on ordinary ones. `firstWindowOf` in test/fixtures.ts
+     now waits 90s for the window, and a test's own budget has to be larger than the wait inside
+     it or the hook simply fails first and reports the same slowness under a different name.
+
+     This is patience, not a weaker assertion: the whole suite runs in about a minute and a half,
+     so nothing on the normal path is anywhere near this, and the job's `timeout-minutes` is what
+     bounds a genuine hang. */
+  timeout: 120_000,
 })

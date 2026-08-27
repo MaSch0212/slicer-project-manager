@@ -13,6 +13,7 @@ import { DatabaseSync } from 'node:sqlite'
 import { closeLibrary, ensureLocalUser, openLibrary, rescan } from '@spm/core'
 import { curaProject } from '../../core/test/fixtures/make-3mf.ts'
 import {
+  firstWindowOf,
   launchWithUserData,
   newUserDataDir,
   pickerCalls,
@@ -94,7 +95,7 @@ test('first run asks for a folder, opens what it is given, and reopens it next l
   const libraryDir = seededFolder('Widget A')
 
   const first = await launchWithUserData(userDataDir, libraryDir)
-  let page = await first.firstWindow()
+  let page = await firstWindowOf(first)
   await page.waitForLoadState('domcontentloaded')
 
   // The picker, with the two properties the plan names. Asserted on the options the *shell*
@@ -122,7 +123,7 @@ test('first run asks for a folder, opens what it is given, and reopens it next l
 
   // Second launch, same userData, and a picker that fails the test if it is opened at all.
   const second = await launchWithUserData(userDataDir, null)
-  page = await second.firstWindow()
+  page = await firstWindowOf(second)
   await page.waitForLoadState('domcontentloaded')
   await expectProjects(page, ['Widget A'])
   expect(await pickerCalls(second)).toEqual([])
@@ -138,7 +139,7 @@ test('the switch control opens another folder without a restart, and lets go of 
   const after = await adoptedFolder('Bracket')
 
   const app = await launchWithUserData(userDataDir, before)
-  const page = await app.firstWindow()
+  const page = await firstWindowOf(app)
   await page.waitForLoadState('domcontentloaded')
   await expectProjects(page, ['Widget A'])
 
@@ -194,7 +195,7 @@ test('a remembered folder that has gone returns to the picker, saying which one'
   const replacement = seededFolder('Bracket')
 
   const app = await launchWithUserData(userDataDir, replacement)
-  const page = await app.firstWindow()
+  const page = await firstWindowOf(app)
   await page.waitForLoadState('domcontentloaded')
 
   await expect.poll(async () => (await pickerCalls(app)).length).toBe(1)
@@ -217,7 +218,7 @@ test('a remembered folder that has gone returns to the picker, saying which one'
 test('a cancelled picker leaves a usable window, not a login screen or a dead app', async () => {
   const userDataDir = newUserDataDir()
   const app = await launchWithUserData(userDataDir, null)
-  const page = await app.firstWindow()
+  const page = await firstWindowOf(app)
   await page.waitForLoadState('domcontentloaded')
 
   await expect.poll(async () => (await pickerCalls(app)).length).toBe(1)
@@ -249,7 +250,7 @@ test('the app renders a thumbnail the queue produced, from a folder that had non
   curaProject(join(libraryDir, 'Widget A', 'widget.3mf'), previewPng())
 
   const app = await launchWithUserData(userDataDir, libraryDir)
-  const page = await app.firstWindow()
+  const page = await firstWindowOf(app)
   await page.waitForLoadState('domcontentloaded')
 
   // Opening the folder adopts it, which is what queues the preview row (ruling C-16) — so the
