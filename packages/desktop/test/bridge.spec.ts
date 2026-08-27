@@ -68,17 +68,14 @@ test.describe('the IPC bridge', () => {
 
   test('the project list renders the library that was on disk before the app started', async () => {
     // Nothing inserted these rows: the folders were written to a temp directory, the app opened
-    // and migrated an empty database over them, and a rescan over the bridge adopted them. The
-    // page is then reloaded so the list is read back out of the library rather than out of the
-    // store's memory.
-    const rescan = await page.evaluate(() => globalThis.spm.invoke('projects.rescan', []))
-    expect(rescan).toMatchObject({ ok: true, value: { adopted: 2 } })
-
-    await page.reload()
+    // and migrated an empty database over them, and adopted them itself — ruling C-16 rescans the
+    // folder that was opened, so this test asked for nothing at all. (It used to call
+    // `projects.rescan` here and assert `adopted: 2`; with the shell doing it that assertion
+    // became a race between the two rescans, and the list below is the stronger claim anyway.)
     await expect.poll(() => page.url()).toBe('spm://app/projects')
 
     const titles = page.locator('.spm-projects .spm-project-title')
-    await expect(titles).toHaveCount(2)
+    await expect(titles).toHaveCount(2, { timeout: 20_000 })
     expect((await titles.allTextContents()).sort()).toEqual(['Bracket', 'Widget A'])
 
     // The card body renders `model / slicerProject / other` from fileCounts, so this says the

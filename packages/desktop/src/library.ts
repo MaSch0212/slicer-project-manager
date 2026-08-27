@@ -1,7 +1,14 @@
-import { mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import type { LocalLibraryDto } from '@spm/contract/dtos.ts'
-import { closeLibrary, ensureLocalUser, openLibrary, type Ctx, type Library } from '@spm/core'
+import {
+  closeLibrary,
+  ensureLocalUser,
+  openLibrary,
+  rescan,
+  type Ctx,
+  type Library,
+} from '@spm/core'
 import { startPreviewTicker, type PreviewTicker } from './previews.ts'
 
 /**
@@ -60,8 +67,14 @@ function readState(stateFile: string): ShellState {
   let text: string
   try {
     text = readFileSync(stateFile, 'utf8')
-  } catch {
-    // No file yet — first run, or a userData directory that has just been wiped.
+  } catch (error) {
+    // `ENOENT` is first run, or a userData directory that has just been wiped, and is the one
+    // case worth no words. Everything else — `EACCES`, `EISDIR`, an I/O error — returns the user
+    // to the picker with their folder apparently forgotten, and a silent catch would leave that
+    // with no explanation in any log.
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+      console.warn(`desktop: could not read ${STATE_FILE_NAME}`, error)
+    }
     return {}
   }
   try {
@@ -94,7 +107,14 @@ export function rememberDir(stateFile: string, dir: string): void {
   const state = readState(stateFile)
   state[REMEMBERED_DIR_KEY] = dir
   mkdirSync(dirname(stateFile), { recursive: true })
-  writeFileSync(stateFile, `${JSON.stringify(state, null, 2)}\n`)
+  // Temp-then-rename rather than a straight write. A torn file costs one forgotten folder today,
+  // which `readState` already degrades to first run — but task 5 is putting the shell's mode and a
+  // remote server URL into this same object, and then half a JSON file loses the whole
+  // configuration rather than one path. `renameSync` replaces an existing file on Windows as well
+  // as on POSIX, which is what lets this be a rename and not a delete-then-write.
+  const temp = `${stateFile}.${process.pid}.tmp`
+  writeFileSync(temp, `${JSON.stringify(state, null, 2)}\n`)
+  renameSync(temp, stateFile)
 }
 
 /**
@@ -103,8 +123,61 @@ export function rememberDir(stateFile: string, dir: string): void {
  */
 export const FOLDER_PICKER_PROPERTIES = ['openDirectory', 'createDirectory'] as const
 
-/** The picker's own title when there is nothing to explain. */
-export const FOLDER_PICKER_TITLE = 'Choose a library folder'
+/**
+ * Why the app is asking for a folder, as a value rather than as a sentence.
+ *
+ * Structured because the sentence has to exist in more than one language. The *dialog* is the one
+ * place a user meets this — the shell has no window it can be sure of when it asks — so the
+ * explanation is built where the language is known, while the log line stays English like every
+ * other log line in this repo. `null` is first run: nothing to explain.
+ */
+export type PromptReason =
+  { kind: 'missing'; dir: string } | { kind: 'unopenable'; dir: string; detail: string }
+
+/**
+ * The languages the picker speaks, which is the pair the renderer ships (`locales/en.json` and
+ * `locales/de.json`). It is the OS locale and not the app's own language setting because that
+ * setting lives in a library, and this is needed exactly when no library is open.
+ */
+export type PickerLanguage = 'en' | 'de'
+
+export function pickerLanguage(locale: string | undefined): PickerLanguage {
+  return locale?.toLowerCase().startsWith('de') ? 'de' : 'en'
+}
+
+type PickerStrings = {
+  title: string
+  buttonLabel: string
+  missing: (dir: string) => string
+  unopenable: (dir: string, detail: string) => string
+}
+
+const PICKER_STRINGS: Readonly<Record<PickerLanguage, PickerStrings>> = {
+  en: {
+    title: 'Choose a library folder',
+    buttonLabel: 'Open',
+    missing: (dir) => `the last folder is no longer there (${dir})`,
+    unopenable: (dir, detail) => `the last folder could not be opened (${dir}): ${detail}`,
+  },
+  de: {
+    title: 'Bibliotheksordner auswählen',
+    buttonLabel: 'Öffnen',
+    missing: (dir) => `Der zuletzt geöffnete Ordner ist nicht mehr vorhanden (${dir})`,
+    unopenable: (dir, detail) =>
+      `Der zuletzt geöffnete Ordner konnte nicht geöffnet werden (${dir}): ${detail}`,
+  },
+}
+
+/** The picker's own title when there is nothing to explain, in the fallback language. */
+export const FOLDER_PICKER_TITLE = PICKER_STRINGS.en.title
+
+/** The explanation as one sentence, for the dialog. */
+export function explainReason(reason: PromptReason, language: PickerLanguage = 'en'): string {
+  const strings = PICKER_STRINGS[language]
+  return reason.kind === 'missing'
+    ? strings.missing(reason.dir)
+    : strings.unopenable(reason.dir, reason.detail)
+}
 
 export type FolderPickerOptions = {
   title: string
@@ -125,11 +198,16 @@ export type FolderPickerOptions = {
  * the title bar carries it. `LibraryHost` also writes the same sentence to stderr, so it survives
  * in a log the user can paste.
  */
-export function folderPickerOptions(reason: string | null): FolderPickerOptions {
+export function folderPickerOptions(
+  reason: PromptReason | null,
+  language: PickerLanguage = 'en',
+): FolderPickerOptions {
+  const strings = PICKER_STRINGS[language]
+  const explanation = reason ? explainReason(reason, language) : null
   return {
-    title: reason ? `${FOLDER_PICKER_TITLE} — ${reason}` : FOLDER_PICKER_TITLE,
-    message: reason ?? FOLDER_PICKER_TITLE,
-    buttonLabel: 'Open',
+    title: explanation ? `${strings.title} — ${explanation}` : strings.title,
+    message: explanation ?? strings.title,
+    buttonLabel: strings.buttonLabel,
     properties: FOLDER_PICKER_PROPERTIES,
   }
 }
@@ -142,13 +220,9 @@ export function folderPickerOptions(reason: string | null): FolderPickerOptions 
  */
 export type FolderPicker = (options: FolderPickerOptions) => Promise<string | null>
 
-/** Why the app is asking, when a folder was remembered and is not usable any more. */
-export function missingFolderReason(dir: string, error?: unknown): string {
-  if (error) {
-    const message = error instanceof Error ? error.message : String(error)
-    return `the last folder could not be opened (${dir}): ${message}`
-  }
-  return `the last folder is no longer there (${dir})`
+/** The reason for a folder that will not open, carrying the failure as its detail. */
+export function unopenableReason(dir: string, error: unknown): PromptReason {
+  return { kind: 'unopenable', dir, detail: error instanceof Error ? error.message : String(error) }
 }
 
 /**
@@ -159,7 +233,7 @@ export function missingFolderReason(dir: string, error?: unknown): string {
  * directory any more is not a failure — it is a reason to ask.
  */
 export type StartupPlan =
-  { source: 'env' | 'remembered'; dir: string } | { source: 'picker'; reason: string | null }
+  { source: 'env' | 'remembered'; dir: string } | { source: 'picker'; reason: PromptReason | null }
 
 export function planStartup(
   env: NodeJS.ProcessEnv,
@@ -173,7 +247,7 @@ export function planStartup(
   // Deleted, renamed, on an unmounted drive, or replaced by a file — all one answer, because the
   // user's next step is the same in every case and none of them is a crash.
   if (!isDirectory(remembered)) {
-    return { source: 'picker', reason: missingFolderReason(remembered) }
+    return { source: 'picker', reason: { kind: 'missing', dir: remembered } }
   }
   return { source: 'remembered', dir: remembered }
 }
@@ -186,7 +260,16 @@ function defaultIsDirectory(path: string): boolean {
   }
 }
 
-type OpenFolder = { dir: string; session: DesktopSession; ticker: PreviewTicker }
+/**
+ * `work` is everything this folder started that must finish before its database may be closed —
+ * today the rescan `open()` fires. It never rejects; the failure is logged where it happens.
+ */
+type OpenFolder = {
+  dir: string
+  session: DesktopSession
+  ticker: PreviewTicker
+  work: Promise<void>
+}
 
 export type LibraryHostOptions = {
   /** `app.getPath('userData')/state.json` in the real shell. */
@@ -199,6 +282,11 @@ export type LibraryHostOptions = {
   onChanged?: () => void
   /** Injected in tests so a slow preview run can be observed; the real shell takes the defaults. */
   startTicker?: (lib: Library) => PreviewTicker
+  /**
+   * The language the dialog speaks, resolved per call because `app.getLocale()` is only dependable
+   * once Electron is ready and this is constructed before that.
+   */
+  language?: () => PickerLanguage
 }
 
 /**
@@ -213,8 +301,11 @@ export class LibraryHost {
   readonly #pick: FolderPicker
   readonly #onChanged: () => void
   readonly #startTicker: (lib: Library) => PreviewTicker
+  readonly #language: () => PickerLanguage
   #current: OpenFolder | null = null
-  /** Every deferred release, chained, so a test (and `whenReleased`) can wait for all of them. */
+  /** The dialog that is already open, so a second click cannot put a second one on top of it. */
+  #asking: Promise<LocalLibraryDto | null> | null = null
+  /** Every deferred release, chained, so a test (and `whenSettled`) can wait for all of them. */
   #releases: Promise<void> = Promise.resolve()
 
   constructor(options: LibraryHostOptions) {
@@ -222,6 +313,7 @@ export class LibraryHost {
     this.#pick = options.pick
     this.#onChanged = options.onChanged ?? ((): void => {})
     this.#startTicker = options.startTicker ?? ((lib): PreviewTicker => startPreviewTicker(lib))
+    this.#language = options.language ?? ((): PickerLanguage => 'en')
   }
 
   session(): DesktopSession | null {
@@ -252,20 +344,91 @@ export class LibraryHost {
 
     const session = openDesktopLibrary(resolved)
     const previous = this.#current
-    this.#current = { dir: resolved, session, ticker: this.#startTicker(session.lib) }
+    const opened: OpenFolder = {
+      dir: resolved,
+      session,
+      ticker: this.#startTicker(session.lib),
+      work: Promise.resolve(),
+    }
+    opened.work = this.#adopt(opened)
+    this.#current = opened
     if (previous) this.#release(previous)
-    if (opts.remember ?? true) rememberDir(this.#stateFile, resolved)
+    if (opts.remember ?? true) this.#remember(resolved)
     this.#onChanged()
     return { dir: resolved }
+  }
+
+  /**
+   * Writes the folder down, and does not fail the open if it cannot.
+   *
+   * The library is already open by the time this runs. A throw here — an unwritable `userData`, a
+   * full disk — used to escape `open()` with the swap already done and the old library already
+   * released: the renderer went on drawing a library the shell no longer served, because
+   * `#onChanged()` was never reached, and through `start()` the same throw produced a prompt
+   * saying the folder "could not be opened" about the folder that was open at that moment.
+   */
+  #remember(dir: string): void {
+    try {
+      rememberDir(this.#stateFile, dir)
+    } catch (error) {
+      console.error(`desktop: could not remember the library folder in ${STATE_FILE_NAME}`, error)
+    }
+  }
+
+  /**
+   * Takes in what is in the folder — ruling C-16.
+   *
+   * **Picking a folder is the gesture that says "this is my library".** The browser arm has an
+   * operator who populates a folder and then rescans a long-lived server, and no per-user "choose
+   * a folder" moment at all; local mode has a user who just pointed the app at a directory full of
+   * projects. Without this they get an empty grid and a Rescan button, and the preview queue this
+   * task also builds has nothing to claim — a freshly opened folder has no preview rows until
+   * something adopts its files.
+   *
+   * Fire-and-forget, so `library.pick()` answers as soon as the library is open rather than after
+   * a hash of every file in it. The window is reloaded once immediately (the library changed) and
+   * again when this finds anything, because a rescan that adopts a project after the reload would
+   * otherwise sit unseen until the user pressed something.
+   */
+  #adopt(opened: OpenFolder): Promise<void> {
+    return rescan(opened.session.lib, opened.session.ctx)
+      .then((result) => {
+        opened.session.lib.log.info('rescanned the folder that was opened', result)
+        const changed =
+          result.adopted + result.markedMissing + result.filesAdded + result.filesRemoved > 0
+        // Not if the user has already moved on: reloading for a library that is no longer the
+        // open one would show them the wrong folder for as long as it took to notice.
+        if (changed && this.#current === opened) this.#onChanged()
+      })
+      .catch((error: unknown) => {
+        // A folder that cannot be read is still a library the user can work in — projects can be
+        // created, and the next rescan is a button away.
+        opened.session.lib.log.error('rescan after opening the library failed', { err: error })
+      })
   }
 
   /**
    * Asks for a folder and opens it. Null when the user cancelled, which is not an error: the
    * library that was open (if any) stays open.
    */
-  async prompt(reason: string | null): Promise<LocalLibraryDto | null> {
-    if (reason) console.warn(`desktop: ${reason}`)
-    const dir = await this.#pick(folderPickerOptions(reason))
+  prompt(reason: PromptReason | null): Promise<LocalLibraryDto | null> {
+    // One dialog at a time. Two quick clicks on the header control — or a click while the
+    // first-run dialog is still up, which the control has no way to know about — would otherwise
+    // open two native pickers and run two `open()` calls, the second of which closes the library
+    // the first just opened. The second caller waits for the first answer, which is what they
+    // asked for anyway.
+    if (this.#asking) return this.#asking
+    const asking = this.#promptOnce(reason).finally(() => {
+      if (this.#asking === asking) this.#asking = null
+    })
+    this.#asking = asking
+    return asking
+  }
+
+  async #promptOnce(reason: PromptReason | null): Promise<LocalLibraryDto | null> {
+    // English, like every other log line here; the user-facing copy is in the dialog.
+    if (reason) console.warn(`desktop: ${explainReason(reason)}`)
+    const dir = await this.#pick(folderPickerOptions(reason, this.#language()))
     return dir === null ? null : this.open(dir)
   }
 
@@ -281,25 +444,27 @@ export class LibraryHost {
    */
   start(
     env: NodeJS.ProcessEnv = process.env,
-  ): { opened: LocalLibraryDto } | { prompt: string | null } {
+  ): { opened: LocalLibraryDto } | { prompt: PromptReason | null } {
     const plan = planStartup(env, this.#stateFile)
     if (plan.source === 'picker') return { prompt: plan.reason }
     try {
       return { opened: this.open(plan.dir, { remember: plan.source !== 'env' }) }
     } catch (error) {
       if (plan.source === 'env') throw error
-      return { prompt: missingFolderReason(plan.dir, error) }
+      return { prompt: unopenableReason(plan.dir, error) }
     }
   }
 
   /**
-   * For `will-quit`. Stops the timer and closes the library **without** waiting for a run that is
-   * in flight, because the process is going away and a user who closed the window should not
-   * watch it linger through a mesh render.
+   * For `will-quit`. Stops the timer and closes the library **without** waiting for a preview run
+   * or a rescan that is in flight, because the process is going away and a user who closed the
+   * window should not watch it linger through a mesh render.
    *
-   * **What that costs, measured rather than inferred from the constant's name.** A row the queue
-   * had claimed when the process went is left `pending` with a `claimed_at` and an `attempts`
-   * that was already charged at claim time. Driven against a real library with
+   * **So the cost below is not only a crash's.** It is what an ordinary quit costs whenever the
+   * queue happened to be rendering — closing the window during a backfill is the common case, not
+   * the exotic one. A row the queue had claimed is left `pending` with a `claimed_at` and an
+   * `attempts` that was already charged at claim time. Measured rather than inferred from the
+   * constant's name, against a real library with
    * `claimPendingPreviews(lib, handlers, 10, now)`:
    *
    * | when                        | rows claimed | row afterwards                          |
@@ -322,36 +487,53 @@ export class LibraryHost {
     this.#current = null
     if (!current) return
     void current.ticker.stop()
+    // Not awaited — but kept in the chain, so `whenSettled()` still covers a rescan that was
+    // running when the app quit rather than returning while it writes into a closed database.
+    this.#releases = this.#releases.then(() => current.work)
     closeDesktopLibrary(current.session)
   }
 
-  /** Resolves when every deferred release has finished. A test seam, and only used as one. */
-  whenReleased(): Promise<void> {
-    return this.#releases
+  /**
+   * Resolves when the open folder's own work (its rescan) and every deferred release have
+   * finished. A test seam, and only used as one.
+   */
+  async whenSettled(): Promise<void> {
+    await this.#current?.work
+    await this.#releases
   }
 
   /**
    * Lets go of a library the user has switched away from — **after** its preview run has
    * finished, and without making the switch wait for it.
    *
-   * Both halves are measured. Closing while a run is in flight is not theoretical: the run's next
+   * Closing while work is in flight is not theoretical, and it is measured: the run's next
    * statement lands on a closed `DatabaseSync`, and it writes preview PNGs into a folder the user
-   * has left. Making the *switch* wait for it is the other failure — a rasterizing job is seconds
-   * to minutes on a big mesh, and `library.pick()` would not answer until it finished, which the
-   * user experiences as the app hanging on the folder they just chose.
+   * has left. Making the *switch* wait for it is the other failure, and that half is an
+   * **estimate rather than a measurement**: B1 timed whole-library backfills, not single jobs, so
+   * what is on record is that rasterizing is CPU-bound work over meshes up to 208.8 MB — long
+   * enough that `library.pick()` waiting for it would read as the app hanging on the folder the
+   * user just chose. Nothing in this task timed one job.
    *
-   * So the new library is live before this runs, and the old one closes a moment later. What that
-   * costs, stated plainly: for the length of one preview job the old folder still has an open
-   * SQLite handle, and on Windows that is enough to refuse a rename or a delete of it — measured,
-   * `EPERM` while open and success once closed. `whenReleased()` is when that is over.
+   * So the new library is live before this runs and the old one closes afterwards. **The window
+   * that leaves open, stated with the right bound:** a preview run claims up to
+   * `PREVIEW_BATCH_LIMIT` jobs and runs them one at a time, and the rescan `#adopt` started has to
+   * finish too, so the old folder can keep its SQLite handle for a whole batch — not for one job,
+   * which is what this comment said until a review caught it. On Windows that handle is enough to
+   * refuse a rename or a delete of the folder: measured, `EPERM` while open, success once closed.
+   * `whenSettled()` is when it is over.
+   *
+   * `stop()` is called **now** rather than inside the chain. It clears the interval synchronously
+   * — only its promise is deferred — so a second switch cannot leave the middle folder's ticker
+   * firing, and writing PNGs into a folder two removes from the one the user is looking at, for as
+   * long as the earlier release takes.
    */
   #release(previous: OpenFolder): void {
+    const stopped = previous.ticker.stop().catch((error: unknown) => {
+      console.error('desktop: a preview run failed while closing a library', error)
+    })
     this.#releases = this.#releases.then(async () => {
-      try {
-        await previous.ticker.stop()
-      } catch (error) {
-        console.error('desktop: a preview run failed while closing a library', error)
-      }
+      await previous.work
+      await stopped
       try {
         closeDesktopLibrary(previous.session)
       } catch (error) {

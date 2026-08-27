@@ -25,16 +25,17 @@ export function newUserDataDir(): string {
 }
 
 /**
- * Replaces the native folder picker in the main process.
+ * Replaces the native folder picker in the main process, for the picks a *test* triggers.
  *
- * Every launch in this suite installs one, including the launches that expect no picker: without
- * it, a first-run app pops a real GTK/Win32 folder dialog on the runner, and while that is
- * survivable — measured, `electronApp.close()` still returns in 70 ms with one open — it is not
- * something a suite should leave on a CI machine.
+ * The **first** prompt of a launch is not this one's job: it fires on `did-finish-load`, before
+ * any `evaluate` can be sure of landing, so it is answered by `SPM_FAKE_PICKER` in the launch
+ * environment instead (see `launchWithUserData` and `resolveFolderPicker` in `src/app.ts`). This
+ * covers every prompt after that, where the test is the one doing the clicking and the ordering is
+ * therefore its own.
  *
  * `answer` is the folder to return, or null to cancel. The options the shell passed are recorded
- * on the main process's `globalThis` so a test can assert on them; there is no other way to see
- * them, because the alternative is a dialog no test can read.
+ * on the main process's `globalThis` — the same key the fake picker uses — so a test can assert on
+ * them; there is no other way to see them, because the alternative is a dialog no test can read.
  */
 export async function stubFolderPicker(
   app: ElectronApplication,
@@ -127,14 +128,22 @@ export async function launchApp(
   seedLibrary(libraryDir, seed)
   const userDataDir = newUserDataDir()
   const app = await electron.launch({
-    args: [MAIN_BUNDLE, `--user-data-dir=${userDataDir}`, ...chromiumArgs],
-    env: { ...process.env, SPM_LIBRARY_DIR: libraryDir },
+    args: [MAIN_BUNDLE, `--user-data-dir=${userDataDir}`, ...LOCALE_ARGS, ...chromiumArgs],
+    // The environment names the folder, so nothing here should reach the picker at all. The empty
+    // `SPM_FAKE_PICKER` says what happens if that is ever wrong: the prompt is cancelled, rather
+    // than a real dialog opening on the runner.
+    env: { ...process.env, SPM_LIBRARY_DIR: libraryDir, SPM_FAKE_PICKER: '' },
   })
-  // The environment names the folder, so nothing here should ever reach the picker — the stub is
-  // what turns "should" into a test that says so, and stops a regression opening a real dialog.
   await stubFolderPicker(app, null)
   return { app, libraryDir, userDataDir }
 }
+
+/**
+ * The dialog's own language is the OS locale, and the assertions in `library.spec.ts` are on
+ * English strings. `--lang` is what pins `app.getLocale()`, so the suite reads the same on a
+ * German development machine as it does on an English CI runner.
+ */
+const LOCALE_ARGS = ['--lang=en-US']
 
 /**
  * Launches at a given userData directory, with no `SPM_LIBRARY_DIR` at all, and a picker stubbed
@@ -146,8 +155,11 @@ export async function launchWithUserData(
   answer: string | null = null,
 ): Promise<ElectronApplication> {
   const app = await electron.launch({
-    args: [MAIN_BUNDLE, `--user-data-dir=${userDataDir}`],
-    env: envWithoutLibraryDir(),
+    args: [MAIN_BUNDLE, `--user-data-dir=${userDataDir}`, ...LOCALE_ARGS],
+    // `SPM_FAKE_PICKER` answers the first prompt — the one that fires on `did-finish-load` and
+    // cannot be stubbed without racing it — with this folder, or cancels it when the answer is
+    // null. Later prompts open the real dialog, which is where `stubFolderPicker` takes over.
+    env: { ...envWithoutLibraryDir(), SPM_FAKE_PICKER: answer ?? '' },
   })
   await stubFolderPicker(app, answer)
   return app

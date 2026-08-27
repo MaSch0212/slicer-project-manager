@@ -4,6 +4,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   renameSync,
   rmSync,
   writeFileSync,
@@ -16,13 +17,16 @@ import {
   FOLDER_PICKER_PROPERTIES,
   LibraryHost,
   STATE_FILE_NAME,
+  explainReason,
   folderPickerOptions,
+  pickerLanguage,
   planStartup,
   readRememberedDir,
   rememberDir,
   resolveLibraryDir,
   type FolderPickerOptions,
   type LibraryHostOptions,
+  type PromptReason,
 } from '../src/library.ts'
 import type { PreviewTicker } from '../src/previews.ts'
 
@@ -78,7 +82,15 @@ type Harness = {
   tickers: FakeTicker[]
 }
 
-type FakeTicker = PreviewTicker & { stopped: boolean; finish: () => void }
+type FakeTicker = PreviewTicker & {
+  /** `stop()` has been *called*. The real ticker clears its interval at that moment. */
+  stopRequested: boolean
+  /** `stop()` has *resolved*, which is what a caller must wait for before closing the library. */
+  stopped: boolean
+  /** Makes the next `stop()` hang until `finish()`, standing in for a run in flight. */
+  block: () => void
+  finish: () => void
+}
 
 /**
  * A ticker that never touches the queue, and that can be made to finish late.
@@ -87,6 +99,16 @@ type FakeTicker = PreviewTicker & { stopped: boolean; finish: () => void }
  * before it closes the library under it, and it must not make the *switch* wait for that. The
  * real implementation is covered by `previews.test.ts` against a real library.
  */
+/**
+ * Every fake ticker any test made, so the cleanup can unblock them all.
+ *
+ * Not tidiness: a failed assertion skips the `finish()` the test was going to call, and then
+ * `afterEach`'s `whenSettled()` waits on a release that can never complete and the whole file
+ * times out instead of reporting the failure. Measured — that is exactly what the mutation for
+ * the release-chaining test did before this list existed.
+ */
+const madeTickers: FakeTicker[] = []
+
 function fakeTicker(): FakeTicker {
   let finish = (): void => {}
   const pending = new Promise<void>((resolve) => {
@@ -94,22 +116,24 @@ function fakeTicker(): FakeTicker {
   })
   let blocked = false
   const ticker: FakeTicker = {
+    stopRequested: false,
     stopped: false,
+    block: () => {
+      blocked = true
+    },
     finish: () => {
       blocked = false
       finish()
     },
     stop: async () => {
+      // Set before the first await, exactly as the real ticker clears its interval before it
+      // waits for the run in flight — that is the property `#release` depends on.
+      ticker.stopRequested = true
       await (blocked ? pending : Promise.resolve())
       ticker.stopped = true
     },
   }
-  // Tests that want a slow stop flip this on before switching.
-  Object.defineProperty(ticker, 'block', {
-    value: () => {
-      blocked = true
-    },
-  })
+  madeTickers.push(ticker)
   return ticker
 }
 
@@ -156,10 +180,16 @@ beforeEach(() => {
  * `EPERM`, which turns one failed assertion into two failures and a leaked temp directory.
  */
 afterEach(async () => {
+  // Unblocked first, or a test that failed before its own `finish()` leaves the release below
+  // waiting for ever and the file times out instead of reporting that failure.
+  for (const ticker of madeTickers.splice(0)) ticker.finish()
   for (const host of hosts) {
     try {
+      // Settled first: `open()` starts a real rescan, and closing the library under one leaves it
+      // writing into a closed database and logging about it long after the test has moved on.
+      await host.whenSettled()
       host.shutdown()
-      await host.whenReleased()
+      await host.whenSettled()
     } catch {
       // Already shut down by the test itself.
     }
@@ -193,6 +223,47 @@ test('remembering a folder keeps the rest of the state file', () => {
   })
 })
 
+test('the state file is replaced, not written over, and leaves nothing behind', () => {
+  const stateFile = stateFileFor()
+  rememberDir(stateFile, 'C:/libraries/one')
+  rememberDir(stateFile, 'C:/libraries/two')
+
+  // The write goes to a temp file and is renamed into place, so a torn file cannot be read as
+  // the state — and the temp file must not survive the rename either.
+  assert.deepEqual(readdirSync(join(stateFile, '..')), [STATE_FILE_NAME])
+})
+
+/**
+ * `ENOENT` is first run and says nothing. Anything else — a directory where the file should be,
+ * a permission error — returns the user to the picker with their folder apparently forgotten, and
+ * that must not happen without a word in the log.
+ */
+test('a state file that cannot be read at all is reported, not silently ignored', () => {
+  const asDirectory = join(root, `state-as-directory-${(seq += 1)}`)
+  mkdirSync(asDirectory, { recursive: true })
+  const warnings: unknown[][] = []
+  const original = console.warn
+  console.warn = (...args: unknown[]): void => void warnings.push(args)
+  try {
+    assert.equal(readRememberedDir(asDirectory), null)
+  } finally {
+    console.warn = original
+  }
+  assert.equal(warnings.length, 1, 'the read failure must reach the log')
+  assert.match(String(warnings[0]?.[0]), /could not read state\.json/)
+
+  // And the silent case really is silent: a missing file is first run, not a fault.
+  const missing = stateFileFor()
+  const quiet: unknown[][] = []
+  console.warn = (...args: unknown[]): void => void quiet.push(args)
+  try {
+    assert.equal(readRememberedDir(missing), null)
+  } finally {
+    console.warn = original
+  }
+  assert.deepEqual(quiet, [])
+})
+
 test('an unreadable state file is treated as nothing remembered, not as a crash', () => {
   const stateFile = stateFileFor()
   mkdirSync(join(stateFile, '..'), { recursive: true })
@@ -223,9 +294,8 @@ test('a remembered folder that has been deleted returns to the picker, naming it
   rmSync(dir, { recursive: true, force: true })
 
   const plan = planStartup({}, stateFile)
-  assert.equal(plan.source, 'picker')
-  assert.match(plan.source === 'picker' ? (plan.reason ?? '') : '', /no longer there/)
-  assert.ok(plan.source === 'picker' && plan.reason?.includes(dir), 'the folder must be named')
+  assert.deepEqual(plan, { source: 'picker', reason: { kind: 'missing', dir } })
+  assert.match(explainReason({ kind: 'missing', dir }), /no longer there/)
 })
 
 test('a remembered folder that has been renamed away returns to the picker', () => {
@@ -271,11 +341,34 @@ test('the picker asks for a directory, and lets the user create one', () => {
 })
 
 test('an explanation reaches the picker on both the platforms that show one', () => {
-  const options = folderPickerOptions('the last folder is no longer there (C:/gone)')
+  const options = folderPickerOptions({ kind: 'missing', dir: 'C:/gone' })
   // Windows and Linux show the title; macOS ignores it on an open dialog and shows `message`.
   assert.match(options.title, /no longer there \(C:\/gone\)/)
   assert.equal(options.message, 'the last folder is no longer there (C:/gone)')
   assert.deepEqual([...options.properties], ['openDirectory', 'createDirectory'])
+})
+
+/**
+ * The one thing this process says to a user in their own words, and it was English-only in the
+ * first version of this task while the button that opens it had a German string.
+ */
+test('the picker speaks the language the shell was told to speak', () => {
+  const reason: PromptReason = { kind: 'missing', dir: 'C:/weg' }
+  const german = folderPickerOptions(reason, 'de')
+  assert.match(german.title, /^Bibliotheksordner auswählen — /)
+  assert.match(german.message, /nicht mehr vorhanden \(C:\/weg\)/)
+  assert.equal(german.buttonLabel, 'Öffnen')
+
+  const failure: PromptReason = { kind: 'unopenable', dir: 'C:/weg', detail: 'EACCES' }
+  assert.match(explainReason(failure, 'de'), /konnte nicht geöffnet werden \(C:\/weg\): EACCES/)
+  assert.match(explainReason(failure, 'en'), /could not be opened \(C:\/weg\): EACCES/)
+
+  // Anything that is not German is English, including an absent locale.
+  assert.equal(pickerLanguage('de-AT'), 'de')
+  assert.equal(pickerLanguage('DE'), 'de')
+  assert.equal(pickerLanguage('en-GB'), 'en')
+  assert.equal(pickerLanguage(undefined), 'en')
+  assert.equal(folderPickerOptions(null, 'en').buttonLabel, 'Open')
 })
 
 /* -------------------------------------------------------------------------------------------
@@ -333,6 +426,7 @@ test('a remembered folder that is gone lands in the picker with the explanation'
 
   assert.equal(h.picks.length, 1)
   assert.ok(h.picks[0]!.options.title.includes(gone), 'the picker must name the folder that went')
+  assert.match(h.picks[0]!.options.title, /no longer there/)
   assert.equal(h.host.dir(), resolve(replacement))
   assert.equal(readRememberedDir(h.stateFile), resolve(replacement))
   h.host.shutdown()
@@ -379,24 +473,30 @@ test('switching folders closes the one that was open and reloads the window', as
   hosts.push(h.host)
 
   await h.host.prompt(null)
+  await h.host.whenSettled()
   const first = h.host.session()
   assert.ok(first)
-  assert.equal(h.changes, 1)
+  const changesBefore = h.changes
 
   answer = b
   await h.host.prompt(null)
-  await h.host.whenReleased()
+  await h.host.whenSettled()
 
   assert.equal(h.host.dir(), resolve(b))
-  assert.equal(h.changes, 2, 'the shell must reload the window after a switch')
+  // At least one more: the switch itself. The rescan `open()` fires may add another when it finds
+  // something, which is what the pair of tests below pins exactly.
+  assert.ok(h.changes > changesBefore, 'the shell must reload the window after a switch')
   assert.equal(h.tickers[0]!.stopped, true, 'the old library must stop ticking the queue')
   assert.throws(
     () => first.lib.db.prepare('SELECT 1').get(),
     'the old library must be closed, not merely forgotten',
   )
-  // The new one is live, and it is the folder that was chosen second.
-  const projects = h.host.session()!.lib.db.prepare('SELECT dir_name AS n FROM projects').all()
-  assert.deepEqual(projects, [])
+  // The new one is live, and it holds the second folder's project — adopted by the rescan that
+  // `open()` fires, with nothing in this test asking for one (ruling C-16).
+  const projects = (
+    h.host.session()!.lib.db.prepare('SELECT dir_name AS n FROM projects').all() as { n: string }[]
+  ).map((row) => row.n)
+  assert.deepEqual(projects, ['Gadget'])
   assert.equal(readRememberedDir(h.stateFile), resolve(b))
   h.host.shutdown()
 })
@@ -434,7 +534,9 @@ test('a remembered folder that will not open degrades to the picker rather than 
 
   const started = host.start({})
   assert.ok('prompt' in started, 'it must ask rather than fail the launch')
-  assert.match('prompt' in started ? (started.prompt ?? '') : '', /could not be opened/)
+  const reason = 'prompt' in started ? started.prompt : null
+  assert.equal(reason?.kind, 'unopenable', 'and it must say the folder would not open')
+  assert.equal(reason?.dir, bad)
 })
 
 test('SPM_LIBRARY_DIR naming a folder that will not open is a startup failure, not a prompt', () => {
@@ -452,6 +554,45 @@ test('an environment override is not written to state.json', () => {
   h.host.start({ SPM_LIBRARY_DIR: dir })
   assert.equal(h.host.dir(), resolve(dir))
   assert.equal(readRememberedDir(h.stateFile), null, 'one launch is not a choice to remember')
+  h.host.shutdown()
+})
+
+/* -------------------------------------------------------------------------------------------
+ * Taking in what is in the folder (ruling C-16)
+ * ---------------------------------------------------------------------------------------- */
+
+/**
+ * Picking a folder is the gesture that says "this is my library", so the app takes in what is in
+ * it. Without this the user gets an empty grid and a Rescan button, and the preview queue this
+ * task also builds has nothing to claim — nothing writes preview rows until a rescan adopts files.
+ */
+test('opening a folder adopts what is in it, and reloads the window when it finds something', async () => {
+  const dir = folderWithProject('adopted', 'Widget A')
+  const h = harness(() => Promise.resolve(dir))
+  hosts.push(h.host)
+
+  await h.host.prompt(null)
+  // The pick answers before the rescan does: it must not wait for a hash of every file.
+  assert.equal(h.changes, 1, 'the window is reloaded for the open itself')
+  await h.host.whenSettled()
+
+  const projects = (
+    h.host.session()!.lib.db.prepare('SELECT name FROM projects').all() as { name: string }[]
+  ).map((row) => row.name)
+  assert.deepEqual(projects, ['Widget A'])
+  assert.equal(h.changes, 2, 'and again once the rescan has something to show')
+  h.host.shutdown()
+})
+
+test('an empty folder is not reloaded a second time for a rescan that found nothing', async () => {
+  const dir = emptyFolder('nothing-to-adopt')
+  const h = harness(() => Promise.resolve(dir))
+  hosts.push(h.host)
+
+  await h.host.prompt(null)
+  await h.host.whenSettled()
+
+  assert.equal(h.changes, 1, 'a rescan that adopted nothing must not flicker the window')
   h.host.shutdown()
 })
 
@@ -483,9 +624,108 @@ test('a switch does not wait for a preview run, and the old library closes when 
   assert.doesNotThrow(() => first.lib.db.prepare('SELECT 1').get())
 
   h.tickers[0]!.finish()
-  await h.host.whenReleased()
+  await h.host.whenSettled()
   assert.throws(() => first.lib.db.prepare('SELECT 1').get(), 'it must close once the run ends')
   h.host.shutdown()
+})
+
+/**
+ * The bug this pins: `#release` used to chain the *whole* release, `stop()` included, onto the
+ * previous one. A second switch then left the middle folder's ticker running — firing on its
+ * interval and writing preview PNGs into a folder the user had already left — for as long as the
+ * first release took, which is a whole preview batch.
+ */
+test('a second switch stops the middle library at once, not after the first release finishes', async () => {
+  const a = folderWithProject('chain-a', 'Widget')
+  const b = folderWithProject('chain-b', 'Gadget')
+  const c = folderWithProject('chain-c', 'Doodad')
+  let answer = a
+  const h = harness(() => Promise.resolve(answer))
+  hosts.push(h.host)
+
+  await h.host.prompt(null)
+  h.tickers[0]!.block() // A's release will not finish until it is told to.
+
+  answer = b
+  await h.host.prompt(null)
+  answer = c
+  await h.host.prompt(null)
+
+  assert.equal(h.tickers[1]!.stopRequested, true, "B's ticker is still armed behind A's release")
+  assert.equal(h.tickers[1]!.stopped, true, 'and nothing was blocking it, so it is done')
+  assert.equal(h.tickers[0]!.stopped, false, "A's is the one that is still waiting")
+
+  h.tickers[0]!.finish()
+  await h.host.whenSettled()
+  assert.equal(h.tickers[0]!.stopped, true)
+  h.host.shutdown()
+})
+
+/**
+ * A `state.json` that cannot be written must not fail the open. It used to: the library was
+ * already swapped and the old one already released, and the throw escaped `open()` before
+ * `#onChanged()` — so the renderer kept drawing a library the shell had closed. Through `start()`
+ * the same throw produced a prompt saying the folder "could not be opened" about the folder that
+ * was open at that moment.
+ */
+test('a state file that cannot be written does not fail the open', async () => {
+  // A parent that is a file, so `mkdirSync` inside `rememberDir` throws on every platform.
+  const blocked = join(root, `blocked-userdata-${(seq += 1)}`)
+  writeFileSync(blocked, 'a file where the userData directory should be')
+  const dir = folderWithProject('writable-library', 'Widget')
+  const h = harness(() => Promise.resolve(dir))
+  hosts.push(h.host)
+  const host = new LibraryHost({
+    stateFile: join(blocked, STATE_FILE_NAME),
+    pick: () => Promise.resolve(dir),
+    onChanged: () => (reloaded += 1),
+    startTicker: () => fakeTicker(),
+  })
+  hosts.push(host)
+  let reloaded = 0
+
+  const opened = await host.prompt(null)
+
+  assert.deepEqual(opened, { dir: resolve(dir) }, 'the folder is open, whatever the state file did')
+  assert.ok(host.session(), 'and the session is live')
+  assert.equal(reloaded, 1, 'and the window was told about it')
+})
+
+/**
+ * Two clicks on the header control, or one while the first-run dialog is still up: the control
+ * renders as soon as the window has loaded and cannot know a dialog is open.
+ */
+test('a second prompt while one is open does not open a second dialog', async () => {
+  const dir = folderWithProject('one-dialog', 'Widget')
+  let release = (): void => {}
+  const gate = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  let dialogs = 0
+  const host = new LibraryHost({
+    stateFile: stateFileFor(),
+    pick: async () => {
+      dialogs += 1
+      await gate
+      return dir
+    },
+    startTicker: () => fakeTicker(),
+  })
+  hosts.push(host)
+
+  const first = host.prompt(null)
+  const second = host.prompt(null)
+  release()
+  const [a, b] = await Promise.all([first, second])
+
+  assert.equal(dialogs, 1, 'the second click must not put a second picker on the screen')
+  assert.deepEqual(a, { dir: resolve(dir) })
+  assert.deepEqual(b, a, 'and both callers get the same answer')
+
+  // And once it has finished, the control works again.
+  await host.prompt(null)
+  assert.equal(dialogs, 2)
+  host.shutdown()
 })
 
 test('the default ticker is the real one, and shutdown stops it', async () => {

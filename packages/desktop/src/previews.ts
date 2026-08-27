@@ -33,10 +33,12 @@ import {
  *
  * What it buys is latency, and on a desktop that latency is *watched*. The user picks a folder
  * and looks at a grid of blank tiles; every tick that passes with nothing claimed is a tile that
- * stays blank. `PREVIEW_BATCH_LIMIT` bounds a batch to 20 files, so draining a library of 374
- * projects (the reference library) costs 19 ticks of pure waiting: 95 s at 5 s, 570 s at 30 s.
- * Rendering dominates that total when the queue is rasterizing, but not when it is reading
- * embedded thumbnails out of slicer projects — which is the fast path and the common one.
+ * stays blank. `PREVIEW_BATCH_LIMIT` bounds a batch to 20 **files**, and the first tick does not
+ * wait, so draining N files costs `ceil(N / 20) - 1` intervals of pure waiting. For the reference
+ * library that is **at least** 18 intervals — 90 s at 5 s against 540 s at 30 s — and the floor is
+ * the honest word: 374 is a count of *projects*, and a project with two model files needs two
+ * slots. Rendering dominates the total when the queue is rasterizing, but not when it is reading
+ * embedded thumbnails out of slicer projects, which is the fast path and the common one.
  *
  * Not shorter than 5 s, because the win keeps shrinking against the batch size while the cost of
  * waking a laptop out of an idle state every second does not. The first tick does not wait for
@@ -50,18 +52,22 @@ export const PREVIEW_INTERVAL_MS = 5_000
  * explicitly rather than left to the default so the budget below is visible at the call site.
  *
  * It is a memory decision, and it multiplies with `PREVIEW_MAX_MESH_BYTES`: each worker may hold
- * one mesh, so the two numbers are one budget. B1 measured a worker's peak at about 290 MB
- * against a 256 MB ceiling (208.8 MB for the largest mesh in the reference library, plus a fixed
- * reader window), and the whole backfill at 400–410 MB of peak RSS with one worker against
- * 620 MB with two — for 1.5 % less wall-clock on one machine and 0 % on another, because parsing
- * and rasterizing are CPU-bound JavaScript on one thread.
+ * one mesh, so the two numbers are one budget. **The figures are B1's, measured on the Deno
+ * server, and the Electron peak was not re-measured in this task** — they are carried across
+ * because the mesh, the parser and the rasterizer are the same code with the same ceiling, not
+ * because anybody watched this process's RSS. B1 put a worker's peak at about 290 MB against a
+ * 256 MB ceiling (208.8 MB for the largest mesh in the reference library, plus a fixed reader
+ * window), and a whole backfill at 400–410 MB of peak RSS with one worker against 620 MB with two
+ * — for 1.5 % less wall-clock on one machine and 0 % on another, because parsing and rasterizing
+ * are CPU-bound JavaScript on one thread.
  *
- * The desktop shell has two reasons to keep it at one where a server might not. This process is
- * not only the queue: it is also Electron's browser process, the IPC dispatch table and the
- * `spm://` handler that serves the very thumbnails this produces, all on the same thread. And it
- * is sharing the machine with whatever the user is doing — a slicer, a browser, the model they
- * are printing from. A second worker doubles the peak of the one process the UI cannot afford to
- * have swapped out, and buys nothing measurable.
+ * The desktop shell has two reasons to keep it at one where a server might not, and both are
+ * arguments rather than measurements of this process. It is not only the queue: it is also
+ * Electron's browser process, the IPC dispatch table and the `spm://` handler that serves the very
+ * thumbnails this produces, all on the same thread. And it is sharing the machine with whatever
+ * the user is doing — a slicer, a browser, the model they are printing from. Against B1's numbers
+ * a second worker adds ~220 MB of peak for 0–1.5 % of wall clock, which is a bad trade on a
+ * server and a worse one here.
  */
 export const PREVIEW_CONCURRENCY = 1
 
@@ -83,6 +89,11 @@ export type PreviewTicker = {
    * Stops the timer and resolves when the run that may be in flight has finished. Callers that
    * are about to close the library must await this, or `runPreviewQueue` writes its result into
    * a database that is no longer open.
+   *
+   * **The timer is cleared synchronously, when this is *called*** — the returned promise is only
+   * the wait for the run already under way. `LibraryHost.#release` depends on that: it calls this
+   * immediately and defers only the awaiting, so a folder the user has switched away from cannot
+   * keep ticking while an earlier release finishes.
    */
   stop(): Promise<void>
 }
@@ -138,6 +149,8 @@ export function startPreviewTicker(lib: Library, opts: PreviewTickerOptions = {}
   tick()
 
   return {
+    // `stopped` and `clearInterval` run before the first await, so they happen when the caller
+    // calls this and not when it awaits it. See the note on `PreviewTicker.stop`.
     async stop(): Promise<void> {
       stopped = true
       clearInterval(timer)

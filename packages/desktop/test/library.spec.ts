@@ -66,30 +66,6 @@ async function adoptedFolder(project: string): Promise<string> {
   return dir
 }
 
-/**
- * Rescans through the bridge, retrying while the window is being reloaded.
- *
- * The shell reloads the window itself whenever the library changes, so an `evaluate` issued at
- * the wrong moment dies with "Execution context was destroyed" — which is the shell doing its
- * job, not a failure. Nothing rescans on open (neither does the server), so a freshly opened
- * folder is adopted by asking, exactly as the other desktop specs do.
- */
-async function rescanEventually(page: Page): Promise<void> {
-  await expect
-    .poll(
-      async () => {
-        try {
-          const result = await page.evaluate(() => globalThis.spm.invoke('projects.rescan', []))
-          return (result as { ok: boolean }).ok
-        } catch {
-          return false
-        }
-      },
-      { timeout: 20_000 },
-    )
-    .toBe(true)
-}
-
 function rememberedDir(userDataDir: string): unknown {
   const state = JSON.parse(readFileSync(join(userDataDir, 'state.json'), 'utf8')) as {
     libraryDir?: unknown
@@ -106,7 +82,11 @@ function rememberedDir(userDataDir: string): unknown {
  * is a failure rather than a coincidence.
  */
 async function expectProjects(page: Page, titles: string[]): Promise<void> {
-  await expect(page.locator('.spm-projects .spm-project-title')).toHaveText(titles)
+  // A generous timeout because this is now waiting on the whole chain ruling C-16 put in front of
+  // it: open, rescan the folder, reload the window, re-fetch the list.
+  await expect(page.locator('.spm-projects .spm-project-title')).toHaveText(titles, {
+    timeout: 20_000,
+  })
 }
 
 test('first run asks for a folder, opens what it is given, and reopens it next launch', async () => {
@@ -127,9 +107,8 @@ test('first run asks for a folder, opens what it is given, and reopens it next l
   })
 
   // A real library was created in the folder that was chosen: migrated, with its single local
-  // user, and the projects that were on disk before the app existed.
-  await rescanEventually(page)
-  await page.reload()
+  // user, and — ruling C-16 — the projects that were on disk before the app existed, adopted
+  // because the folder was picked. Nothing in this test asks for a rescan.
   await expectProjects(page, ['Widget A'])
   expect(existsSync(join(libraryDir, '.spm', 'app.db'))).toBe(true)
   expect(rememberedDir(userDataDir)).toBe(libraryDir)
@@ -161,8 +140,6 @@ test('the switch control opens another folder without a restart, and lets go of 
   const app = await launchWithUserData(userDataDir, before)
   const page = await app.firstWindow()
   await page.waitForLoadState('domcontentloaded')
-  await rescanEventually(page)
-  await page.reload()
   await expectProjects(page, ['Widget A'])
 
   // The control exists because `canPickLocalFolder` is true, and it is found the way a screen
@@ -187,10 +164,11 @@ test('the switch control opens another folder without a restart, and lets go of 
   })
 
   // The folder that was left is really released, which on Windows means it can be renamed —
-  // measured: `EPERM` while a library is open, and success once it is closed. The release is
-  // deferred until any preview run in flight has finished, so this polls rather than asserting
-  // once. On Linux a rename succeeds with an open handle too, so there this only says the
-  // directory is still there; `library.test.ts` asserts the close itself, on the database.
+  // measured: `EPERM` while a library is open, and success once it is closed. The release waits
+  // for that library's own work — a preview batch of up to `PREVIEW_BATCH_LIMIT` jobs, and the
+  // rescan opening it started — so this polls rather than asserting once. On Linux a rename
+  // succeeds with an open handle too, so there this only says the directory is still there;
+  // `library.test.ts` asserts the close itself, on the database.
   await expect
     .poll(
       () => {
@@ -230,8 +208,6 @@ test('a remembered folder that has gone returns to the picker, saying which one'
   // no library at all, and the folder the user chose instead is now the library. Polled, because
   // the router redirects after bootstrap and the shell reloads the window once the pick lands.
   await expect.poll(() => page.url()).toBe('spm://app/projects')
-  await rescanEventually(page)
-  await page.reload()
   await expectProjects(page, ['Bracket'])
   expect(rememberedDir(userDataDir)).toBe(replacement)
 
@@ -257,8 +233,6 @@ test('a cancelled picker leaves a usable window, not a login screen or a dead ap
   await stubFolderPicker(app, chosen)
   await page.getByRole('button', { name: 'Change library folder' }).click()
 
-  await rescanEventually(page)
-  await page.reload()
   await expectProjects(page, ['Widget A'])
   expect(rememberedDir(userDataDir)).toBe(chosen)
 
@@ -277,19 +251,26 @@ test('the app renders a thumbnail the queue produced, from a folder that had non
   const app = await launchWithUserData(userDataDir, libraryDir)
   const page = await app.firstWindow()
   await page.waitForLoadState('domcontentloaded')
-  await rescanEventually(page)
 
-  // The queue ticks on its own; nothing here asks it to. It has one interval to do it in.
+  // Opening the folder adopts it, which is what queues the preview row (ruling C-16) — so the
+  // grid filling is also the signal that the database is there to be read.
+  await expectProjects(page, ['Widget A'])
+
+  // The queue ticks on its own; nothing here asks it to.
   const db = new DatabaseSync(join(libraryDir, '.spm', 'app.db'), { readOnly: true })
   try {
     await expect
-      .poll(() => db.prepare('SELECT state, source FROM previews').all(), { timeout: 30_000 })
+      .poll(
+        () =>
+          (db.prepare('SELECT state, source FROM previews').all() as Record<string, unknown>[]).map(
+            (row) => ({ state: row['state'], source: row['source'] }),
+          ),
+        { timeout: 30_000 },
+      )
       .toEqual([{ state: 'ready', source: 'embedded' }])
   } finally {
     db.close()
   }
-
-  await page.reload()
   await page.locator('.spm-project-link').first().click()
   await expect(page.locator('h1')).toHaveText('Widget A')
 

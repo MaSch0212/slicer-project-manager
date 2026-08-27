@@ -7,8 +7,10 @@ import { parseFileRequest, serveLibraryFile } from './files.ts'
 import { registerInvokeHandler } from './ipc.ts'
 import {
   LibraryHost,
+  pickerLanguage,
   STATE_FILE_NAME,
   type DesktopSession,
+  type FolderPicker,
   type FolderPickerOptions,
 } from './library.ts'
 import { navigationPolicy, RENDERER_HOST, RENDERER_ORIGIN, RESERVED_PATH_SEGMENT } from './urls.ts'
@@ -462,8 +464,13 @@ export function applyNavigationPolicy(window: BrowserWindow): void {
  * on Electron 44.0.0 (Windows) a dialog opened *with* a parent window and one opened without both
  * leave the page fully drivable — a Playwright click on a button behind the dialog lands and its
  * handler runs, in 49 ms either way — and `electronApp.close()` returns in about 70 ms with a real
- * dialog still open, either way. So the choice is not load-bearing for the suite, and a test that
- * meets a real dialog fails rather than hangs.
+ * dialog still open, either way.
+ *
+ * **Windows only.** That last part was the argument for why a suite that lost the stub race would
+ * fail rather than hang, and it has never been run on Linux — where CI runs, under `xvfb` with no
+ * window manager, which is the one environment where a native modal with nowhere to go might
+ * behave differently. The suite no longer rests on it either way: `SPM_FAKE_PICKER` below means
+ * the first prompt never reaches a dialog at all.
  *
  * `canceled` and the empty-array case are both checked. They are the same answer here, but
  * `filePaths` is documented as possibly empty and `[chosen]` off an empty array is `undefined`,
@@ -478,6 +485,43 @@ export async function showFolderPicker(options: FolderPickerOptions): Promise<st
   })
   const [chosen] = result.filePaths
   return result.canceled || chosen === undefined ? null : chosen
+}
+
+/** Answers the shell's *first* folder prompt without a dialog. See `resolveFolderPicker`. */
+export const FAKE_PICKER_ENV = 'SPM_FAKE_PICKER'
+
+/**
+ * The picker, or the answer an automated run wants in place of the first one.
+ *
+ * `SPM_FAKE_PICKER=<dir>` answers the first prompt with that folder and `SPM_FAKE_PICKER=` (empty)
+ * cancels it; every later prompt opens the real dialog. It exists for one reason: the first-run
+ * prompt fires on `did-finish-load`, so a Playwright suite that replaces `dialog.showOpenDialog`
+ * after launch is racing the app's own startup. Measured, that race is currently won by about
+ * 75 ms — comfortable, and *nothing pins it*, so a change that trims renderer startup would narrow
+ * it silently and the price of losing is a real native dialog on a CI runner. This removes the
+ * race instead of resting on the margin, in the same shape as the `SPM_LIBRARY_DIR` override the
+ * suite already uses. Picks after the first still go through the dialog, which is where the suite
+ * can stub deterministically because it is the one doing the clicking.
+ *
+ * It is no more of a foothold than `SPM_LIBRARY_DIR`: both let whoever can set the environment of
+ * this process name a folder, and neither reaches past what the user could have chosen. The
+ * warning is so that a user who somehow has it set can see why they were never asked.
+ *
+ * The options are recorded on `globalThis` because that is the only main-process value an
+ * `electronApp.evaluate` can reach; `test/fixtures.ts` reads the same key for its dialog stub.
+ */
+export function resolveFolderPicker(env: NodeJS.ProcessEnv = process.env): FolderPicker {
+  const answer = env[FAKE_PICKER_ENV]
+  if (answer === undefined) return showFolderPicker
+  console.warn(`desktop: ${FAKE_PICKER_ENV} is set; the first folder prompt will not be shown`)
+  let used = false
+  return (options) => {
+    if (used) return showFolderPicker(options)
+    used = true
+    const recorder = globalThis as { __spmPickerCalls?: unknown[] }
+    recorder.__spmPickerCalls = [...(recorder.__spmPickerCalls ?? []), options]
+    return Promise.resolve(answer === '' ? null : resolve(answer))
+  }
 }
 
 /**
@@ -504,8 +548,12 @@ export function main(): void {
   // after) and before `whenReady`, which it does not require.
   const host = new LibraryHost({
     stateFile: join(app.getPath('userData'), STATE_FILE_NAME),
-    pick: showFolderPicker,
+    pick: resolveFolderPicker(),
     onChanged: reloadOpenWindows,
+    // Resolved per call: `app.getLocale()` is only dependable once Electron is ready, and this
+    // runs before that. The dialog is the one thing this process says to a user in their own
+    // words — see `PICKER_STRINGS`.
+    language: () => pickerLanguage(app.getLocale()),
   })
 
   // Before `whenReady`, and before any window: `ipcMain.handle` is not tied to a window, and
