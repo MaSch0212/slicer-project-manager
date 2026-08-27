@@ -130,7 +130,13 @@ export async function launchApp(
   seedLibrary(libraryDir, seed)
   const userDataDir = newUserDataDir()
   const app = await electron.launch({
-    args: [MAIN_BUNDLE, `--user-data-dir=${userDataDir}`, ...LOCALE_ARGS, ...chromiumArgs],
+    args: [
+      MAIN_BUNDLE,
+      `--user-data-dir=${userDataDir}`,
+      ...LOCALE_ARGS,
+      ...loggingArgs(),
+      ...chromiumArgs,
+    ],
     // The environment names the folder, so there should be no startup prompt here at all. The
     // empty `SPM_FAKE_PICKER` says what happens if that is ever wrong: the startup prompt is
     // cancelled rather than a real dialog opening on the runner — and, because it answers only
@@ -150,6 +156,39 @@ export async function launchApp(
  */
 const LOCALE_ARGS = ['--lang=en-US']
 
+/** Where CI asks for Chromium's own log; unset locally, where nothing needs it. */
+const LOG_DIR_ENV = 'SPM_ELECTRON_LOG_DIR'
+
+let launchCount = 0
+
+/**
+ * Chromium's own log, written by the browser process from its first line — ruling C-21.
+ *
+ * **What it is and is not, measured rather than assumed.** It carries *Chromium's* logging — the
+ * dbus, GPU and sandbox complaints that were the only content of the four `firstWindow`
+ * timeouts — and **not** the main process's Node `console.warn`, which goes to stderr. On a
+ * healthy Windows launch it is written and stays **0 bytes**, which is the expected shape: an
+ * empty file means Chromium had nothing at ERROR or WARNING to say.
+ *
+ * So it complements the stderr pipe rather than replacing it, and neither is the decisive
+ * instrument — `describeStalledApp` above is, because it asks the live main process what state it
+ * is in. This is the environment-side evidence to read beside that answer.
+ *
+ * A file per launch, because `--log-file` does not template and 45 launches would otherwise leave
+ * one. Off unless the environment names a directory, so a local run writes nothing.
+ */
+function loggingArgs(): string[] {
+  const dir = process.env[LOG_DIR_ENV]
+  if (!dir) return []
+  launchCount += 1
+  mkdirSync(dir, { recursive: true })
+  return [
+    '--enable-logging=file',
+    `--log-file=${join(dir, `electron-${launchCount}.log`)}`,
+    '--log-level=0',
+  ]
+}
+
 /**
  * Launches at a given userData directory, with no `SPM_LIBRARY_DIR` at all, and a picker stubbed
  * to `answer`. This is the shape task 4's own paths are driven through: first run, a remembered
@@ -161,7 +200,7 @@ export async function launchWithUserData(
   mode: 'local' | 'remote' | 'cancel' = 'local',
 ): Promise<ElectronApplication> {
   const app = await electron.launch({
-    args: [MAIN_BUNDLE, `--user-data-dir=${userDataDir}`, ...LOCALE_ARGS],
+    args: [MAIN_BUNDLE, `--user-data-dir=${userDataDir}`, ...LOCALE_ARGS, ...loggingArgs()],
     // Two questions, two environment answers, and both exist for the same reason: they are raised
     // on `did-finish-load`, so a suite that replaced the dialogs after launch would be racing the
     // app's own startup and the price of losing is a real native modal on a CI runner.
@@ -304,7 +343,48 @@ function pipeProcessOutput(app: ElectronApplication, label: string): void {
  * in one place and a fourth failure has one line to change.
  */
 export async function firstWindowOf(app: ElectronApplication): Promise<Page> {
-  return await app.firstWindow({ timeout: FIRST_WINDOW_TIMEOUT_MS })
+  try {
+    return await app.firstWindow({ timeout: FIRST_WINDOW_TIMEOUT_MS })
+  } catch (error) {
+    throw new Error(`${(error as Error).message}\n${await describeStalledApp(app)}`)
+  }
+}
+
+/**
+ * What the main process looks like at the moment `firstWindow` gave up — ruling C-21.
+ *
+ * **`electron.launch()` succeeded in every one of those failures.** The error was a `firstWindow`
+ * timeout, not a launch timeout, so Playwright had a live connection to the main process the
+ * whole time and the diagnosis was one `evaluate` away rather than a packet capture. Four
+ * occurrences were shrugged at for want of these six values.
+ *
+ * How to read what it prints:
+ *
+ * - `isReady: false` — `app.whenReady()` never resolved. That is the environment, not this app:
+ *   nothing in `main()` runs before it.
+ * - `isReady: true, windowCount: 0` — the ready block is stuck or threw before
+ *   `createMainWindow`. The only synchronous work there is `shellHost.start()` →
+ *   `openDesktopLibrary`, and SQLite's `busy_timeout` is 5 s, which cannot produce 90 s; a throw
+ *   would have called `app.exit` and given Playwright a *closed app* instead of this timeout. So
+ *   this combination would be genuinely new information.
+ * - `windowCount: 1` — the window exists and Playwright missed it. That is the harness.
+ *
+ * It must not throw on its own account: a diagnostic that fails while reporting a failure buries
+ * the thing it was called about.
+ */
+async function describeStalledApp(app: ElectronApplication): Promise<string> {
+  try {
+    const state = await app.evaluate(({ app: electronApp, BrowserWindow }) => ({
+      isReady: electronApp.isReady(),
+      windowCount: BrowserWindow.getAllWindows().length,
+      urls: BrowserWindow.getAllWindows().map((window) => window.webContents.getURL()),
+      uptimeMs: Math.round(process.uptime() * 1000),
+      gpu: electronApp.getGPUFeatureStatus(),
+    }))
+    return `main process at the moment of the timeout: ${JSON.stringify(state)}`
+  } catch (error) {
+    return `main process could not be inspected either: ${String(error)}`
+  }
 }
 
 const FIRST_WINDOW_TIMEOUT_MS = 90_000
@@ -338,7 +418,7 @@ export async function launchShell(
   if (launch.fakeMode !== undefined) env['SPM_FAKE_MODE'] = launch.fakeMode
   if (launch.fakePicker !== undefined) env['SPM_FAKE_PICKER'] = launch.fakePicker ?? ''
   const app = await electron.launch({
-    args: [MAIN_BUNDLE, `--user-data-dir=${userDataDir}`, ...LOCALE_ARGS],
+    args: [MAIN_BUNDLE, `--user-data-dir=${userDataDir}`, ...LOCALE_ARGS, ...loggingArgs()],
     env,
   })
   pipeProcessOutput(app, 'launchShell')

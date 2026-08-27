@@ -247,3 +247,28 @@ jobs:
       # nothing, so this cannot pass against a stale bundle -- and it cannot pass without
       # launching, either: every assertion in it is on a window that opened.
       - run: xvfb-run -a deno task test:desktop
+        env:
+          # Ruling C-21. Chromium's own logging, written from the browser process's first line —
+          # the dbus and GPU complaints that were the entire content of the four `firstWindow`
+          # timeouts. It does not carry the main process's `console.warn` (that is stderr, which
+          # the suite pipes separately), and on a healthy launch it is 0 bytes. The decisive
+          # instrument is `describeStalledApp` in test/fixtures.ts, which asks the live main
+          # process whether it was ready and how many windows it had; this is what to read beside
+          # that answer. Those four failures left no artifact at all, which is why each had to be
+          # shrugged at rather than diagnosed.
+          SPM_ELECTRON_LOG_DIR: ${{ runner.temp }}/electron-logs
+      # `if: failure()`, not `always()`: a green run uploads nothing.
+      - name: electron logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: electron-logs
+          path: ${{ runner.temp }}/electron-logs
+          if-no-files-found: ignore
+      - name: desktop playwright output
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-test-results
+          path: packages/desktop/test-results
+          if-no-files-found: ignore
