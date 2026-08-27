@@ -773,11 +773,23 @@ function reloadOpenWindows(): void {
   }
 }
 
+/**
+ * Whether this window is showing the question rather than the answer.
+ *
+ * A window on the connect page is sent home instead of reloaded: it is the one route in the app
+ * that *asks* something, and reloading it after the question has been answered puts the user back
+ * in front of "where is your library?" with the library already open behind it.
+ */
 function isOnConnectPage(window: BrowserWindow): boolean {
   // `getURL()` is the empty string for a webContents that has not committed a document yet, which
   // `new URL` throws on rather than reporting as "not that page".
   const current = window.webContents.getURL()
   return current !== '' && URL.parse(current)?.pathname === CONNECT_PATH
+}
+
+/** The one place a `ShellRoute` becomes a path, so the two callers cannot spell it differently. */
+function pathFor(route: ShellRoute): string {
+  return route === 'connect' ? CONNECT_PATH : '/'
 }
 
 /**
@@ -794,10 +806,6 @@ function isOnConnectPage(window: BrowserWindow): boolean {
  * webContents: a reloaded window would rebuild the renderer with the *previous* transport, which
  * is precisely the stale-client failure this task exists to rule out.
  */
-function pathFor(route: ShellRoute): string {
-  return route === 'connect' ? CONNECT_PATH : '/'
-}
-
 function replaceWindows(mode: BridgeMode, route: ShellRoute): void {
   const path = pathFor(route)
   const previous = BrowserWindow.getAllWindows()
