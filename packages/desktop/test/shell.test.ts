@@ -252,7 +252,7 @@ test('two mode questions at once are one dialog', async () => {
  * What is remembered, and what is read back
  * ---------------------------------------------------------------------------------------- */
 
-test('a remembered server is reconnected at startup without asking', () => {
+test('a remembered server is reconnected at startup without asking, and asks for no window', () => {
   const stateFile = stateFileFor()
   rememberChoice(stateFile, 'remote', origin)
   const h = harness({ stateFile })
@@ -261,6 +261,11 @@ test('a remembered server is reconnected at startup without asking', () => {
   assert.equal(h.shell.mode(), 'remote')
   assert.equal(h.shell.remote()?.origin, origin)
   assert.equal(requests.length, 0, 'and the server is not contacted to start the app')
+  // There is no window to replace at startup: `main()` builds the first one from `transport()`
+  // straight after this. Measured with the callback firing here anyway — two windows at every
+  // remote-mode launch, and every Playwright assertion still green, because `firstWindow()`
+  // answered the first of them.
+  assert.equal(h.replacements, 0)
 })
 
 test('a state file from task 4 — a folder and no mode — still opens its folder', () => {

@@ -1,5 +1,5 @@
 import type { Capabilities } from '@spm/contract/dtos.ts'
-import { AppError } from '@spm/contract/errors.ts'
+import { AppError, type AppErrorCode } from '@spm/contract/errors.ts'
 import { isCapabilities, REMOTE_SHELL_CAPABILITIES, unionCapabilities } from './capabilities.ts'
 import { API_PATH_PREFIX, UPLOAD_LENGTH_HEADER } from './protocol.ts'
 import { RENDERER_ORIGIN } from './urls.ts'
@@ -245,7 +245,9 @@ export class RemoteHost {
    * `GET /api/capabilities` and whatever comes back is what the whole UI keys off. Doing the
    * union in the renderer would mean a desktop-only wrapper around a client the spec says to use
    * as it is; doing it here means the shell's column is added by the only process that knows what
-   * shell this is, and the same `unionCapabilities` answers the IPC route in local mode.
+   * shell this is. The IPC route reaches the same code through `capabilities()` below — in local
+   * mode there is no backend to union with at all, and `ShellHost.capabilities` answers the
+   * shell's column directly.
    *
    * A backend that answers something that is not a `Capabilities` is passed through untouched
    * rather than unioned with a guess: `CapabilitiesStore` already has a fallback for a
@@ -253,21 +255,24 @@ export class RemoteHost {
    * light up UI on the strength of a 200 from something that is not this server.
    */
   async #unioned(response: Response): Promise<Response> {
-    let backend: unknown
+    // Read once and rebuild, rather than `clone()`: a clone tees the stream and whichever branch
+    // is not read stays buffered until it is collected. A capability set is a couple of hundred
+    // bytes, so reading it whole costs nothing and leaves nothing dangling.
+    const text = await response.text()
+    let backend: unknown = null
     try {
-      backend = await response.clone().json()
+      backend = JSON.parse(text)
     } catch {
-      return response
+      // Not JSON at all. Handed on exactly as it arrived.
     }
+    const headers = new Headers(response.headers)
     if (!isCapabilities(backend)) {
       console.warn('desktop: the remote server answered /api/capabilities with something else')
-      return response
+      return new Response(text, { status: response.status, headers })
     }
     const merged: Capabilities = unionCapabilities(REMOTE_SHELL_CAPABILITIES, backend)
-    return new Response(JSON.stringify(merged), {
-      status: 200,
-      headers: { 'content-type': 'application/json' },
-    })
+    headers.set('content-type', 'application/json')
+    return new Response(JSON.stringify(merged), { status: 200, headers })
   }
 
   async #send(request: Request, url: URL): Promise<Response> {
@@ -276,7 +281,10 @@ export class RemoteHost {
       const value = request.headers.get(name)
       if (value !== null) headers.set(name, value)
     }
-    const declared = declaredUploadLength(request)
+    // Only where there is a body to measure. A `x-spm-content-length` on a GET would otherwise
+    // become a `content-length` describing a body that is not there, and undici would either
+    // refuse the request or wait for bytes that never come.
+    const declared = request.body ? declaredUploadLength(request) : null
     // Measured: Chromium strips `content-length` from a renderer `fetch` (it is a forbidden
     // header name) and does not put the body's own length on the `Request` the protocol handler
     // receives, so a proxied upload reaches the server as `Transfer-Encoding: chunked` — and the
@@ -351,7 +359,7 @@ export class RemoteHost {
   }
 
   /** The app's own error envelope, so a failure the shell invents keeps its identity too. */
-  #failure(status: number, code: string, message: string): Response {
+  #failure(status: number, code: AppErrorCode, message: string): Response {
     return new Response(JSON.stringify({ error: { code, message } }), {
       status,
       headers: { 'content-type': 'application/json' },

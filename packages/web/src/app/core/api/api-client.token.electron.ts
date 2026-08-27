@@ -19,9 +19,16 @@ import { IpcApiClient, UPLOAD_LENGTH_HEADER, type BridgeMode } from './ipc-api-c
  * reasoning, and the four measurements behind it, are in `packages/desktop/src/remote.ts`.
  *
  * The factory runs lazily, on the first `inject(API_CLIENT)`, so a missing preload surfaces as an
- * `AppError` from `desktopBridge()` at that point rather than at module evaluation — which in
- * this app means `CapabilitiesStore.load()` catching it and falling back to the offline defaults,
- * instead of a blank window.
+ * `AppError` from `desktopBridge()` at that point rather than at module evaluation.
+ *
+ * **Where that lands is a blank window, and the comment this replaces said the opposite.** It
+ * claimed `CapabilitiesStore.load()` would catch it and fall back to the offline defaults. It
+ * cannot: the store takes its client in a *field initializer* (`inject(API_CLIENT)`), so the
+ * throw happens while the store is being constructed — which `app.config.ts` does in its app
+ * initializer, outside `load()`'s `try` — and bootstrap fails. Pinned in
+ * `api-client.token.electron.spec.ts`, which asserts the `AppError` rather than a recovery that
+ * does not happen. Nothing here fixes it: a desktop build whose own preload did not load is
+ * broken, and the honest failure is better than a UI that pretends to be offline.
  */
 export const API_CLIENT = new InjectionToken<ApiClient>('API_CLIENT', {
   factory: () =>
@@ -56,8 +63,12 @@ export function desktopMode(): BridgeMode {
  * be: the client's own `content-length` is still in `init.headers` when this runs — nothing has
  * stripped it yet — and a `Blob` body knows its own size. A request with neither is left alone,
  * which is every request that is not an upload.
+ *
+ * Exported for `api-client.token.electron.spec.ts`: it is the renderer's half of a two-package
+ * mechanism whose other half (`declaredUploadLength`, in the desktop package) has its own test,
+ * and neither test alone would notice the two disagreeing.
  */
-function proxiedFetch(input: string, init: RequestInit = {}): Promise<Response> {
+export function proxiedFetch(input: string, init: RequestInit = {}): Promise<Response> {
   const declared = declaredLength(init)
   if (declared === null) return fetch(input, init)
   const headers = new Headers(init.headers)

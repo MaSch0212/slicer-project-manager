@@ -144,6 +144,11 @@ test('remote mode reaches a real server, and lists the projects that are on it',
   // the switch the shell put on the window, and the only thing about Electron the renderer knows.
   expect(await page.evaluate(() => globalThis.spm.mode)).toBe('remote')
 
+  // *One* window. Self-review found two here: connecting fired the shell's replace-the-window
+  // callback before any window existed, and `main()` then made a second — with every assertion
+  // in this file still green, because `firstWindow()` answered whichever came first.
+  expect(app.windows()).toHaveLength(1)
+
   // `requiresAuth: true` arrived from the server's own `capabilities()`, through the union, and
   // the guard the browser build already had put the app on /login. Nothing desktop-specific
   // decided this.
@@ -305,6 +310,46 @@ test('switching to a local folder leaves nothing of the server behind', async ()
   // user has left. A stale `RemoteHost` here would answer 200 with the server's projects.
   const status = await local.evaluate(async () => (await fetch('/api/capabilities')).status)
   expect(status).toBe(404)
+})
+
+/**
+ * An upload, in remote mode, end to end — the one piece of machinery this mode needed that the
+ * browser arm does not.
+ *
+ * `content-length` is a forbidden header name, so Chromium strips the one `HttpApiClient` sets and
+ * — measured on Electron 44.0.0 — does not put the body's own length on the `Request` the
+ * protocol handler receives either. The server refuses a body with no length with 411 before it
+ * writes a byte (spec 5.6), so without the length the renderer declares in a header of the
+ * shell's own, every upload in this mode fails. `remote.test.ts` asserts each half; this is the
+ * one place both halves and the real server are in the same sentence.
+ */
+test('an upload in remote mode reaches the server, length and all', async () => {
+  const app = await launchShell(newUserDataDir(), { remoteUrl: server.origin })
+  running.push(app)
+  const page = await app.firstWindow()
+  await page.waitForLoadState('domcontentloaded')
+  await signIn(page)
+  await expect(page.locator('.spm-projects .spm-project-title')).toHaveText(['Server Widget'], {
+    timeout: 20_000,
+  })
+
+  const source = join(mkdtempSync(join(tmpdir(), 'spm-remote-upload-')), 'uploaded.stl')
+  const contents = `solid uploaded${' '.repeat(2000)}\nendsolid uploaded\n`
+  writeFileSync(source, contents)
+
+  await page.locator('.spm-project-link').first().click()
+  await expect(page.locator('h1')).toHaveText('Server Widget')
+  await page.locator('input[type="file"]').setInputFiles(source)
+
+  await expect(page.locator('.spm-file', { hasText: 'uploaded.stl' })).toBeVisible({
+    timeout: 20_000,
+  })
+  // On the server's own disk, whole. A 411 would have left the row absent and an error message
+  // in its place; a truncated body would have left a file of the wrong size.
+  expect(readFileSync(join(libraryDir, 'admin', 'Server Widget', 'uploaded.stl'), 'utf8')).toBe(
+    contents,
+  )
+  await expect(page.locator('jig-message[color="error"]')).toHaveCount(0)
 })
 
 test('the mode question is what first run asks, before any folder dialog', async () => {

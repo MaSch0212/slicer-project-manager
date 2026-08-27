@@ -145,7 +145,12 @@ export class ShellHost {
       // starting, and the login screen the renderer lands on is a better place to find out than
       // a dialog in front of nothing. `remember: false` for an env override, exactly as the
       // library folder's override is not remembered.
-      this.#adoptRemote(plan.origin, { remember: plan.source !== 'env' })
+      //
+      // `replaceWindow: false` because there is no window yet — `main()` creates the first one
+      // from `transport()` immediately after this returns. Measured with it firing: two windows
+      // at every remote-mode launch, one from the callback and one from `main()`, and every
+      // assertion in `remote.spec.ts` still green because `firstWindow()` answered the first.
+      this.#adoptRemote(plan.origin, { remember: plan.source !== 'env', replaceWindow: false })
       return { opened: true }
     }
     const started = this.#library.openPlanned(plan)
@@ -220,7 +225,7 @@ export class ShellHost {
     return { origin }
   }
 
-  #adoptRemote(origin: string, options: { remember: boolean }): void {
+  #adoptRemote(origin: string, options: { remember: boolean; replaceWindow?: boolean }): void {
     if (isPlaintextToAnotherMachine(origin)) {
       console.warn(
         `desktop: ${origin} is plain http to another machine; the login, the session and every ` +
@@ -235,7 +240,9 @@ export class ShellHost {
     this.#library.closeCurrent()
     this.#remote = this.#makeRemote(origin)
     if (options.remember) this.#remember('remote', origin)
-    if (this.transport() !== previousTransport) this.#onTransportChanged()
+    if ((options.replaceWindow ?? true) && this.transport() !== previousTransport) {
+      this.#onTransportChanged()
+    }
   }
 
   #becomeLocal(): void {

@@ -369,13 +369,14 @@ export function createSpmHandler(
     //
     // The host is resolved per call and never captured (ruling C-12), for the reason task 4 had
     // to learn once: a captured one would go on answering out of a server the user has left,
-    // which is exactly the leak this task exists to avoid. With no remote — local mode, or
-    // nothing chosen yet — the branch is not taken at all and `/api/...` falls through to the
-    // renderer. It is refused there rather than falling through, and that is not tidiness: the
-    // SPA fallback answers anything without a known extension with **index.html and status 200**,
-    // so a `/api/projects` left to it would hand `HttpApiClient` an HTML body with a success
-    // status — the same failure ruling C-7's reserved prefix exists to prevent, in a second
-    // place. Nothing the Angular build emits lives under `/api`, so nothing legitimate is lost.
+    // which is exactly the leak this task exists to avoid.
+    //
+    // With no remote — local mode, or nothing chosen yet — this is a **404**, and not a fall
+    // through to `resolveRendererFile`. That is not tidiness: the SPA fallback answers anything
+    // without a known extension with index.html and status 200, so a `/api/projects` left to it
+    // would hand `HttpApiClient` an HTML body with a success status — the failure ruling C-7's
+    // reserved prefix exists to prevent, in a second place. Nothing the Angular build emits lives
+    // under `/api`, so nothing legitimate is lost.
     if (url.pathname.startsWith(`${API_PATH_PREFIX}/`)) {
       const remote = resolveRemote()
       if (!remote) return new Response('not found', { status: 404 })
@@ -669,16 +670,17 @@ export function resolveModePicker(env: NodeJS.ProcessEnv = process.env): ModePic
  * Built from roles wherever a role exists, so the accelerators, the platform-specific ordering
  * and the translations are Electron's rather than this file's guesses at them.
  */
-export function buildMenu(onChooseMode: () => void): Menu {
+export function buildMenu(onChooseMode: () => void, language: PickerLanguage = 'en'): Menu {
+  const strings = MENU_STRINGS[language]
   return Menu.buildFromTemplate([
     ...(process.platform === 'darwin' ? [{ role: 'appMenu' as const }] : []),
     {
-      label: 'Library',
+      label: strings.library,
       submenu: [
         // The id is how `remote.spec.ts` reaches it: a native menu has no automation surface, and
         // driving the item Electron itself would invoke is the difference between testing the
         // menu and testing a function the menu happens to call.
-        { id: 'spm-choose-library', label: 'Choose library…', click: onChooseMode },
+        { id: CHOOSE_LIBRARY_ITEM, label: strings.choose, click: onChooseMode },
         { type: 'separator' as const },
         { role: 'quit' as const },
       ],
@@ -687,6 +689,21 @@ export function buildMenu(onChooseMode: () => void): Menu {
     { role: 'viewMenu' },
     { role: 'windowMenu' },
   ])
+}
+
+/** The id of the one menu item this app writes itself, so a test can drive the real thing. */
+export const CHOOSE_LIBRARY_ITEM = 'spm-choose-library'
+
+/**
+ * The two labels this file owns, in the two languages the shell speaks.
+ *
+ * Only two, because every other item is a `role` and Electron supplies its label, its accelerator
+ * and its translation. Leaving these in English while the dialogs speak German would have been a
+ * visible inconsistency in the one window a German user has open.
+ */
+const MENU_STRINGS: Readonly<Record<PickerLanguage, { library: string; choose: string }>> = {
+  en: { library: 'Library', choose: 'Choose library…' },
+  de: { library: 'Bibliothek', choose: 'Bibliothek auswählen…' },
 }
 
 /**
@@ -726,9 +743,11 @@ function replaceWindows(mode: BridgeMode, path: string): void {
     for (const window of previous) if (!window.isDestroyed()) window.destroy()
   }
   replacement.once('ready-to-show', closePrevious)
-  // A window that never paints — a renderer that failed to load — would otherwise leave the old
-  // one up for ever, showing a library the shell no longer serves. `closed` covers the case where
-  // the user closes the replacement before it ever showed.
+  // For the replacement that is closed before it ever paints: without this the old window would
+  // be left behind showing a library the shell no longer serves, and `window-all-closed` would
+  // never fire, so quitting would need the old window closed by hand. A replacement that neither
+  // paints nor closes — a renderer wedged mid-load — still leaves the old one up, and that is
+  // deliberate: a window showing something stale beats no window at all.
   replacement.once('closed', closePrevious)
 }
 
@@ -749,14 +768,18 @@ export function main(): void {
     onChanged: reloadOpenWindows,
     language,
   })
-  const shell = new ShellHost({
+  // `shellHost` and not `shell`: `electron`'s own `shell` is imported at the top of this file and
+  // is what `applyNavigationPolicy` opens external links with. A local named `shell` compiles
+  // perfectly and would make the next `shell.openExternal` written inside `main()` a call on this
+  // object instead.
+  const shellHost = new ShellHost({
     stateFile,
     library,
     askMode: resolveModePicker(),
     language,
     // The transport changed, so the renderer has to be rebuilt rather than reloaded. Always back
     // at the root: the route the user was on belongs to the library they have just left.
-    onTransportChanged: () => replaceWindows(shell.transport(), '/'),
+    onTransportChanged: () => replaceWindows(shellHost.transport(), '/'),
     // The mode question's remote answer. A navigation and not a replacement, because the connect
     // page runs on the IPC transport the window already has.
     onNavigate: (route) => {
@@ -772,11 +795,11 @@ export function main(): void {
   // is null until a folder is opened and `library.pick` and `library.connect` both swap what the
   // shell is serving without a restart (ruling C-12).
   registerInvokeHandler(() => ({
-    session: shell.session(),
+    session: shellHost.session(),
     shell: {
-      pickLibraryFolder: () => shell.pickLocalFolder(),
-      connectRemote: (url) => shell.connectRemote(url),
-      capabilities: () => shell.capabilities(),
+      pickLibraryFolder: () => shellHost.pickLocalFolder(),
+      connectRemote: (url) => shellHost.connectRemote(url),
+      capabilities: () => shellHost.capabilities(),
     },
   }))
 
@@ -789,17 +812,17 @@ export function main(): void {
         'spm',
         createSpmHandler(
           defaultRendererDir(),
-          () => shell.session(),
-          () => shell.remote(),
+          () => shellHost.session(),
+          () => shellHost.remote(),
         ),
       )
 
-      Menu.setApplicationMenu(buildMenu(() => void shell.askForMode()))
+      Menu.setApplicationMenu(buildMenu(() => void shellHost.askForMode(), language()))
 
       // Opened *before* the window when there is something to open, so the renderer's first
       // `projects.list` finds a library rather than a `Conflict` it would have to recover from.
-      const started = shell.start()
-      const window = createMainWindow(shell.transport())
+      const started = shellHost.start()
+      const window = createMainWindow(shellHost.transport())
 
       if ('prompt' in started) {
         // First run, a remembered folder that is gone, or a state file that no longer says which
@@ -813,7 +836,7 @@ export function main(): void {
         window.webContents.once('did-finish-load', () => {
           const asked =
             started.prompt === null
-              ? shell.askForMode('startup')
+              ? shellHost.askForMode('startup')
               : library.prompt(started.prompt, 'startup')
           void asked.catch((error: unknown) => {
             // A folder that will not open is not a reason to take the app down: the menu is still
@@ -824,7 +847,7 @@ export function main(): void {
       }
 
       app.on('activate', () => {
-        if (BrowserWindow.getAllWindows().length === 0) createMainWindow(shell.transport())
+        if (BrowserWindow.getAllWindows().length === 0) createMainWindow(shellHost.transport())
       })
     } catch (error) {
       // The failures this still catches are the environment's: `SPM_LIBRARY_DIR` naming a folder
@@ -846,5 +869,5 @@ export function main(): void {
     if (process.platform !== 'darwin') app.quit()
   })
 
-  app.on('will-quit', () => shell.shutdown())
+  app.on('will-quit', () => shellHost.shutdown())
 }
