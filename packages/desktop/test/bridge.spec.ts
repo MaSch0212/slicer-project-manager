@@ -45,7 +45,7 @@ test.describe('the IPC bridge', () => {
     //
     // Both arms are now satisfied, and it is worth being exact about which does the work,
     // because the ruling this task carried in said it was the capability alone. Measured, by
-    // mutation: flip DESKTOP_CAPABILITIES.requiresAuth to true and the app still lands here,
+    // mutation: flip LOCAL_SHELL_CAPABILITIES.requiresAuth to true and the app still lands here,
     // because account.me() now answers; make account.me() throw instead and it still lands here,
     // because requiresAuth is false. Either arm is sufficient on its own. So the URL below is
     // evidence that *the bridge* works, not evidence about one flag — the flag is asserted

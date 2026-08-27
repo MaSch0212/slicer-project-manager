@@ -25,8 +25,8 @@ import {
   type BridgeMode as WebBridgeMode,
   type IpcResult as WebIpcResult,
 } from '../../web/src/app/core/api/ipc-api-client.ts'
+import { LOCAL_SHELL_CAPABILITIES } from '../src/capabilities.ts'
 import {
-  DESKTOP_CAPABILITIES,
   dispatch,
   isApiPath,
   type ApiPath,
@@ -86,7 +86,7 @@ const shell: ShellApi = {
     connected.push(url)
     return Promise.resolve({ origin: 'https://example.invalid' })
   },
-  capabilities: () => Promise.resolve(DESKTOP_CAPABILITIES),
+  capabilities: () => Promise.resolve(LOCAL_SHELL_CAPABILITIES),
 }
 
 /** Calls a route the way `ipc.ts` does, so a test cannot accidentally bypass the validation. */
@@ -368,7 +368,10 @@ test('capabilities answers without a library, and says auth is not required', as
     canConfigureSlicers: false,
     canBrowseModelSites: false,
   })
-  assert.deepEqual(await dispatch.capabilities({ session: null, shell }, []), DESKTOP_CAPABILITIES)
+  assert.deepEqual(
+    await dispatch.capabilities({ session: null, shell }, []),
+    LOCAL_SHELL_CAPABILITIES,
+  )
 })
 
 /**

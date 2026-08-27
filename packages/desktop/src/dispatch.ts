@@ -46,9 +46,9 @@ import {
   updateProject,
   updateUser,
   uploadFile,
-  type Ctx,
   type Library,
 } from '@spm/core'
+import type { DesktopSession } from './library.ts'
 import type { WireUploadBody } from './protocol.ts'
 import { ACTIVATION_URL_BASE, FILE_URL_BASE } from './urls.ts'
 
@@ -65,8 +65,15 @@ import { ACTIVATION_URL_BASE, FILE_URL_BASE } from './urls.ts'
  * way. Where an entry does something the server does not, the comment says why.
  */
 
-/** A library that is open, migrated, and has its single local user (spec 2.6). */
-export type DispatchSession = { lib: Library; ctx: Ctx }
+/**
+ * A library that is open, migrated, and has its single local user (spec 2.6).
+ *
+ * The same type `library.ts` opens one into, imported rather than re-declared. It was a separate
+ * `DispatchSession` with a verbatim copy of that docblock while the two files were written by
+ * different tasks — right during the branch, wrong as a resting state, because two names for one
+ * shape is two things a reader has to check are still the same.
+ */
+export type DispatchSession = DesktopSession
 
 /**
  * The part of the shell a dispatch entry may reach that is not a library.
@@ -105,16 +112,6 @@ export type ShellApi = {
  * way for the user to choose one, and no way for the renderer to find out that it may.
  */
 export type DispatchDeps = { session: DispatchSession | null; shell: ShellApi }
-
-/**
- * The shell's local column, re-exported.
- *
- * It moved to `capabilities.ts` in task 5, with a second column beside it for remote mode and the
- * union that combines a column with a backend's. It is re-exported here because this is where
- * tasks 2-4 put it and where their tests import it from — and because this table's `capabilities`
- * entry no longer names it at all: the answer now depends on what the shell is talking to.
- */
-export { LOCAL_SHELL_CAPABILITIES as DESKTOP_CAPABILITIES } from './capabilities.ts'
 
 const { decorateFile, decorateProject, decorateProjectDetail } = createDecorators(FILE_URL_BASE)
 

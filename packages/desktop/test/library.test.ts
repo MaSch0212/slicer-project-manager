@@ -15,22 +15,24 @@ import { after, afterEach, before, beforeEach, test } from 'node:test'
 import type { LocalLibraryDto } from '@spm/contract/dtos.ts'
 import type { Library } from '@spm/core'
 import {
+  confirmRemoteOptions,
   FOLDER_PICKER_PROPERTIES,
   LibraryHost,
-  STATE_FILE_NAME,
   explainReason,
   folderPickerOptions,
+  MODE_CHOICES,
+  modePickerOptions,
   pickerLanguage,
   planStartup,
-  readRememberedDir,
-  rememberDir,
   resolveLibraryDir,
   type FolderPickerOptions,
   type LibraryHostOptions,
+  type PickerLanguage,
   type PromptReason,
   type PromptTrigger,
 } from '../src/library.ts'
 import type { PreviewTicker } from '../src/previews.ts'
+import { readRememberedDir, rememberDir, STATE_FILE_NAME } from '../src/state.ts'
 
 /**
  * Choosing a folder, remembering it, and swapping it — under plain Node, with the native dialog
@@ -420,6 +422,56 @@ function startLocal(
   if (plan.mode === 'remote') return assert.fail('these cases are all local mode')
   return host.openPlanned(plan)
 }
+
+/**
+ * The four hand-written string tables in the main process agree on which languages exist.
+ *
+ * They cannot be derived from the renderer's locale files — every one of them is needed at a
+ * moment when there is no library, and so no settings, and so no language the app has been told
+ * to use, and importing the Angular build's JSON would pull the renderer into this bundle. What
+ * *can* be checked is that they do not drift apart from each other, which is the failure mode
+ * with no other alarm: a third language added to one table leaves the other three silently
+ * answering in English for the same user.
+ *
+ * Derived from `PickerLanguage` rather than from a list written here, so adding a language to the
+ * type is what makes this demand the four translations.
+ */
+test('every native dialog in the shell speaks the same set of languages', () => {
+  const languages: PickerLanguage[] = ['en', 'de']
+
+  for (const language of languages) {
+    // Each table, reached through the function that reads it, so a missing entry is a failure
+    // here rather than an `undefined` in front of a user.
+    const folder = folderPickerOptions(null, language)
+    assert.ok(folder.title.length > 0, `folder picker title in ${language}`)
+    assert.ok(folder.buttonLabel.length > 0, `folder picker button in ${language}`)
+    assert.ok(
+      explainReason({ kind: 'missing', dir: 'C:/x' }, language).includes('C:/x'),
+      `folder picker explanation in ${language}`,
+    )
+
+    const mode = modePickerOptions(language)
+    assert.equal(mode.buttons.length, MODE_CHOICES.length, `mode buttons in ${language}`)
+    assert.ok(
+      mode.buttons.every((button) => button.length > 0),
+      `mode buttons in ${language}`,
+    )
+
+    const confirm = confirmRemoteOptions('https://print.example.com', language)
+    assert.ok(confirm.message.includes('https://print.example.com'), `confirm in ${language}`)
+    assert.ok(confirm.detail.length > 0, `confirm detail in ${language}`)
+    assert.equal(confirm.buttons.length, 2, `confirm buttons in ${language}`)
+  }
+
+  // And the two languages really are different text, not the same table read twice — which is
+  // what a copy-pasted entry would look like to every assertion above.
+  assert.notEqual(modePickerOptions('en').message, modePickerOptions('de').message)
+  assert.notEqual(folderPickerOptions(null, 'en').title, folderPickerOptions(null, 'de').title)
+  assert.notEqual(
+    confirmRemoteOptions('https://x.example', 'en').detail,
+    confirmRemoteOptions('https://x.example', 'de').detail,
+  )
+})
 
 /* -------------------------------------------------------------------------------------------
  * Opening, remembering, switching

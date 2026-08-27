@@ -64,21 +64,6 @@ export function resolveLibraryDir(env: NodeJS.ProcessEnv = process.env): string 
 }
 
 /**
- * The state file, and the two helpers `LibraryHost` uses out of it, re-exported.
- *
- * Task 5 moved the state file to `state.ts`: it stopped being about the library folder when the
- * shell gained a mode and a remote server to remember beside it. They are re-exported here
- * because this is where tasks 4's tests and `app.ts` import them from.
- */
-export {
-  readRememberedDir,
-  REMEMBERED_DIR_KEY,
-  rememberDir,
-  STATE_FILE_NAME,
-  type ShellMode,
-} from './state.ts'
-
-/**
  * What `dialog.showOpenDialog` is asked for. A folder, and the user may create one on the spot —
  * the folder they want for a brand-new library usually does not exist yet.
  */
@@ -99,6 +84,18 @@ export type PromptReason =
  * The languages the picker speaks, which is the pair the renderer ships (`locales/en.json` and
  * `locales/de.json`). It is the OS locale and not the app's own language setting because that
  * setting lives in a library, and this is needed exactly when no library is open.
+ *
+ * **Four hand-written tables in this process speak them** — `PICKER_STRINGS`, `MODE_STRINGS`,
+ * `CONFIRM_STRINGS` and `MENU_STRINGS` — with nothing tying them to the renderer's locale files.
+ * That separation is deliberate and cannot be removed: every one of these is needed at a moment
+ * when there is no library, and so no settings, and so no language the app has been told to use.
+ * What it costs is a drift surface: a third language added to the renderer leaves the shell
+ * speaking two, silently.
+ *
+ * `library.test.ts` holds the part that can be checked mechanically — that the four tables agree
+ * with each other on which languages exist, so adding one to a single table fails rather than
+ * half-shipping. Agreement with the *renderer's* set is not checked, because the main process
+ * cannot import the Angular build's JSON without pulling the renderer into this bundle.
  */
 export type PickerLanguage = 'en' | 'de'
 

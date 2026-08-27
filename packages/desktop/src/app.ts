@@ -10,7 +10,6 @@ import {
   LibraryHost,
   modeChoiceAt,
   pickerLanguage,
-  STATE_FILE_NAME,
   type ConfirmOptions,
   type DesktopSession,
   type FolderPicker,
@@ -24,6 +23,7 @@ import {
 import { API_PATH_PREFIX, MODE_SWITCH, type BridgeMode } from './protocol.ts'
 import type { RemoteHost } from './remote.ts'
 import { ShellHost, type ShellRoute } from './shell.ts'
+import { STATE_FILE_NAME } from './state.ts'
 import { navigationPolicy, RENDERER_HOST, RENDERER_ORIGIN, RESERVED_PATH_SEGMENT } from './urls.ts'
 
 /**
@@ -83,19 +83,6 @@ export const APP_NAME = 'Slicer Project Manager'
  * here because that is where task 1 put them and where task 3 will look.
  */
 export { RENDERER_HOST, RENDERER_ORIGIN } from './urls.ts'
-
-/**
- * Choosing and opening the library folder lives in `library.ts`, which imports no `electron` and
- * so can be driven by a unit test. These are re-exported because this is where tasks 1-3 put them
- * and where the specs import them from.
- */
-export {
-  closeDesktopLibrary,
-  LIBRARY_DIR_ENV,
-  openDesktopLibrary,
-  resolveLibraryDir,
-  type DesktopSession,
-} from './library.ts'
 
 /**
  * `spm://` has to be declared privileged *before* `app.whenReady()`, which is why it is declared
@@ -334,7 +321,9 @@ export function contentTypeFor(file: string): string {
  *   | `model/stl`, `model/obj`, `model/3mf` | `stl`, `obj`, `3mf` | downloads | no |
  *   | `application/octet-stream`    | everything else   | downloads  | no         |
  *
- *   So six of the ten extensions really do commit as documents, and the payload's
+ *   So **seven** of the ten commit as documents — `txt`, `gcode`, `json`, `png`, `jpg`, `jpeg`
+ *   and `pdf`, which is the table above read off row by row; it said six until the final review
+ *   counted. The payload's
  *   `<script>window.__p=1</script>` executed in **none** of them — a plain-text, JSON, image or
  *   PDF document cannot run script or hold a `<video>` element. The types that could are the
  *   ones that download, and `nosniff` on that branch is what stops Chromium reconsidering. See
@@ -940,6 +929,11 @@ export function main(): void {
       // process with no window at all, and `window-all-closed` never fires for a window that was
       // never created, so it hangs until something kills it.
       console.error('desktop: startup failed', error)
+      // `app.exit` does **not** fire `will-quit`, so the handler below never runs and the shell's
+      // own shutdown is skipped: a library opened moments earlier would be left with its preview
+      // ticker running and its SQLite handle open until the process died anyway. Called here so
+      // the one path that leaves without quitting normally still lets go of what it took.
+      shellHost.shutdown()
       app.exit(1)
     }
   })
