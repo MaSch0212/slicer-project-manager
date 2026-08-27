@@ -487,25 +487,39 @@ export async function showFolderPicker(options: FolderPickerOptions): Promise<st
   return result.canceled || chosen === undefined ? null : chosen
 }
 
-/** Answers the shell's *first* folder prompt without a dialog. See `resolveFolderPicker`. */
+/** Answers the shell's *startup* folder prompt without a dialog. See `resolveFolderPicker`. */
 export const FAKE_PICKER_ENV = 'SPM_FAKE_PICKER'
 
 /**
- * The picker, or the answer an automated run wants in place of the first one.
+ * The picker, or the answer an automated run wants for the prompt the shell raises by itself.
  *
- * `SPM_FAKE_PICKER=<dir>` answers the first prompt with that folder and `SPM_FAKE_PICKER=` (empty)
- * cancels it; every later prompt opens the real dialog. It exists for one reason: the first-run
- * prompt fires on `did-finish-load`, so a Playwright suite that replaces `dialog.showOpenDialog`
- * after launch is racing the app's own startup. Measured, that race is currently won by about
- * 75 ms — comfortable, and *nothing pins it*, so a change that trims renderer startup would narrow
- * it silently and the price of losing is a real native dialog on a CI runner. This removes the
- * race instead of resting on the margin, in the same shape as the `SPM_LIBRARY_DIR` override the
- * suite already uses. Picks after the first still go through the dialog, which is where the suite
- * can stub deterministically because it is the one doing the clicking.
+ * `SPM_FAKE_PICKER=<dir>` answers the **startup** prompt with that folder and `SPM_FAKE_PICKER=`
+ * (empty) cancels it. It exists for one reason: that prompt fires on `did-finish-load`, so a
+ * Playwright suite replacing `dialog.showOpenDialog` after launch is racing the app's own startup.
+ * Measured, the race is currently won by about 75 ms — comfortable, and *nothing pins it*, so a
+ * change that trimmed renderer startup would narrow it silently and the price of losing is a real
+ * native dialog on a CI runner. This removes the race rather than resting on the margin, in the
+ * same shape as the `SPM_LIBRARY_DIR` override the suite already uses.
  *
- * It is no more of a foothold than `SPM_LIBRARY_DIR`: both let whoever can set the environment of
- * this process name a folder, and neither reaches past what the user could have chosen. The
- * warning is so that a user who somehow has it set can see why they were never asked.
+ * **The startup prompt only, and that is the whole point of `PromptTrigger`.** A picker that
+ * answered "the first prompt" was armed for the life of the process in any launch that never
+ * raised a startup prompt at all — a suite that set `SPM_LIBRARY_DIR` and then clicked the header
+ * control would have had that click silently cancelled instead of reaching its own dialog stub.
+ * Silently cancelled is the worst thing to hand the next author to debug, so a user-triggered pick
+ * always goes to the real dialog, where the suite stubs it deterministically.
+ *
+ * **Where it differs from `SPM_LIBRARY_DIR`, since the comment used to claim parity.** Neither
+ * escalates anything: setting either needs control of this process's environment, which already
+ * means running code as the user, and neither can name a folder the user could not have picked.
+ * But `SPM_LIBRARY_DIR` is an override for one launch and is deliberately *not* remembered
+ * (`LibraryHost.start` passes `remember: false`), while a folder answered here goes through
+ * `open()` as a pick and **is** written into `state.json` — so it is inherited by later launches
+ * that do not set it. That is deliberate rather than an oversight: this variable stands in for the
+ * user's answer to a dialog, and an answer to that dialog is a choice, which is exactly what makes
+ * `first run asks for a folder … and reopens it next launch` an end-to-end proof of the
+ * remembering rather than a test of a hand-written state file. The warning below is the
+ * announcement; on a packaged app nobody reads stderr, so the honest summary is that this
+ * redirects the first launch of anyone who has it set, visibly in `state.json` afterwards.
  *
  * The options are recorded on `globalThis` because that is the only main-process value an
  * `electronApp.evaluate` can reach; `test/fixtures.ts` reads the same key for its dialog stub.
@@ -513,11 +527,12 @@ export const FAKE_PICKER_ENV = 'SPM_FAKE_PICKER'
 export function resolveFolderPicker(env: NodeJS.ProcessEnv = process.env): FolderPicker {
   const answer = env[FAKE_PICKER_ENV]
   if (answer === undefined) return showFolderPicker
-  console.warn(`desktop: ${FAKE_PICKER_ENV} is set; the first folder prompt will not be shown`)
-  let used = false
-  return (options) => {
-    if (used) return showFolderPicker(options)
-    used = true
+  console.warn(
+    `desktop: ${FAKE_PICKER_ENV} is set; the startup folder prompt will be answered without a ` +
+      'dialog, and the folder it names will be remembered',
+  )
+  return (options, trigger) => {
+    if (trigger !== 'startup') return showFolderPicker(options)
     const recorder = globalThis as { __spmPickerCalls?: unknown[] }
     recorder.__spmPickerCalls = [...(recorder.__spmPickerCalls ?? []), options]
     return Promise.resolve(answer === '' ? null : resolve(answer))
@@ -586,7 +601,7 @@ export function main(): void {
         // finish loading: a native dialog in front of a grey rectangle looks like a crash, and
         // the app behind it is what tells the user what they are choosing a folder for.
         window.webContents.once('did-finish-load', () => {
-          void host.prompt(started.prompt).catch((error: unknown) => {
+          void host.prompt(started.prompt, 'startup').catch((error: unknown) => {
             // A folder that will not open is not a reason to take the app down: the header
             // control is still there, and `capabilities` still answers. Say so and stop.
             console.error('desktop: could not open the chosen folder', error)

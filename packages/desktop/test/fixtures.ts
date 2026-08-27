@@ -27,11 +27,13 @@ export function newUserDataDir(): string {
 /**
  * Replaces the native folder picker in the main process, for the picks a *test* triggers.
  *
- * The **first** prompt of a launch is not this one's job: it fires on `did-finish-load`, before
+ * The **startup** prompt of a launch is not this one's job: it fires on `did-finish-load`, before
  * any `evaluate` can be sure of landing, so it is answered by `SPM_FAKE_PICKER` in the launch
  * environment instead (see `launchWithUserData` and `resolveFolderPicker` in `src/app.ts`). This
- * covers every prompt after that, where the test is the one doing the clicking and the ordering is
- * therefore its own.
+ * covers every *user-triggered* pick, where the test is the one doing the clicking and the
+ * ordering is therefore its own. The two cannot get in each other's way: the environment answers
+ * `trigger === 'startup'` and nothing else, so a launch that never prompts at startup leaves no
+ * armed one-shot waiting to swallow the first click a later spec makes.
  *
  * `answer` is the folder to return, or null to cancel. The options the shell passed are recorded
  * on the main process's `globalThis` — the same key the fake picker uses — so a test can assert on
@@ -129,9 +131,11 @@ export async function launchApp(
   const userDataDir = newUserDataDir()
   const app = await electron.launch({
     args: [MAIN_BUNDLE, `--user-data-dir=${userDataDir}`, ...LOCALE_ARGS, ...chromiumArgs],
-    // The environment names the folder, so nothing here should reach the picker at all. The empty
-    // `SPM_FAKE_PICKER` says what happens if that is ever wrong: the prompt is cancelled, rather
-    // than a real dialog opening on the runner.
+    // The environment names the folder, so there should be no startup prompt here at all. The
+    // empty `SPM_FAKE_PICKER` says what happens if that is ever wrong: the startup prompt is
+    // cancelled rather than a real dialog opening on the runner — and, because it answers only
+    // that prompt, a spec built on this fixture can still click the header control and have
+    // `stubFolderPicker` answer it.
     env: { ...process.env, SPM_LIBRARY_DIR: libraryDir, SPM_FAKE_PICKER: '' },
   })
   await stubFolderPicker(app, null)
@@ -156,9 +160,11 @@ export async function launchWithUserData(
 ): Promise<ElectronApplication> {
   const app = await electron.launch({
     args: [MAIN_BUNDLE, `--user-data-dir=${userDataDir}`, ...LOCALE_ARGS],
-    // `SPM_FAKE_PICKER` answers the first prompt — the one that fires on `did-finish-load` and
+    // `SPM_FAKE_PICKER` answers the startup prompt — the one that fires on `did-finish-load` and
     // cannot be stubbed without racing it — with this folder, or cancels it when the answer is
-    // null. Later prompts open the real dialog, which is where `stubFolderPicker` takes over.
+    // null. A folder answered that way is remembered, exactly as a folder chosen in the dialog is,
+    // which is what makes the relaunch assertion in `library.spec.ts` a real one. Picks the test
+    // triggers open the real dialog, which is where `stubFolderPicker` takes over.
     env: { ...envWithoutLibraryDir(), SPM_FAKE_PICKER: answer ?? '' },
   })
   await stubFolderPicker(app, answer)

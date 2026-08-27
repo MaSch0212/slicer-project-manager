@@ -1,4 +1,14 @@
-import { mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs'
+import {
+  closeSync,
+  fsyncSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import type { LocalLibraryDto } from '@spm/contract/dtos.ts'
 import {
@@ -107,14 +117,39 @@ export function rememberDir(stateFile: string, dir: string): void {
   const state = readState(stateFile)
   state[REMEMBERED_DIR_KEY] = dir
   mkdirSync(dirname(stateFile), { recursive: true })
-  // Temp-then-rename rather than a straight write. A torn file costs one forgotten folder today,
-  // which `readState` already degrades to first run — but task 5 is putting the shell's mode and a
-  // remote server URL into this same object, and then half a JSON file loses the whole
-  // configuration rather than one path. `renameSync` replaces an existing file on Windows as well
-  // as on POSIX, which is what lets this be a rename and not a delete-then-write.
+  // Write to a temp file, flush it, then rename over the real one. A torn file costs one
+  // forgotten folder today, which `readState` already degrades to first run — but task 5 is
+  // putting the shell's mode and a remote server URL into this same object, and then half a file
+  // loses the whole configuration rather than one path. `renameSync` replaces an existing file on
+  // Windows as well as on POSIX, which is what lets this be a rename and not a delete-then-write.
+  //
+  // **The `fsync` is the half that makes it survive a crash and not only a concurrent reader.**
+  // Without it the rename can reach the directory before the data reaches the disk — ext4's
+  // `data=ordered` and NTFS both allow it — and what a reader finds afterwards is a zero-length
+  // `state.json`, which is the exact outcome the paragraph above says this prevents.
+  //
+  // What is still not forced is the *directory* entry: an fsync on the containing directory (not
+  // possible on Windows) is what would make the rename itself durable. Left, and stated: the
+  // failure it guards is a power cut in the millisecond after the rename, and its cost is one
+  // forgotten folder, not a corrupt one.
   const temp = `${stateFile}.${process.pid}.tmp`
-  writeFileSync(temp, `${JSON.stringify(state, null, 2)}\n`)
-  renameSync(temp, stateFile)
+  try {
+    const handle = openSync(temp, 'w')
+    try {
+      writeFileSync(handle, `${JSON.stringify(state, null, 2)}\n`)
+      fsyncSync(handle)
+    } finally {
+      closeSync(handle)
+    }
+    renameSync(temp, stateFile)
+  } catch (error) {
+    // A temp file that never became the state file is litter in the user's `userData`. This
+    // removes the one this call made; a hard kill *between* the flush and the rename still leaves
+    // one behind, and nothing sweeps those — a sweep would race a second instance of the app
+    // mid-write, and the litter is one short file per crash.
+    rmSync(temp, { force: true })
+    throw error
+  }
 }
 
 /**
@@ -213,12 +248,28 @@ export function folderPickerOptions(
 }
 
 /**
+ * Which prompt a picker is being asked to answer.
+ *
+ * `startup` is the one the shell raises by itself, on first run or when the remembered folder has
+ * gone; `user` is the header control. They are told apart because the Playwright suite answers the
+ * first without a dialog (`SPM_FAKE_PICKER`, see `app.ts`) — that prompt fires on
+ * `did-finish-load` and cannot be stubbed without racing it — while a pick the *test* triggers is
+ * stubbed at the dialog, deterministically, because the test is the one doing the clicking. A
+ * fake that answered "the first prompt" instead of "the startup prompt" would silently swallow a
+ * later click in any spec that never raised a startup prompt at all.
+ */
+export type PromptTrigger = 'startup' | 'user'
+
+/**
  * Shows the picker and answers the chosen folder, or null when the user cancelled.
  *
  * A function and not `dialog` itself, so everything above and below this line is testable
  * without Electron running.
  */
-export type FolderPicker = (options: FolderPickerOptions) => Promise<string | null>
+export type FolderPicker = (
+  options: FolderPickerOptions,
+  trigger: PromptTrigger,
+) => Promise<string | null>
 
 /** The reason for a folder that will not open, carrying the failure as its detail. */
 export function unopenableReason(dir: string, error: unknown): PromptReason {
@@ -411,24 +462,30 @@ export class LibraryHost {
    * Asks for a folder and opens it. Null when the user cancelled, which is not an error: the
    * library that was open (if any) stays open.
    */
-  prompt(reason: PromptReason | null): Promise<LocalLibraryDto | null> {
+  prompt(
+    reason: PromptReason | null,
+    trigger: PromptTrigger = 'user',
+  ): Promise<LocalLibraryDto | null> {
     // One dialog at a time. Two quick clicks on the header control — or a click while the
     // first-run dialog is still up, which the control has no way to know about — would otherwise
     // open two native pickers and run two `open()` calls, the second of which closes the library
     // the first just opened. The second caller waits for the first answer, which is what they
     // asked for anyway.
     if (this.#asking) return this.#asking
-    const asking = this.#promptOnce(reason).finally(() => {
+    const asking = this.#promptOnce(reason, trigger).finally(() => {
       if (this.#asking === asking) this.#asking = null
     })
     this.#asking = asking
     return asking
   }
 
-  async #promptOnce(reason: PromptReason | null): Promise<LocalLibraryDto | null> {
+  async #promptOnce(
+    reason: PromptReason | null,
+    trigger: PromptTrigger,
+  ): Promise<LocalLibraryDto | null> {
     // English, like every other log line here; the user-facing copy is in the dialog.
     if (reason) console.warn(`desktop: ${explainReason(reason)}`)
-    const dir = await this.#pick(folderPickerOptions(reason, this.#language()))
+    const dir = await this.#pick(folderPickerOptions(reason, this.#language()), trigger)
     return dir === null ? null : this.open(dir)
   }
 
@@ -514,13 +571,17 @@ export class LibraryHost {
    * enough that `library.pick()` waiting for it would read as the app hanging on the folder the
    * user just chose. Nothing in this task timed one job.
    *
-   * So the new library is live before this runs and the old one closes afterwards. **The window
-   * that leaves open, stated with the right bound:** a preview run claims up to
-   * `PREVIEW_BATCH_LIMIT` jobs and runs them one at a time, and the rescan `#adopt` started has to
-   * finish too, so the old folder can keep its SQLite handle for a whole batch — not for one job,
-   * which is what this comment said until a review caught it. On Windows that handle is enough to
-   * refuse a rename or a delete of the folder: measured, `EPERM` while open, success once closed.
-   * `whenSettled()` is when it is over.
+   * So the new library is live before this runs and the old one closes afterwards, and until it
+   * does, that folder still has an open SQLite handle — on Windows, enough to refuse a rename or a
+   * delete of it (measured: `EPERM` while open, success once closed).
+   *
+   * **How long that lasts is not a number, and two rounds of review were spent correcting one.**
+   * It said "one preview job", then "a whole batch"; both were short, because the close is chained
+   * onto `#releases` and so waits for every release queued ahead of it as well as for this
+   * folder's own batch and rescan. The bound is the chain, not a duration: `whenSettled()` is
+   * exactly when it is over, `a folder's handle is held until every earlier release has finished`
+   * in `library.test.ts` is what pins it, and the three lines below are what decide it. A reader
+   * who needs a figure should read those, not a sentence that has been wrong twice.
    *
    * `stop()` is called **now** rather than inside the chain. It clears the interval synchronously
    * — only its promise is deferred — so a second switch cannot leave the middle folder's ticker

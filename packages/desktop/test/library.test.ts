@@ -27,6 +27,7 @@ import {
   type FolderPickerOptions,
   type LibraryHostOptions,
   type PromptReason,
+  type PromptTrigger,
 } from '../src/library.ts'
 import type { PreviewTicker } from '../src/previews.ts'
 
@@ -72,7 +73,7 @@ function folderWithProject(name: string, project: string): string {
   return dir
 }
 
-type Recorded = { options: FolderPickerOptions }
+type Recorded = { options: FolderPickerOptions; trigger: PromptTrigger }
 
 type Harness = {
   host: LibraryHost
@@ -143,8 +144,8 @@ function harness(pick?: (options: FolderPickerOptions) => Promise<string | null>
   const state = { changes: 0 }
   const options: LibraryHostOptions = {
     stateFile: stateFileFor(),
-    pick: async (opts) => {
-      picks.push({ options: opts })
+    pick: async (opts, trigger) => {
+      picks.push({ options: opts, trigger })
       return await (pick ? pick(opts) : Promise.resolve(null))
     },
     onChanged: () => {
@@ -262,6 +263,22 @@ test('a state file that cannot be read at all is reported, not silently ignored'
     console.warn = original
   }
   assert.deepEqual(quiet, [])
+})
+
+test('a write that cannot complete leaves no temp file behind', () => {
+  const stateFile = stateFileFor()
+  rememberDir(stateFile, 'C:/libraries/one')
+  // A directory where the state file should be: the write succeeds, the rename cannot.
+  rmSync(stateFile, { force: true })
+  mkdirSync(stateFile, { recursive: true })
+
+  assert.throws(() => rememberDir(stateFile, 'C:/libraries/two'))
+
+  assert.deepEqual(
+    readdirSync(join(stateFile, '..')),
+    [STATE_FILE_NAME],
+    'the temp file must not be left in the user data directory',
+  )
 })
 
 test('an unreadable state file is treated as nothing remembered, not as a crash', () => {
@@ -429,6 +446,28 @@ test('a remembered folder that is gone lands in the picker with the explanation'
   assert.match(h.picks[0]!.options.title, /no longer there/)
   assert.equal(h.host.dir(), resolve(replacement))
   assert.equal(readRememberedDir(h.stateFile), resolve(replacement))
+  h.host.shutdown()
+})
+
+/**
+ * The picker is told which prompt it is answering, because the Playwright suite answers the
+ * startup one out of the environment and stubs the user one at the dialog. A fake keyed on "the
+ * first prompt" instead stayed armed for the whole process in any launch that never raised a
+ * startup prompt, and would have swallowed a later click silently.
+ */
+test('the picker is told whether the shell or the user asked', async () => {
+  const dir = folderWithProject('trigger', 'Widget')
+  const h = harness(() => Promise.resolve(dir))
+  hosts.push(h.host)
+
+  const started = h.host.start({})
+  await h.host.prompt('prompt' in started ? started.prompt : null, 'startup')
+  await h.host.prompt(null)
+
+  assert.deepEqual(
+    h.picks.map((recorded) => recorded.trigger),
+    ['startup', 'user'],
+  )
   h.host.shutdown()
 })
 
@@ -658,6 +697,48 @@ test('a second switch stops the middle library at once, not after the first rele
   h.tickers[0]!.finish()
   await h.host.whenSettled()
   assert.equal(h.tickers[0]!.stopped, true)
+  h.host.shutdown()
+})
+
+/**
+ * How long a folder the user left keeps its database handle. The comment that tried to put a
+ * number on this has been wrong twice — "one preview job", then "a whole batch" — because the
+ * close is chained: a folder released while an earlier release is still waiting cannot close until
+ * that one has. This is that fact, asserted, so the next person reads a test instead of prose.
+ */
+test("a folder's handle is held until every earlier release has finished", async () => {
+  const a = folderWithProject('held-a', 'Widget')
+  const b = folderWithProject('held-b', 'Gadget')
+  const c = folderWithProject('held-c', 'Doodad')
+  let answer = a
+  const h = harness(() => Promise.resolve(answer))
+  hosts.push(h.host)
+
+  await h.host.prompt(null)
+  const first = h.host.session()!
+  h.tickers[0]!.block()
+
+  answer = b
+  await h.host.prompt(null)
+  const second = h.host.session()!
+  answer = c
+  await h.host.prompt(null)
+
+  // Long enough for an *unchained* release to have closed B — without this the assertion below
+  // passes whether the close is queued or not, because neither has had a turn yet. Measured with
+  // the chaining removed: B closes inside this window and the next line goes red.
+  await new Promise((settle) => setTimeout(settle, 50))
+
+  // B's ticker is stopped — that is the fix — but B's *database* is still open, because its close
+  // is queued behind A's release, which is blocked.
+  assert.equal(h.tickers[1]!.stopped, true)
+  assert.doesNotThrow(() => second.lib.db.prepare('SELECT 1').get(), 'B is held behind A')
+  assert.doesNotThrow(() => first.lib.db.prepare('SELECT 1').get(), 'and A is still open too')
+
+  h.tickers[0]!.finish()
+  await h.host.whenSettled()
+  assert.throws(() => first.lib.db.prepare('SELECT 1').get())
+  assert.throws(() => second.lib.db.prepare('SELECT 1').get(), 'and B closes once A has')
   h.host.shutdown()
 })
 
