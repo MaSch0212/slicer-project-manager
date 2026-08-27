@@ -177,6 +177,13 @@ let launchCount = 0
  * A file per launch, because `--log-file` does not template and every launch in the suite would
  * otherwise leave one. Off unless the environment names a directory, so a local run writes
  * nothing.
+ *
+ * **The worker's pid is in the name because leaving it out destroyed the evidence once.** Run
+ * 33122549571's artifact held thirty `electron-N.log` files and not one of them was from a failed
+ * launch: Playwright discards a worker after a test fails, the counter below starts again at 1 in
+ * the replacement, and each of the three workers in that run overwrote `electron-1.log` in turn —
+ * so the only file that survived was the *passing* third attempt. The counter alone is unique
+ * within a worker and nothing else.
  */
 function loggingArgs(): string[] {
   const dir = process.env[LOG_DIR_ENV]
@@ -185,7 +192,7 @@ function loggingArgs(): string[] {
   mkdirSync(dir, { recursive: true })
   return [
     '--enable-logging=file',
-    `--log-file=${join(dir, `electron-${launchCount}.log`)}`,
+    `--log-file=${join(dir, `electron-${process.pid}-${launchCount}.log`)}`,
     '--log-level=0',
   ]
 }
@@ -327,40 +334,134 @@ function pipeProcessOutput(app: ElectronApplication, label: string): void {
 }
 
 /**
- * The app's first window, with more patience than Playwright's 30-second default, and with the
- * main process's own state attached when it does not arrive.
+ * The app's first window: Playwright's own wait, a nudge for the one thing patience cannot fix,
+ * and the main process's own state attached when neither works.
  *
- * **Ruling C-21 is answered, and the answer is that this is a harness limitation.** Six CI
- * failures across this branch, every one passing on a re-run of the same commit, all reporting
- * `firstWindow: Timeout … waiting for event "window"`. The diagnostic below finally produced
- * evidence, twice, and both readings were identical:
+ * **Ruling C-21, and this time with the mechanism rather than a shrug.** Six CI failures across
+ * this branch, every one passing on a re-run of the same commit, all reporting
+ * `firstWindow: Timeout … waiting for event "window"`. The diagnostic below produced the same
+ * reading four times:
  *
  * ```
  * main process at the moment of the timeout:
- *   {"isReady":true,"windowCount":1,"urls":["spm://app/projects"],"uptimeMs":90198, …}
+ *   {"isReady":true,"windowCount":1,"urls":["spm://app/projects"],"uptimeMs":90526, …}
  * ```
  *
  * The window **existed**, had loaded, and had routed itself to `/projects` for the whole ninety
- * seconds. So it is not the environment (`isReady: true`) and it is not this app (a window, at
- * the right URL): Playwright never saw it.
+ * seconds. Not the environment (`isReady: true`), not this app (a window, at the right URL):
+ * Playwright never reported it.
  *
- * **The obvious fallback was tried and measured, and it does not work.** Polling `app.windows()`
- * beside the event looked like the fix — the list is what Playwright itself maintains, so a
- * window in it is a window whether or not the event arrived. On the very next CI run the timeout
- * came back with the *same* `windowCount: 1` from the main process and an empty `app.windows()`,
- * which settles where the gap is: the event and the list come from the same attachment, and when
- * that is missed neither has anything. The poll was removed again rather than left in as
- * something that reads like a mitigation and is not one.
+ * **Why, read out of `playwright-core` and then reproduced.** Playwright reports an Electron
+ * window only once `CRPage`'s `FrameSession._initialize` resolves, and the last thing that
+ * function awaits is `_firstNonInitialNavigationCommittedPromise` — the main frame committing a
+ * navigation that is not the initial empty document. A window whose commit Playwright does not
+ * observe is therefore a window Playwright never announces, for ever; `app.windows()` and the
+ * `window` event are two views of that same unreported page, which is why the window-list
+ * fallback measured useless last round.
  *
- * What is left, deliberately: the patience, the diagnostic, and the CI-only retry in
- * `playwright.config.ts` — which is the honest mitigation for a tooling race this suite cannot
- * close from the inside, and which now has a measured cause rather than a shrug behind it.
+ * That shape is reproducible on demand, and was: an Electron app that opens a `BrowserWindow` and
+ * never calls `loadURL` puts Playwright in exactly the observed state —
+ * `BrowserWindow.getAllWindows().length === 1` in the main process against `app.windows() === 0`,
+ * `app.context().pages() === 0`, and a `firstWindow` that never resolves. Measured, on this
+ * Playwright (1.62.1) and this Electron (44.0.0), rather than inferred: the third accessor was
+ * checked because the docblock could otherwise only have asserted it shared the attachment.
+ *
+ * **So the nudge.** Make the window commit a navigation Playwright cannot miss: ask the *main
+ * process* — over the Node inspector connection, which is a different socket from the browser one
+ * and demonstrably still answering — to reload the window it says it has. In the reproduction
+ * above the page arrived **21 ms** later, and `app.context().pages()` went 0 → 1.
+ *
+ * What this does **not** claim. It cannot conjure a window: `nudgeMissedAttachment` reloads only a
+ * window the main process reports and only one that has already loaded a URL, so a launch that
+ * never opened one still fails, with `windowCount: 0` printed against it. It does not weaken a
+ * single assertion — the page returned is a real Playwright page onto a real window that really
+ * loaded the app — and it cannot pass silently: every nudge is warned about on stdout, so a run
+ * that needed one says so. Upstream this is still open (microsoft/playwright#21117, where the
+ * same hang is worked around by opening the devtools); the CI-only retry stays behind this as the
+ * last resort.
  */
 export async function firstWindowOf(app: ElectronApplication): Promise<Page> {
+  const window = app.firstWindow({ timeout: FIRST_WINDOW_TIMEOUT_MS })
+  const nudges = nudgeMissedAttachment(app, window)
   try {
-    return await app.firstWindow({ timeout: FIRST_WINDOW_TIMEOUT_MS })
+    const page = await window
+    const notes = await nudges
+    // Loud on purpose. A recovery nobody can see is indistinguishable from a bug that stopped
+    // happening, and this line is the only evidence that C-21 fired at all on a green run.
+    if (notes.length > 0)
+      console.warn(`desktop: C-21 — first window arrived after ${notes.join('; ')}`)
+    return page
   } catch (error) {
-    throw new Error(`${(error as Error).message}\n${await describeStalledApp(app)}`)
+    const notes = await nudges
+    throw new Error([(error as Error).message, await describeStalledApp(app), ...notes].join('\n'))
+  }
+}
+
+/**
+ * Every `NUDGE_INTERVAL_MS` that passes without Playwright announcing a window, ask the main
+ * process what it has and reload it — see `firstWindowOf` for why that is what unsticks it.
+ *
+ * A loop rather than one shot, because the two failure shapes need different moments: a window
+ * that exists at launch is nudged at the first interval, and a window that only appears at, say,
+ * forty seconds on a loaded runner would be missed entirely by a single check at fifteen. It
+ * stops as soon as `window` settles either way, so a healthy launch pays for one `Promise.race`
+ * and never touches the main process at all.
+ *
+ * It returns notes rather than throwing: this runs beside the wait it is trying to rescue, and a
+ * helper that fails on its own account would replace the diagnosis with its own stack.
+ */
+async function nudgeMissedAttachment(
+  app: ElectronApplication,
+  window: Promise<Page>,
+): Promise<string[]> {
+  const notes: string[] = []
+  const startedAt = Date.now()
+  const deadline = startedAt + FIRST_WINDOW_TIMEOUT_MS - NUDGE_INTERVAL_MS
+  while (Date.now() < deadline) {
+    if (await settledWithin(window, NUDGE_INTERVAL_MS)) return notes
+    notes.push(await nudgeOnce(app, Date.now() - startedAt))
+  }
+  return notes
+}
+
+/** True if `window` settled — resolved or rejected — inside `ms`, false if the time ran out. */
+async function settledWithin(window: Promise<unknown>, ms: number): Promise<boolean> {
+  let timer: NodeJS.Timeout | undefined
+  const expiry = new Promise<false>((settle) => {
+    timer = setTimeout(() => settle(false), ms)
+  })
+  try {
+    return await Promise.race([
+      window.then(
+        () => true,
+        () => true,
+      ),
+      expiry,
+    ])
+  } finally {
+    // Without this a healthy launch would hold the event loop open for the rest of the interval.
+    clearTimeout(timer)
+  }
+}
+
+/** One nudge, and a sentence saying what it found — which is the whole of what it guarantees. */
+async function nudgeOnce(app: ElectronApplication, elapsedMs: number): Promise<string> {
+  const at = `${Math.round(elapsedMs / 1000)}s`
+  try {
+    const loaded = await app.evaluate(({ BrowserWindow }) => {
+      const [window] = BrowserWindow.getAllWindows()
+      if (!window) return null
+      const url = window.webContents.getURL()
+      // A window that has loaded nothing has no navigation to repeat, and `reload()` on it is a
+      // no-op — so say so instead of pretending to have done something.
+      if (url) window.webContents.reload()
+      return url
+    })
+    if (loaded === null) return `no window in the main process at ${at} either, so nothing to nudge`
+    if (loaded === '') return `a window at ${at} that had loaded nothing, so a reload was pointless`
+    return `a window Playwright had not attached to at ${at}, whose ${loaded} was reloaded`
+  } catch (error) {
+    return `the main process could not be asked for a window at ${at}: ${String(error)}`
   }
 }
 
@@ -451,6 +552,17 @@ async function describeStalledApp(app: ElectronApplication): Promise<string> {
 const INSPECT_TIMEOUT_MS = 10_000
 
 const FIRST_WINDOW_TIMEOUT_MS = 90_000
+
+/**
+ * How long Playwright gets to announce a window on its own before the main process is asked.
+ *
+ * Fifteen seconds is not a guess about the stall — that one never ends, so any interval would do —
+ * it is a bound on the *healthy* path, which on this suite is about a second and on the slowest
+ * CI launch measured (a cold first launch after the Angular build, where the GPU process took
+ * 3.6 s to appear) still well inside it. Short enough that all five nudges fit inside the ninety
+ * seconds; long enough that a merely slow launch is never reloaded out from under itself.
+ */
+const NUDGE_INTERVAL_MS = 15_000
 
 export type ShellLaunch = {
   /** `SPM_REMOTE_URL`: this launch is for that server, and it is not remembered. */

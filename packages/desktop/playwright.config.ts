@@ -30,14 +30,18 @@ export default defineConfig({
      attempts. Locally there are no retries at all, so a flake introduced during development is
      as loud as it ever was.
 
-     **The cause is now known, and it is not this app.** Ruling C-21's diagnostic caught it twice:
-     the main process reported `isReady: true, windowCount: 1, urls: ["spm://app/projects"]` for
-     the whole ninety seconds Playwright spent waiting for the event announcing that window, and
-     `app.windows()` was empty at the same moment. The event and the list come from one
-     attachment, and when Playwright misses it neither has anything. That is a race between the
-     harness and an Electron process this suite cannot close from the inside — see
-     `firstWindowOf` in test/fixtures.ts, including the fallback that was tried and measured not
-     to work. The retry stays until Playwright's Electron support stops dropping it. */
+     **This is no longer the first line of defence, and it is worth saying which is.** Ruling
+     C-21's mechanism is now known and reproduced: Playwright announces an Electron window only
+     after the main frame commits a navigation its page session observes, and a window whose
+     commit it misses is never announced at all. `firstWindowOf` in test/fixtures.ts now nudges
+     that window into committing another one — measured to surface the page in 21 ms from the
+     exact stalled state — so the stall should be recovered inside the first attempt, loudly, and
+     never reach a retry.
+
+     This stays behind it for the arm the nudge cannot reach: a launch whose window Playwright
+     missed *and* which cannot be made to navigate again. A retried test is reported as **flaky**,
+     not as passed, so the signal stays in the run rather than being deleted — and a test that
+     fails twice still fails the job. */
   retries: process.env['CI'] ? 1 : 0,
   /* Each spec launches its own Electron process against its own library folder; running two at
      once on one runner is contention for no gain, and the whole suite is a few seconds. */
