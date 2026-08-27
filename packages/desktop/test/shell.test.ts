@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { after, afterEach, before, test } from 'node:test'
+import { AppError } from '@spm/contract/errors.ts'
 import { LOCAL_SHELL_CAPABILITIES } from '../src/capabilities.ts'
 import {
   confirmedAt,
@@ -34,9 +35,27 @@ import { RENDERER_ORIGIN } from '../src/urls.ts'
  * or a `LibraryHost` still ticking previews into a folder they have left.
  */
 
+/** What both test servers answer `/api/capabilities` with: the Deno server's own column. */
+const BACKEND_COLUMN = {
+  requiresAuth: true,
+  canManageUsers: true,
+  canPickLocalFolder: false,
+  canLaunchSlicer: false,
+  canConfigureSlicers: false,
+  canBrowseModelSites: false,
+}
+
 let root: string
 let server: Server
 let origin: string
+/**
+ * A second, identical server, so "connect somewhere else" is a case this file can actually reach.
+ *
+ * The suite had no such thing, which is how remote → remote went three rounds unnoticed: every
+ * reconnection in it was to the origin already open, and `connectRemote` short-circuits that
+ * before any of the interesting code runs.
+ */
+let second: { server: Server; origin: string }
 let requests: string[] = []
 
 before(async () => {
@@ -44,25 +63,26 @@ before(async () => {
   server = createServer((request, response) => {
     requests.push(request.url ?? '')
     response.writeHead(200, { 'content-type': 'application/json' })
-    response.end(
-      JSON.stringify({
-        requiresAuth: true,
-        canManageUsers: true,
-        canPickLocalFolder: false,
-        canLaunchSlicer: false,
-        canConfigureSlicers: false,
-        canBrowseModelSites: false,
-      }),
-    )
+    response.end(JSON.stringify(BACKEND_COLUMN))
   })
   await new Promise<void>((resolve_) => server.listen(0, '127.0.0.1', resolve_))
   const address = server.address()
   assert.ok(address && typeof address === 'object')
   origin = `http://127.0.0.1:${address.port}`
+
+  const other = createServer((_request, response) => {
+    response.writeHead(200, { 'content-type': 'application/json' })
+    response.end(JSON.stringify(BACKEND_COLUMN))
+  })
+  await new Promise<void>((resolve_) => other.listen(0, '127.0.0.1', resolve_))
+  const otherAddress = other.address()
+  assert.ok(otherAddress && typeof otherAddress === 'object')
+  second = { server: other, origin: `http://127.0.0.1:${otherAddress.port}` }
 })
 
 after(() => {
   server.close()
+  second.server.close()
   rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 })
 })
 
@@ -410,9 +430,9 @@ test('opening a folder lets go of the server, its session, and the /api route wi
   assert.equal(requests.length, 0)
 })
 
-test('the transport callback fires exactly on a change of transport, and not otherwise', async () => {
+test('the windows are invalidated when the target moves, transport or not', async () => {
   const first = folderWithProject('one', 'Widget')
-  const second = folderWithProject('two', 'Gadget')
+  const secondFolder = folderWithProject('two', 'Gadget')
   const h = harness({ folder: first })
 
   h.library.open(first)
@@ -427,12 +447,49 @@ test('the transport callback fires exactly on a change of transport, and not oth
   assert.deepEqual(h.replacements, ['home'])
   assert.equal(h.confirmations.length, 1)
 
-  await h.shell.pickLocalFolder()
+  // **A different server is.** This is the case the test used to look like it covered while only
+  // ever reconnecting to the same origin, which `connectRemote` short-circuits: the transport
+  // does not move between two remotes, so keying the invalidation on it left the renderer showing
+  // server A while every request went to server B.
+  await h.shell.connectRemote(second.origin)
   assert.deepEqual(h.replacements, ['home', 'home'])
 
+  await h.shell.pickLocalFolder()
+  assert.deepEqual(h.replacements, ['home', 'home', 'home'])
+
   // A second folder is a library change, which is a reload.
-  h.library.open(second)
+  h.library.open(secondFolder)
+  assert.deepEqual(h.replacements, ['home', 'home', 'home'])
+})
+
+/**
+ * Remote A → remote B, end to end through the shell.
+ *
+ * The transport does not move between two servers, so this is the case the previous invariant
+ * could not see. What the renderer would have been left holding is not subtle: `AuthStore`'s user
+ * and `CapabilitiesStore`'s answer from A, a project list whose ids name rows in A's database,
+ * and every request going to B and coming back 401.
+ */
+test('connecting to a different server replaces the window and lets go of the first', async () => {
+  const h = harness({})
+  await h.shell.connectRemote(origin)
+  const first = h.shell.remote()
+  assert.ok(first)
+  assert.deepEqual(h.replacements, ['home'])
+
+  await h.shell.connectRemote(second.origin)
+
+  assert.equal(h.shell.remote()?.origin, second.origin)
+  // The window really is thrown away: everything in the renderer belongs to the other server.
   assert.deepEqual(h.replacements, ['home', 'home'])
+  // And the first host is closed, not merely dropped — the same rule a mode switch follows.
+  assert.equal(first.hasSession(), false)
+  assert.equal(
+    (await first.proxy(new Request(`${RENDERER_ORIGIN}${API_PATH_PREFIX}/projects`))).status,
+    503,
+  )
+  // Written down, so a relaunch comes back to B rather than to A.
+  assert.deepEqual(readState(h.stateFile), { mode: 'remote', remoteUrl: second.origin })
 })
 
 test('the transport is what a window must be built with, in each state', async () => {
@@ -551,6 +608,33 @@ test('a renderer asking to connect in a loop gets one dialog, not one per call',
   assert.equal(h2.shell.remote(), null, 'the server really was let go of')
   await h2.shell.connectRemote(origin)
   assert.equal(h2.confirmations.length, 2)
+})
+
+/**
+ * The guard answers about the origin the caller asked about, or it does not answer.
+ *
+ * It used to hand the in-flight result to whoever asked next, so `connect(B)` racing `connect(A)`
+ * resolved `{ origin: A }` — a server the user confirmed, reported as the answer to a question
+ * about a server they never saw. `askForMode` has one question and can coalesce; this has one
+ * *per server* and cannot.
+ */
+test('a second connect to a different server is refused, not answered with the first', async () => {
+  const h = harness({ confirm: true })
+
+  const first = h.shell.connectRemote(origin)
+  const refused = h.shell.connectRemote(second.origin)
+
+  await assert.rejects(
+    () => refused,
+    (error: unknown) => error instanceof AppError && error.code === 'Conflict',
+  )
+  assert.deepEqual(await first, { origin })
+  assert.equal(h.shell.remote()?.origin, origin, 'and the one that was confirmed is the one open')
+  assert.equal(h.confirmations.length, 1)
+
+  // Once the first is done the guard is clear, so the second server is a question of its own.
+  assert.deepEqual(await h.shell.connectRemote(second.origin), { origin: second.origin })
+  assert.equal(h.confirmations.length, 2)
 })
 
 test('a malformed URL rejects rather than throwing out of a promise-typed call', async () => {

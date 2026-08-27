@@ -1,4 +1,5 @@
 import type { Capabilities, LocalLibraryDto, RemoteLibraryDto } from '@spm/contract/dtos.ts'
+import { AppError } from '@spm/contract/errors.ts'
 import { LOCAL_SHELL_CAPABILITIES } from './capabilities.ts'
 import {
   confirmRemoteOptions,
@@ -110,6 +111,8 @@ export class ShellHost {
    * exists to resist, and the caller is the untrusted side of this boundary.
    */
   #connecting: Promise<RemoteLibraryDto | null> | null = null
+  /** Which origin `#connecting` is asking about, so a second caller is answered about its own. */
+  #connectingTo: string | null = null
 
   constructor(options: ShellHostOptions) {
     this.#stateFile = options.stateFile
@@ -283,9 +286,16 @@ export class ShellHost {
    * is asked for here, in a native dialog the main process owns, naming the origin.
    *
    * The gate is on **this** method and not on `#adoptRemote`, which is the distinction that makes
-   * it worth having: a remembered origin and `SPM_REMOTE_URL` are the user's own earlier answer
-   * and this process's environment, and re-asking about them on every launch would train people
-   * to dismiss the one question that matters.
+   * it worth having: a remembered origin is the user's own earlier answer, and re-asking about it
+   * on every launch would train people to dismiss the one question that matters.
+   *
+   * **`SPM_REMOTE_URL` also skips it, and that is outside this gate's threat model rather than
+   * covered by it.** Grouping it with "the user's earlier answer" was too generous: an
+   * environment variable is not something the user said in the app, and unlike `SPM_LIBRARY_DIR`
+   * — whose blast radius is a folder on the machine that set it — this one points the shell's
+   * network stack at a host. What bounds it is that setting it means controlling this process's
+   * environment, which already means running code as the user; C-20 exists for the *renderer*,
+   * which does not.
    *
    * Nothing is asked of the *server* here. A `connect` that required it to answer would fail on a
    * laptop that is not on the network yet and leave the user with no way to write the URL down;
@@ -307,11 +317,24 @@ export class ShellHost {
     // answer, which is the shape `askForMode` already uses; the difference is that this one can
     // be called in a loop by code we do not trust, and unbounded native dialogs are how a user is
     // trained to dismiss the one question that matters.
-    if (this.#connecting) return await this.#connecting
+    //
+    // **But only for the same origin.** `askForMode` has one question; this has one *per server*,
+    // and returning the in-flight answer to a caller who asked about a different one resolved
+    // `connect(B)` with `{ origin: A }` — a server the user confirmed, reported as the answer to
+    // a question about a server they never saw. A second origin is refused instead: it is not a
+    // duplicate, and it cannot be honestly answered until the first question is closed.
+    if (this.#connecting) {
+      if (this.#connectingTo === origin) return await this.#connecting
+      throw new AppError('Conflict', 'a server connection is already being confirmed')
+    }
     const connecting = this.#connectOnce(origin).finally(() => {
-      if (this.#connecting === connecting) this.#connecting = null
+      if (this.#connecting === connecting) {
+        this.#connecting = null
+        this.#connectingTo = null
+      }
     })
     this.#connecting = connecting
+    this.#connectingTo = origin
     return await connecting
   }
 
@@ -321,6 +344,21 @@ export class ShellHost {
     return { origin }
   }
 
+  /**
+   * Points the shell at `origin`, letting go of whatever it was serving.
+   *
+   * **The windows are invalidated when the *target* moved, not when the transport did**, and the
+   * difference between those two is a defect this shipped for three rounds. Remote A → remote B
+   * leaves `transport()` reading `remote` both times, so nothing was replaced and nothing
+   * reloaded: the renderer kept its `AuthStore` user, its capability set, its settings and its
+   * project list **from A** while every request went to B and came back 401, with the ids on
+   * screen naming rows in a different database.
+   *
+   * The test that looked like it covered this connected twice to the *same* origin, which
+   * `connectRemote` short-circuits before it ever reaches here — the code handled the case it was
+   * written for and the test exercised the case that works. The invariant now sits on the thing
+   * that actually changed.
+   */
   #adoptRemote(origin: string, options: { remember: boolean; replaceWindow?: boolean }): void {
     if (isPlaintextToAnotherMachine(origin)) {
       console.warn(
@@ -329,6 +367,7 @@ export class ShellHost {
       )
     }
     const previousTransport = this.transport()
+    const previousOrigin = this.#remote?.origin ?? null
     this.#releaseRemote()
     // The local library goes *before* the server is adopted, and this is the half of the swap
     // that would otherwise leak: its preview ticker writes PNGs into the folder, and its SQLite
@@ -336,9 +375,8 @@ export class ShellHost {
     this.#library.closeCurrent()
     this.#remote = this.#makeRemote(origin)
     if (options.remember) this.#remember('remote', origin)
-    if ((options.replaceWindow ?? true) && this.transport() !== previousTransport) {
-      this.#onTransportChanged('home')
-    }
+    const moved = this.transport() !== previousTransport || previousOrigin !== origin
+    if ((options.replaceWindow ?? true) && moved) this.#onTransportChanged('home')
   }
 
   #becomeLocal(): void {
