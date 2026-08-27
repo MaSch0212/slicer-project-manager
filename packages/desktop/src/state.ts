@@ -20,7 +20,8 @@ import { dirname } from 'node:path'
  * to cost one forgotten folder, and now it would cost the whole of the shell's configuration.
  *
  * Nothing here imports `electron`, so `test/state.test.ts` drives every branch under plain
- * `node --test` against a real temporary file.
+ * `node --test` against a real temporary file; the writer's atomicity is asserted in
+ * `test/library.test.ts`, beside the folder tests that depend on it.
  */
 
 /** The file under `app.getPath('userData')` that carries all of it. */
@@ -30,8 +31,9 @@ export const STATE_FILE_NAME = 'state.json'
  * Which of spec 2.6's two modes the shell is in.
  *
  * `'unset'` is not one of them and is deliberately not in this type: it is the absence of an
- * answer, which the state file spells by having no `mode` key at all. See `ShellMode` in
- * `shell.ts` for the runtime state, which does have a third value.
+ * answer, which the state file spells by having no `mode` key at all. `ActiveMode` in `shell.ts`
+ * is the runtime half and does have that third value — the two were both called `ShellState`
+ * until review pointed out that one package had the name meaning two unrelated things.
  */
 export type ShellMode = 'local' | 'remote'
 
@@ -87,15 +89,26 @@ export function readRememberedRemote(stateFile: string): string | null {
  * The remembered mode, or null when there is none — which is first run, and also a `state.json`
  * written by task 4, which knew nothing about modes.
  *
- * A task-4 file has a `libraryDir` and no `mode`, and that is not a corrupt file: it is a user
- * who chose a folder before this key existed. `planStartup` treats it as `local`, so upgrading
- * does not throw anyone back to the mode picker. Anything that is neither spelling — a
- * hand-edited `"MODE": "cloud"` — is null, which asks rather than guessing.
+ * **Absent and unrecognised are different answers**, and conflating them was a real bug here: an
+ * unknown `mode` used to fall through to the same fallback as a missing one, so a `state.json`
+ * that said `"mode": "cloud"` beside a folder silently opened that folder. Found by making the
+ * test able to fail — with no folder in the fixture, `null` came back either way and the
+ * assertion could not tell the two paths apart.
+ *
+ * - **Absent** is a task-4 file: a `libraryDir` and no `mode`, written by a user who chose a
+ *   folder before this key existed. It reads as `local`, so upgrading does not throw anyone back
+ *   to a question they already answered.
+ * - **Unrecognised** — hand-edited, or written by a newer version — is `null`, which asks. The
+ *   file was written by something whose intent this code does not know, and the keys beside the
+ *   one it cannot read are no more trustworthy than the one it cannot.
  */
 export function readRememberedMode(stateFile: string): ShellMode | null {
   const value = readState(stateFile)[MODE_KEY]
   if (value === 'local' || value === 'remote') return value
-  if (value !== undefined) console.warn(`desktop: ignoring an unknown ${MODE_KEY} in state.json`)
+  if (value !== undefined) {
+    console.warn(`desktop: ignoring an unknown ${MODE_KEY} in state.json`)
+    return null
+  }
   return readRememberedDir(stateFile) === null ? null : 'local'
 }
 
