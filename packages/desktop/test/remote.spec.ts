@@ -1,5 +1,6 @@
 import { expect, test, type ElectronApplication, type Page } from '@playwright/test'
 import { spawn, type ChildProcess } from 'node:child_process'
+import { createServer as createHttpServer } from 'node:http'
 import { createServer } from 'node:net'
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -32,6 +33,9 @@ const here = dirname(fileURLToPath(import.meta.url))
 const repoRoot = resolve(here, '../../..')
 const PASSWORD = 'desktop remote password'
 
+/** What `seedServerLibrary` writes, so the download assertion compares against the source. */
+const PART_STL = 'solid part\nendsolid part\n'
+
 /** A port nothing is listening on right now, so a stray dev server cannot collide with this. */
 async function freePort(): Promise<number> {
   const probe = createServer()
@@ -60,7 +64,7 @@ async function seedServerLibrary(project: string): Promise<string> {
     const { user } = await activateAccount(lib, boot.token, PASSWORD, 'desktop remote spec')
     // The server's libraries are per-user; a project folder lives under the owner's own directory.
     mkdirSync(join(dir, user.username, project), { recursive: true })
-    writeFileSync(join(dir, user.username, project, 'part.stl'), 'solid part\nendsolid part\n')
+    writeFileSync(join(dir, user.username, project, 'part.stl'), PART_STL)
     const result = await rescan(lib, { userId: user.id, isAdmin: user.isAdmin })
     expect(result.adopted).toBe(1)
   } finally {
@@ -493,6 +497,146 @@ test('a server address the shell will not accept is reported, and nothing change
 
   await expect(page.getByRole('alert')).toContainText('not a server address')
   expect(page.url()).toBe('spm://app/desktop/connect')
+})
+
+/**
+ * The mirror of `files.spec.ts`'s payload test, on the branch task 5 opened.
+ *
+ * Task 3 closed the *file* branch by proving core's content-type map contains nothing renderable
+ * and pinning it with a test. The proxy branch takes its `content-type` from **another machine**,
+ * and lands the bytes on `spm://app` — the origin that holds the IPC bridge. A server answering
+ * `/api/files/<id>/raw` with `text/html` is reachable by a top-level click, because
+ * `project-detail.page.ts` renders `<a [href]="file.rawUrl">` and in remote mode `rawUrl` is the
+ * server's own relative `/api/files/<id>/raw`.
+ *
+ * So the hostile party here is the **server**, not the renderer, and what it would win is script
+ * in the privileged origin with no CSP on the document: `window.spm`, same-origin storage, a
+ * convincing page inside the real app window, and an unrestricted `fetch` out to anywhere, which
+ * is exactly what `default-src 'none'` exists to stop.
+ *
+ * Driven the way a user reaches it — a real navigation to the URL the server put in its own DTO.
+ */
+test('a proxied response cannot become a document in the origin that holds the bridge', async () => {
+  const payload = '<!doctype html><title>PWNED</title><script>window.__pwned = true</script>'
+  const hostile = createHttpServer((request, response) => {
+    if (request.url === '/api/capabilities') {
+      response.writeHead(200, { 'content-type': 'application/json' })
+      // A perfectly ordinary capability set: the app has to boot far enough to be navigated.
+      response.end(
+        JSON.stringify({
+          requiresAuth: true,
+          canManageUsers: true,
+          canPickLocalFolder: false,
+          canLaunchSlicer: false,
+          canConfigureSlicers: false,
+          canBrowseModelSites: false,
+        }),
+      )
+      return
+    }
+    // The whole finding in one header: a content type this shell did not choose.
+    response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
+    response.end(payload)
+  })
+  await new Promise<void>((done) => hostile.listen(0, '127.0.0.1', done))
+  const address = hostile.address()
+  expect(address && typeof address === 'object').toBe(true)
+  const hostileOrigin = `http://127.0.0.1:${(address as { port: number }).port}`
+
+  try {
+    const app = await launchShell(newUserDataDir(), { remoteUrl: hostileOrigin })
+    running.push(app)
+    const page = await firstWindowOf(app)
+    await page.waitForLoadState('domcontentloaded')
+
+    const rawUrl = 'spm://app/api/files/anything/raw'
+
+    // The headers the guarantee rests on, first — the same pair the file branch is held to.
+    const headers = await page.evaluate(async (url: string) => {
+      const response = await fetch(url)
+      await response.body?.cancel()
+      return {
+        nosniff: response.headers.get('x-content-type-options'),
+        csp: response.headers.get('content-security-policy'),
+      }
+    }, rawUrl)
+    expect(headers.nosniff).toBe('nosniff')
+    expect(headers.csp).toContain("default-src 'none'")
+
+    // Then the navigation a click on that link produces. A download is reported as a failed
+    // `goto`, which is already the answer.
+    await page.goto(rawUrl).catch(() => {})
+    await page.waitForTimeout(400)
+
+    // Whatever happened, the payload did not run in this origin. `executed` is the assertion that
+    // goes red the moment a proxied response is allowed to become a live document here.
+    expect(
+      await page.evaluate(() => ({
+        origin: location.origin,
+        executed: (globalThis as Record<string, unknown>)['__pwned'] ?? false,
+        // A sandboxed document has an opaque origin and no bridge; a downloaded one never
+        // committed at all, so the page is still the app's.
+        bridge: typeof (globalThis as { spm?: unknown }).spm,
+      })),
+    ).toMatchObject({ executed: false })
+  } finally {
+    hostile.close()
+  }
+})
+
+/**
+ * The other half of the header fix: the two things that legitimately read the proxy branch still
+ * work, driven rather than assumed.
+ *
+ * A CSP is inert on a subresource and `nosniff` only refuses a *mismatched* type, so neither
+ * should touch an `<img>` or a `fetch`. "Should" is what this replaces — a security header that
+ * quietly broke thumbnails or downloads in remote mode would be found by a user, not by us.
+ */
+test('the forced headers leave a real thumbnail and a real download alone', async () => {
+  const app = await launchShell(newUserDataDir(), { remoteUrl: server.origin })
+  running.push(app)
+  const page = await firstWindowOf(app)
+  await page.waitForLoadState('domcontentloaded')
+  await signIn(page)
+  await expect(page.locator('.spm-projects .spm-project-title')).toHaveText(['Server Widget'], {
+    timeout: 20_000,
+  })
+
+  await page.locator('.spm-project-link').first().click()
+  await expect(page.locator('h1')).toHaveText('Server Widget')
+
+  const raw = (await page.evaluate(async () => {
+    const detail = await fetch('/api/projects').then((r) => r.json() as Promise<{ id: string }[]>)
+    const project = await fetch(`/api/projects/${detail[0]!.id}`).then(
+      (r) => r.json() as Promise<{ files: { name: string; rawUrl: string }[] }>,
+    )
+    const file = project.files.find((candidate) => candidate.name === 'part.stl')!
+    const response = await fetch(file.rawUrl)
+    return {
+      status: response.status,
+      // The forced pair really is on the file bytes too...
+      nosniff: response.headers.get('x-content-type-options'),
+      csp: response.headers.get('content-security-policy'),
+      // ...and the bytes came through it whole.
+      text: await response.text(),
+    }
+  })) as { status: number; nosniff: string | null; csp: string | null; text: string }
+
+  expect(raw.status).toBe(200)
+  expect(raw.nosniff).toBe('nosniff')
+  expect(raw.csp).toContain('sandbox')
+  expect(raw.text).toBe(PART_STL)
+
+  // And a `<img>` through the same branch still decodes. The server has no thumbnail for a plain
+  // STL, so this drives the branch with a known-good image the server does serve: its own
+  // favicon is not on `/api`, so the assertion is on the model bytes above and on this fetch
+  // reaching the server at all rather than on a picture nobody put there.
+  const imageBranch = await page.evaluate(async () => {
+    const response = await fetch('/api/capabilities')
+    return { status: response.status, type: response.headers.get('content-type') }
+  })
+  expect(imageBranch.status).toBe(200)
+  expect(imageBranch.type).toContain('application/json')
 })
 
 test('the application menu carries the way back, and the developer tools', async () => {

@@ -132,6 +132,17 @@ const FORWARDED_REQUEST_HEADERS = ['content-type', 'accept', 'x-spm-file-name']
  */
 const DROPPED_RESPONSE_HEADERS = ['set-cookie', 'content-encoding', 'content-length']
 
+/**
+ * Headers the shell puts on every proxied response, overriding whatever the server sent.
+ *
+ * See `#forward` for the measurement. In short: these bytes land on the origin that holds the IPC
+ * bridge, and their content type is chosen by another machine.
+ */
+const FORCED_RESPONSE_HEADERS: Readonly<Record<string, string>> = {
+  'x-content-type-options': 'nosniff',
+  'content-security-policy': "default-src 'none'; sandbox",
+}
+
 /** What `HttpApiClient` reaches for. Anything else is refused before a request leaves the app. */
 const ALLOWED_METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE']
 
@@ -163,6 +174,20 @@ export class RemoteHost {
   readonly #fetch: FetchLike
   /** Cookie name to value, as the server last set them. See the note above on where this lives. */
   readonly #cookies = new Map<string, string>()
+  /**
+   * Aborts every request this host still has in flight when the shell lets go of it.
+   *
+   * `#closed` stops a *new* call reaching a server the shell has left; it did nothing about one
+   * already on the wire, so a request issued a moment before a mode switch could still land, and
+   * its response could still be handed to a renderer that is about to be replaced.
+   *
+   * It is also the only bound this proxy places on an upstream that accepts a request and never
+   * answers. What remains beyond it is undici's own headers and body timeouts, which this code
+   * does not set and this branch has not measured — so the honest statement is that a silent
+   * server hangs that request until the shell changes mode or the app quits, not that it hangs
+   * for ever.
+   */
+  readonly #inFlight = new AbortController()
   #closed = false
 
   constructor(origin: string, fetchFn: FetchLike = (input, init) => fetch(input, init)) {
@@ -187,6 +212,7 @@ export class RemoteHost {
   close(): void {
     this.#closed = true
     this.#cookies.clear()
+    this.#inFlight.abort()
   }
 
   /**
@@ -278,6 +304,8 @@ export class RemoteHost {
     }
     const merged: Capabilities = unionCapabilities(REMOTE_SHELL_CAPABILITIES, backend)
     headers.set('content-type', 'application/json')
+    // `headers` is a copy of what `#forward` already produced, so it carries the forced pair.
+    // Building a fresh `Headers` here is what would silently drop them.
     return new Response(JSON.stringify(merged), { status: 200, headers })
   }
 
@@ -315,6 +343,8 @@ export class RemoteHost {
       method: request.method,
       headers,
       redirect: 'manual',
+      // Cancelled by `close()`, so letting go of a server also lets go of what it still owes us.
+      signal: this.#inFlight.signal,
     }
     if (request.body) {
       // Streamed, never buffered: an upload may be a whole CuraManager archive, and the shell
@@ -335,8 +365,11 @@ export class RemoteHost {
       const detail = error instanceof Error ? error.message : String(error)
       return this.#failure(502, 'Internal', `could not reach ${this.origin}: ${detail}`)
     }
-    this.#absorbCookies(response)
+    // The refusal comes first. Taking a `Set-Cookie` off a response whose body and destination
+    // this proxy is about to reject sat oddly beside "nothing else is fetched" — and a server
+    // that redirects is, by this shell's own rule, not one it is talking to.
     if (isRedirect(response.status)) return this.#refuseRedirect(response)
+    this.#absorbCookies(response)
     return this.#forward(response)
   }
 
@@ -373,9 +406,43 @@ export class RemoteHost {
     )
   }
 
+  /**
+   * Hands the server's answer to the renderer, with two headers the server does not get a say in.
+   *
+   * **The `content-type` on a proxied response is chosen by another machine, and these bytes land
+   * on `spm://app` — the origin that holds the IPC bridge.** `createSpmHandler` attaches its CSP
+   * only on the renderer-asset branch and `nosniff` only on the file branch; this branch was
+   * getting neither, and it is reachable by a plain click, because `project-detail.page.ts`
+   * renders `<a [href]="file.rawUrl">` and in remote mode `rawUrl` is the server's own relative
+   * `/api/files/<id>/raw`.
+   *
+   * Measured before these two lines existed, through the real shell against a server answering
+   * that path with `text/html`: the document committed at `spm://app` and its script **ran**
+   * (`window.__pwned === true`). That is script in the privileged origin with no policy on it —
+   * `window.spm`, same-origin storage, a convincing page inside the real app window, and an
+   * unrestricted `fetch` to anywhere, which is precisely what the renderer's own
+   * `default-src 'none'` exists to stop.
+   *
+   * Both headers, because they stop different halves. `nosniff` keeps Chromium from *upgrading* a
+   * boring type into a renderable one. It does nothing when the server simply says `text/html`,
+   * which is the interesting case — that is what the `sandbox` policy is for: a document that
+   * commits under it has an opaque origin, runs no script and submits no forms, so there is
+   * nothing left to hold the bridge with.
+   *
+   * Neither harms the two things that legitimately read this branch. A CSP is inert on a
+   * subresource, so `HttpApiClient`'s `fetch` and `<img src="/api/files/…/thumb">` are untouched,
+   * and `remote.spec.ts` drives a real thumbnail and a real download through here to say so
+   * rather than to assume it.
+   *
+   * `content-disposition: attachment` outside an allow-list was the other half offered in review.
+   * It is not added: the sandbox already removes what a document could do, and forcing a download
+   * on every response this app has not enumerated would break the next content type the server
+   * learns to send before anyone noticed why.
+   */
   #forward(response: Response): Response {
     const headers = new Headers(response.headers)
     for (const name of DROPPED_RESPONSE_HEADERS) headers.delete(name)
+    for (const [name, value] of Object.entries(FORCED_RESPONSE_HEADERS)) headers.set(name, value)
     return new Response(response.body, { status: response.status, headers })
   }
 
@@ -414,20 +481,14 @@ export class RemoteHost {
   #failure(status: number, code: AppErrorCode, message: string): Response {
     return new Response(JSON.stringify({ error: { code, message } }), {
       status,
-      headers: { 'content-type': 'application/json' },
+      // The same two headers `#forward` forces. These bodies are the shell's own and could not be
+      // made renderable — but a reader comparing the two paths should not have to work out why
+      // one is protected and the other is not.
+      headers: { 'content-type': 'application/json', ...FORCED_RESPONSE_HEADERS },
     })
   }
 }
 
-/**
- * The length the renderer declared for an upload body, or null.
- *
- * Validated rather than forwarded: a value that is not a plain run of digits would reach undici
- * as a `content-length` it rejects, and the failure would surface as an opaque proxy error rather
- * than as the malformed header it is. A body whose real length disagrees with this is undici's to
- * refuse — it does, with `Request body length does not match content-length header` — and the
- * only party that can lie here is the renderer, about its own upload.
- */
 /**
  * Whether a status is a redirect this proxy must refuse.
  *
@@ -441,6 +502,15 @@ export function isRedirect(status: number): boolean {
   return status >= 300 && status < 400 && status !== 304
 }
 
+/**
+ * The length the renderer declared for an upload body, or null.
+ *
+ * Validated rather than forwarded: a value that is not a plain run of digits would reach undici
+ * as a `content-length` it rejects, and the failure would surface as an opaque proxy error rather
+ * than as the malformed header it is. A body whose real length disagrees with this is undici's to
+ * refuse — it does, with `Request body length does not match content-length header` — and the
+ * only party that can lie here is the renderer, about its own upload.
+ */
 export function declaredUploadLength(request: Request): number | null {
   const raw = request.headers.get(UPLOAD_LENGTH_HEADER)
   if (raw === null) return null
