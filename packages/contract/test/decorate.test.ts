@@ -13,8 +13,17 @@ import { createDecorators } from '../src/decorate.ts'
  * Byte-level and not `deepEqual`: key order is not something `deepEqual` sees, and the DTO is
  * JSON on the wire in one shell and a structured clone in the other. Nothing depends on the
  * order today; pinning it is how a reordering shows up as a decision rather than as a diff nobody
- * looked at. (`packages/server/test/files.test.ts` independently asserts the same `/api/...`
- * strings over real HTTP, which is what proves the server itself did not move.)
+ * looked at.
+ *
+ * **What this file does *not* cover, checked by mutation rather than assumed.** The `'/api'`
+ * below is a literal, not `SERVER_FILE_URL_BASE` — `@spm/contract` cannot import from the server
+ * — so changing the base the server passes leaves every test here green. Measured, in task 3:
+ * `SERVER_FILE_URL_BASE = '/apiX'` and this file still reported 16 passed. What went red was
+ * `packages/server/test/files.test.ts`, five failures, asserting the `/api/files/<id>/{raw,thumb}`
+ * strings over real HTTP. The two halves of ruling C-2's condition therefore live in two suites:
+ * this one fails if `createDecorators` changes shape (measured too — swap `files` for `file` in
+ * `rawUrl` and four tests here go red), and the server's fails if the server stops passing
+ * `/api`. Neither alone is the guarantee.
  */
 
 const API = createDecorators('/api')

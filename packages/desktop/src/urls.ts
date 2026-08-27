@@ -29,9 +29,9 @@ export const RENDERER_ORIGIN = `spm://${RENDERER_HOST}`
  * `media/` folder. A leading underscore is not a character the Angular builder produces at the
  * top level for anything, which is why it was picked over a plausible-looking English word.
  *
- * Task 3 owns the handler that answers under this prefix, including refusing a renderer asset
- * request that tries to reach through it. It imports the constant from here rather than
- * spelling the string a second time.
+ * `files.ts` answers the one canonical spelling under this prefix; `app.ts` goes on refusing
+ * every other spelling of it. Both import the constant from here rather than spelling the string
+ * a second time.
  */
 export const RESERVED_PATH_SEGMENT = '_spm'
 

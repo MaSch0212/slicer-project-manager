@@ -23,21 +23,6 @@ const SEED: SeedProject[] = [
   { name: 'Bracket', files: { 'model.3mf': 'not a real 3mf' } },
 ]
 
-declare global {
-  // The preload's bridge, as the renderer sees it. Declared here so `page.evaluate` bodies are
-  // type-checked by `deno task typecheck:desktop` rather than being `any`.
-  var spm: {
-    canStreamFromDisk(file: unknown): boolean
-    invoke(
-      path: string,
-      args: unknown[],
-    ): Promise<
-      | { ok: true; value: unknown }
-      | { ok: false; error: { code: string; message: string; details?: Record<string, unknown> } }
-    >
-  }
-}
-
 test.describe('the IPC bridge', () => {
   let app: ElectronApplication
   let page: Page

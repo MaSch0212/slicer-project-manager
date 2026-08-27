@@ -11,8 +11,13 @@ export const MAIN_BUNDLE = resolve(here, '../dist/main.js')
 
 export type LaunchedApp = { app: ElectronApplication; libraryDir: string }
 
-/** A project folder to create on disk before the app ever sees the library. */
-export type SeedProject = { name: string; files: Record<string, string> }
+/**
+ * A project folder to create on disk before the app ever sees the library.
+ *
+ * `Uint8Array` as well as `string` because task 3 seeds a real binary STL — the viewer has to
+ * parse what it fetches, and a text placeholder would only ever prove the transport.
+ */
+export type SeedProject = { name: string; files: Record<string, string | Uint8Array> }
 
 /**
  * Launches the shell against a library folder of its own.
@@ -39,4 +44,37 @@ export async function launchApp(seed: SeedProject[] = []): Promise<LaunchedApp> 
     env: { ...process.env, SPM_LIBRARY_DIR: libraryDir },
   })
   return { app, libraryDir }
+}
+
+/**
+ * The shell with no library folder at all — `SPM_LIBRARY_DIR` unset rather than pointed at an
+ * empty directory, which is a different state and the one task 4 will start in.
+ *
+ * `resolveLibraryDir` returns null, `main()` never calls `openDesktopLibrary`, and the window
+ * still opens: the bridge answers `capabilities` out of the shell itself and every
+ * library-backed call reports `Conflict`. What this fixture exists for is the protocol handler's
+ * session accessor, which has to have an answer for that state too.
+ */
+export async function launchWithoutLibrary(): Promise<ElectronApplication> {
+  const env: Record<string, string> = {}
+  for (const [key, value] of Object.entries(process.env)) {
+    if (key !== 'SPM_LIBRARY_DIR' && value !== undefined) env[key] = value
+  }
+  return await electron.launch({ args: [MAIN_BUNDLE], env })
+}
+
+declare global {
+  // The preload's bridge, as the renderer sees it. Declared here rather than in one spec so
+  // every `page.evaluate` body in the suite is type-checked by `deno task typecheck:desktop`
+  // against the same shape instead of being `any`.
+  var spm: {
+    canStreamFromDisk(file: unknown): boolean
+    invoke(
+      path: string,
+      args: unknown[],
+    ): Promise<
+      | { ok: true; value: unknown }
+      | { ok: false; error: { code: string; message: string; details?: Record<string, unknown> } }
+    >
+  }
 }

@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises'
 import { extname, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { closeLibrary, ensureLocalUser, openLibrary, type Ctx, type Library } from '@spm/core'
+import { parseFileRequest, serveLibraryFile } from './files.ts'
 import { registerInvokeHandler } from './ipc.ts'
 import { RENDERER_HOST, RENDERER_ORIGIN, RESERVED_PATH_SEGMENT } from './urls.ts'
 
@@ -14,8 +15,9 @@ import { RENDERER_HOST, RENDERER_ORIGIN, RESERVED_PATH_SEGMENT } from './urls.ts
  * adds an `ipc.ts` that needs the library session and that `main()` in turn wires up, so a
  * module holding both the shared pieces and the start-the-app side effect would put `main()` at
  * the bottom of an import cycle. Everything is exported for the same reason — task 2 takes
- * `openDesktopLibrary` for the dispatch table's `lib`/`ctx`, task 3 takes `createSpmHandler` and
- * the renderer host, and neither has to duplicate or re-open anything.
+ * `openDesktopLibrary` for the dispatch table's `lib`/`ctx`, and neither has to duplicate or
+ * re-open anything. Task 3's file bytes went into `files.ts` rather than in here, for the same
+ * reason: it must be importable, and testable, without `electron`.
  */
 
 /**
@@ -60,11 +62,16 @@ export { RENDERER_HOST, RENDERER_ORIGIN } from './urls.ts'
 export const LIBRARY_DIR_ENV = 'SPM_LIBRARY_DIR'
 
 /**
- * `spm://` has to be declared privileged *before* `app.whenReady()`, which is why it is here
- * and not in task 3 with the rest of the scheme. Task 3 adds the handler for
- * `spm://app/${RESERVED_PATH_SEGMENT}/files/<id>/{raw,thumb}`; until then `resolveRendererFile`
- * refuses that prefix outright, so it 404s rather than being answered by the renderer's own
- * index.html.
+ * `spm://` has to be declared privileged *before* `app.whenReady()`, which is why it is declared
+ * here and handled in `createSpmHandler` below.
+ *
+ * The four privileges are what Electron's documentation says they are, and none of them has been
+ * removed one at a time to see what breaks — so read this as intent, not as measurement.
+ * `standard` gives the scheme an origin, which is what makes `spm://app/_spm/...` same-origin
+ * with the document; `secure` puts the renderer in a secure context; `supportFetchAPI` is what
+ * the viewer's `fetch(rawUrl)` goes through; `stream` is there for the `ReadableStream` body
+ * `serveLibraryFile` answers with, which does work — that part is measured, by the raw-bytes
+ * test reading a body larger than one chunk.
  *
  * There is no `spm://file` host, which is what the plan originally specified — ruling C-7 moved
  * file bytes under the renderer's own host at a reserved path, because `spm://file` is a
@@ -104,8 +111,9 @@ const CONTENT_TYPES: Readonly<Record<string, string>> = {
  *
  * `default-src 'none'` is the part that earns its keep: nothing in this app should ever reach
  * the network, and with no policy at all Chromium would happily let a compromised renderer fetch
- * from anywhere. `spm:` is listed for images and connections because that is where task 3's file
- * bytes will come from.
+ * from anywhere. `spm:` is listed for images and connections because that is where file bytes
+ * come from — and it is what `media-src` does *not* say, which is why a `<video>` pointed at a
+ * `rawUrl` never issues a request at all. See the range table on `createSpmHandler`.
  *
  * `'unsafe-inline'` twice, and neither is an oversight. The Angular build inlines critical CSS
  * into `<head>`, and it defers the stylesheet with `<link media="print" onload="this.media=
@@ -148,8 +156,14 @@ export function defaultRendererDir(): string {
  * SPA fallback below swallows them: `spm://app/_spm/files/<id>/raw` has no known extension, so
  * it came back **200 `text/html`** with index.html in the body — measured — and B2's viewer then
  * reported a perfectly intact model as damaged. Failing closed costs one line; failing open with
- * a success status and the wrong content type is the worst of the three states. Task 3 replaces
- * the 404 with real bytes.
+ * a success status and the wrong content type is the worst of the three states.
+ *
+ * It still refuses every one of them. `parseFileRequest` now takes the one canonical spelling
+ * out of the stream *before* this function is reached, so what arrives here under the reserved
+ * prefix is only ever an alias of it — and an alias must still be a 404, or the aliases would be
+ * a second way to name a file. That is why the reserved list in `shell.spec.ts` did not change
+ * when the bytes arrived: `_spm/files/abc/raw` 404s because there is no file `abc`, and
+ * `_SPM/files/abc/raw` 404s because it never became a file request in the first place.
  *
  * It runs **after** `resolve`, and that ordering is what makes it proof against the *separator*
  * encodings — the class the containment check above exists for. Written first against the
@@ -223,16 +237,67 @@ export function contentTypeFor(file: string): string {
 }
 
 /**
- * The single `spm://` handler. There is one host, `spm://app`; task 3 adds the branch that serves
- * `spm://app/${RESERVED_PATH_SEGMENT}/files/<id>/{raw,thumb}`, which `resolveRendererFile`
- * currently refuses.
+ * The single `spm://` handler. There is one host, `spm://app`, and two things under it: the
+ * renderer's own assets, and file bytes at `spm://app/${RESERVED_PATH_SEGMENT}/files/<id>/{raw,
+ * thumb}`. `parseFileRequest` decides which, and everything it does not claim falls through to
+ * `resolveRendererFile` — including every alias of the reserved prefix, which that function goes
+ * on refusing exactly as it did before this branch existed.
+ *
+ * **Ranges are not served, and nothing this app can do asks for one.** That is a measurement,
+ * not a position. A recording handler was swapped in on Electron 44.0.0 (Chromium 152) with the
+ * `spm` privileges below, and every consumer was driven at it with its request headers logged:
+ *
+ * | driven                        | method | `range`      |
+ * | ----------------------------- | ------ | ------------ |
+ * | `fetch(rawUrl)` — the viewer  | GET    | absent       |
+ * | `<img src=thumbUrl>`          | GET    | absent       |
+ * | `<a href=rawUrl>` clicked     | GET    | absent       |
+ * | `webContents.downloadURL`     | GET    | absent (no headers at all) |
+ * | `<video src=rawUrl>`          | GET    | **`bytes=0-`** |
+ *
+ * The last row is why this is written down rather than assumed, and it does not change the
+ * answer: a `<video>` cannot be pointed at these bytes from the renderer at all. The CSP above
+ * has no `media-src` and `default-src 'none'`, so the element never issues a request —
+ * `securitypolicyviolation` fires with `media-src <- spm` and the element fails with
+ * `MEDIA_ELEMENT_ERROR: Media load rejected by URL safety check`. The `bytes=0-` above was
+ * measured from a CSP-free probe document, which is the only place it can happen. If a later
+ * task adds `media-src spm:` it inherits range support as a requirement, and this table is the
+ * evidence for that.
+ *
+ * The headers are genuinely visible here, which is the thing that would make the table vacuous
+ * if it were not true: a `fetch` with a hand-written `x-probe: yes` arrived with it intact. So
+ * did a hand-written `Range: bytes=4-9` — Chromium forwards it, this handler ignores it, and the
+ * renderer gets **200 with the whole body**; `fetch` does not synthesise a 206 and does not slice
+ * anything. `accept-ranges: none` on every response says so on the wire.
+ *
+ * The viewer's size gate, which the brief flagged as having assumed HTTP semantics, turns out to
+ * need none: it compares `file.sizeBytes` from the DTO against a constant and returns *before*
+ * any fetch (`viewer.page.ts`, the `oversized` branch), so it never depended on a header.
  */
-export function createSpmHandler(rendererDir: string): (request: Request) => Promise<Response> {
+export function createSpmHandler(
+  rendererDir: string,
+  resolveSession: () => DesktopSession | null,
+): (request: Request) => Promise<Response> {
   return async (request: Request): Promise<Response> => {
     const url = new URL(request.url)
     if (url.hostname !== RENDERER_HOST) {
       // Nothing legitimate reaches here: every URL this app emits is under spm://app.
       return new Response('not found', { status: 404 })
+    }
+    const fileRequest = parseFileRequest(url.pathname)
+    if (fileRequest) {
+      const session = resolveSession()
+      // No library open. A 404 and not a 503: with no library there is no id that names
+      // anything, which is the same thing a stale URL from a library that has since been closed
+      // means. It is also what the viewer renders best — 404 gives "this file is not part of
+      // this project any more", where a 5xx gives "check your connection", and the connection is
+      // not the problem. Task 4 makes this reachable by switching folders under a loaded page.
+      //
+      // Load-bearing, not defensive. Measured with the line deleted: `session.lib` throws a
+      // TypeError, the handler's promise rejects, and the renderer gets a bare
+      // `TypeError: Failed to fetch` — the failure with no status for the UI to branch on.
+      if (!session) return new Response('not found', { status: 404 })
+      return await serveLibraryFile(session.lib, session.ctx, fileRequest)
     }
     const file = resolveRendererFile(rendererDir, url.pathname)
     if (file === null) return new Response('not found', { status: 404 })
@@ -327,7 +392,13 @@ export function main(): void {
 
   app.whenReady().then(() => {
     try {
-      protocol.handle('spm', createSpmHandler(defaultRendererDir()))
+      // The same closure the IPC handler gets, and for the same reason: task 4 swaps the open
+      // library without a restart, and a captured session would pin the protocol handler to the
+      // old one — a re-registration it has no reason to discover it needs.
+      protocol.handle(
+        'spm',
+        createSpmHandler(defaultRendererDir(), () => session),
+      )
 
       const libraryDir = resolveLibraryDir()
       // Task 4 replaces this branch with a folder picker. Until then a shell with no library
