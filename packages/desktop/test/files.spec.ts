@@ -120,7 +120,9 @@ test.describe('file bytes over spm://', () => {
   test('the project card shows the same thumbnail through coverThumbUrl', async () => {
     // A second surface, and a different DTO field: `decorateProject` puts `coverThumbUrl` on the
     // project rather than on a file, and nothing else in the desktop suite ever fetches it.
-    await page.goBack()
+    // Navigated rather than `goBack()`: this must not depend on where the test above left the
+    // shared page, and the tests in this block share one Electron process on purpose.
+    await page.goto('spm://app/projects')
     await expect(page.locator('h1')).toHaveText('Projects')
     expect(detail.coverThumbUrl).toBeDefined()
 
@@ -188,19 +190,19 @@ test.describe('file bytes over spm://', () => {
     const cube = detail.files.find((file) => file.name === 'cube.stl')!
     await page.goto(`spm://app/projects/${detail.id}/view/${cube.id}`)
 
-    // `role="img"` with that label is bound to `showsModel()`, which is
-    // `initError() === null && state().status === 'ready'` — so it appears only once the bytes
-    // arrived, parsed into a non-empty mesh and reached the scene. Measured by mutation: a
-    // `canvas` visibility check is *not* enough, because the viewport element is in the DOM
-    // while loading and while failing too, and it stayed green with `raw` forced to 404.
-    await expect(page.getByRole('img', { name: /3D view of the model/ })).toBeVisible({
-      timeout: 30_000,
-    })
-    // And nothing is telling the user something went wrong. Both messages by their exact text,
-    // because the point of this pair of tests is that the two states do not say the same thing.
-    await expect(page.locator('jig-message[color="error"]')).toHaveCount(0)
-    await expect(page.getByText(MISSING_MESSAGE)).toHaveCount(0)
-    await expect(page.getByText(FETCH_FAILED_MESSAGE)).toHaveCount(0)
+    // The whole settled page in one object, rather than four separate locator assertions.
+    // `roleImg` is bound to `showsModel()` — `initError() === null && state().status === 'ready'`
+    // — so it is 1 only once the bytes arrived, parsed into a non-empty mesh and reached the
+    // scene. Measured by mutation: a `canvas` visibility check is *not* enough, because the
+    // viewport element is in the DOM while loading and while failing too, and it stayed green
+    // with `raw` forced to 404.
+    //
+    // Read as one object because the *failure output* is what has to be readable: this page has
+    // three ways to say nothing is on screen (a WebGL init error, a load failure, a gate), and
+    // an `element(s) not found` on the success locator tells you which of them happened —
+    // nothing. `messages` is every `jig-message` on the page, so a red run quotes the sentence
+    // the user would have read.
+    expect(await settledViewer(page)).toEqual({ roleImg: 1, messages: [] })
   })
 
   test('and says something different about a model whose bytes are really gone', async () => {
@@ -213,10 +215,46 @@ test.describe('file bytes over spm://', () => {
     rmSync(join(libraryDir, 'Models', 'ghost.stl'))
 
     await page.goto(`spm://app/projects/${detail.id}/view/${ghost.id}`)
-    await expect(page.getByText(MISSING_MESSAGE)).toBeVisible({ timeout: 30_000 })
+    expect(await settledViewer(page)).toEqual({
+      roleImg: 0,
+      messages: [`error: ${MISSING_MESSAGE}`],
+    })
+    // Not the sentence the other half of this pair must never show.
     expect(MISSING_MESSAGE).not.toBe(FETCH_FAILED_MESSAGE)
   })
 })
+
+/**
+ * The viewer once it has stopped changing: how many elements claim to be showing a model, and
+ * every message it is displaying, colour included.
+ *
+ * Polled to a *stable* reading rather than waited on with a locator, because both outcomes this
+ * file asserts are "the page settled on exactly this", and one of them is an empty message list —
+ * which any locator would satisfy the instant the page was blank.
+ */
+async function settledViewer(page: Page): Promise<{ roleImg: number; messages: string[] }> {
+  const read = () =>
+    page.evaluate(() => ({
+      roleImg: document.querySelectorAll('[role="img"]').length,
+      messages: [...document.querySelectorAll('jig-message')].map(
+        (element) =>
+          `${element.getAttribute('color')}: ${(element.textContent ?? '').replace(/\s+/g, ' ').trim()}`,
+      ),
+    }))
+  let previous = JSON.stringify(await read())
+  for (let attempt = 0; attempt < 60; attempt++) {
+    await page.waitForTimeout(250)
+    const current = await read()
+    const serialised = JSON.stringify(current)
+    // Two identical readings a quarter-second apart, and not merely "no longer loading": the
+    // progress region and the message swap in the same change detection pass.
+    if (serialised === previous && (current.roleImg > 0 || current.messages.length > 0)) {
+      return current
+    }
+    previous = serialised
+  }
+  throw new Error(`the viewer never settled; last reading was ${previous}`)
+}
 
 /** Straight out of `en.json`; if the copy moves, this fails rather than silently matching less. */
 const MISSING_MESSAGE =
