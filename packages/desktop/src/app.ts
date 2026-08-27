@@ -893,12 +893,16 @@ export function main(): void {
         ),
       )
 
-      Menu.setApplicationMenu(buildMenu(() => void shellHost.askForMode(), language()))
-
       // Opened *before* the window when there is something to open, so the renderer's first
       // `projects.list` finds a library rather than a `Conflict` it would have to recover from.
       const started = shellHost.start()
       const window = createMainWindow(shellHost.transport())
+
+      // **After the window, deliberately.** On Linux the application menu is GTK widgets, and
+      // building them is the one thing in this block that touches the desktop environment before
+      // anything is on screen. Nothing needs the menu until there is a window to hang it beside,
+      // and the window is what a user — and `firstWindow` — is waiting for.
+      Menu.setApplicationMenu(buildMenu(() => void shellHost.askForMode(), language()))
 
       if ('prompt' in started) {
         // First run, a remembered folder that is gone, or a state file that no longer says which

@@ -138,6 +138,7 @@ export async function launchApp(
     // `stubFolderPicker` answer it.
     env: { ...process.env, SPM_LIBRARY_DIR: libraryDir, SPM_FAKE_PICKER: '' },
   })
+  pipeProcessOutput(app, 'launchApp')
   await stubFolderPicker(app, null)
   return { app, libraryDir, userDataDir }
 }
@@ -178,6 +179,7 @@ export async function launchWithUserData(
       SPM_FAKE_PICKER: answer ?? '',
     },
   })
+  pipeProcessOutput(app, 'launchWithUserData')
   await stubFolderPicker(app, answer)
   return app
 }
@@ -258,6 +260,25 @@ function envWithoutLibraryDir(): Record<string, string> {
 }
 
 /**
+ * Forwards the Electron process's own stdout and stderr into the test output.
+ *
+ * Playwright captures the child's streams and shows them to nobody, so when a launch fails the
+ * one account of *why* — the main process's `console.error('desktop: startup failed', …)`, a
+ * missing shared library, a Chromium sandbox complaint — is thrown away, and the test reports
+ * only that no window arrived. That is exactly the position the desktop job left us in: three
+ * failures whose whole content was `Timeout … waiting for event "window"`.
+ *
+ * Prefixed and unconditional. The shell is quiet on a healthy launch — the suite's own
+ * `renderer boots without a console error or warning` spec depends on that being true — so this
+ * costs nothing on the runs that pass and is the only evidence on the runs that do not.
+ */
+function pipeProcessOutput(app: ElectronApplication, label: string): void {
+  const child = app.process()
+  child.stdout?.on('data', (chunk: Buffer) => process.stdout.write(`[${label} out] ${chunk}`))
+  child.stderr?.on('data', (chunk: Buffer) => process.stdout.write(`[${label} err] ${chunk}`))
+}
+
+/**
  * The app's first window, with more patience than Playwright's 30-second default.
  *
  * **Measured on CI, three first-attempt failures in a row, each green on a re-run of the same
@@ -308,10 +329,12 @@ export async function launchShell(
   if (launch.remoteUrl !== undefined) env['SPM_REMOTE_URL'] = launch.remoteUrl
   if (launch.fakeMode !== undefined) env['SPM_FAKE_MODE'] = launch.fakeMode
   if (launch.fakePicker !== undefined) env['SPM_FAKE_PICKER'] = launch.fakePicker ?? ''
-  return await electron.launch({
+  const app = await electron.launch({
     args: [MAIN_BUNDLE, `--user-data-dir=${userDataDir}`, ...LOCALE_ARGS],
     env,
   })
+  pipeProcessOutput(app, 'launchShell')
+  return app
 }
 
 /**
