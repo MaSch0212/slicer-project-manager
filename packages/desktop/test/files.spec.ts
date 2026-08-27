@@ -53,9 +53,20 @@ test.describe('file bytes over spm://', () => {
   let detail: Detail
 
   test.beforeAll(async () => {
+    // **The heaviest launch in the suite, and the only one that needs more patience than the
+    // default.** Electron plus ANGLE's software rasteriser has to bring up a GL stack in
+    // software before the first window appears, and on a shared CI runner that has exceeded
+    // `firstWindow`'s 30-second default — measured: one run where this hook timed out while 37
+    // other Electron launches in the same run came up fine, and which passed on a re-run of the
+    // same commit.
+    //
+    // Patience, not a weaker assertion: a shell that never opens a window still fails here, one
+    // minute later. The hook's own budget is raised with it, or the wait would simply hit that
+    // instead and report the same slowness as a different failure.
+    test.setTimeout(120_000)
     // The viewer tests at the bottom need a WebGL context, and the CI runner has no GPU.
     ;({ app, libraryDir } = await launchApp(SEED, SOFTWARE_WEBGL_ARGS))
-    page = await app.firstWindow()
+    page = await app.firstWindow({ timeout: 90_000 })
     await page.waitForLoadState('domcontentloaded')
     await page.evaluate(() => globalThis.spm.invoke('projects.rescan', []))
     detail = await readDetail(page)
