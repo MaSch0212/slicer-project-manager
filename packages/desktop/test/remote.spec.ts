@@ -8,6 +8,7 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { Capabilities } from '@spm/contract/dtos.ts'
 import { activateAccount, closeLibrary, ensureBootstrapAdmin, openLibrary, rescan } from '@spm/core'
+import { binaryStl, cubeMesh } from '../../core/test/fixtures/make-mesh.ts'
 import {
   confirmationCalls,
   confirmationsWereParented,
@@ -35,6 +36,15 @@ const PASSWORD = 'desktop remote password'
 
 /** What `seedServerLibrary` writes, so the download assertion compares against the source. */
 const PART_STL = 'solid part\nendsolid part\n'
+
+/**
+ * A real binary STL, so the *server's* preview queue has something it can actually rasterise.
+ *
+ * `PART_STL` above is a text placeholder with no triangles in it — enough to be a file, not
+ * enough to be a thumbnail — which is why the thumbnail half of the header test used to drive
+ * no thumbnail at all.
+ */
+const CUBE_STL = binaryStl(cubeMesh())
 
 /** A port nothing is listening on right now, so a stray dev server cannot collide with this. */
 async function freePort(): Promise<number> {
@@ -65,6 +75,7 @@ async function seedServerLibrary(project: string): Promise<string> {
     // The server's libraries are per-user; a project folder lives under the owner's own directory.
     mkdirSync(join(dir, user.username, project), { recursive: true })
     writeFileSync(join(dir, user.username, project, 'part.stl'), PART_STL)
+    writeFileSync(join(dir, user.username, project, 'cube.stl'), CUBE_STL)
     const result = await rescan(lib, { userId: user.id, isAdmin: user.isAdmin })
     expect(result.adopted).toBe(1)
   } finally {
@@ -93,7 +104,14 @@ async function startServer(libraryDir: string): Promise<RunningServer> {
     {
       cwd: repoRoot,
       stdio: 'ignore',
-      env: { ...process.env, SPM_LIBRARY_DIR: libraryDir, SPM_PORT: String(port) },
+      env: {
+        ...process.env,
+        SPM_LIBRARY_DIR: libraryDir,
+        SPM_PORT: String(port),
+        // At the 30-second production default a thumbnail assertion would dominate this suite's
+        // runtime; the web e2e suite drops it for the same reason.
+        SPM_PREVIEW_INTERVAL_MS: '1000',
+      },
     },
   )
   const stop = (): void => void child.kill()
@@ -627,17 +645,61 @@ test('the forced headers leave a real thumbnail and a real download alone', asyn
   expect(raw.csp).toContain('sandbox')
   expect(raw.text).toBe(PART_STL)
 
-  // And a `<img>` through the same branch still decodes. The server has no thumbnail for a plain
-  // STL, so this drives the branch with a known-good image the server does serve: its own
-  // favicon is not on `/api`, so the assertion is on the model bytes above and on this fetch
-  // reaching the server at all rather than on a picture nobody put there.
-  const imageBranch = await page.evaluate(async () => {
-    const response = await fetch('/api/capabilities')
-    return { status: response.status, type: response.headers.get('content-type') }
+  // And a real `<img>`, at a real `thumbUrl`, through the same branch — the consumer the forced
+  // headers would break if a response CSP were enforced on a subresource. The server renders this
+  // itself from the cube seeded above; the poll is waiting for its preview queue, not for
+  // anything this shell does.
+  const thumbUrl = await pollForThumbnail(page)
+
+  expect(
+    await page.evaluate(async (url: string) => {
+      const response = await fetch(url)
+      await response.body?.cancel()
+      return {
+        type: response.headers.get('content-type'),
+        nosniff: response.headers.get('x-content-type-options'),
+        csp: response.headers.get('content-security-policy'),
+      }
+    }, thumbUrl),
+  ).toEqual({
+    type: 'image/png',
+    nosniff: 'nosniff',
+    csp: "default-src 'none'; sandbox",
   })
-  expect(imageBranch.status).toBe(200)
-  expect(imageBranch.type).toContain('application/json')
+
+  // Decoded and painted, not merely fetched: a header that broke image loading would fail here
+  // and nowhere else in the suite.
+  const painted = await page.evaluate(async (url: string) => {
+    const image = new Image()
+    image.src = url
+    await image.decode()
+    return { width: image.naturalWidth, height: image.naturalHeight }
+  }, thumbUrl)
+  expect(painted.width).toBeGreaterThan(0)
+  expect(painted.height).toBeGreaterThan(0)
 })
+
+/** The server's own `thumbUrl` for the cube, once its preview queue has rendered one. */
+async function pollForThumbnail(page: Page): Promise<string> {
+  let thumbUrl: string | undefined
+  await expect
+    .poll(
+      async () => {
+        thumbUrl = (await page.evaluate(async () => {
+          const projects = (await fetch('/api/projects').then((r) => r.json())) as { id: string }[]
+          const detail = (await fetch(`/api/projects/${projects[0]!.id}`).then((r) =>
+            r.json(),
+          )) as { files: { name: string; thumbUrl?: string }[] }
+          return detail.files.find((file) => file.name === 'cube.stl')?.thumbUrl
+        })) as string | undefined
+        return thumbUrl ?? null
+      },
+      { timeout: 30_000 },
+    )
+    .not.toBeNull()
+  if (!thumbUrl) throw new Error('no thumbUrl after polling')
+  return thumbUrl
+}
 
 test('the application menu carries the way back, and the developer tools', async () => {
   const app = await launchShell(newUserDataDir(), { remoteUrl: server.origin })
