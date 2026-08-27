@@ -115,10 +115,74 @@ with the library inside the repo.
 `deno task` lists the rest: `build:ui`, `serve` (build the UI, then serve it for real),
 `import`, `check`, `lint`, `fmt`, `test`, `test:core`, `test:server`, `e2e`.
 
-The desktop shell is a third thing to run: `deno task dev:desktop` builds the electron Angular
-bundle and the Electron main process, then launches it. It reads `SPM_LIBRARY_DIR` for the
-folder to open — a native picker replaces that later — and there is no server and no login in
-that mode.
+## The desktop application
+
+The Electron shell runs the same Angular UI against either of two libraries (spec 2.6):
+
+- **a folder on this computer** — no server, no login, fully offline. The app calls `packages/core`
+  directly from its main process and runs the preview queue itself.
+- **a server** — the same `HttpApiClient` the browser uses, pointed at a Deno server you run
+  somewhere else. You sign in with an account on that server.
+
+On first run it asks which, in a native dialog. Choosing a folder opens the system folder chooser;
+choosing a server asks for its address on a page of its own. Whichever you pick is remembered, and
+**Library → Choose library…** in the menu bar is how you change your mind later — in server mode
+the header's folder control is deliberately absent, because there is no local folder to change.
+
+### Running it
+
+    deno task install
+    node node_modules/electron/install.js   # once: Electron's ~100 MB binary
+    deno task dev:desktop
+
+`dev:desktop` builds the Angular electron bundle in its **development** configuration
+(unoptimized, with source maps) and the Electron main process, then launches it. The developer
+tools are on the **View** menu, as in any Electron app.
+
+`deno task build:desktop` is the same build with the renderer optimized. It produces
+`packages/desktop/dist` (the main bundle, the preload and the SQL migrations) and
+`packages/web/dist/electron` (the renderer), and is what the desktop test suite runs against.
+
+    deno task package:desktop
+
+writes an unpacked, runnable application to
+`packages/desktop/out/slicer-project-manager-<platform>-<arch>/`. Start it with the `electron`
+executable in that directory. It is a directory and not an installer — installers and code signing
+are deferred, with the reasons in the subsystem plan's Scope — but it is self-contained: it carries
+the Electron runtime, the bundled main process and the renderer, and needs no Node, no Deno and no
+`node_modules` on the machine that runs it. What it does still need is whatever Electron itself
+needs from the platform (on Linux, `libgtk-3` and Chromium's other shared libraries; on Windows,
+nothing a supported Windows lacks).
+
+### Environment
+
+Two variables override the remembered choice for one launch, and neither is written back to
+`state.json` — an operator naming a library for one run has not made a choice in the app:
+
+| Variable          | What it does                                                                      |
+| ----------------- | --------------------------------------------------------------------------------- |
+| `SPM_LIBRARY_DIR` | Open this folder in local mode. The same variable the server reads.               |
+| `SPM_REMOTE_URL`  | Connect to this server, e.g. `http://192.168.1.5:8000`. An origin only — no path. |
+
+Setting both is refused at startup rather than resolved by precedence: they name two different
+libraries.
+
+### The session in server mode
+
+The desktop app is not a browser tab, so it does not get a browser's cookie jar. The main process
+holds the session cookie the server sets, in memory, and attaches it to every request it forwards;
+the renderer never sees a token, exactly as `HttpOnly` gives a browser tab.
+
+**Nothing about the session is written to disk, so quitting the app signs you out.** That is a
+decision rather than a default: Electron's own `net.fetch` would have used a cookie jar that
+persists under the app's data directory, which would leave a bearer credential for your server at
+rest for as long as its lifetime, protected by nothing this app controls. The mode and the server
+address _are_ remembered, so a restart comes straight back to the login screen of the right server.
+
+One thing worth knowing before you point it at a LAN server over plain `http`: the login, the
+session and every model cross that network in the clear. The app says so once, on stderr, and
+connects anyway — a home server on `http` is the normal case, and refusing it would mean the
+desktop app could not reach the server this README tells you to run.
 
 ### Editors
 
@@ -253,6 +317,8 @@ uses. It needs a browser binary once:
 `cd packages/web && deno run -A node_modules/@playwright/test/cli.js install chromium`.
 
 `deno task test:desktop` builds the Angular electron bundle and the main process, launches the
-real app against a throw-away library and asserts on what it painted. It needs the Electron
-binary once — `deno install` will not fetch it, because Electron 44 ships no install script:
-`node node_modules/electron/install.js` (about 100 MB, cached thereafter).
+real app against a throw-away library and asserts on what it painted. Its remote-mode suite also
+starts a real Deno server of its own and drives the app against it, so it needs Deno on the path
+as well. It needs the Electron binary once — `deno install` will not fetch it, because Electron 44
+ships no install script: `node node_modules/electron/install.js` (about 100 MB, cached
+thereafter).

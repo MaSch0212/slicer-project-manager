@@ -85,6 +85,19 @@ jobs:
           grep -rl DesktopPlaceholderPage packages/web/dist/electron/browser \
             || { echo "::error::fileReplacements did not swap in the electron routes"; exit 1; }
 
+      # Task 5's desktop-only page, which is the first one under features/desktop/ that is real
+      # rather than a scaffold: it reaches the shell over IPC to ask for a folder or a server, so
+      # it must be as absent from the web bundle as the placeholder is. Same shape, same reason.
+      - name: web bundle carries no desktop connect page
+        run: |
+          if grep -rl DesktopConnectPage packages/web/dist/web/browser; then
+            echo "::error::the desktop connect page leaked into the web bundle"; exit 1
+          fi
+      - name: electron bundle carries the desktop connect page
+        run: |
+          grep -rl DesktopConnectPage packages/web/dist/electron/browser \
+            || { echo "::error::routes.electron.ts no longer reaches the connect page"; exit 1; }
+
       # Same shape, for the second fileReplacement: API_CLIENT resolves to IpcApiClient in the
       # electron build and to HttpApiClient in the web one. The marker is a string literal from
       # ipc-api-client.ts (BRIDGE_MISSING) and not the class name, because the minifier renames

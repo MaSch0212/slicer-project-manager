@@ -5,5 +5,5 @@
        the same root devDependency packages/core's Node tests use. */
     "types": ["node"]
   },
-  "include": ["src", "test", "build.ts", "playwright.config.ts"]
+  "include": ["src", "test", "build.ts", "package-app.ts", "playwright.config.ts"]
 }

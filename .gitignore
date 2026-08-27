@@ -3,6 +3,8 @@
 
 node_modules/
 dist/
+# `deno task package:desktop` writes the unpacked application here (Electron's runtime, ~250 MB).
+out/
 .angular/
 coverage/
 *.tsbuildinfo
