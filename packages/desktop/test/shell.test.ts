@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { createServer, type Server } from 'node:http'
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { after, afterEach, before, test } from 'node:test'
@@ -274,6 +274,12 @@ test('two mode questions at once are one dialog', async () => {
 test('a remembered server is reconnected at startup without asking, and asks for no window', () => {
   const stateFile = stateFileFor()
   rememberChoice(stateFile, 'remote', origin)
+  // Rewritten by hand in a spelling `rememberChoice` would never produce: no indentation, no
+  // trailing newline. **That is what makes the "nothing is rewritten" assertion below able to
+  // fail** — comparing the parsed object could not, because a rewrite produces byte-identical
+  // content and the review caught exactly that. Any write at all reformats this.
+  const compact = '{"mode":"remote","remoteUrl":"' + origin + '"}'
+  writeFileSync(stateFile, compact)
   const h = harness({ stateFile })
 
   assert.deepEqual(h.shell.start({}), { opened: true })
@@ -286,8 +292,9 @@ test('a remembered server is reconnected at startup without asking, and asks for
   // answered the first of them.
   assert.deepEqual(h.replacements, [])
   // And nothing is rewritten either: the origin came off disk and putting it back would be an
-  // fsync per launch to produce a byte-identical file.
-  assert.deepEqual(readState(stateFile), { mode: 'remote', remoteUrl: origin })
+  // fsync per launch to produce a byte-identical file. Read as raw text, not as an object —
+  // see the fixture above.
+  assert.equal(readFileSync(stateFile, 'utf8'), compact)
 })
 
 test('a state file from task 4 — a folder and no mode — still opens its folder', () => {
@@ -509,6 +516,51 @@ test('a server the renderer named is not connected to until the user says so', a
   // worse than none, because it would train people to accept an unnamed one.
   assert.equal(h.confirmations.length, 1)
   assert.match(h.confirmations[0]!.message, /169\.254\.169\.254/)
+})
+
+/**
+ * The renderer can ask as often as it likes; it gets one dialog.
+ *
+ * `askForMode` has had this guard since it was written, because two menu clicks could stack two
+ * message boxes. Here the caller is the untrusted side and needs no clicks at all — a loop over
+ * `spm.invoke('library.connect', ...)` would stack a native dialog per iteration. The gate would
+ * still hold, since every one of them defaults to refusing, but dialog fatigue is the failure a
+ * confirmation gate exists to resist.
+ */
+test('a renderer asking to connect in a loop gets one dialog, not one per call', async () => {
+  const h = harness({ confirm: false })
+
+  const answers = await Promise.all(Array.from({ length: 25 }, () => h.shell.connectRemote(origin)))
+
+  assert.equal(h.confirmations.length, 1, 'one native dialog, however many times it was asked')
+  assert.deepEqual(
+    answers,
+    Array.from({ length: 25 }, () => null),
+    'and they all get the answer',
+  )
+  assert.equal(h.shell.remote(), null)
+
+  // The guard is released afterwards, so the next genuine attempt is asked about again rather
+  // than silently inheriting the refusal. The folder is what makes the pick actually *switch* —
+  // a cancelled one leaves the server attached, and the second call would then take the
+  // already-connected shortcut instead of the path under test. (It did, first time round.)
+  const h2 = harness({ confirm: true, folder: folderWithProject('between-connects', 'Widget') })
+  await h2.shell.connectRemote(origin)
+  assert.equal(h2.confirmations.length, 1)
+  await h2.shell.pickLocalFolder()
+  assert.equal(h2.shell.remote(), null, 'the server really was let go of')
+  await h2.shell.connectRemote(origin)
+  assert.equal(h2.confirmations.length, 2)
+})
+
+test('a malformed URL rejects rather than throwing out of a promise-typed call', async () => {
+  const h = harness({})
+  // Sharp edge worth pinning: the guard made this synchronous for a moment, and a function whose
+  // type says `Promise` throwing before it returns one is a footgun for every caller.
+  const returned = h.shell.connectRemote('file:///C:/Windows')
+  assert.ok(returned instanceof Promise)
+  await assert.rejects(() => returned, /http or https/)
+  assert.deepEqual(h.confirmations, [])
 })
 
 test('the confirmation defaults to refusing, and is refused by dismissal', () => {

@@ -9,6 +9,7 @@ import type { Capabilities } from '@spm/contract/dtos.ts'
 import { activateAccount, closeLibrary, ensureBootstrapAdmin, openLibrary, rescan } from '@spm/core'
 import {
   confirmationCalls,
+  confirmationsWereParented,
   launchShell,
   newUserDataDir,
   stubFolderPicker,
@@ -415,6 +416,12 @@ test('a server the renderer names is not connected to until the user confirms it
   const asked = await confirmationCalls(app)
   expect(asked).toHaveLength(1)
   expect(String(asked[0]!['message'])).toContain(server.origin)
+  // Raised **on the window that asked**, which is what makes it window-modal: measured on
+  // Electron 44.0.0, a parented message box leaves `win.isEnabled()` false while it is up and a
+  // parentless one leaves it true. This is the one dialog in the shell raised by untrusted code,
+  // so tying it to the page that provoked it is the difference between a question about
+  // something and a box floating on its own.
+  expect(await confirmationsWereParented(app)).toEqual([true])
 
   // And the same call, confirmed, does connect — so what the test above measured is the answer
   // and not some other reason the connection did not happen.

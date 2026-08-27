@@ -100,6 +100,16 @@ export class ShellHost {
   #remote: RemoteHost | null = null
   /** The mode question that is already open, so a second menu click cannot stack another. */
   #asking: Promise<ModeChoice> | null = null
+  /**
+   * The connect confirmation that is already open, for the same reason — and a stronger one.
+   *
+   * The mode question is raised by a menu click, so stacking two of them takes two clicks. This
+   * one is raised by `library.connect`, which the *renderer* calls and which `ipc.ts` does not
+   * serialize, so a loop could stack unbounded native dialogs. The gate holds either way — every
+   * one of them defaults to refusing — but dialog fatigue is precisely the failure a confirmation
+   * exists to resist, and the caller is the untrusted side of this boundary.
+   */
+  #connecting: Promise<RemoteLibraryDto | null> | null = null
 
   constructor(options: ShellHostOptions) {
     this.#stateFile = options.stateFile
@@ -282,10 +292,30 @@ export class ShellHost {
    * the login screen the window lands on is where an unreachable server is reported.
    */
   async connectRemote(url: unknown): Promise<RemoteLibraryDto | null> {
+    // `async`, so a malformed URL *rejects* rather than throwing synchronously out of a function
+    // whose type says it returns a promise. Everything below still runs before the first `await`,
+    // which is what keeps the guard sound: two calls in a loop are two synchronous entries, and
+    // the first has assigned `#connecting` before the second reads it.
+    //
+    // Parsed before that guard, so a malformed URL is refused immediately rather than queueing
+    // behind a dialog it is never going to reach.
     const origin = parseRemoteOrigin(url)
     // Reconnecting to the server that is already open would throw the renderer away and log the
     // user out of it, for nothing — and would ask a question whose answer is already on screen.
     if (this.#remote?.origin === origin) return { origin }
+    // One dialog at a time, whatever the renderer asks for. A second caller waits for the first
+    // answer, which is the shape `askForMode` already uses; the difference is that this one can
+    // be called in a loop by code we do not trust, and unbounded native dialogs are how a user is
+    // trained to dismiss the one question that matters.
+    if (this.#connecting) return await this.#connecting
+    const connecting = this.#connectOnce(origin).finally(() => {
+      if (this.#connecting === connecting) this.#connecting = null
+    })
+    this.#connecting = connecting
+    return await connecting
+  }
+
+  async #connectOnce(origin: string): Promise<RemoteLibraryDto | null> {
     if (!(await this.#confirmRemote(confirmRemoteOptions(origin, this.#language())))) return null
     this.#adoptRemote(origin, { remember: true })
     return { origin }

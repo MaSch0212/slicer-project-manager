@@ -638,7 +638,14 @@ export async function showModePicker(options: ModePickerOptions): Promise<ModeCh
  * the gate off, which is the one thing it must not have.
  */
 export const showRemoteConfirmation: RemoteConfirmer = async (options: ConfirmOptions) => {
-  const { response } = await dialog.showMessageBox({
+  // **Parented, unlike every other dialog in this shell**, and the asymmetry is the point. The
+  // folder chooser and the mode question are parentless because the same call serves a window
+  // the user is looking at and a first run with nothing in it yet (see `showFolderPicker`). This
+  // one is raised by the renderer, so there is always a page that asked — and attaching the sheet
+  // to that page is what ties the question to the thing that provoked it, rather than leaving a
+  // floating box the user has to guess the origin of.
+  const parent = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0]
+  const box = {
     type: options.type,
     title: options.title,
     message: options.message,
@@ -646,7 +653,13 @@ export const showRemoteConfirmation: RemoteConfirmer = async (options: ConfirmOp
     buttons: options.buttons,
     defaultId: options.defaultId,
     cancelId: options.cancelId,
-  })
+  }
+  // The overload takes the parent first. With no window at all — nothing in this app reaches here
+  // in that state, but `getAllWindows()` is empty for a moment during a replacement — it falls
+  // back to the parentless form rather than passing `undefined`, which is not that overload.
+  const { response } = await (parent
+    ? dialog.showMessageBox(parent, box)
+    : dialog.showMessageBox(box))
   return confirmedAt(response)
 }
 

@@ -202,13 +202,28 @@ export async function stubRemoteConfirmation(
   await app.evaluate(({ dialog }, allow) => {
     const recorder = globalThis as unknown as { __spmConfirmCalls?: unknown[] }
     recorder.__spmConfirmCalls ??= []
+    const parented = globalThis as unknown as { __spmConfirmParented?: boolean[] }
+    parented.__spmConfirmParented ??= []
     const stub = (...args: unknown[]): Promise<{ response: number }> => {
+      // The overload is `(options)` or `(parentWindow, options)`. Which one the shell used is the
+      // whole of whether the dialog is window-modal — measured on Electron 44.0.0: a parented box
+      // leaves `win.isEnabled()` **false** while it is up and a parentless one leaves it `true`,
+      // so the page that asked cannot be touched until the question is answered.
+      parented.__spmConfirmParented?.push(args.length > 1)
       recorder.__spmConfirmCalls?.push(args.length > 1 ? args[1] : args[0])
       // Index 1 is Connect and index 0 is Cancel — see `CONFIRM_CHOICES` in library.ts.
       return Promise.resolve({ response: allow ? 1 : 0 })
     }
     ;(dialog as unknown as { showMessageBox: unknown }).showMessageBox = stub
   }, confirm)
+}
+
+/** Whether each confirmation was raised with a parent window, and so was window-modal. */
+export async function confirmationsWereParented(app: ElectronApplication): Promise<boolean[]> {
+  return await app.evaluate(() => {
+    const recorder = globalThis as unknown as { __spmConfirmParented?: boolean[] }
+    return recorder.__spmConfirmParented ?? []
+  })
 }
 
 /** What that stub recorded: one entry per confirmation the shell raised, in order. */
