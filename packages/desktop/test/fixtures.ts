@@ -270,7 +270,15 @@ function envWithoutLibraryDir(): Record<string, string> {
  *
  * Prefixed and unconditional. The shell is quiet on a healthy launch — the suite's own
  * `renderer boots without a console error or warning` spec depends on that being true — so this
- * costs nothing on the runs that pass and is the only evidence on the runs that do not.
+ * costs nothing on the runs that pass.
+ *
+ * **What it does not catch, measured rather than assumed.** The handlers attach after
+ * `electron.launch` resolves, so anything the process wrote before that is already gone:
+ * `resolveFolderPicker`'s `SPM_FAKE_PICKER is set` warning is emitted by every `launchApp` in
+ * this file and appeared **zero** times in a full CI run through this pipe, while a later
+ * `desktop: the last folder is no longer there` came through fine. So this shows what a launch
+ * says once it is up, not what it says while starting — which is the half a wedged startup most
+ * needs. Recorded rather than left to look complete.
  */
 function pipeProcessOutput(app: ElectronApplication, label: string): void {
   const child = app.process()

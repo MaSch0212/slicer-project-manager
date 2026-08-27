@@ -15,6 +15,25 @@ export default defineConfig({
   /* Builds before anything runs, and fails the whole run if the build produced nothing. The
      tests must never be able to pass against a stale dist/. */
   globalSetup: './test/build.setup.ts',
+  /* One retry, on CI only, and only because of what four consecutive CI failures turned out to
+     be: the Electron process starts, prints Chromium's usual dbus and GPU complaints, and then
+     never produces a window. Every one of the four passed on a re-run of the same commit, and
+     the last of them held out for a full **90 seconds** — so it is not slowness, and it is not a
+     failing assertion. The process stays alive throughout (`app.exit` would have closed it and
+     given Playwright a different error), and nothing in the shell's own output says why; the
+     startup warnings this suite's stderr pipe would show are emitted before the pipe can attach.
+
+     What this is, and is not. A retried test is reported as **flaky**, not as passed, so the
+     signal stays in the run rather than being deleted — and a test that fails twice still fails
+     the job. It is not a licence for a flaky assertion: everything in this suite is
+     deterministic against a library it created itself, and a genuine regression fails both
+     attempts. Locally there are no retries at all, so a flake introduced during development is
+     as loud as it ever was.
+
+     If this needs a fifth look, the thing to find out is why a healthy-looking Electron process
+     under `xvfb-run` sometimes never opens a window; nothing in the product code has been shown
+     to cause it. */
+  retries: process.env['CI'] ? 1 : 0,
   /* Each spec launches its own Electron process against its own library folder; running two at
      once on one runner is contention for no gain, and the whole suite is a few seconds. */
   workers: 1,
