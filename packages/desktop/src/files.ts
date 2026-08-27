@@ -67,9 +67,12 @@ export function parseFileRequest(pathname: string): FileRequest | null {
  * `NotFound` comes from `requireOwnedFile` (no such file, or one owned by someone else), from a
  * preview that is not `ready`, and from bytes that vanished between the row and the open.
  * `Forbidden` comes from core's `safeJoin`. Anything else reaching here is a bug in the main
- * process, and 500 is the honest answer to it. The server's `STATUS_BY_CODE` covers all thirteen
- * codes because its routes can raise all thirteen; copying the whole table here would claim a
- * breadth these two routes do not have.
+ * process, and 500 is the honest answer to it. The server's `STATUS_BY_CODE` covers every code in
+ * the shared union because its routes can raise every one of them; copying the whole table here
+ * would claim a breadth these two routes do not have. (It said "all thirteen" until the final
+ * review counted: `AppErrorCode` has twelve members, and so does the server's table. A number
+ * nothing derives is a number that goes stale — the rule the rest of this branch settled on is to
+ * derive it or drop it, and here there is nothing worth deriving.)
  */
 const STATUS_BY_CODE: Partial<Record<AppErrorCode, number>> = { NotFound: 404, Forbidden: 403 }
 
@@ -182,17 +185,23 @@ async function streamFile(
  * exactly one thing on top: it never builds a path from the URL. The escape a URL could attempt
  * therefore does not reach a path join — it reaches `WHERE f.id = ?` and selects nothing.
  *
- * What that leaves uncovered, stated rather than implied: `resolvePreviewPath` joins the
- * `previews.png_path` column under `lib.dir` with a plain `join`, **not** `safeJoin`, so a row
- * whose `png_path` is `../x.png` names a file outside the library — measured, by writing that
- * exact row into a real library and calling the function: it returned an `absPath` one directory
- * above `lib.dir`. The Deno server shares the function and so shares this. Nothing writes that
- * column but `previews/queue.ts`, from an id it generated, and reaching it needs write access to
- * the library database — at which point the attacker already has the library. Left alone rather
- * than patched here, because the fix belongs in core where both shells would get it, and because
- * a guard in one shell would make the two disagree about the same row. **Ruling C-13 assigns it
- * to task 4** — the task that makes previews real, and so the first task in which shipping code
- * writes that column at all.
+ * **Both paths through core are `safeJoin`, and ruling C-13 is closed.** This paragraph used to
+ * record a hole: `resolvePreviewPath` assembled the `previews.png_path` column under `lib.dir`
+ * with a plain `join`, so a row whose `png_path` was `../x.png` named a file outside the library
+ * — measured at the time, by writing that row into a real library and getting back an `absPath`
+ * one directory above `lib.dir`. It was left to core rather than patched in one shell, because a
+ * guard here would have made the two shells disagree about the same row.
+ *
+ * Task 4 discharged it. `resolvePreviewPath` in `packages/core/src/files/usecases.ts` now
+ * assembles through `safeJoin` exactly as `resolveFilePath` does, and
+ * `packages/core/test/files.test.ts` covers both escapes — a relative `png_path` and an absolute
+ * one — with a real file at the escaped target, so the refusal cannot be `existsSync` answering
+ * on the guard's behalf. Both shells got it, which was the point of sending it there.
+ *
+ * What is left is the residual `dispatch.ts` already names where it serves bytes: a **hard link**
+ * inside the library pointing out of it defeats every path-assembly guard, because the path never
+ * leaves the root. Nothing in this app creates one, and an attacker who can is already writing
+ * inside the library folder.
  */
 export async function serveLibraryFile(
   lib: Library,

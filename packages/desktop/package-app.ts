@@ -27,6 +27,17 @@ import { fileURLToPath } from 'node:url'
  * Windows does not already have. That is the honest boundary of "runnable": it is a build of this
  * app that starts on a machine with no developer toolchain, not a self-contained static binary.
  *
+ * ## What ships inside it
+ *
+ * `dist/` is copied whole, **sourcemaps included**, so the unpacked application carries the full
+ * main-process source. That is a decision and not an inheritance: this artifact exists so a
+ * person can run the subsystem and report what happened, and a stack trace that names
+ * `remote.ts:329` is worth more here than the modest secrecy of a bundle nobody is shipping to
+ * customers. There is nothing in this source a reader of the public repository does not have.
+ *
+ * An installer would want the opposite, and that is one of the things deferred with it: when
+ * packaging becomes real, dropping `*.map` is a line in this file.
+ *
  * ## The renderer, and why it is copied rather than referenced
  *
  * `defaultRendererDir()` looks for `renderer/index.html` beside the main bundle before falling

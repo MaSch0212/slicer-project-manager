@@ -8,7 +8,7 @@ import type { AppErrorCode } from '@spm/contract/errors.ts'
  * too. `dispatch.ts` and `@spm/core` must never end up there.
  */
 
-/** Decision 3 of the plan: one channel carrying a dotted `ApiClient` path, not thirty. */
+/** Decision 3 of the plan: one channel carrying a dotted `ApiClient` path, not one per method. */
 export const INVOKE_CHANNEL = 'spm:invoke'
 
 /** The name the preload publishes on `window`. */

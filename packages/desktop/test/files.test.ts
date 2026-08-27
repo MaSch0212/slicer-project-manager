@@ -181,8 +181,8 @@ test('nothing core can name a file resolves to a type Chromium would execute', a
     // The equality and nothing else. A first version also checked the value against a list of
     // active-content types, which could never be reached in a failing state — the equality is
     // strictly stronger, so the list was documentation wearing an assertion's clothes. Measured:
-    // all nine take the fallback today, so any entry added to core's map turns this red, even a
-    // harmless-looking one. That is the intended sensitivity: the decision should be made
+    // every extension in the list above takes the fallback today, so any entry added to core's
+    // map turns this red, even a harmless-looking one. That is the intended sensitivity: the decision should be made
     // deliberately, here, rather than inherited.
     assert.equal(type, 'application/octet-stream', `.${extension}`)
   }

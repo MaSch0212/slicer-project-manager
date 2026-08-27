@@ -21,8 +21,9 @@ import type { Capabilities } from '@spm/contract/dtos.ts'
  * `requiresAuth: false` is what spec 2.6 says local mode is, and it is asserted on directly. It
  * is *not*, on its own, what gets the renderer off `/login`, and the carried-in ruling that said
  * so is wrong — measured in task 4, by flipping this one flag back to `true` and running the
- * desktop suite: the app still lands on `spm://app/projects` and thirteen of fourteen tests stay
- * green. The guard is `!capabilities.requiresAuth || auth.isAuthenticated()` (guards.ts), and the
+ * desktop suite: the app still landed on `spm://app/projects` and almost every test stayed green.
+ * (The count that used to be here was of a suite that has since more than tripled, so it said
+ * less each round; what matters is that flipping the flag did not move the app.) The guard is `!capabilities.requiresAuth || auth.isAuthenticated()` (guards.ts), and the
  * bridge satisfies *both* arms at once: this flag is the first, and `account.me` answering with
  * `ensureLocalUser`'s row is the second.
  *

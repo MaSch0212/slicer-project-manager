@@ -167,6 +167,18 @@ Two variables override the remembered choice for one launch, and neither is writ
 Setting both is refused at startup rather than resolved by precedence: they name two different
 libraries.
 
+Two more exist for the automated suite, and are documented because an environment variable that
+changes what the app does is not a secret worth keeping:
+
+| Variable          | What it does                                                                                                                                                                                                                              |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SPM_FAKE_MODE`   | Answers the first-run **mode** question without a dialog: `local`, `remote`, or anything else for "not now". Both questions fire on `did-finish-load`, so a test that replaced the dialogs after launch would race the app's own startup. |
+| `SPM_FAKE_PICKER` | Answers the **startup folder** prompt with that folder, or cancels it when empty. A folder answered this way _is_ remembered, exactly as one chosen in the dialog is — it stands in for the user's answer.                                |
+
+Neither can name anything the user could not have chosen themselves, and neither answers the
+server confirmation: that one is raised in reply to a call rather than at startup, so there is no
+race to lose, and a variable that could pre-answer it would be a way to switch it off.
+
 ### The session in server mode
 
 The desktop app is not a browser tab, so it does not get a browser's cookie jar. The main process

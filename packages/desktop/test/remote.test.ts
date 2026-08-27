@@ -381,6 +381,41 @@ test('the session dies with the host, and a new one starts logged out', async ()
   assert.equal(received.at(-1)!.headers['cookie'], undefined)
 })
 
+/**
+ * Closing a host cancels what it still has on the wire, not just what it might send next.
+ *
+ * `#closed` only ever stopped the *next* call. A request issued a moment before a mode switch was
+ * still out there, and its response would have been handed to a renderer that is about to be
+ * replaced. It is also the only bound this proxy puts on a server that accepts a request and
+ * never answers — the reason this test's server deliberately never answers.
+ */
+test('closing a host cancels the request it still has in flight', async () => {
+  const remote = host()
+  let release = (): void => {}
+  reply = (_request, response) => {
+    // Accepted and never answered, until this test says so.
+    release = (): void => {
+      response.writeHead(200, { 'content-type': 'application/json' })
+      response.end('{}')
+    }
+  }
+
+  const inFlight = remote.proxy(ask('/projects'))
+  // The request has to have left before closing means anything.
+  await new Promise((settle) => setTimeout(settle, 50))
+  assert.equal(received.length, 1, 'the server really did receive it')
+
+  remote.close()
+  const response = await inFlight
+
+  // It comes back as the app's own envelope rather than hanging or throwing an `AbortError` at
+  // the protocol handler, which would reach the renderer as a bare `Failed to fetch`.
+  assert.equal(response.status, 502)
+  const body = (await response.json()) as { error: { code: string } }
+  assert.equal(body.error.code, 'Internal')
+  release()
+})
+
 test('a closed host refuses rather than reaching the server it has been let go of', async () => {
   const remote = host()
   remote.close()
