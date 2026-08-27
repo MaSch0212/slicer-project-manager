@@ -273,6 +273,20 @@ export function contentTypeFor(file: string): string {
 }
 
 /**
+ * **Before adding a branch here, read this paragraph.** `spm://app` is a trust boundary that does
+ * not look like one. Nothing in this function's signature says so: a branch returns a `Response`,
+ * and the bytes in it are about to become same-origin with the renderer — which holds the IPC
+ * bridge and, through it, the user's filesystem. Subsystem C reached that origin without the
+ * protection it needs three separate times: the file branch (task 3), the proxy branch, whose
+ * content type is chosen by a remote machine (task 5), and an `/api` fall-through that would have
+ * served `index.html` as a 200 to an API client. Each was caught by measurement, none by reading.
+ *
+ * So the question to ask of a new branch is not "is this data safe". It is **"what happens if this
+ * commits as a document"** — and the answer has to be a header you wrote plus a test that goes red
+ * without it. The payload test in `test/files.spec.ts` and its mirror in `test/remote.spec.ts` are
+ * the shape to copy: real bytes, a real top-level navigation, and an assertion on what the page
+ * could reach.
+ *
  * The single `spm://` handler. There is one host, `spm://app`, and two things under it: the
  * renderer's own assets, and file bytes at `spm://app/${RESERVED_PATH_SEGMENT}/files/<id>/{raw,
  * thumb}`. `parseFileRequest` decides which, and everything it does not claim falls through to
