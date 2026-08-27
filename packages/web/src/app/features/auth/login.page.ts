@@ -88,8 +88,17 @@ export class LoginPage {
           const { username, password } = this.model()
           this.auth.setUser(await this.api.auth.login(username, password))
           await this.router.navigate(['/projects'])
-        } catch {
-          // Unknown user, pending, disabled and wrong password are one message (spec 5.1).
+        } catch (error) {
+          // Unknown user, pending, disabled and wrong password are one message (spec 5.1), and
+          // that stays exactly as it is: distinguishing them is the enumeration oracle the spec
+          // refuses to hand out.
+          //
+          // What is logged is a different thing from what is shown. A failure that is *not* about
+          // these credentials — a server that cannot be reached, a proxy redirecting the origin
+          // the desktop shell was pointed at — arrives here as an `AppError` whose message names
+          // it, and this catch used to discard it, leaving "sign-in failed" as the only account
+          // of a misconfiguration nothing else reports either.
+          console.error('sign-in failed', error)
           this.errorKey.set('signInFailed')
         }
       },

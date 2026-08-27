@@ -4,7 +4,12 @@ import { after, before, test } from 'node:test'
 import { AppError } from '@spm/contract/errors.ts'
 import { REMOTE_SHELL_CAPABILITIES } from '../src/capabilities.ts'
 import { API_PATH_PREFIX, UPLOAD_LENGTH_HEADER } from '../src/protocol.ts'
-import { isPlaintextToAnotherMachine, parseRemoteOrigin, RemoteHost } from '../src/remote.ts'
+import {
+  isPlaintextToAnotherMachine,
+  isRedirect,
+  parseRemoteOrigin,
+  RemoteHost,
+} from '../src/remote.ts'
 import { RENDERER_ORIGIN } from '../src/urls.ts'
 
 /**
@@ -269,24 +274,39 @@ test('a redirect is refused, named, and never followed', async () => {
       // then the fix is for the user to type the address the message quotes.
       assert.match(body.error.message, /redirected to http:\/\/127\.0\.0\.1/, String(status))
       assert.equal(elsewhereHits, 0, `nothing was fetched from the redirect target (${status})`)
+      // Nor is the redirect handed to the renderer to follow: its own `fetch` follows them, so a
+      // forwarded `Location` would be the same escape one layer out, stopped only by a CSP this
+      // module does not own. Asserted here rather than in a test of its own — the sibling this
+      // replaces pointed at `example.invalid`, where undici fails DNS and `#send`'s catch returns
+      // a 502 with no `location` whether or not the option is in force, so it could not fail.
+      assert.equal(response.headers.get('location'), null, String(status))
     }
   } finally {
     elsewhere.close()
   }
 })
 
-test('a redirect is not handed to the renderer to follow either', async () => {
+/**
+ * 304 shares the 3xx band and is not a redirect: it carries no `Location`, and refusing it would
+ * turn an ordinary conditional response into a confusing 502.
+ *
+ * Nothing in this repo sends `If-None-Match` today — grepped, not assumed — so this guards a
+ * future conditional GET rather than a live bug. `isRedirect` is asserted directly as well,
+ * because the band is easier to get wrong in one place than to notice in another.
+ */
+test('a 304 is passed through, because it is not a redirect', async () => {
   const remote = host()
   reply = (_request, response) => {
-    response.writeHead(302, { location: 'https://example.invalid/anything' })
+    response.writeHead(304)
     response.end()
   }
   const response = await remote.proxy(ask('/projects'))
-  // A 3xx with its `Location` intact would move the escape one layer out: the renderer's own
-  // `fetch` follows redirects, and the only thing left standing between it and another origin
-  // would be a CSP this module does not own.
-  assert.equal(response.status, 502)
-  assert.equal(response.headers.get('location'), null)
+  assert.equal(response.status, 304)
+
+  for (const status of [300, 301, 302, 303, 307, 308])
+    assert.equal(isRedirect(status), true, String(status))
+  for (const status of [200, 204, 304, 400, 404, 500])
+    assert.equal(isRedirect(status), false, String(status))
 })
 
 /* -------------------------------------------------------------------------------------------

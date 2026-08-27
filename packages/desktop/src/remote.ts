@@ -336,7 +336,7 @@ export class RemoteHost {
       return this.#failure(502, 'Internal', `could not reach ${this.origin}: ${detail}`)
     }
     this.#absorbCookies(response)
-    if (response.status >= 300 && response.status < 400) return this.#refuseRedirect(response)
+    if (isRedirect(response.status)) return this.#refuseRedirect(response)
     return this.#forward(response)
   }
 
@@ -349,12 +349,22 @@ export class RemoteHost {
    * only by a CSP that is not this module's to depend on.
    *
    * The message names the target, because the one legitimate way to meet this is a reverse proxy
-   * redirecting `http://host` to `https://host`, and then the fix is for the user to type the
-   * address it named. `Internal` rather than a new code: `AppErrorCode` is a closed union and
-   * this is not a failure any UI branches on.
+   * redirecting `http://host` to `https://host`. **Where that message actually goes is worth
+   * being exact about, because three comments used to overstate it.** It travels to the renderer
+   * in the app's error envelope and `HttpApiClient` rebuilds it into an `AppError` — and both
+   * places that catch one (`capabilities.store.ts`, `login.page.ts`) show the user a fixed
+   * sentence, so what the user *sees* is "sign-in failed". The message is logged: here, in the
+   * shell's own stderr, which is the log a user can paste; and in the renderer's console at both
+   * of those catch sites, which is what the View menu's developer tools are for. It is a
+   * diagnostic, not a dialog, and saying otherwise is how a mitigation becomes a claim nobody
+   * checked.
+   *
+   * `Internal` rather than a new code: `AppErrorCode` is a closed union and this is not a failure
+   * any UI branches on.
    */
   #refuseRedirect(response: Response): Response {
     const location = response.headers.get('location') ?? 'somewhere else'
+    console.warn(`desktop: refused a redirect from ${this.origin} to ${location}`)
     return this.#failure(
       502,
       'Internal',
@@ -418,6 +428,19 @@ export class RemoteHost {
  * refuse — it does, with `Request body length does not match content-length header` — and the
  * only party that can lie here is the renderer, about its own upload.
  */
+/**
+ * Whether a status is a redirect this proxy must refuse.
+ *
+ * **304 is excluded, and it is the reason this is a function rather than a range check.** `Not
+ * Modified` shares the 3xx band and is not a redirect at all: it carries no `Location`, and
+ * reporting it as "redirected to somewhere else" would be a confusing 502 for a perfectly ordinary
+ * conditional response. Nothing in this repo sends `If-None-Match` today — that was checked, not
+ * assumed — so this is a guard against a future conditional GET rather than a live bug.
+ */
+export function isRedirect(status: number): boolean {
+  return status >= 300 && status < 400 && status !== 304
+}
+
 export function declaredUploadLength(request: Request): number | null {
   const raw = request.headers.get(UPLOAD_LENGTH_HEADER)
   if (raw === null) return null
