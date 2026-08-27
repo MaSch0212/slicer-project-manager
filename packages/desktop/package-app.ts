@@ -15,11 +15,11 @@ import { fileURLToPath } from 'node:url'
  *
  * ## What it produces, and what that directory assumes is installed
  *
- * `packages/desktop/out/slicer-project-manager-<platform>-<arch>/` holds the Electron runtime
- * with this app's own files inside it — the layout Electron looks for by default, `resources/app` with a `package.json`
- * naming the entry point. **It needs no Node, no Deno, no `node_modules` and no Electron on the
- * machine that runs it**, because `build.ts` bundles `@spm/core`, `@spm/contract` and zod into
- * the main bundle and everything else here is Electron's own distribution.
+ * `packages/desktop/out/slicer-project-manager-<platform>-<arch>/` holds the Electron runtime with
+ * this app's own files inside it — the layout Electron looks for by default, `resources/app` with
+ * a `package.json` naming the entry point. **It needs no Node, no Deno, no `node_modules` and no
+ * Electron on the machine that runs it**, because `build.ts` bundles `@spm/core`, `@spm/contract`
+ * and zod into the main bundle and everything else here is Electron's own distribution.
  *
  * What it does still assume is the platform's own C/C++ runtime and desktop libraries, which is
  * Electron's requirement rather than this app's: on Linux, the shared libraries the CI job
