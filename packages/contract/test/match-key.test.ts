@@ -10,7 +10,7 @@ import { matchKey, type ModelSiteIdentity } from '../src/match-key.ts'
  * one pathname and records the URL object it was handed, so the tests below can assert what
  * `matchKey` promises implementations rather than what Thingiverse's URLs look like. The
  * exhaustive fixtures over the spike's real URLs run against the **real** four-row registry in
- * `packages/desktop/test/browse.test.ts`, where the registry lives; a second hand-written copy of
+ * `packages/desktop/test/browse-registry.test.ts`, where the registry lives; a second hand-written copy of
  * those rules here would be a test double standing in for the code it is meant to check.
  */
 
@@ -37,7 +37,7 @@ test('the host is lowercased even where WHATWG has not already done it', () => {
    * host itself for a **special** scheme — `new URL('https://WWW.Probe.EXAMPLE/x').host` is
    * already `www.probe.example` — so a mixed-case `https:` fixture asserts the URL parser's
    * behaviour and says nothing about this function: deleting `.toLowerCase()` here leaves every
-   * `http(s)` fixture in this file and in `packages/desktop/test/browse.test.ts` green. That was
+   * `http(s)` fixture in this file and in `packages/desktop/test/browse-registry.test.ts` green. That was
    * measured, by deleting it.
    *
    * A **non-special** scheme is the only shape that reaches the clause: `new URL('spm://APP/x').host`
@@ -86,14 +86,56 @@ test('the fallback is lowercased host + pathname with the trailing slash removed
   assert.equal(matchKey('https://www.example.com/some/path', []), 'example.com/some/path')
   assert.equal(matchKey('https://example.com/', []), 'example.com')
   assert.equal(matchKey('https://example.com', []), 'example.com')
-  // The query and fragment go for an unrecognised host too, which is where that clause does the
-  // work the four measured rows do not need it for.
+  // A query and a fragment do not survive into the fallback either — but the tempting reason for
+  // that is false, and an earlier version of this comment gave it. The fallback is built from
+  // `parsed.pathname`, which never carries either, so deleting `parsed.search = ''` and
+  // `parsed.hash = ''` leaves this line green. It pins the value, not the clause. The clause is
+  // pinned by the `identity()` hand-off test above, which is the only assertion in this file that
+  // reddens when it goes.
   assert.equal(matchKey('https://example.com/some/path/?lang=de#frag', []), 'example.com/some/path')
 })
 
 test('the fallback keeps the port, so two servers on one hostname stay two keys', () => {
-  assert.equal(matchKey('http://localhost:8080/x', []), 'localhost:8080/x')
+  assert.equal(matchKey('http://localhost:8080/x', []), 'localhost_8080/x')
   assert.notEqual(matchKey('http://localhost:8080/x', []), matchKey('http://localhost:9000/x', []))
+})
+
+test('a fallback key can never spell a prefixed one', () => {
+  /*
+   * `https://thingiverse:1234/` is a single-label host spelled exactly as a registry id, with a
+   * port — and it used to fall back to `thingiverse:1234`, which is the key
+   * `https://www.thingiverse.com/thing:1234` produces through the real registry. Both are valid
+   * `z.url()` values, so a crafted `projects.website` could have synthesised a real model's key.
+   * The port is rendered `_` so the two namespaces are structurally disjoint: a fallback's `:` can
+   * now only come from the pathname (always behind a `/`) or from an IPv6 literal (always behind a
+   * `[`), and neither of those characters occurs in a site id.
+   */
+  assert.equal(matchKey('https://thingiverse:1234/', []), 'thingiverse_1234')
+
+  // A `:` in the *path* is fine and is kept: it always has a `/` in front of it, and a site id
+  // never contains one. An IPv6 literal keeps its colons too, behind a `[`.
+  assert.equal(matchKey('https://thingiverse/thing:1234', []), 'thingiverse/thing:1234')
+  assert.equal(matchKey('https://[::1]:8080/x', []), '[::1]_8080/x')
+
+  // The property stated as the thing that actually matters, rather than as "no colons": no
+  // fallback key begins with a site id and a colon. Restore `:` as the port separator and the
+  // first URL below reddens this.
+  const ids = ['thingiverse', 'printables', 'makerworld', 'cults3d', 'probe']
+  for (const url of [
+    'https://thingiverse:1234/',
+    'https://printables:1807378/',
+    'https://probe:1/',
+    'https://example.com/some/path/',
+    'https://example.com/',
+    'http://localhost:8080/x',
+    'https://probe.example/not-a-model',
+    'https://[::1]:8080/x',
+  ]) {
+    const key = matchKey(url, [probe])
+    for (const id of ids) {
+      assert.ok(!key.startsWith(`${id}:`), `${url} => ${key} spells a ${id} key`)
+    }
+  }
 })
 
 test('http and https on the same path are one key — the scheme is not part of the identity', () => {

@@ -16,10 +16,17 @@
  * other fields — `displayName`, `homeUrl` — are things only the browse view uses, and because a
  * `contract` that carried a table of third-party websites would be describing the outside world
  * rather than this app's API. `ModelSiteDef` is structurally assignable to this, which is what
- * `packages/desktop/test/browse.test.ts` relies on when it passes the real registry in.
+ * `packages/desktop/test/browse-registry.test.ts` relies on when it passes the real registry in.
  */
 export type ModelSiteIdentity = {
-  /** Prefixes the key, so two sites cannot collide on a bare id. */
+  /**
+   * Prefixes the key, so two sites cannot collide on a bare id.
+   *
+   * It is also what makes the two key namespaces disjoint, which needed a deliberate choice
+   * rather than luck: see the port note in `matchKey`. No fallback key begins with a site id
+   * followed by a `:`, and `match-key.test.ts` asserts exactly that rather than the tidier and
+   * false "a fallback contains no `:`".
+   */
   id: string
   /** Matched against the URL's host, lowercased, with a leading `www.` stripped. */
   hosts: readonly string[]
@@ -64,7 +71,23 @@ export type ModelSiteIdentity = {
  *   change, and the category segment (`various`, `home`) also differs per model.
  * - **The fallback is `host + pathname`**, honest about being the weaker key rather than pretending
  *   the four measured rows are the whole web. The trailing slash goes so that a stored
- *   `https://example.com/thing/` and a browsed `https://example.com/thing` are one key.
+ *   `https://example.com/thing/` and a browsed `https://example.com/thing` are one key. A port is
+ *   kept — two servers on one hostname are two keys — but rendered `hostname_port`, not
+ *   `hostname:port`, and that separator is load-bearing rather than cosmetic. See below.
+ *
+ * **The two key namespaces are disjoint, and that took a decision.** Measured against this code:
+ * `https://thingiverse:1234/` — a single-label host spelled exactly as a registry id, with a port —
+ * used to fall back to `thingiverse:1234`, which is the key
+ * `https://www.thingiverse.com/thing:1234` produces. Both are valid `z.url()` values, so a crafted
+ * `projects.website` could synthesise a real model's key: the aggressive direction this function
+ * claims never to take. Rendering the port with `_` closes it structurally rather than
+ * probabilistically. A fallback key's `:` can now come from only two places, and neither can be
+ * preceded by a bare site id: the **pathname**, which always begins with `/`
+ * (`thingiverse/thing:1234`), and an **IPv6 literal**, which always begins with `[`
+ * (`[::1]_8080/x`). A prefixed key's `<id>` is one of four literals containing neither character.
+ * The port separator was chosen over changing the `<id>:<identity>` separator because that string
+ * is handed to other tasks verbatim and appears in spec 6.2, while no fixture anywhere depends on
+ * how a port is spelled.
  *
  * **This is a consequence of the measured rows and not a rule that was tested** against real
  * `projects.website` values (spec 9.8). The URL *shapes* were measured on live sites; the key
@@ -80,6 +103,11 @@ export type ModelSiteIdentity = {
  * some common prefix; a host must match a registry row *exactly* after the `www.` strip, so
  * `cdn.thingiverse.com` is not Thingiverse; and a recognised host whose `identity()` says `null` —
  * a site's home page, a listing — falls back to the full path rather than being keyed to the site.
+ * The one place that claim was not true when first written is the namespace overlap above, which
+ * is why it is closed in the code rather than described in a comment. What the claim does **not**
+ * cover is a collision *inside* one site's identity space — Cults3D's row keys every page on its
+ * final path segment, so a profile and a model that share a slug share a key. That is a property
+ * of the measured row rather than of this function; `registry.ts` states it where the row is.
  *
  * **Total, and never `null`.** An unparseable string comes back as itself, trimmed and lowercased.
  * That is deliberate: `null` would be a key two unrelated failures shared, and `null === null`
@@ -104,9 +132,16 @@ export function matchKey(url: string, sites: readonly ModelSiteIdentity[]): stri
   // was matched on rather than a `www.` form.
   parsed.host = host
 
-  // Captured before the loop, so a row's `identity()` cannot move the fallback out from under it
-  // by mutating the URL object it is handed.
-  const fallback = `${host}${parsed.pathname.toLowerCase().replace(/\/+$/, '')}`
+  // `_` and not `:` for the port. `https://thingiverse:1234/` would otherwise fall back to
+  // `thingiverse:1234`, which is the key a real Thingiverse model produces — see the namespace
+  // note in the docblock. Two ports on one hostname still make two keys, which is the property
+  // that was wanted from keeping the port at all.
+  const fallbackHost = parsed.port === '' ? parsed.hostname : `${parsed.hostname}_${parsed.port}`
+  // Captured before the loop so a row's `identity()` cannot move the *fallback* by mutating the
+  // URL object it is handed. That is the whole of the protection: `parsed` is still the shared,
+  // mutable object every row sees in turn, so a row that mutated it would change what later rows
+  // read. Nothing in the registry does, and nothing should.
+  const fallback = `${fallbackHost.toLowerCase()}${parsed.pathname.toLowerCase().replace(/\/+$/, '')}`
 
   for (const site of sites) {
     if (!site.hosts.includes(host)) continue
