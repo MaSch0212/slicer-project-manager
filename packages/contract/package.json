@@ -7,6 +7,7 @@
     ".": "./src/index.ts",
     "./decorate.ts": "./src/decorate.ts",
     "./errors.ts": "./src/errors.ts",
+    "./match-key.ts": "./src/match-key.ts",
     "./dtos.ts": "./src/dtos.ts",
     "./schemas.ts": "./src/schemas.ts",
     "./api-client.ts": "./src/api-client.ts"

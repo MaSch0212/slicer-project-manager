@@ -10,6 +10,7 @@
     "@spm/contract": "./packages/contract/src/index.ts",
     "@spm/contract/decorate.ts": "./packages/contract/src/decorate.ts",
     "@spm/contract/errors.ts": "./packages/contract/src/errors.ts",
+    "@spm/contract/match-key.ts": "./packages/contract/src/match-key.ts",
     "@spm/contract/dtos.ts": "./packages/contract/src/dtos.ts",
     "@spm/contract/schemas.ts": "./packages/contract/src/schemas.ts",
     "@spm/contract/api-client.ts": "./packages/contract/src/api-client.ts",
