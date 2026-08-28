@@ -1,4 +1,12 @@
-import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core'
+import {
+  ChangeDetectionStrategy,
+  Component,
+  computed,
+  inject,
+  signal,
+  viewChild,
+  viewChildren,
+} from '@angular/core'
 import { InterpolatePipe } from '@ngneers/signal-translate'
 import { JigButton } from '@awdlab/jig/button'
 import { JigIcon } from '@awdlab/jig/icon'
@@ -238,8 +246,11 @@ function classify(error: unknown): FailureKind {
                     }}
                   </jig-message>
                 }
+                <!-- orientation="vertical" is not decoration: jig's radio-group root is a flex
+                     *row* until aria-orientation says otherwise, so this is what stacks the rows,
+                     as well as what puts the arrow keys on the right axis. Measured; styles.css
+                     says the same thing from the other side. -->
                 <jig-radio-group
-                  class="spm-slicer-installs"
                   orientation="vertical"
                   [label]="
                     t.translations().slicers.chooseLabel | interpolate: { name: product.name }
@@ -307,9 +318,26 @@ export class DesktopSlicersPage {
 
   protected readonly icons = { rescan: tablerRefresh, add: tablerPlus, remove: tablerTrash }
 
-  readonly config = signal<SlicerConfigDto | null>(null)
-  readonly busy = signal(false)
-  readonly failure = signal<FailureKind | null>(null)
+  // Writable in here, readable everywhere else — `CapabilitiesStore`'s convention. A page whose
+  // state can be written from outside has no single place its state changes.
+  readonly #configState = signal<SlicerConfigDto | null>(null)
+  readonly #busyState = signal(false)
+  readonly #failureState = signal<FailureKind | null>(null)
+  readonly config = this.#configState.asReadonly()
+  readonly busy = this.#busyState.asReadonly()
+  readonly failure = this.#failureState.asReadonly()
+
+  /**
+   * The two kinds of control that own a value of their own, so a refused change can be put back.
+   *
+   * `jig-radio-group` and `jig-select` write their own model signal the moment the user picks;
+   * this page binds one-way from `config()`. On success the configuration changes and Angular
+   * rewrites the input, which is what `onBind`'s early return is about. On **failure** nothing in
+   * `config()` changed, so Angular writes nothing, and the control would sit there showing the
+   * install the shell had just refused — underneath a banner saying it was refused.
+   */
+  private readonly radioGroups = viewChildren(JigRadioGroup)
+  private readonly defaultSelect = viewChild(JigSelect)
 
   /**
    * Resolves once the first `slicers.get()` has settled, so a spec can await the load rather than
@@ -422,13 +450,13 @@ export class DesktopSlicersPage {
     overrides: { generic?: FailureKind; notFound?: FailureKind } = {},
   ): Promise<void> {
     if (this.busy()) return
-    this.busy.set(true)
-    this.failure.set(null)
+    this.#busyState.set(true)
+    this.#failureState.set(null)
     try {
       const next = await call()
       // `null` is the user cancelling the shell's executable picker, which is an ordinary outcome
       // and not a failure: they were shown the dialog they said no to, and nothing changed.
-      if (next !== null) this.config.set(next)
+      if (next !== null) this.#configState.set(next)
     } catch (error) {
       // Two codes mean something operation-specific, and only those two are overridable. A failed
       // first load says the configuration could not be read rather than "something went wrong";
@@ -442,13 +470,40 @@ export class DesktopSlicersPage {
           : kind === 'notFound'
             ? overrides.notFound
             : undefined
-      this.failure.set(override ?? kind)
+      this.#failureState.set(override ?? kind)
+      // Before `busy` is cleared, deliberately: writing a model signal re-emits `valueChange`, and
+      // the handler it reaches short-circuits twice over — on the value being what is already
+      // stored, and on `#run` refusing to start while a call is in flight.
+      this.#resyncControls()
       // The sentence the user is shown is this app's own, in this app's language; the shell's
       // message and its `details.cause` — the Node error behind a failed detection — are the
       // diagnosis, and this is where they land.
       console.error('slicers: a configuration call failed', error)
     } finally {
-      this.busy.set(false)
+      this.#busyState.set(false)
     }
+  }
+
+  /**
+   * Puts every control back to what the stored configuration actually says.
+   *
+   * No index lines up with anything: whatever install a group is *showing* as chosen, the truth
+   * about that install is its own product's binding, so each group answers for itself and a group
+   * that never diverged is left alone.
+   */
+  #resyncControls(): void {
+    const config = this.config()
+    for (const group of this.radioGroups()) {
+      // Total, and deliberately branchless past this: whatever install a group is *showing*, the
+      // stored truth about it is its own product's binding, and an id the configuration no longer
+      // carries means nothing is bound. A group that never moved is written its own value back.
+      //
+      // An earlier version skipped groups it judged already in step. That judgement had no
+      // observable consequence — a signal written its current value emits a `valueChange` the
+      // handler discards — so it was a branch no assertion could ever fail on, and it is gone.
+      const install = config?.installs.find((row) => row.id === group.value())
+      group.value.set(install ? (config?.bindings[install.slicerId] ?? null) : null)
+    }
+    this.defaultSelect()?.value.set(config?.defaultSlicerId ?? null)
   }
 }

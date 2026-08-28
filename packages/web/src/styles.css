@@ -623,17 +623,13 @@ h2.spm-project-title {
 
 /* ------------------------------------------------------------- slicer settings */
 
-/* The group of install rows for one product.
-   Measured, not assumed: jig's radio-group root lays its children out in a *row*, so without this
-   the two Cura installs sat side by side and the second one's remove button hung outside the
-   card. `jig-radio-group.` rather than a bare class so it wins against the theme's own rule
-   whatever order the two stylesheets land in. */
-jig-radio-group.spm-slicer-installs {
-  display: flex;
-  flex-direction: column;
-  gap: var(--jig-size-padding-sm);
-  align-items: stretch;
-}
+/* The install rows are stacked by jig itself, not from here.
+   Its radio-group root is `inline-flex; flex-direction: row` with a
+   `[aria-orientation='vertical'] { flex-direction: column }` beside it, and `orientation="vertical"`
+   on the element is what sets that attribute. This file used to carry a `flex-direction: column`
+   override as well; measured three ways in a real window, it changed nothing the library was not
+   already doing, so it is gone. `test/slicers.spec.ts` in the desktop package is what holds the
+   stacking down, because jsdom does not lay out and no `ng test` assertion can see it. */
 
 /* One install: the radio and its label take the row, the state tag and the remove control sit at
    the end of it. `align-items: flex-start` because the label is three stacked lines and a dot
@@ -657,7 +653,8 @@ jig-radio-group.spm-slicer-installs {
   gap: 0.125rem;
 }
 
-/* The radio group is a plain block: its rows already carry their own separators. */
+/* jig-radio is a flex row of [dot, label]; the label here is three stacked lines, so the dot is
+   pinned to the top of them rather than floating against the middle one. */
 .spm-slicer-install jig-radio {
   align-items: flex-start;
 }

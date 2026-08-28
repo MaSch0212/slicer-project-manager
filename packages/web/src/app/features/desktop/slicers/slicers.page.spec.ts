@@ -1,6 +1,9 @@
 import { TestBed } from '@angular/core/testing'
+import { By } from '@angular/platform-browser'
+import { JigRadioGroup } from '@awdlab/jig/radio'
+import { JigSelect } from '@awdlab/jig/select'
 import { describe, expect, it, vi } from 'vitest'
-import type { SlicerConfigDto, SlicerInstallDto } from '@spm/contract/dtos.ts'
+import type { SlicerConfigDto, SlicerId, SlicerInstallDto } from '@spm/contract/dtos.ts'
 import { AppError, DETECTION_FAILED } from '@spm/contract/errors.ts'
 import { TranslateService } from '../../../core/i18n/translate.service'
 import { provideJigForTests } from '../../../../testing/jig'
@@ -248,6 +251,47 @@ describe('DesktopSlicersPage', () => {
       expect(checkedState(fixture)).toEqual(['true', 'false'])
     })
 
+    /*
+     * The control owns its own value and writes it the moment the user picks; the page binds
+     * one-way. On failure `config()` has not changed, so Angular writes nothing back — and the
+     * radio would sit there checked on the install the shell had just refused, under a banner
+     * saying that install is gone. `#resyncControls` is what puts it back.
+     */
+    it('puts the radio back on the stored binding when the shell refuses the change', async () => {
+      const { fixture, page, translate } = await setup(
+        { ...TWO_CURAS, bindings: { cura: CURA_513.id } },
+        { bind: vi.fn().mockRejectedValue(new AppError('NotFound', 'no such install')) },
+      )
+      // Exactly what a click does: the group writes its own model, then the template's
+      // `(valueChange)` reaches the page.
+      const group = fixture.debugElement.query(By.directive(JigRadioGroup))
+        .componentInstance as JigRadioGroup<string | null>
+      group.value.set(CURA_512.id)
+
+      await page.onBind('cura', CURA_512.id)
+
+      expect(alertText(fixture)).toContain(translate.translations().slicers.errorNotFound)
+      expect(checkedState(fixture)).toEqual(['false', 'true'])
+    })
+
+    // The pair: a change that lands must *stay*, or "put it back" could be "never move".
+    it('leaves the radio on the new install when the shell accepts the change', async () => {
+      const { fixture, page } = await setup(
+        { ...TWO_CURAS, bindings: { cura: CURA_513.id } },
+        {
+          bind: vi.fn().mockResolvedValue({ ...TWO_CURAS, bindings: { cura: CURA_512.id } }),
+        },
+      )
+      const group = fixture.debugElement.query(By.directive(JigRadioGroup))
+        .componentInstance as JigRadioGroup<string | null>
+      group.value.set(CURA_512.id)
+
+      await page.onBind('cura', CURA_512.id)
+
+      expect(alertText(fixture)).toBeNull()
+      expect(checkedState(fixture)).toEqual(['true', 'false'])
+    })
+
     it('does not spend a round trip re-binding what is already bound', async () => {
       const { page, slicers } = await setup({ ...TWO_CURAS, bindings: { cura: CURA_513.id } })
 
@@ -489,6 +533,24 @@ describe('DesktopSlicersPage', () => {
       expect(alertText(fixture)).not.toContain(strings.errorLoad)
     })
 
+    /*
+     * M19's other cell. The override lives in the `notFound` slot; nothing drove an overriding
+     * call with a failure landing in the *generic* slot, so swapping the two slots survived. A
+     * page that answered "that file is not there any more" to an unrelated internal failure would
+     * be inventing a diagnosis.
+     */
+    it('does not answer an unclassifiable add-by-hand failure with the picked-file sentence', async () => {
+      const created = await setup(NOTHING_FOUND, {
+        addManual: vi.fn().mockRejectedValue(new Error('boom')),
+      })
+      await created.page.onAddManual('cura')
+
+      expect(alertText(created.fixture)).toContain(created.translate.translations().errors.generic)
+      expect(alertText(created.fixture)).not.toContain(
+        created.translate.translations().slicers.errorPickedGone,
+      )
+    })
+
     it('does not let the add-by-hand override swallow a Conflict', async () => {
       const created = await setup(NOTHING_FOUND, {
         addManual: vi.fn().mockRejectedValue(new AppError('Conflict', 'newer')),
@@ -513,6 +575,47 @@ describe('DesktopSlicersPage', () => {
       const bound = await setup({ ...TWO_CURAS, bindings: { cura: CURA_512.id } })
       expect(pageText(bound.fixture)).not.toContain(strings.defaultNone)
       expect(pageText(bound.fixture)).toContain(strings.defaultPlaceholder)
+    })
+
+    /** The select's own trigger, which is where the chosen product is rendered. */
+    function selectText(fixture: Setup['fixture']): string {
+      return host(fixture).querySelector('jig-select')?.textContent?.replace(/\s+/g, ' ') ?? ''
+    }
+
+    const TWO_BOUND: SlicerConfigDto = {
+      installs: [CURA_512, PRUSA],
+      bindings: { cura: CURA_512.id, prusaslicer: PRUSA.id },
+      defaultSlicerId: 'cura',
+      detectionSupported: true,
+    }
+
+    // The select owns its value exactly as the radio group does, and diverges the same way.
+    it('puts the default back in the select when the shell refuses the change', async () => {
+      const { fixture, page } = await setup(TWO_BOUND, {
+        setDefault: vi.fn().mockRejectedValue(new AppError('Conflict', 'newer')),
+      })
+      const select = fixture.debugElement.query(By.directive(JigSelect))
+        .componentInstance as JigSelect<SlicerId>
+      select.value.set('prusaslicer')
+
+      await page.onSetDefault('prusaslicer')
+
+      expect(selectText(fixture)).toContain('UltiMaker Cura')
+      expect(selectText(fixture)).not.toContain('PrusaSlicer')
+    })
+
+    it('leaves the new default in the select when the shell accepts it', async () => {
+      const { fixture, page } = await setup(TWO_BOUND, {
+        setDefault: vi.fn().mockResolvedValue({ ...TWO_BOUND, defaultSlicerId: 'prusaslicer' }),
+      })
+      const select = fixture.debugElement.query(By.directive(JigSelect))
+        .componentInstance as JigSelect<SlicerId>
+      select.value.set('prusaslicer')
+
+      await page.onSetDefault('prusaslicer')
+
+      expect(selectText(fixture)).toContain('PrusaSlicer')
+      expect(selectText(fixture)).not.toContain('UltiMaker Cura')
     })
 
     it('records the choice, and does not repeat one already stored', async () => {
