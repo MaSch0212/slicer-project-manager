@@ -34,6 +34,7 @@ import {
   sliceInfo,
   writeZip,
 } from '../../core/test/fixtures/make-3mf.ts'
+import { patchZipHeaders } from '../../core/test/fixtures/patch-zip.ts'
 import {
   SLICERS_CONFIG_VERSION,
   SLICERS_FILE_NAME,
@@ -401,6 +402,52 @@ test('a source with nothing to strip is copied verbatim, and says it was not str
   assert.deepEqual(readFileSync(copy), readFileSync(file.absPath))
 })
 
+test('a source called launch.json is refused rather than overwritten by its own record', async () => {
+  const h = harness()
+  const projectId = project('Collision')
+  // `.json` takes the plain-copy branch, and the copy keeps the source's basename — which for this
+  // one name is the name of the record written beside it a moment later. Left alone, the record
+  // replaces the copy, and the slicer is handed a record whose `launchedHash` describes the file it
+  // has just overwritten.
+  const file = await addFile(projectId, 'launch.json', (path) =>
+    writeFileSync(path, '{"mine": true}'),
+  )
+
+  const error = await rejection(h.launcher.open(file.id, projectId, { mode: 'new-project' }))
+
+  assert.equal(error.code, 'Validation')
+  assert.match(error.message, /a file called launch\.json cannot be prepared for a new project/)
+  assert.equal(h.spawns.length, 0)
+  assert.deepEqual(h.sessions(), [], 'the refusal must not leave a launch directory behind')
+  // And the user's own file is exactly as it was.
+  assert.equal(readFileSync(file.absPath, 'utf8'), '{"mine": true}')
+
+  // Spelled differently, and on the platform this ships to it is the same file. The comparison is
+  // case-insensitive for that reason, and refusing it on a case-sensitive filesystem too costs
+  // nothing: it is one basename, and no slicer can do anything with a `.json` anyway.
+  const other = project('CollisionCase')
+  const shouty = await addFile(other, 'Launch.JSON', (path) => writeFileSync(path, '{}'))
+  const second = await rejection(h.launcher.open(shouty.id, other, { mode: 'new-project' }))
+  assert.equal(second.code, 'Validation')
+  assert.equal(h.spawns.length, 0)
+})
+
+test('a launch directory holds the copy and the record, and nothing named like the other', async () => {
+  const h = harness({ launchId: 'two-entries' })
+  const projectId = project('TwoEntries')
+  const file = await addFile(projectId, 'plate.3mf', curaProject)
+
+  await h.launcher.open(file.id, projectId, { mode: 'new-project' })
+
+  const directory = join(h.sessionsDir, 'two-entries')
+  assert.deepEqual(readdirSync(directory).sort(), ['launch.json', 'plate.3mf'])
+  // The invariant the refusal above exists to keep: the record still describes the copy.
+  const record = JSON.parse(
+    readFileSync(join(directory, LAUNCH_RECORD_NAME), 'utf8'),
+  ) as SlicerLaunchRecord
+  assert.equal(record.launchedHash, entryHash(join(directory, record.fileName)))
+})
+
 test('a file that is neither a mesh nor a 3MF is copied into a launch directory unchanged', async () => {
   const h = harness({ launchId: 'other' })
   const projectId = project('Other')
@@ -501,6 +548,30 @@ test('a 3MF that is not a readable archive refuses as unreadable rather than bei
   assert.equal(h.spawns.length, 0)
 })
 
+test('an encrypted entry refuses as encrypted, which is a different next move from unreadable', async () => {
+  const h = harness()
+  const projectId = project('Encrypted')
+  const file = await addFile(projectId, 'locked.3mf', (path) => {
+    curaProject(path)
+    // General-purpose bit 0, in both headers: the entry is encrypted, so the rewriter cannot
+    // reproduce bytes it cannot read. The archive is otherwise perfectly well-formed, which is what
+    // separates this from the `unreadable` case.
+    patchZipHeaders(path, ({ name, file: view, centralAt, localAt }) => {
+      if (name !== '3D/3dmodel.model') return
+      view.setUint16(centralAt + 8, 1, true)
+      view.setUint16(localAt + 6, 1, true)
+    })
+  })
+
+  const error = await rejection(h.launcher.open(file.id, projectId, { mode: 'new-project' }))
+
+  assert.equal(error.details?.['reason'], 'encrypted')
+  assert.match(error.message, /it is an encrypted archive/)
+  assert.match(error.message, /Opening it as it is, without stripping, is still available/)
+  assert.equal(h.spawns.length, 0)
+  assert.deepEqual(h.sessions(), [])
+})
+
 test('a launch whose bound install has vanished reports it as gone and does not spawn', async () => {
   // Every executable is there except Cura's, and the re-resolution finds nothing.
   const h = harness({
@@ -538,6 +609,34 @@ test('a product with two installs and no binding refuses, naming the choice rath
   assert.match(error.message, /2 installs of UltiMaker Cura/)
   assert.match(error.message, /UltiMaker Cura 5\.13\.0/)
   assert.match(error.message, /UltiMaker Cura 5\.12\.0/)
+  assert.equal(h.spawns.length, 0)
+})
+
+test('a product with one unbound install is not described as a choice between installs', async () => {
+  const config = machine()
+  const h = harness({
+    config: {
+      ...config,
+      // A second Cura that is gone. The count the message may quote is the *usable* one, which is
+      // one — and "1 installs … choose which one" is both broken English and a false question.
+      installs: [
+        ...config.installs,
+        { ...install(CURA_12, 'cura', 'UltiMaker Cura 5.12.0', CURA_12_EXE), missing: true },
+      ],
+      bindings: { ...config.bindings, cura: undefined },
+    },
+  })
+  const projectId = project('OneUnbound')
+  const file = await addFile(projectId, 'bracket.3mf', curaProject)
+
+  const error = await rejection(h.launcher.open(file.id, projectId, { mode: 'as-is' }))
+
+  assert.equal(error.code, 'Conflict')
+  assert.match(
+    error.message,
+    /UltiMaker Cura is installed \(UltiMaker Cura 5\.13\.0\) but not chosen/,
+  )
+  assert.doesNotMatch(error.message, /installs of/)
   assert.equal(h.spawns.length, 0)
 })
 

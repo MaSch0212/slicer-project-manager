@@ -90,6 +90,15 @@ export const LAUNCH_RECORD_NAME = 'launch.json'
  * entries, never a whole-file hash and never mtime, both of which were measured failing on all four
  * in-place savers.
  *
+ * **There is deliberately no `version` key, and `slicers.json` in this same subsystem has one.**
+ * The asymmetry is a judgement, not an oversight: `slicers.json` is a document the app *rewrites*,
+ * where a downgrade silently overwriting a newer build's configuration costs the user every binding
+ * they made, so it refuses rather than guesses. A launch record is written once and only ever read,
+ * and the change task 5 already has planned for it — a `sweptAt` timestamp — is additive, which a
+ * version gate would not help with. A reader that cannot understand a record can say so from the
+ * fields it finds. If a *breaking* change to this shape ever arrives, that is the moment to add one,
+ * and the reader added with it has to treat a record with no `version` as this shape.
+ *
  * Written only where there *is* a launch directory. The two in-place paths (`as-is`, and
  * `new-project` for a `.stl` or an `.obj`) create nothing and therefore record nothing: what a
  * slicer writes in those cases lands in the project folder, where the ordinary rescan finds it, and
@@ -408,8 +417,25 @@ export class SlicerLauncher {
     // `basename`, not `name` — the copy must land inside the launch directory whatever the row in
     // the database says. Kept otherwise verbatim, because the basename is what four of five
     // slicers propose on the first save and what Cura carries into its Save-As dialog.
+    //
+    // Which leaves exactly one basename the copy may not have. `launch.json` is written into this
+    // same directory a moment later, so a source of that name would be overwritten by its own
+    // record — and in an order that is worse than it sounds: `launchedHash` is taken from the
+    // user's bytes, the record then replaces them, and the slicer is handed the record. Nothing in
+    // the library is lost, but task 5 would inherit a directory whose only file is a record whose
+    // `launchedHash` cannot match it, which is precisely the shape its reconcile reads as "this
+    // came back changed". Refused here rather than renamed: the basename is load-bearing on this
+    // path, so the honest answer is that this one file cannot take it.
+    const fileName = basename(name)
+    if (fileName.toLowerCase() === LAUNCH_RECORD_NAME) {
+      throw new AppError(
+        'Validation',
+        `a file called ${LAUNCH_RECORD_NAME} cannot be prepared for a new project, because the app writes a record of that name beside the copy it hands over`,
+        { fileName },
+      )
+    }
     mkdirSync(directory, { recursive: true })
-    const copy = join(directory, basename(name))
+    const copy = join(directory, fileName)
     if (extension !== '.3mf') {
       copyFileSync(absPath, copy)
       return {
@@ -435,7 +461,7 @@ export class SlicerLauncher {
       // nothing a slicer could put back into it. That is what makes removing it here compatible
       // with constraint 10, which is about directories a slicer has *seen*.
       rmSync(directory, { recursive: true, force: true })
-      throw refusal(error, name)
+      refuseStrip(error, name)
     }
   }
 
@@ -532,6 +558,17 @@ function unboundInstall(
     )
   }
   const labels = candidates.map((install) => install.label).join(', ')
+  if (candidates.length === 1) {
+    // Not a choice, so not phrased as one — and not bound automatically either. Reaching here with
+    // one usable install means the user unbound it, or a second install went missing after they
+    // were asked to choose; writing a binding out of a launch would undo the first of those
+    // silently, on a code path whose job is to start a process.
+    return new AppError(
+      'Conflict',
+      `${product} is installed (${labels}) but not chosen for launching; pick it under Settings, Slicers`,
+      { slicerId },
+    )
+  }
   return new AppError(
     'Conflict',
     `this machine has ${candidates.length} installs of ${product} (${labels}); choose which one to launch under Settings, Slicers`,
@@ -540,16 +577,18 @@ function unboundInstall(
 }
 
 /**
- * Turns a `strip3mf` refusal into the sentence the user gets (constraint 9).
+ * Turns a `strip3mf` refusal into the sentence the user gets, and throws it (constraint 9).
  *
  * It names which of the three problems it was, because they have three different next moves, and
  * it says that the other path is still open — which matters, because the tempting silent fallback
  * from here is to launch the original, and for Anycubic that fallback is the empty plate.
  */
-function refusal(error: unknown, name: string): unknown {
+function refuseStrip(error: unknown, name: string): never {
   const reason = stripRefusalReason(error)
-  if (reason === null) return error
-  return new AppError(
+  // Not a strip refusal at all — a filesystem failure, say. It travels unchanged rather than being
+  // dressed up as one of three reasons it is not.
+  if (reason === null) throw error
+  throw new AppError(
     'Validation',
     `${name} could not be prepared for a new project because ${REFUSAL_WORDING[reason]}. Opening it as it is, without stripping, is still available.`,
     { reason },

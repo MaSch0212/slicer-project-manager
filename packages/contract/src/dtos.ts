@@ -192,7 +192,17 @@ export type SlicerLaunchOptions = { mode: SlicerLaunchMode; slicerId?: SlicerId 
  * which is where the measurements live.
  */
 export type SlicerLaunchDto = {
-  /** Identifies this launch, and names its directory under `<userData>/slicer-sessions/`. */
+  /**
+   * Identifies this launch — and, **for a launch that made one**, names its directory under
+   * `<userData>/slicer-sessions/`.
+   *
+   * The two in-place paths make none: `as-is` always, and `new-project` for an `.stl` or an
+   * `.obj`. Those hand the slicer the file where it already lives, so there is no copy to keep and
+   * nothing to reconcile — whatever the slicer writes lands in the project folder, where the
+   * ordinary rescan finds it. Joining this onto the sessions directory is therefore a path that
+   * may legitimately not exist, and `stripped` is not the discriminator either: a `new-project`
+   * launch of a config-less `.3mf` copies without stripping.
+   */
   launchId: string
   slicerId: SlicerId
   /** Which install of that product, in the words `/settings/slicers` shows. */
