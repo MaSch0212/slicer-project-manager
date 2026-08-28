@@ -174,7 +174,14 @@ export function detectionScript(): string {
     `}`,
     `$msix = @()`,
     `foreach ($family in @(${familyList})) {`,
-    `  foreach ($pkg in Get-AppxPackage -Name $family.Substring(0, $family.LastIndexOf('_'))) {`,
+    // A package family is `<name>_<publisher hash>`, and `Get-AppxPackage -Name` wants the name
+    // half. `LastIndexOf` answers -1 for a family with no underscore, and `Substring(0, -1)` is a
+    // PowerShell exception that would take the whole detection run down — including the registry
+    // half, which has nothing to do with it. Only Orca has a family today and it has an underscore,
+    // so this guards a row somebody adds later rather than a bug that exists.
+    `  $cut = $family.LastIndexOf('_')`,
+    `  if ($cut -lt 1) { continue }`,
+    `  foreach ($pkg in Get-AppxPackage -Name $family.Substring(0, $cut)) {`,
     `    if ($pkg.PackageFamilyName -ne $family) { continue }`,
     `    $msix += [pscustomobject]@{ packageFamily = [string]$pkg.PackageFamilyName; packageFullName = [string]$pkg.PackageFullName; version = [string]$pkg.Version; installLocation = [string]$pkg.InstallLocation }`,
     `  }`,
@@ -240,7 +247,21 @@ export const runPowerShellDetection: RunDetection = () =>
     execFile(
       powerShellPath(),
       ['-NoProfile', '-NonInteractive', '-EncodedCommand', encodedDetectionCommand()],
-      { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024, timeout: DETECTION_TIMEOUT_MS },
+      {
+        encoding: 'utf8',
+        maxBuffer: 32 * 1024 * 1024,
+        timeout: DETECTION_TIMEOUT_MS,
+        // **A console window flashes on the user's screen without this**, for the 880 ms the scan
+        // takes. Electron's main process is a GUI-subsystem binary, so a console child gets a
+        // window of its own, and libuv only passes `CREATE_NO_WINDOW` to `CreateProcess` when this
+        // flag is set. Windows-only, and structurally invisible to `node --test` — which runs in a
+        // console subsystem process where the flag changes nothing observable — so the injected
+        // seam that makes everything else here testable is exactly what could not catch it.
+        //
+        // `app.ts`'s slicer `spawn` deliberately does *not* set it: a slicer is a GUI application
+        // and hiding its window is the opposite of the point.
+        windowsHide: true,
+      },
       (error, stdout) => {
         if (error) reject(error)
         else resolve(stdout)

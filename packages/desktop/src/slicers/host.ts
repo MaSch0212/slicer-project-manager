@@ -136,6 +136,11 @@ export class SlicersHost {
   async scan(): Promise<SlicerConfigDto> {
     if (!this.detectionSupported()) return this.get()
     const { config, writable } = this.#load()
+    // Before the subprocess, not after it. `#save` refuses a file written by a newer build, so a
+    // scan against one spent 880 ms and a PowerShell process to arrive at a refusal that was
+    // already knowable — and the user pressed the button again, because nothing about the wait
+    // suggested the answer had been decided before it started.
+    if (!writable) return this.#save(config, writable)
     const detected = await this.#detect()
     return this.#save(mergeDetected(config, detected, this.#now()), writable)
   }
@@ -249,7 +254,9 @@ export class SlicersHost {
    *
    * A detected install removed this way comes back on the next scan. That is deliberate rather
    * than overlooked: `remove` is how a *manual* entry is undone, and the honest answer for a
-   * registry install is that it is still installed.
+   * registry install is that it is still installed. **It is therefore not a way to unbind
+   * anything** — the install returns and, being the only one of its product, is bound again. That
+   * is what `bind(slicerId, null)` is for.
    */
   remove(installId: string): SlicerConfigDto {
     const { config, writable } = this.#load()
@@ -271,8 +278,18 @@ export class SlicersHost {
   }
 
   /** Points a product at one of its installs. The one decision D asks the user to make. */
-  bind(slicerId: SlicerId, installId: string): SlicerConfigDto {
+  bind(slicerId: SlicerId, installId: string | null): SlicerConfigDto {
     const { config, writable } = this.#load()
+    if (installId === null) {
+      // Unbinding is a *removal* from the map and not a `null` value in it: `bindings` is a
+      // `Partial<Record<SlicerId, string>>`, so "absent" is what every reader already treats as
+      // unbound, and writing `null` into it would make `bindings[slicerId] !== undefined` — the
+      // check the launch path and the project page's product list both make — answer true for a
+      // product that cannot launch.
+      const without = { ...config.bindings }
+      delete without[slicerId]
+      return this.#save({ ...config, bindings: without }, writable)
+    }
     const install = config.installs.find((candidate) => candidate.id === installId)
     if (!install) throw new AppError('NotFound', 'no such slicer install')
     if (install.slicerId !== slicerId) {
@@ -285,14 +302,18 @@ export class SlicersHost {
   }
 
   /**
-   * The product a file that names no slicer is opened with.
+   * The product a file that names no slicer is opened with, or `null` for none.
    *
    * Not gated on there being a binding for it. The default is a statement of preference and the
    * bindings are a statement of fact about this machine; a user who sets a default before binding
    * it, or whose bound install later goes missing, gets an honest refusal at launch rather than a
    * setting that would not stick.
+   *
+   * `null` clears it, and the launch paths already handle that: `chooseSlicer` refuses with a
+   * message naming the choice rather than guessing, which is the behaviour the default exists to
+   * let a user opt out of.
    */
-  setDefault(slicerId: SlicerId): SlicerConfigDto {
+  setDefault(slicerId: SlicerId | null): SlicerConfigDto {
     const { config, writable } = this.#load()
     return this.#save({ ...config, defaultSlicerId: slicerId }, writable)
   }

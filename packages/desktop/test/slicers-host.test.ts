@@ -79,6 +79,31 @@ async function rejection(promise: Promise<unknown>): Promise<AppError> {
  * get and scan
  * ---------------------------------------------------------------------------------------- */
 
+test('a product can be unbound, and a default can be cleared', async () => {
+  const { host } = hostFor()
+  const scanned = await host.scan()
+  // Anycubic has exactly one install in the fixture, so the scan bound it without being asked —
+  // which is the whole reason there has to be a way back. `remove` is not one: the install is
+  // still installed, so the next scan finds it and binds it again for being the only one.
+  assert.equal(scanned.bindings.anycubic !== undefined, true)
+  host.setDefault('anycubic')
+
+  const unbound = host.bind('anycubic', null)
+  assert.equal(unbound.bindings.anycubic, undefined)
+  // Removed from the map rather than set to `null`: every reader treats *absent* as unbound, and
+  // `bindings[id] !== undefined` — what the launch path and the project page both check — would
+  // otherwise answer true for a product that cannot launch.
+  assert.equal('anycubic' in unbound.bindings, false)
+  // Unbinding a product does not touch the others, or the default, which names a product.
+  assert.equal(unbound.bindings.prusaslicer, scanned.bindings.prusaslicer)
+  assert.equal(unbound.defaultSlicerId, 'anycubic')
+
+  assert.equal(host.setDefault(null).defaultSlicerId, null)
+  // And it stuck: both are reads of the file, not of an object this call happened to return.
+  assert.equal(host.get().defaultSlicerId, null)
+  assert.equal(host.get().bindings.anycubic, undefined)
+})
+
 test('before any scan there is nothing configured, and no subprocess has run', () => {
   let runs = 0
   const { host } = hostFor({
@@ -187,7 +212,13 @@ test('off Windows detection does not run, and the UI is told so', async () => {
  * the return value while destroying the file.
  */
 test('a slicers.json from a newer build survives a scan, byte for byte', async () => {
-  const { host, file } = hostFor()
+  let runs = 0
+  const { host, file } = hostFor({
+    run: () => {
+      runs += 1
+      return Promise.resolve(fixture)
+    },
+  })
   mkdirSync(join(file, '..'), { recursive: true })
   const future = `${JSON.stringify({ version: 2, installs: [{ shape: 'unknown' }] }, null, 2)}\n`
   writeFileSync(file, future)
@@ -195,6 +226,10 @@ test('a slicers.json from a newer build survives a scan, byte for byte', async (
   const error = await rejection(host.scan())
   assert.equal(error.code, 'Conflict')
   assert.match(error.message, /newer version/)
+  // Before the subprocess, not after it. The refusal is knowable from the file, and spending
+  // 880 ms and a PowerShell process to reach it made the user press the button again — nothing
+  // about the wait suggested the answer had been decided before it started.
+  assert.equal(runs, 0, 'detection ran for an answer that was already decided')
   assert.equal(readFileSync(file, 'utf8'), future, 'the file was overwritten')
 
   // And it is not just `scan`: every write refuses.
