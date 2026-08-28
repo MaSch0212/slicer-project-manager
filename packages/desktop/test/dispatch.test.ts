@@ -395,8 +395,10 @@ test('capabilities answers without a library, and says auth is not required', as
     requiresAuth: false,
     canManageUsers: false,
     canPickLocalFolder: true,
-    canLaunchSlicer: false,
-    canConfigureSlicers: false,
+    // Spec D: the shell detects and launches the slicers on this machine whichever library is
+    // open, so both are the shell's to offer even with no session.
+    canLaunchSlicer: true,
+    canConfigureSlicers: true,
     canBrowseModelSites: false,
   })
   assert.deepEqual(

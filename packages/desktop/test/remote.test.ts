@@ -516,8 +516,10 @@ test('capabilities come back as the union of the shell column and the server one
     requiresAuth: true,
     canManageUsers: true,
     canPickLocalFolder: false,
-    canLaunchSlicer: false,
-    canConfigureSlicers: false,
+    // The server above answers `false` for both; the shell's remote column answers `true`, and
+    // the union is what a desktop window pointed at that server gets. Spec 2.4's row.
+    canLaunchSlicer: true,
+    canConfigureSlicers: true,
     canBrowseModelSites: false,
   }
   assert.deepEqual(await throughProxy.json(), expected)

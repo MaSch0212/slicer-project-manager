@@ -208,8 +208,9 @@ test('the capability set in remote mode is the union, and the UI keys off it', a
     requiresAuth: true,
     canManageUsers: true,
     canPickLocalFolder: false,
-    canLaunchSlicer: false,
-    canConfigureSlicers: false,
+    // …and, since spec D, keeps these two true over a server that reports both false.
+    canLaunchSlicer: true,
+    canConfigureSlicers: true,
     canBrowseModelSites: false,
   })
 

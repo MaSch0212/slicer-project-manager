@@ -59,8 +59,8 @@ test.describe('the IPC bridge', () => {
         requiresAuth: false,
         canManageUsers: false,
         canPickLocalFolder: true,
-        canLaunchSlicer: false,
-        canConfigureSlicers: false,
+        canLaunchSlicer: true,
+        canConfigureSlicers: true,
         canBrowseModelSites: false,
       },
     })

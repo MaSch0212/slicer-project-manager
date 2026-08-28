@@ -33,17 +33,24 @@ import type { Capabilities } from '@spm/contract/dtos.ts'
  * library, and the header control the renderer shows for this flag reaches it through `ApiClient`
  * like every other affordance.
  *
- * The three slicer/browser flags stay false until specs D and E ship them, which is a deliberate
- * departure from the spec table: a capability whose feature does not exist lights up UI that goes
- * nowhere. When D flips `canLaunchSlicer` here it lights up in **both** modes with no other
- * change, which is the whole point of the union below.
+ * `canLaunchSlicer` and `canConfigureSlicers` are true because spec D shipped them: the shell
+ * detects the slicers installed on this machine, `/settings/slicers` configures them, and both
+ * work whichever library is open. `canBrowseModelSites` stays false until E ships it, which is a
+ * deliberate departure from the spec table: a capability whose feature does not exist lights up
+ * UI that goes nowhere.
+ *
+ * **A flag flipped here is flipped in this column only**, and an earlier version of this comment
+ * claimed otherwise. Local mode *returns* this object (`shell.ts:170`); remote mode unions
+ * `REMOTE_SHELL_CAPABILITIES` with the backend (`remote.ts:305`) and never reads this one. The two
+ * columns are edited together or the flag lights up in one mode and not the other — which is the
+ * whole reason `test/capabilities.test.ts` asserts both of them whole.
  */
 export const LOCAL_SHELL_CAPABILITIES: Capabilities = {
   requiresAuth: false,
   canManageUsers: false,
   canPickLocalFolder: true,
-  canLaunchSlicer: false,
-  canConfigureSlicers: false,
+  canLaunchSlicer: true,
+  canConfigureSlicers: true,
   canBrowseModelSites: false,
 }
 
@@ -63,16 +70,18 @@ export const LOCAL_SHELL_CAPABILITIES: Capabilities = {
  * and the test that would catch it is not the union's, it is this constant's. `test/
  * capabilities.test.ts` asserts both objects whole.
  *
- * The three slicer/browser flags are false for the same reason as above, and their *row* is the
- * one spec 2.4 wrote the union for: a server that reports them false must not be able to switch
- * off a slicer the desktop shell can genuinely launch.
+ * The two slicer flags are true here for the same reason they are true in the local column — the
+ * machine this process runs on has the slicers on it whatever library is open — and this is the
+ * row spec 2.4 wrote the union for: the Deno server reports both false, and a server that cannot
+ * launch a slicer must not be able to switch off a shell that can. `canBrowseModelSites` is false
+ * until E, as above.
  */
 export const REMOTE_SHELL_CAPABILITIES: Capabilities = {
   requiresAuth: false,
   canManageUsers: false,
   canPickLocalFolder: false,
-  canLaunchSlicer: false,
-  canConfigureSlicers: false,
+  canLaunchSlicer: true,
+  canConfigureSlicers: true,
   canBrowseModelSites: false,
 }
 
