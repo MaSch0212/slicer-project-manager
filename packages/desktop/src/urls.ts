@@ -24,10 +24,19 @@ export const RENDERER_ORIGIN = `spm://${RENDERER_HOST}`
  * renderer's own host makes them same-origin, and CORS never enters into it.
  *
  * `_spm` and not `files`, `api` or `spm`: the price of a path prefix is that it must never
- * collide with something the Angular build emits at the root of the renderer directory, and the
- * build emits `index.html`, `favicon.ico`, `main.js`, `styles.css`, `chunk-<hash>.js` and a
- * `media/` folder. A leading underscore is not a character the Angular builder produces at the
- * top level for anything, which is why it was picked over a plausible-looking English word.
+ * collide with something the Angular build emits at the root of the renderer directory. That list
+ * has grown once since this was written — the app icons added six root-level files — so it is
+ * recorded here as measured from `packages/web/dist/electron/browser` rather than remembered:
+ * `index.html`, `main.js`, `styles.css`, `chunk-<hash>.js`, a `.map` beside each of those, a
+ * `media/` folder, and, from `packages/web/public/`, `favicon.ico`, `favicon.svg`,
+ * `apple-touch-icon.png`, `icon-192.png`, `icon-512.png` and `manifest.webmanifest`.
+ *
+ * The reasoning survived the growth, and that is the point of writing the new names down: a
+ * leading underscore is not a character the Angular builder produces at the top level for
+ * anything, and it is not one anybody is going to give a favicon either. Everything the *public*
+ * folder contributes is named by a person, which is a weaker guarantee than the builder's — so
+ * the rule for adding a file there is that it must not start with `_`, and `shell.spec.ts` asserts
+ * the ones that exist are served rather than swallowed by the reserved-prefix guard.
  *
  * `files.ts` answers the one canonical spelling under this prefix; `app.ts` goes on refusing
  * every other spelling of it. Both import the constant from here rather than spelling the string

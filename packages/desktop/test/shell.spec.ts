@@ -1,8 +1,9 @@
 import { expect, test, type ElectronApplication, type Page } from '@playwright/test'
 import { DatabaseSync } from 'node:sqlite'
-import { join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { parseFileRequest } from '../src/files.ts'
-import { firstWindowOf, launchApp } from './fixtures.ts'
+import { windowIconFile } from '../src/icons.ts'
+import { firstWindowOf, launchApp, MAIN_BUNDLE } from './fixtures.ts'
 
 /**
  * What "the shell works" means, asserted on what the app actually rendered.
@@ -212,6 +213,13 @@ test.describe('the desktop shell', () => {
      * Without them the guard could be widened until it swallowed ordinary routes and no test
      * would notice. A tab and a non-breaking space are not stripped by Win32 the way a trailing
      * dot or space is, and `_spmx` shares only a prefix -- the reservation is the whole segment.
+     *
+     * These are *routes*, and they are answered with index.html. The root-level **files** the
+     * public folder contributes -- the six icon assets and the manifest, all new since this list
+     * was written -- are not here on purpose: they are served as themselves, so `200 <!doctype
+     * html>` is the wrong expectation for them and a right-looking entry would assert the
+     * opposite of what should happen. They have their own test below, which asserts the content
+     * type each one comes back with.
      */
     const PASSTHROUGH_URLS = [
       'spm://app/projects/some-id',
@@ -271,6 +279,145 @@ test.describe('the desktop shell', () => {
       expected['spm://app/x/..%5c_spm/files/abc/raw'] = '200 <!doctype html>'
     }
     expect(answers).toEqual(expected)
+  })
+
+  test('every root-level icon asset is served, with its own content type', async () => {
+    // These six files arrived with the app icons, and they are the only things in the renderer
+    // directory that nothing in the bundle imports -- so a build that stopped emitting them, or a
+    // handler that stopped recognising one, breaks nothing that any other test in this repo
+    // watches. What it breaks is a tab with no favicon and an Android home screen with a grey
+    // square, which nobody notices until a user says so.
+    //
+    // The content type is the assertion and not the status, because the status was never the
+    // failure. `.webmanifest` was missing from CONTENT_TYPES when this was written and the file
+    // came back **200 application/octet-stream** -- measured, from the renderer, before the map
+    // gained its tenth entry. Chromium refuses a manifest that is not served as JSON, so the
+    // Android icon would not have worked in a browser either. A status-only assertion is green
+    // through all of that.
+    //
+    // They are also the other half of what `PASSTHROUGH_URLS` above is for. That list proves the
+    // reserved-prefix guard does not swallow ordinary routes; this proves it does not swallow the
+    // root-level *files* the public folder now contributes, which are new since the guard was
+    // written. `urls.ts` carries the reasoning for why none of them may begin with `_`.
+    const served = await page.evaluate(async () => {
+      const out: Record<string, string> = {}
+      for (const name of [
+        'favicon.ico',
+        'favicon.svg',
+        'apple-touch-icon.png',
+        'icon-192.png',
+        'icon-512.png',
+        'manifest.webmanifest',
+      ]) {
+        const response = await fetch(`spm://app/${name}`)
+        const head = new Uint8Array((await response.arrayBuffer()).slice(0, 4))
+        const hex = [...head].map((byte) => byte.toString(16).padStart(2, '0')).join('')
+        const magic = hex.startsWith('89504e47')
+          ? 'png'
+          : hex.startsWith('00000100')
+            ? 'ico'
+            : hex.startsWith('3c3f786d')
+              ? 'svg'
+              : hex.startsWith('3c21646f')
+                ? 'html'
+                : head[0] === 0x7b
+                  ? 'json'
+                  : hex
+        out[name] = `${response.status} ${response.headers.get('content-type')} ${magic}`
+      }
+      return out
+    })
+    // The third field is the file's own magic bytes, classified. A status and a content type
+    // together still pass against a handler that answered every one of these with index.html --
+    // which is exactly what a missing asset looks like -- so the body has to say what it is.
+    // `html` is in the classifier for that reason: it is the wrong answer this is looking for,
+    // and it reads as one in the diff rather than as a hex string.
+    //
+    // A byte count was the first version of this and it was worse in a way worth recording: the
+    // manifest is 464 bytes, so `byteLength > 500` failed on the one file whose type mattered most.
+    expect(served).toEqual({
+      'favicon.ico': '200 image/x-icon ico',
+      'favicon.svg': '200 image/svg+xml svg',
+      'apple-touch-icon.png': '200 image/png png',
+      'icon-192.png': '200 image/png png',
+      'icon-512.png': '200 image/png png',
+      'manifest.webmanifest': '200 application/manifest+json json',
+    })
+  })
+
+  test('the app manifest is fetched and parsed under the renderer own CSP', async () => {
+    // `manifest-src 'self'` in CONTENT_SECURITY_POLICY, and this test exists because the obvious
+    // way to check it reports nothing. Adding `<link rel="manifest">` to index.html and loading
+    // the shell produced **no violation at all**: Chromium fetches a manifest lazily and nothing
+    // in Electron asks for one, because there is no install prompt here. So the block was latent,
+    // and a test that watched `securitypolicyviolation` on a normal load would have been green
+    // with the directive removed.
+    //
+    // `Page.getAppManifest` is what asks. Measured with `manifest-src` absent: `errors` empty but
+    // `url` and `data` both **empty strings**, and `manifest-src <- spm` fired on the document at
+    // the same moment. With it present, this.
+    const cdp = await page.context().newCDPSession(page)
+    const manifest = (await cdp.send('Page.getAppManifest')) as {
+      url: string
+      data: string
+      errors: unknown[]
+    }
+    expect(manifest.errors).toEqual([])
+    expect(manifest.url).toBe('spm://app/manifest.webmanifest')
+    // Parsed here rather than asserted as a string: what matters is that Chromium handed back the
+    // real file, and `tools/icons.test.ts` is what holds the contents to their meaning.
+    const parsed = JSON.parse(manifest.data) as { name: string; icons: { src: string }[] }
+    expect(parsed.name).toBe(APP_TITLE)
+    expect(parsed.icons.map((icon) => icon.src)).toEqual(['icon-192.png', 'icon-512.png'])
+  })
+
+  test('the brand mark beside the title is loaded, not a broken image', async () => {
+    // `naturalWidth`, because every cheaper check passes on a broken image: the element is in the
+    // DOM either way, and `complete` is true for a failed load too. This is also the one assertion
+    // that covers the path -- the `<img src="favicon.svg">` in app.ts resolves through
+    // `<base href="/">`, so it is `spm://app/favicon.svg` here and not a lookup relative to
+    // whatever route the window happens to be on.
+    const mark = page.locator('.spm-brand-mark')
+    await expect(mark).toBeVisible()
+    const loaded = await mark.evaluate((element: HTMLImageElement) => ({
+      src: element.currentSrc,
+      width: element.naturalWidth,
+      hidden: element.getAttribute('aria-hidden'),
+      alt: element.getAttribute('alt'),
+    }))
+    expect(loaded.src).toBe('spm://app/favicon.svg')
+    expect(loaded.width).toBeGreaterThan(0)
+    // Decorative, and it has to stay that way: the link's own text already names the app, so an
+    // alt here would have a screen reader announce the name twice. The link's accessible name is
+    // asserted below, which is what would fail if someone gave the image one of its own.
+    expect(loaded.alt).toBe('')
+    expect(loaded.hidden).toBe('true')
+    await expect(page.getByRole('link', { name: APP_TITLE, exact: true })).toBeVisible()
+  })
+
+  test('the window icon is beside the bundle and Electron decodes it', async () => {
+    // Two failures in one, and neither is visible from the repo. `windowIconPath()` resolves
+    // `./icons/<file>` against the *bundle*, so an icon left in `packages/desktop/icons/` and
+    // never copied by build.ts resolves to nothing -- and `BrowserWindow`'s `icon` option does not
+    // throw on a missing path, it silently shows Electron's own default. A developer never sees
+    // that, because in the repo layout the file happens to be findable anyway.
+    //
+    // `nativeImage.createFromPath` is the decoder that actually consumes this file, which is why
+    // the check runs in the main process rather than against a byte count here.
+    // `tools/icons.test.ts` takes the same two files apart frame by frame; this is the part that
+    // only Electron can answer.
+    const file = windowIconFile(process.platform)
+    expect(file).not.toBeNull()
+    const iconPath = resolve(dirname(MAIN_BUNDLE), 'icons', file as string)
+    const decoded = await app.evaluate(({ nativeImage }, path) => {
+      const image = nativeImage.createFromPath(path)
+      return { empty: image.isEmpty(), size: image.getSize() }
+    }, iconPath)
+    expect(decoded.empty).toBe(false)
+    // Electron picks one frame out of an .ico rather than reporting them all; whichever it picked
+    // has to be square and a real size, which is what a zero-sized 256 frame would fail.
+    expect(decoded.size.width).toBe(decoded.size.height)
+    expect(decoded.size.width).toBeGreaterThanOrEqual(16)
   })
 
   test('the window keeps the three webPreferences the trust model rests on', async () => {

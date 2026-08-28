@@ -122,6 +122,20 @@ const REQUIRED = [
   join(appDir, 'dist', 'preload.js'),
   join(appDir, 'dist', 'migrations', '001_init.sql'),
   join(appDir, 'dist', 'renderer', 'index.html'),
+  // The window icon. `cp(distDir, …)` above already brings these across — they are inside `dist/`
+  // — so this is not what puts them here; it is what notices when they stop arriving. The failure
+  // it replaces is silent by construction: `BrowserWindow`'s `icon` option does not throw on a
+  // path that does not exist, it just shows Electron's default, and the developer who packaged it
+  // sees the right icon because `windowIconPath()` also resolves in the repo layout. Both
+  // spellings, because `windowIconPath()` picks between them by platform and this script runs on
+  // one platform at a time.
+  join(appDir, 'dist', 'icons', 'icon.ico'),
+  join(appDir, 'dist', 'icons', 'icon.png'),
+  // Copied in with the renderer, and named here for the same reason: the home-screen icon and
+  // the manifest are the only files in the renderer directory that nothing in the app *imports*,
+  // so a build that stopped emitting them would break no bundle and no test that watched imports.
+  join(appDir, 'dist', 'renderer', 'favicon.svg'),
+  join(appDir, 'dist', 'renderer', 'manifest.webmanifest'),
 ]
 for (const file of REQUIRED) {
   const info = await stat(file).catch(() => null)

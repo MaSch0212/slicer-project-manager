@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises'
 import { extname, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { parseFileRequest, serveLibraryFile } from './files.ts'
+import { windowIconFile } from './icons.ts'
 import { registerInvokeHandler } from './ipc.ts'
 import {
   confirmedAt,
@@ -116,6 +117,33 @@ export function registerSpmScheme(): void {
 /**
  * Explicit, not inferred. A module script served with the wrong Content-Type is refused by
  * Chromium outright, so guessing here would break the whole renderer rather than one asset.
+ *
+ * **`.webmanifest` was added with the app icons, and the trust-boundary paragraph on
+ * `createSpmHandler` is what it had to answer first.** Two facts, both measured on Electron
+ * 44.0.0 rather than reasoned about:
+ *
+ * - Without the entry the file falls through to `application/octet-stream` — confirmed, by
+ *   fetching `spm://app/manifest.webmanifest` from the renderer before this line existed. That is
+ *   not merely untidy: Chromium refuses a manifest whose type is not JSON-ish, so the Android
+ *   home-screen icon this file exists for would not have worked in a browser either.
+ * - The trust-boundary question is "what happens if this commits as a document", and the first
+ *   version of this paragraph answered it wrongly — it said `application/manifest+json`
+ *   downloads. It does not. `location.href = 'spm://app/manifest.webmanifest'` **commits**, at
+ *   `origin: spm://app`, `document.contentType: application/manifest+json`, no download event.
+ *   What saves it is the next measurement rather than that one: a `.webmanifest` file containing
+ *   `<html><script>window.__p = 1</script>` was placed in the renderer directory and navigated to,
+ *   and the document that arrived had `window.__p === null`, an empty `<title>` and the markup
+ *   rendered as *text* in the body. So it is the `application/json` row of the table on
+ *   `createSpmHandler`, not the `model/stl` row: it commits, and it cannot run script.
+ *
+ *   Which leaves the containment argument resting where the rest of this branch's does — the only
+ *   bytes reachable here are the Angular build's own output.
+ *
+ * `.svg` is a different matter and it is **not** new: it was in this map before the icons arrived,
+ * and an SVG *does* commit as a document and can run script. What contains it is that this branch
+ * only ever serves the Angular build's own output out of `rendererDir` — no user bytes reach it —
+ * which is the same argument the `x-content-type-options` note below makes. Nothing about the
+ * icons changes that; `favicon.svg` is a file this repo generates and commits.
  */
 const CONTENT_TYPES: Readonly<Record<string, string>> = {
   '.css': 'text/css; charset=utf-8',
@@ -126,6 +154,7 @@ const CONTENT_TYPES: Readonly<Record<string, string>> = {
   '.map': 'application/json; charset=utf-8',
   '.png': 'image/png',
   '.svg': 'image/svg+xml',
+  '.webmanifest': 'application/manifest+json',
   '.woff2': 'font/woff2',
 }
 
@@ -143,6 +172,20 @@ const CONTENT_TYPES: Readonly<Record<string, string>> = {
  * 'all'">` — an inline event handler, which `script-src 'self'` blocks, leaving the app running
  * with no stylesheet at all. Hashes cannot cover an attribute handler, so the choices are this
  * or changing how the Angular build emits its head, which is not this task's to change.
+ *
+ * `manifest-src 'self'` arrived with the app icons, and the measurement behind it is worth the
+ * paragraph because the obvious version of it is wrong. `index.html` gained
+ * `<link rel="manifest">`, and simply loading the shell produced **no violation at all** — the
+ * renderer looked fine. Chromium fetches a manifest lazily, and nothing in Electron asks for one:
+ * there is no install prompt here. Forced, through `Page.getAppManifest` over CDP, it fired
+ * immediately: `manifest-src <- spm`, and the manifest came back with an empty `url` and empty
+ * `data`. So the directive is not cosmetic, it is just latent — the violation waits for whatever
+ * first asks, which today is DevTools and tomorrow is anything. `shell.spec.ts` drives the same
+ * CDP call, so removing this line turns that test red rather than turning nothing red.
+ *
+ * `'self'` and not `spm:`: the manifest is the renderer's own file at its own origin, and the
+ * broader value would also permit one served from any other `spm://` host — of which there are
+ * none, which is exactly why the narrower spelling costs nothing.
  */
 export const CONTENT_SECURITY_POLICY = [
   "default-src 'none'",
@@ -151,6 +194,7 @@ export const CONTENT_SECURITY_POLICY = [
   "font-src 'self'",
   "img-src 'self' data: spm:",
   "connect-src 'self' spm:",
+  "manifest-src 'self'",
   "base-uri 'self'",
   "form-action 'none'",
   "frame-ancestors 'none'",
@@ -414,7 +458,7 @@ export function createSpmHandler(
       //
       // No `x-content-type-options` here either, and that asymmetry with the file branch is
       // deliberate rather than an oversight. This branch serves the Angular build's own output
-      // out of `rendererDir` through the fixed nine-entry `CONTENT_TYPES` map above — every type
+      // out of `rendererDir` through the fixed ten-entry `CONTENT_TYPES` map above — every type
       // explicit, no user bytes reachable, nothing falling through to a guess. The file branch
       // serves whatever a user dropped in a folder, under a name they chose, and that is what
       // makes sniffing worth forbidding there. Adding it here is defensible and untested; it is
@@ -434,6 +478,27 @@ export function preloadPath(): string {
 }
 
 /**
+ * The window icon, resolved the same way the preload is — relative to the *bundle*, never to the
+ * source tree.
+ *
+ * `windowIconFile` in `icons.ts` decides *which* file and carries the per-platform reasoning; this
+ * is only the resolution, and the resolution is the half that is easy to get wrong in a way
+ * nothing catches until someone runs the packaged app. `deno task icons` writes the files to
+ * `packages/desktop/icons/`, and a path computed from *that* directory would work perfectly in
+ * development and point at nothing at all inside `out/…/resources/app`. So `build.ts` copies them
+ * to `dist/icons/` beside `main.js`, `package-app.ts` carries `dist/` across whole and then
+ * *asserts* they arrived, and this resolves against `import.meta.url`, which is `dist/main.js` in
+ * both layouts. `preloadPath` above has the same shape for the same reason.
+ *
+ * `undefined` on macOS rather than a path, because `BrowserWindow` ignores the option there —
+ * see `icons.ts`. `new BrowserWindow({ icon: undefined })` is the same as not passing it.
+ */
+export function windowIconPath(platform: string = process.platform): string | undefined {
+  const file = windowIconFile(platform)
+  return file === null ? undefined : fileURLToPath(new URL(`./icons/${file}`, import.meta.url))
+}
+
+/**
  * The window.
  *
  * `nodeIntegration: false`, `contextIsolation: true` and `sandbox: true` are constraint 3 of the
@@ -447,6 +512,11 @@ export function createMainWindow(mode: BridgeMode = 'local', path = '/'): Browse
   const window = new BrowserWindow({
     width: 1280,
     height: 860,
+    // The taskbar, the title bar and Alt-Tab. Without it Electron's own default icon ships as
+    // this app's face — which is what every unbranded Electron app looks like, and is not a
+    // failure any test would have reported. See `windowIconPath` for why it is resolved from the
+    // bundle rather than from the source tree.
+    icon: windowIconPath(),
     // Hidden until the first paint, so the window never flashes an unstyled, untranslated
     // shell. It is also what keeps the window's title honest — see APP_NAME.
     show: false,
