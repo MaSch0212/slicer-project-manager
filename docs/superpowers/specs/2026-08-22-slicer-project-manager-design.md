@@ -34,6 +34,12 @@ architecture they must all fit into — package boundaries, data model, API cont
 capability model, build targets — so those later specs are additive rather than
 structural.
 
+**Amended 2026-08-28:** that is not what happened for B or C. Both went straight to a plan, and
+their rows above are unchanged because this document's coverage of them did not change. D is the
+first subsystem to produce a second spec, which is why its row points at one. The sentence is left
+standing as the intent rather than deleted — a subsystem large enough to need a spec should get
+one — but it describes a rule two subsystems have already, deliberately, not followed.
+
 ### 1.2 Explicitly out of scope
 
 - Sharing projects between users, or any permission model beyond per-user ownership.
