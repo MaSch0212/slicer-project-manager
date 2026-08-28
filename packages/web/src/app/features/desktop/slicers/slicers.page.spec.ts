@@ -402,6 +402,22 @@ describe('DesktopSlicersPage', () => {
     expect(slicers.setDefault).toHaveBeenCalledWith(null)
   })
 
+  it('can still clear a default after the last binding is gone', async () => {
+    // The shape Minor 6's nullable arm was added to remove, one step along: the control used to
+    // live inside the "there is something to choose" block, so unbinding the last bound product
+    // took the select and the button together and left a default set with nothing on screen to
+    // clear it. Recoverable — the launch path refuses by name — but a setting whose effect the
+    // user can see and cannot reach.
+    const stranded: SlicerConfigDto = { ...TWO_CURAS, bindings: {}, defaultSlicerId: 'cura' }
+    const { fixture, slicers, translate } = await setup(stranded)
+
+    expect(pageText(fixture)).toContain(translate.translations().slicers.defaultNone)
+    buttonNamed(fixture, translate.translations().slicers.clearDefault)?.click()
+    await fixture.whenStable()
+
+    expect(slicers.setDefault).toHaveBeenCalledWith(null)
+  })
+
   it('renders no clear-default control where there is no default', async () => {
     // The pair, and the reason the one above says anything: a control rendered unconditionally
     // would satisfy it while offering to clear a setting nobody has made.

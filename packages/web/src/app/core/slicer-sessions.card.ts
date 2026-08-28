@@ -48,8 +48,9 @@ import { formatBytes } from './format-bytes'
  * ## Stale
  *
  * A session whose launch is more than {@link STALE_SESSION_MS} old is labelled stale and offered
- * to the bulk discard. It is deliberately about the launch rather than about the file — a stale session may well hold a file that came back
- * yesterday, which is exactly why being stale is a label and never a reason to delete anything.
+ * to the bulk discard. It is deliberately about the launch rather than about the file — a stale
+ * session may well hold a file that came back yesterday, which is exactly why being stale is a
+ * label and never a reason to delete anything.
  */
 
 /**
@@ -481,7 +482,16 @@ export class SlicerSessionsCard {
 function describeFailure(error: unknown, t: TranslateService): string {
   const strings = t.translations().slicerSessions
   if (isAppError(error)) {
-    if (error.code === 'Conflict') return strings.failedSettling
+    // Two different `Conflict`s reach here, and mapping both to the settling sentence made the
+    // shell's carefully named refusal — "launched from a different library" — surface as advice to
+    // wait a moment, which can never work. They are told apart by `details.fileState`, which only
+    // the settling refusal carries; a code alone cannot, and inventing a third `AppErrorCode` for
+    // a distinction one screen makes would be widening a closed union for a sentence.
+    if (error.code === 'Conflict') {
+      return error.details?.['fileState'] === undefined
+        ? strings.failedElsewhere
+        : strings.failedSettling
+    }
     if (error.code === 'QuotaExceeded') {
       const details = error.details as QuotaExceededDetails | undefined
       if (details) {

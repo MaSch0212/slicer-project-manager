@@ -193,11 +193,12 @@ describe('SlicerSessionsCard', () => {
   })
 
   it('labels a session stale after thirty days, and not before', async () => {
-    // Not `expect(STALE_SESSION_MS).toBe(30 * 24 * 60 * 60 * 1000)`, which was here and was an
-    // assertion that a constant equals its own literal in the module that defines it — green
-    // whatever anything else says. What is worth pinning is the *unit*: a threshold accidentally
-    // written in seconds would still satisfy every relative assertion below, because they are all
-    // built from the constant itself.
+    // The same fact as `expect(STALE_SESSION_MS).toBe(30 * 24 * 60 * 60 * 1000)`, spelled so the
+    // unit is legible — the two fail on exactly the same set of values. What was wrong with the
+    // old line was never its strength but the claim around it, that it pinned this copy against
+    // one in the desktop package, which it could not observe from here; that copy is gone and the
+    // claim with it. Worth keeping either way, because the relative assertions below are all built
+    // from the constant itself and would survive a threshold accidentally written in seconds.
     expect(STALE_SESSION_MS / (24 * 60 * 60 * 1000)).toBe(30)
     const { fixture } = await setup([
       session({ launchId: 'fresh', startedAt: NOW - STALE_SESSION_MS + 1000 }),
@@ -255,8 +256,12 @@ describe('SlicerSessionsCard', () => {
    */
   it('shows the shell refusal when an import is refused, and leaves the session listed', async () => {
     const { fixture, shell } = await setup([session()], { projectId: 'p1' })
+    // `details.fileState`, because that is what the shell actually sends and it is the only thing
+    // that tells this `Conflict` from the other one the same call can raise.
     shell.resolveSession.mockRejectedValue(
-      new AppError('Conflict', 'that file is still being written; try again in a moment'),
+      new AppError('Conflict', 'that file is still being written; try again in a moment', {
+        fileState: 'settling',
+      }),
     )
 
     buttonNamed(fixture, en.slicerSessions.import)?.click()
@@ -286,6 +291,24 @@ describe('SlicerSessionsCard', () => {
     expect(rendered).toContain('1.0 GB')
   })
 
+  it('does not tell a user to wait for a file that belongs to another library', async () => {
+    const { fixture, shell } = await setup([session()], { projectId: 'p1' })
+    // The other `Conflict` this call can raise — reachable only across a race, since a foreign
+    // session is not listed, which is exactly why it has to be right: the shell names the refusal
+    // carefully and the last frame used to flatten it into advice that can never work.
+    shell.resolveSession.mockRejectedValue(
+      new AppError('Conflict', 'that file was launched from a different library', {
+        launchId: 'launch-1',
+      }),
+    )
+
+    buttonNamed(fixture, en.slicerSessions.import)?.click()
+    await settle(fixture)
+
+    expect(text(fixture)).toContain(en.slicerSessions.failedElsewhere)
+    expect(text(fixture)).not.toContain(en.slicerSessions.failedSettling)
+  })
+
   it('shows a failed discard rather than swallowing it', async () => {
     const { fixture, shell } = await setup([session()], { projectId: 'p1' })
     shell.discardSessions.mockRejectedValue(new Error('bridge gone'))
@@ -299,7 +322,9 @@ describe('SlicerSessionsCard', () => {
 
   it('clears the message once something works', async () => {
     const { fixture, shell } = await setup([session()], { projectId: 'p1' })
-    shell.resolveSession.mockRejectedValueOnce(new AppError('Conflict', 'wait'))
+    shell.resolveSession.mockRejectedValueOnce(
+      new AppError('Conflict', 'wait', { fileState: 'settling' }),
+    )
 
     buttonNamed(fixture, en.slicerSessions.import)?.click()
     await settle(fixture)

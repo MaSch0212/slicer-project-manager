@@ -142,6 +142,7 @@
     "whichProjectPlaceholder": "Projekt wählen",
     "refresh": "Erneut prüfen",
     "curaLimit": "Dieser Slicer speichert nie über die Datei, die er bekommen hat — hier kommt also von selbst nie etwas zurück. Speichern Sie im Slicer in einen eigenen Ordner und laden Sie diese Datei dann ins Projekt hoch.",
+    "failedElsewhere": "Diese Datei wurde aus einer anderen Bibliothek an einen Slicer übergeben. Öffnen Sie diese Bibliothek erneut, um sie zu beantworten.",
     "failedSettling": "Diese Datei wird gerade noch geschrieben. Warten Sie einen Moment und prüfen Sie erneut.",
     "import": "Zum Projekt hinzufügen",
     "discard": "Wegwerfen",

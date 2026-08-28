@@ -142,6 +142,7 @@
     "whichProjectPlaceholder": "Choose a project",
     "refresh": "Check again",
     "curaLimit": "This slicer never saves back over the file it was given, so nothing will ever come back here on its own. Save from the slicer to a folder of your own, then upload that file to the project.",
+    "failedElsewhere": "That file was handed to a slicer from a different library. Open that library again to answer it.",
     "failedSettling": "That file is still being written. Wait a moment and check again.",
     "import": "Add it to the project",
     "discard": "Throw it away",

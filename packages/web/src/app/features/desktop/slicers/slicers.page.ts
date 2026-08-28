@@ -204,24 +204,29 @@ function classify(error: unknown): FailureKind {
                   (valueChange)="onSetDefault($event)"
                 />
               </jig-input-field>
-              @if (cfg.defaultSlicerId !== null) {
-                <!-- The only way back. Without it a default could be set and never unset, and
-                     the launch paths handle its absence perfectly well: they refuse and name the
-                     choice, which is what a default exists to let a user opt out of. -->
-                <span>
-                  <button
-                    jigButton
-                    kind="text"
-                    type="button"
-                    [disabled]="busy()"
-                    (click)="onSetDefault(null)"
-                  >
-                    {{ t.translations().slicers.clearDefault }}
-                  </button>
-                </span>
-              }
             } @else {
               <p class="spm-muted">{{ t.translations().slicers.defaultNone }}</p>
+            }
+            @if (cfg.defaultSlicerId !== null) {
+              <!--
+                Outside the block above, deliberately. It used to be inside it, so unbinding the
+                last bound product took the whole select AND this button away, leaving a default
+                still set with nothing on screen to clear it — the same "no way back" shape one
+                step along from the one the nullable arm was added to remove. The launch path
+                refuses by name in that state, so it is recoverable rather than broken; it is
+                still a setting whose effect the user can see and cannot reach.
+              -->
+              <span>
+                <button
+                  jigButton
+                  kind="text"
+                  type="button"
+                  [disabled]="busy()"
+                  (click)="onSetDefault(null)"
+                >
+                  {{ t.translations().slicers.clearDefault }}
+                </button>
+              </span>
             }
           </div>
 
