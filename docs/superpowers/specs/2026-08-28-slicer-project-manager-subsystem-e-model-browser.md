@@ -432,8 +432,10 @@ in the view.
 ### 3.7 The permission handler
 
 Each session needs its own; the default session's handler fired only for the default session's view
-(row 7). So a browse partition with none uses Electron's defaults, which is not a decision anyone
-made.
+(row 7). So a browse partition with none uses Electron's defaults, and **task 2 measured what those
+are** rather than leaving it at "not a decision anyone made": in a fresh partition with no handler of
+either kind, a page was **granted** geolocation and **granted** notifications with no prompt, and
+`navigator.permissions.query({ name: 'geolocation' })` answered `"granted"`.
 
 **`setPermissionRequestHandler` on the browse session denies everything.** A model site needs no
 geolocation, no camera, no microphone, no notifications, no MIDI, no clipboard read, no pointer lock
@@ -442,8 +444,16 @@ in a project manager is not the place to start granting them. A denied permissio
 a granted one is a capability the user was never asked about, in a window that looks like the app.
 
 `setPermissionCheckHandler` — the synchronous sibling that answers `navigator.permissions.query` and
-some checks that never raise a request — was **not measured** and is set to the same refusal for
-consistency. Recorded as 9.5 rather than presented as measured.
+some checks that never raise a request — is set to the same refusal. ~~Not measured, and set for
+consistency.~~ **Withdrawn: task 2 measured it, and it is not merely for consistency — it does work
+the request handler does not.** Three partitions on Electron 44.0.0, one variable each: with the
+_request_ handler alone, `navigator.permissions.query({ name: 'geolocation' })` answered
+**`"granted"`** while the actual geolocation request was denied; with **both**, it answered
+`"denied"` and the check handler fired for `media`, `web-app-installation`, `geolocation` and
+`notifications`; with **neither**, the query answered `"granted"` and the request was granted
+outright. So without the check handler a site reads a granted permission out of an API that never
+raises a request, and whatever it draws from that answer is a decision nobody refused. 9.5 is closed
+by this; Windows 11 only, as with everything else here.
 
 ### 3.8 What the browse view does not inherit, and why that is fine
 
@@ -1377,10 +1387,14 @@ not.
    no login was performed anywhere (§11.3) — so if a future measurement shows the four sites log in
    entirely first-party, this is worth revisiting as defence in depth. It would never become the
    boundary.
-5. **`setPermissionCheckHandler`.** **Unmeasured.** Only `setPermissionRequestHandler` was tested
-   (row 7). The check handler answers `navigator.permissions.query` and some paths that never raise a
-   request, and E sets it to the same refusal for consistency. _To settle:_ a probe of the same shape
-   as §3's permissions row, against the check handler.
+5. **`setPermissionCheckHandler`.** ~~Unmeasured.~~ **Answered by task 2's implementation probe, and
+   the answer changes why the line exists** (3.7). Three partitions on Electron 44.0.0: request
+   handler alone → `navigator.permissions.query({name:'geolocation'})` answers **`"granted"`** while
+   the request itself is denied; both handlers → `"denied"`, with the check handler firing for
+   `media`, `web-app-installation`, `geolocation` and `notifications`; neither → the query answers
+   `"granted"` and the request is granted. It is therefore not "the same refusal for consistency" —
+   it is the only thing that answers the query API at all, and `browse.spec.ts` pins it. Windows 11
+   only.
 6. **Do `WebContentsView` bounds, resize and focus behave acceptably in the real Angular shell?**
    **Unmeasured** (§11.9), and named by the spike as the famously fiddly part. 4.2's design — the
    renderer reports intent, the main process intersects with an inset it computes itself, and a

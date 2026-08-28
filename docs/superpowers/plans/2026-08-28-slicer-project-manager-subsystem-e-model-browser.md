@@ -405,9 +405,13 @@ true } } }` — **naming the flags rather than inheriting them**, because a `web
 - [ ] `setPermissionRequestHandler` **and** `setPermissionCheckHandler` on the browse session, both
       refusing everything. Each session needs its own — the default session's handler fired only for
       the default session's view — so a browse partition with none runs on Electron's defaults, which
-      is not a decision anyone made. Mark `setPermissionCheckHandler` **unmeasured** in a comment
+      is not a decision anyone made. ~~Mark `setPermissionCheckHandler` **unmeasured** in a comment
       (spec 9.5): only the request handler was probed, and the check handler is set to the same
-      refusal for consistency.
+      refusal for consistency.~~ **Withdrawn during task 2, which measured it** — it is not for
+      consistency, it is the only thing that answers `navigator.permissions.query`, which reads
+      `"granted"` with the request handler alone. See spec 3.7 and 9.5, both corrected, and the
+      docblock on `BrowseHost.session`. Electron's defaults were measured at the same time: a
+      partition with neither handler **grants** geolocation and notifications with no prompt.
 - [ ] Bounds (decision 11): `BROWSE_CHROME_INSET` and `BROWSE_MIN_AREA` are constants in this file
       and the renderer never names either. The renderer reports a rectangle in CSS pixels; the main
       process converts by the window's current `zoomFactor`/scale, computes
