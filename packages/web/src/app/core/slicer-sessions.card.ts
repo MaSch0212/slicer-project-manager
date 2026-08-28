@@ -15,7 +15,7 @@ import { JigSelect } from '@awdlab/jig/select'
 import { JigSpinner } from '@awdlab/jig/spinner'
 import { JigTag } from '@awdlab/jig/tag'
 import type { SlicerSessionDto } from '@spm/contract/dtos.ts'
-import { isAppError } from '@spm/contract/errors.ts'
+import { isAppError, type QuotaExceededDetails } from '@spm/contract/errors.ts'
 import { API_CLIENT, SHELL_CLIENT } from './api/api-client.token'
 import { TranslateService } from './i18n/translate.service'
 import { formatBytes } from './format-bytes'
@@ -70,6 +70,8 @@ type SessionRow = {
   needsProject: boolean
   /** Whether "add to the project" is offered at all. */
   canImport: boolean
+  /** Whether to restate why this session will never have anything to import. */
+  curaLimit: boolean
 }
 
 @Component({
@@ -83,13 +85,23 @@ type SessionRow = {
         <p class="spm-muted">{{ t.translations().slicerSessions.lead }}</p>
       </div>
 
-      @if (failed()) {
-        <jig-message color="error" role="alert">{{ failureMessage() }}</jig-message>
+      @if (failure(); as message) {
+        <jig-message color="error" role="alert">{{ message }}</jig-message>
       }
 
-      @if (loading()) {
-        <jig-spinner [size]="20" />
-      }
+      <div class="spm-row">
+        <!--
+          The only way to re-ask. Nothing pushes from the main process — there is no IPC channel
+          back and no dependable "slicer closed" signal to push on — so this page is a pull, and
+          a pull with no control on it reads as broken to somebody who has just pressed Ctrl+S.
+        -->
+        <button jigButton kind="secondary" type="button" [disabled]="busy()" (click)="reload()">
+          {{ t.translations().slicerSessions.refresh }}
+        </button>
+        @if (loading() || busy()) {
+          <jig-spinner [size]="20" />
+        }
+      </div>
 
       @if (rows().length === 0) {
         <p class="spm-muted">{{ t.translations().slicerSessions.none }}</p>
@@ -128,6 +140,18 @@ type SessionRow = {
           </div>
 
           <p class="spm-muted">{{ describe(row.session) }}</p>
+
+          @if (row.curaLimit) {
+            <!--
+              Restated where the user meets the consequence. Cura never saves in place — its
+              Ctrl+S is always a Save-As into a folder of its own — so a Cura session sits here
+              reading "Nothing came back" for ever, and the pre-launch warning that said why was
+              dismissible and is long gone by the time anybody reads this row.
+            -->
+            <jig-message color="warning" role="status">
+              {{ t.translations().slicerSessions.curaLimit }}
+            </jig-message>
+          }
 
           <!--
             Constraint 11. Whether the process the app spawned is alive is the only thing it can
@@ -176,8 +200,8 @@ type SessionRow = {
                 [options]="projectOptions()"
                 [placeholder]="t.translations().slicerSessions.whichProjectPlaceholder"
                 [disabled]="busy()"
-                [value]="chosenProject()"
-                (valueChange)="chosenProject.set($event ?? null)"
+                [value]="chosenProject(row.session.launchId)"
+                (valueChange)="setChosenProject(row.session.launchId, $event ?? null)"
               />
             </jig-input-field>
           }
@@ -188,7 +212,9 @@ type SessionRow = {
                 jigButton
                 kind="primary"
                 type="button"
-                [disabled]="busy() || (row.needsProject && chosenProject() === null)"
+                [disabled]="
+                  busy() || (row.needsProject && chosenProject(row.session.launchId) === null)
+                "
                 (click)="onImport(row)"
               >
                 {{ t.translations().slicerSessions.import }}
@@ -229,17 +255,34 @@ export class SlicerSessionsCard {
 
   readonly #sessions = signal<SlicerSessionDto[] | null>(null)
   readonly #busy = signal(false)
-  readonly #failed = signal(false)
+  /** The sentence to show, already resolved. Null when the last thing that happened worked. */
+  readonly #failure = signal<string | null>(null)
   readonly #now = signal(Date.now())
   readonly sessions = this.#sessions.asReadonly()
   readonly busy = this.#busy.asReadonly()
-  readonly failed = this.#failed.asReadonly()
-  readonly loading = computed(() => this.#sessions() === null && !this.#failed())
+  readonly failure = this.#failure.asReadonly()
+  readonly loading = computed(() => this.#sessions() === null && this.#failure() === null)
 
-  /** The project an orphan is being adopted into, on a page that does not already name one. */
-  readonly chosenProject = signal<string | null>(null)
+  /**
+   * The project each orphan is being adopted into, keyed by its own `launchId`.
+   *
+   * **Keyed, and not one signal, because `/settings/slicers` shows every orphan there is.** A
+   * single signal bound to every row meant choosing a project for one filled in the select of all
+   * the others and enabled their import buttons with it — "only the user can say where an orphan
+   * belongs", answered once for all of them. Visible rather than silent, but it is the wrong
+   * question asked once.
+   */
+  readonly #chosenProjects = signal<Readonly<Record<string, string | null>>>({})
   readonly #projects = signal<{ label: string; value: string }[]>([])
   readonly projectOptions = this.#projects.asReadonly()
+
+  chosenProject(launchId: string): string | null {
+    return this.#chosenProjects()[launchId] ?? null
+  }
+
+  setChosenProject(launchId: string, projectId: string | null): void {
+    this.#chosenProjects.update((current) => ({ ...current, [launchId]: projectId }))
+  }
 
   /** Resolves once the first load has settled, so a spec can await it rather than count ticks. */
   readonly ready: Promise<void>
@@ -264,15 +307,31 @@ export class SlicerSessionsCard {
         // a new-project launch the copy that was handed over is a genuinely different file from
         // the original, and the user is the one who knows whether they want it.
         canImport: session.fileState === 'changed' || session.fileState === 'unchanged',
+        // Only while nothing has come back, which for Cura is for ever. A Cura session that did
+        // change is one the user aimed a Save-As at deliberately, and telling them it cannot
+        // happen while it is on screen having happened would be the app arguing with the disk.
+        curaLimit: session.slicerId === 'cura' && session.fileState === 'unchanged',
       }))
   })
 
   readonly staleRows = computed(() => this.rows().filter((row) => row.stale))
 
-  protected readonly failureMessage = computed(() => this.t.translations().slicerSessions.failed)
-
+  /** Re-asks the shell, and clears whatever the last answer said. The refresh control calls it. */
   async reload(): Promise<void> {
-    this.#failed.set(false)
+    this.#failure.set(null)
+    await this.#load()
+  }
+
+  /**
+   * Re-reads the list **without touching the failure state**, which is the whole of the fix.
+   *
+   * `#run`'s `finally` reloads, because every action changes what the list would say. When that
+   * reload also cleared the failure, the banner an action had just set was wiped before Angular
+   * ever rendered it — so a refused import, a `QuotaExceeded`, a dead bridge all showed the user
+   * nothing at all, on a row that then stayed listed with "Throw it away" beside it. A listing
+   * that fails still raises its own failure here; it only may not *clear* one.
+   */
+  async #load(): Promise<void> {
     try {
       const sessions = await this.shell.slicers.sessions()
       this.#sessions.set(sessions)
@@ -283,18 +342,22 @@ export class SlicerSessionsCard {
         await this.#loadProjects()
       }
     } catch (error) {
-      this.#failed.set(true)
+      this.#failure.set(describeFailure(error, this.t))
       this.#sessions.set([])
       console.error('slicer sessions: could not be listed', error)
     }
   }
 
   async onImport(row: SessionRow): Promise<void> {
-    const projectId = row.needsProject ? this.chosenProject() : this.projectId()
+    const launchId = row.session.launchId
+    const projectId = row.needsProject ? this.chosenProject(launchId) : this.projectId()
     await this.#run(async () => {
-      await this.shell.slicers.resolveSession(row.session.launchId, 'import', {
+      await this.shell.slicers.resolveSession(launchId, 'import', {
         ...(projectId === null ? {} : { projectId }),
       })
+      // Only on the way past the call: a failed import leaves the row, and the answer the user
+      // gave for it, exactly where they were.
+      this.#chosenProjects.update(({ [launchId]: _gone, ...rest }) => rest)
       this.imported.emit()
     })
   }
@@ -365,20 +428,57 @@ export class SlicerSessionsCard {
     }
   }
 
-  /** One call, one reload, one message. Everything here changes what `sessions()` would answer. */
+  /**
+   * One call, one reload, one message. Everything here changes what `sessions()` would answer.
+   *
+   * The reload is `#load` and not `reload`, and that is not a detail: `reload` clears the failure
+   * state, so reloading through it in this `finally` wiped the message this `catch` had just set
+   * before anything rendered it.
+   */
   async #run(action: () => Promise<unknown>): Promise<void> {
     if (this.#busy()) return
     this.#busy.set(true)
-    this.#failed.set(false)
+    this.#failure.set(null)
     try {
       await action()
     } catch (error) {
-      this.#failed.set(true)
+      this.#failure.set(describeFailure(error, this.t))
       if (!isAppError(error)) console.error('slicer sessions: an unexpected failure', error)
       else console.error(`slicer sessions: ${error.code}`, error.message)
     } finally {
       this.#busy.set(false)
-      await this.reload()
+      await this.#load()
     }
   }
+}
+
+/**
+ * What went wrong, as a sentence, keeping the two codes that mean something specific here.
+ *
+ * Constraint 5 carries an `AppError`'s identity all the way across the IPC boundary, and the last
+ * frame is the one that decides whether that was worth anything. `Conflict` on this card is
+ * "the file is still being written", which is the one refusal a user can act on by waiting;
+ * `QuotaExceeded` is the one they can act on by making room, and it is the only one with numbers
+ * in it. Everything else says so plainly rather than pretending to a diagnosis.
+ *
+ * Resolved at the moment of failure rather than kept as a kind, unlike `/settings/slicers`: the
+ * two interesting sentences interpolate values off the error, so they cannot be re-rendered from
+ * a kind alone after a language switch. The cost is a message that stays in the old language
+ * until the next action; the alternative is keeping the error object alive in a signal.
+ */
+function describeFailure(error: unknown, t: TranslateService): string {
+  const strings = t.translations().slicerSessions
+  if (isAppError(error)) {
+    if (error.code === 'Conflict') return strings.failedSettling
+    if (error.code === 'QuotaExceeded') {
+      const details = error.details as QuotaExceededDetails | undefined
+      if (details) {
+        return interpolate(t.translations().errors.quotaExceeded, {
+          usage: formatBytes(details.usageBytes),
+          quota: formatBytes(details.quotaBytes),
+        })
+      }
+    }
+  }
+  return strings.failed
 }

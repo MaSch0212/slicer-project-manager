@@ -138,6 +138,9 @@
     "diffLimit": "This says which parts of the file changed, not which setting inside them did.",
     "whichProject": "Which project does this belong to?",
     "whichProjectPlaceholder": "Choose a project",
+    "refresh": "Check again",
+    "curaLimit": "This slicer never saves back over the file it was given, so nothing will ever come back here on its own. Save from the slicer to a folder of your own, then upload that file to the project.",
+    "failedSettling": "That file is still being written. Wait a moment and check again.",
     "import": "Add it to the project",
     "discard": "Throw it away",
     "failed": "That did not work. Nothing was added or removed."

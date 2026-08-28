@@ -2,6 +2,7 @@ import { Component, signal } from '@angular/core'
 import { TestBed } from '@angular/core/testing'
 import { describe, expect, it, vi, type Mock } from 'vitest'
 import type { SlicerSessionDto } from '@spm/contract/dtos.ts'
+import { AppError } from '@spm/contract/errors.ts'
 import { provideJigForTests } from '../../testing/jig'
 import { API_CLIENT, SHELL_CLIENT } from './api/api-client.token'
 import en from './i18n/locales/en.json'
@@ -174,7 +175,7 @@ describe('SlicerSessionsCard', () => {
     expect(text(fixture)).toContain(en.slicerSessions.whichProject)
     expect(buttonNamed(fixture, en.slicerSessions.import)?.disabled).toBe(true)
 
-    card(fixture).chosenProject.set('p9')
+    card(fixture).setChosenProject('launch-1', 'p9')
     await settle(fixture)
     buttonNamed(fixture, en.slicerSessions.import)?.click()
     await settle(fixture)
@@ -237,6 +238,127 @@ describe('SlicerSessionsCard', () => {
         .map((row) => row.session.launchId),
     ).toEqual(['mine', 'stray'])
     expect(text(fixture)).not.toContain('theirs.3mf')
+  })
+
+  /*
+   * The failure path an action takes, which showed the user nothing at all until this round.
+   *
+   * `#run`'s `finally` reloads, because every answer changes what the list would say — and the
+   * reload used to clear the failure state as its first statement, so the banner the `catch` had
+   * just set was wiped before Angular rendered a frame. Every one of these three would have been
+   * silent: a refusal, a quota, and a bridge that is not there.
+   */
+  it('shows the shell refusal when an import is refused, and leaves the session listed', async () => {
+    const { fixture, shell } = await setup([session()], { projectId: 'p1' })
+    shell.resolveSession.mockRejectedValue(
+      new AppError('Conflict', 'that file is still being written; try again in a moment'),
+    )
+
+    buttonNamed(fixture, en.slicerSessions.import)?.click()
+    await settle(fixture)
+
+    expect(text(fixture)).toContain(en.slicerSessions.failedSettling)
+    // Still there, because `#sweep` only runs after a successful upload — which is why saying
+    // nothing was worse than it sounds: "Throw it away" sits beside work that was never imported.
+    expect(card(fixture).rows()).toHaveLength(1)
+  })
+
+  it('puts the numbers in front of the user when the upload would not fit', async () => {
+    const { fixture, shell } = await setup([session()], { projectId: 'p1' })
+    shell.resolveSession.mockRejectedValue(
+      new AppError('QuotaExceeded', 'no room', {
+        usageBytes: 1024 * 1024 * 900,
+        quotaBytes: 1024 * 1024 * 1024,
+        incomingBytes: 4096,
+      }),
+    )
+
+    buttonNamed(fixture, en.slicerSessions.import)?.click()
+    await settle(fixture)
+
+    const rendered = text(fixture)
+    expect(rendered).toContain('900.0 MB')
+    expect(rendered).toContain('1.0 GB')
+  })
+
+  it('shows a failed discard rather than swallowing it', async () => {
+    const { fixture, shell } = await setup([session()], { projectId: 'p1' })
+    shell.discardSessions.mockRejectedValue(new Error('bridge gone'))
+    shell.resolveSession.mockRejectedValue(new Error('bridge gone'))
+
+    buttonNamed(fixture, en.slicerSessions.discard)?.click()
+    await settle(fixture)
+
+    expect(text(fixture)).toContain(en.slicerSessions.failed)
+  })
+
+  it('clears the message once something works', async () => {
+    const { fixture, shell } = await setup([session()], { projectId: 'p1' })
+    shell.resolveSession.mockRejectedValueOnce(new AppError('Conflict', 'wait'))
+
+    buttonNamed(fixture, en.slicerSessions.import)?.click()
+    await settle(fixture)
+    expect(text(fixture)).toContain(en.slicerSessions.failedSettling)
+
+    // The pair: a banner that never cleared would be as wrong as one that never showed.
+    buttonNamed(fixture, en.slicerSessions.import)?.click()
+    await settle(fixture)
+    expect(text(fixture)).not.toContain(en.slicerSessions.failedSettling)
+  })
+
+  it('re-asks the shell when the refresh control is pressed', async () => {
+    const { fixture, shell } = await setup([session()])
+    expect(shell.sessions).toHaveBeenCalledTimes(1)
+
+    buttonNamed(fixture, en.slicerSessions.refresh)?.click()
+    await settle(fixture)
+
+    // Nothing pushes from the main process, so this is the only way to re-ask, and a page with
+    // no way to re-ask reads as broken to somebody who has just pressed Ctrl+S.
+    expect(shell.sessions).toHaveBeenCalledTimes(2)
+  })
+
+  it('answers each orphan separately, and forgets the answer once it is used', async () => {
+    const { fixture, shell } = await setup(
+      [
+        session({ launchId: 'a', projectId: '', isOrphan: true, fileName: 'a.3mf' }),
+        session({ launchId: 'b', projectId: '', isOrphan: true, fileName: 'b.3mf' }),
+      ],
+      { projects: [{ id: 'p9', name: 'Bracket' }] },
+    )
+
+    card(fixture).setChosenProject('a', 'p9')
+    await settle(fixture)
+
+    // One signal for every row meant answering for A also answered for B — and enabled B's
+    // import button with a project nobody chose for it.
+    expect(card(fixture).chosenProject('a')).toBe('p9')
+    expect(card(fixture).chosenProject('b')).toBeNull()
+    const imports = [...(fixture.nativeElement as HTMLElement).querySelectorAll('button')].filter(
+      (button) => (button.textContent ?? '').includes(en.slicerSessions.import),
+    )
+    expect(imports.map((button) => button.disabled)).toEqual([false, true])
+
+    imports[0]!.click()
+    await settle(fixture)
+
+    expect(shell.resolveSession).toHaveBeenCalledWith('a', 'import', { projectId: 'p9' })
+    expect(card(fixture).chosenProject('a')).toBeNull()
+  })
+
+  it('restates why a Cura session will never have anything to import', async () => {
+    const { fixture } = await setup([session({ slicerId: 'cura', fileState: 'unchanged' })])
+
+    // The pre-launch warning is dismissible and long gone by the time anybody reads this row.
+    expect(text(fixture)).toContain(en.slicerSessions.curaLimit)
+  })
+
+  it('does not restate the Cura limit over a Cura file that did come back', async () => {
+    const { fixture } = await setup([session({ slicerId: 'cura', fileState: 'changed' })])
+
+    // The user aimed a Save-As at the launch directory. Telling them it cannot happen while it is
+    // on screen having happened would be the app arguing with the disk.
+    expect(text(fixture)).not.toContain(en.slicerSessions.curaLimit)
   })
 
   it('says so when the list cannot be read, and adds nothing', async () => {
