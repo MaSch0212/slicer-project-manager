@@ -119,6 +119,44 @@ export const DEFAULT_SETTINGS: SettingsDto = {
 }
 
 /**
+ * One installed slicer the shell is prepared to launch.
+ *
+ * **A `SlicerId` names a product; this names an install, and the two are one-to-many.** Measured:
+ * the developer's machine has UltiMaker Cura 5.12.0 and 5.13.0 side by side, both working, both
+ * able to run at once. Everything in the slicer UI is built on keeping them apart.
+ *
+ * `id` is the install's *origin key* — the uninstall subkey and its hive, the MSIX package family,
+ * or a generated id for a manual entry — and never its path. An MSIX install path embeds the
+ * package version, so a stored path breaks silently on update.
+ */
+export type SlicerInstallDto = {
+  id: string
+  slicerId: SlicerId
+  label: string
+  /** Null for a manual entry with no readable version. Never read from the executable. */
+  version: string | null
+  /** The last known path. Re-checked before every launch; shown so the user can tell two apart. */
+  path: string
+  origin: 'registry' | 'msix' | 'manual'
+  /** `missing`: the stored path failed and re-resolution from the origin key found nothing. */
+  state: 'ok' | 'missing'
+}
+
+export type SlicerConfigDto = {
+  installs: SlicerInstallDto[]
+  /**
+   * Which install each product launches. A `SlicerId` with one install is bound to it
+   * automatically; one with two is left unbound and the UI asks. The app offers, it does not
+   * guess — preferring the newer of two Curas is what the rejected file-association mechanism does.
+   */
+  bindings: Partial<Record<SlicerId, string>>
+  /** Used for every file that does not name a slicer, which is most of a library. */
+  defaultSlicerId: SlicerId | null
+  /** False off Windows, where manual entry is the only mechanism the UI should offer. */
+  detectionSupported: boolean
+}
+
+/**
  * What core returns: IDs, never URLs (spec 4.2). Only a transport knows its own scheme, so
  * it decorates these into the DTOs above — /api/files/:id/thumb over HTTP,
  * spm://file/:id/thumb in Electron.

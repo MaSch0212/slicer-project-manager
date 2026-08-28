@@ -1,0 +1,187 @@
+import type { SlicerId } from '@spm/contract/dtos.ts'
+
+/**
+ * The five slicers, as measured — what each is called, how it is found, and what it does to a
+ * file it is handed.
+ *
+ * **Code, not configuration.** Every field is a measured property of the product
+ * (`.superpowers/spikes/2026-08-28-slicer-launch-facts.md`, §§1–2 and §§16, 20), and a user has
+ * no business editing any of it: a wrong `exeName` here is the app spawning something that is not
+ * the slicer, and a wrong `msixPackageFamily` is a `Get-AppxPackage` query for a package that
+ * does not exist. What a user *can* configure — which install of a product to launch, and where a
+ * portable install lives — is `slicers.json` (see `config.ts`), and nothing in this file is in it.
+ *
+ * **There is deliberately no `strip` field** (D decision 1). The strip sets are indexed by the
+ * flavour of the *file*, not by the slicer being launched — what can be removed is whatever the
+ * authoring slicer put in — and a `SlicerId`-keyed table cannot express the parent spec §3.4
+ * rule-4 case, which is a classification with no `SlicerId` at all. They live in
+ * `packages/core/src/files/strip3mf.ts`, which is their one home.
+ */
+export type SlicerDef = {
+  id: SlicerId
+  displayName: string
+
+  /** How detection finds it on Windows. See `detect.ts`. */
+  windows: {
+    /**
+     * Matched against the uninstall key's `DisplayName`, which carries the version for three of
+     * the five: `UltiMaker Cura 5.12.0`, `AnycubicSlicerNext 1.4.1.2`, `PrusaSlicer`,
+     * `Bambu Studio`. Anchored at the start and required to end at a word boundary, so
+     * `PrusaSlicer` does not also claim a hypothetical `PrusaSlicerXL` — but it does claim
+     * `PrusaSlicer 2.9.6`, which is the point.
+     */
+    displayNamePattern: RegExp
+    /**
+     * The basename `DisplayIcon` must resolve to. **Validation, not search.**
+     *
+     * It is what stops `DisplayIcon` resolving to something that sits beside the real executable
+     * and is not it: `CuraEngine.exe` (21 MB, so "the biggest exe in the folder" picks it over
+     * Cura), `prusa-gcodeviewer.exe`, `prusa-slicer-console.exe` — the headless twin, with the
+     * *same* version resource — or one of the four uninstallers. All measured, §1.
+     */
+    exeName: string
+    /**
+     * Set only for MSIX products, and OrcaSlicer is the only one today.
+     *
+     * The family name and not the full name: the full name embeds the version
+     * (`OrcaSlicer.OrcaSlicer_2.4.3.0_x64__3qd7h69xpne0g`) and so changes on every update, while
+     * the family is stable by construction. This is also the only mechanism that sees Orca at
+     * all — it has no uninstall key, no Start Menu shortcut, no `App Paths` entry, is not on
+     * `PATH`, and is not findable by a recursive filename search (§2d, §2e, §2g).
+     */
+    msixPackageFamily?: string
+  }
+
+  /**
+   * argv for a file. `[file]` for all five (§3), a function so that a sixth need not be.
+   *
+   * Task 4 is what calls this. It is here rather than there because it is a property of the
+   * product, measured with the rest of the row.
+   */
+  argv(file: string): string[]
+
+  /**
+   * What this slicer does to a file it is handed, as measured. Read by the launch paths to decide
+   * what the app may honestly claim; never a strip set — see the module docblock.
+   */
+  behaviour: {
+    /**
+     * Whether Ctrl+S writes back over the file that was opened.
+     *
+     * False for Cura alone, and that is not a nicety: Cura proposes a *new* file in the user's
+     * own Cura library directory rather than the folder the file came from (§13), so a project
+     * opened from the library and saved lands somewhere the app never looks.
+     */
+    savesInPlace: boolean
+    /** Whether an unstripped foreign project is silently discarded — Anycubic (§3, §16, §20). */
+    discardsForeignProjects: boolean
+    /** Whether a `.3mf` always draws a modal regardless of content — PrusaSlicer (§16, §20). */
+    alwaysPromptsOn3mf: boolean
+    /** Whether a modal fires on the *absence* of its own config — Bambu (§20). */
+    promptsWithoutOwnConfig: boolean
+  }
+}
+
+/** Every `SlicerId`, in the order `/settings/slicers` lists them. */
+export const SLICER_IDS = [
+  'cura',
+  'prusaslicer',
+  'anycubic',
+  'bambu',
+  'orca',
+] as const satisfies readonly SlicerId[]
+
+/**
+ * A compile-time tie between the list above and the contract's union, in both directions.
+ *
+ * `SLICER_IDS` has to be a value — things iterate it — and a value can drift from a type. The
+ * `satisfies` catches a member the union does not have; this catches one the union has and the
+ * list does not, which is the direction that would otherwise ship a slicer the app never asks
+ * about. `Exclude` is `never` while they agree, and `AssertNever` fails to instantiate otherwise.
+ */
+type AssertNever<T extends never> = T
+export type SlicerIdsAreComplete = AssertNever<Exclude<SlicerId, (typeof SLICER_IDS)[number]>>
+
+export const SLICERS: Readonly<Record<SlicerId, SlicerDef>> = {
+  cura: {
+    id: 'cura',
+    displayName: 'UltiMaker Cura',
+    windows: {
+      displayNamePattern: /^UltiMaker Cura\b/i,
+      exeName: 'UltiMaker-Cura.exe',
+    },
+    argv: (file) => [file],
+    behaviour: {
+      savesInPlace: false,
+      discardsForeignProjects: false,
+      alwaysPromptsOn3mf: false,
+      promptsWithoutOwnConfig: false,
+    },
+  },
+  prusaslicer: {
+    id: 'prusaslicer',
+    displayName: 'PrusaSlicer',
+    windows: {
+      displayNamePattern: /^PrusaSlicer\b/i,
+      exeName: 'prusa-slicer.exe',
+    },
+    argv: (file) => [file],
+    behaviour: {
+      savesInPlace: true,
+      discardsForeignProjects: false,
+      alwaysPromptsOn3mf: true,
+      promptsWithoutOwnConfig: false,
+    },
+  },
+  anycubic: {
+    id: 'anycubic',
+    displayName: 'Anycubic Slicer Next',
+    windows: {
+      displayNamePattern: /^AnycubicSlicerNext\b/i,
+      exeName: 'AnycubicSlicerNext.exe',
+    },
+    argv: (file) => [file],
+    behaviour: {
+      savesInPlace: true,
+      discardsForeignProjects: true,
+      alwaysPromptsOn3mf: false,
+      promptsWithoutOwnConfig: false,
+    },
+  },
+  bambu: {
+    id: 'bambu',
+    displayName: 'Bambu Studio',
+    windows: {
+      displayNamePattern: /^Bambu Studio\b/i,
+      exeName: 'bambu-studio.exe',
+    },
+    argv: (file) => [file],
+    behaviour: {
+      savesInPlace: true,
+      discardsForeignProjects: false,
+      alwaysPromptsOn3mf: false,
+      promptsWithoutOwnConfig: true,
+    },
+  },
+  orca: {
+    id: 'orca',
+    displayName: 'OrcaSlicer',
+    windows: {
+      displayNamePattern: /^OrcaSlicer\b/i,
+      exeName: 'orca-slicer.exe',
+      msixPackageFamily: 'OrcaSlicer.OrcaSlicer_3qd7h69xpne0g',
+    },
+    argv: (file) => [file],
+    behaviour: {
+      savesInPlace: true,
+      discardsForeignProjects: false,
+      alwaysPromptsOn3mf: false,
+      promptsWithoutOwnConfig: false,
+    },
+  },
+}
+
+/** Narrows an arbitrary value — from the renderer, or from a hand-edited config file. */
+export function isSlicerId(value: unknown): value is SlicerId {
+  return typeof value === 'string' && Object.hasOwn(SLICERS, value)
+}
