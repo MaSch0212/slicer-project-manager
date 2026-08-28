@@ -21,13 +21,13 @@ It ships in two forms from one codebase:
 
 ### 1.1 Subsystems and what this spec covers
 
-|       | Subsystem                                                                           | Depends on | This spec                      |
-| ----- | ----------------------------------------------------------------------------------- | ---------- | ------------------------------ |
-| **A** | Deno backend (SQLite, file store, auth/users) + Angular project browser + web build | —          | **Full, implementable detail** |
-| **B** | 3D model previews (thumbnails + interactive viewer)                                 | A          | Skeleton + pipeline design     |
-| **C** | Electron shell (offline local folder, native dialogs)                               | A          | Skeleton + extension points    |
-| **D** | Slicer configuration and launching                                                  | C          | Extension points only          |
-| **E** | Model browser (embedded browsing, download interception, project matching)          | C          | Extension points only          |
+|       | Subsystem                                                                           | Depends on | This spec                                                                                                      |
+| ----- | ----------------------------------------------------------------------------------- | ---------- | -------------------------------------------------------------------------------------------------------------- |
+| **A** | Deno backend (SQLite, file store, auth/users) + Angular project browser + web build | —          | **Full, implementable detail**                                                                                 |
+| **B** | 3D model previews (thumbnails + interactive viewer)                                 | A          | Skeleton + pipeline design                                                                                     |
+| **C** | Electron shell (offline local folder, native dialogs)                               | A          | Skeleton + extension points                                                                                    |
+| **D** | Slicer configuration and launching                                                  | C          | Extension points only — full detail in [subsystem D](2026-08-28-slicer-project-manager-subsystem-d-slicers.md) |
+| **E** | Model browser (embedded browsing, download interception, project matching)          | C          | Extension points only                                                                                          |
 
 B–E each get their own spec and plan cycle. This document fixes the cross-cutting
 architecture they must all fit into — package boundaries, data model, API contract, auth,
