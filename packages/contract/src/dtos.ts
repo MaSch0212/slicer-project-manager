@@ -295,6 +295,62 @@ export type SlicerSessionDto = {
 }
 
 /**
+ * One row of the model-site registry, as the renderer sees it (spec 4.4).
+ *
+ * The registry itself lives in `packages/desktop/src/browse/registry.ts` — this is the projection
+ * of it that crosses the boundary, so the `/browse` page can render the start links without
+ * duplicating a table of somebody else's websites. `identity()` and `hosts` deliberately do not
+ * cross: `matchKey` runs in the renderer over `ModelSiteIdentity`, which is a different shape for a
+ * different job, and `hosts` is not a permission list and would read like one.
+ */
+export type ModelSiteDto = {
+  id: string
+  displayName: string
+  homeUrl: string
+}
+
+/**
+ * Where the `/browse` page wants the native view, in **CSS pixels of the host page**.
+ *
+ * An intent and not an instruction. The main process converts by the window's current zoom factor
+ * and intersects the result with a rectangle it computes for itself — the content area minus a
+ * chrome inset it owns and this side never names (spec 4.2). A request that intersects to less than
+ * the shell's minimum is treated as a call to `hide()`, because a `1×1` view is a live third-party
+ * page running where nobody can see it.
+ */
+export type BrowseBounds = { x: number; y: number; width: number; height: number }
+
+/**
+ * What the browse chrome polls, and **the one DTO in this file whose strings a stranger wrote**.
+ *
+ * `url`, `title` and `lastError` are chosen by, or derived from, whatever site the browse view is
+ * on. They arrive inside `spm://app` — the document that holds the IPC bridge — so spec 3.10's rule
+ * is a property of this type and not a habit of whoever renders it:
+ *
+ * **Every string here is rendered as text only.** Never into `innerHTML` or `[innerHTML]`, never
+ * through `bypassSecurityTrust*`, never into a `[href]`, a `[src]`, a CSS `url()` or a
+ * `window.open`, and truncated for display, because a page can set a title of any length and the
+ * app's own chrome should not be re-laid-out by one. Angular escapes interpolated text by default,
+ * which makes the default safe — and that is a reason to write the rule down rather than a reason
+ * to leave it to the page, because the two things a browse chrome obviously wants are to render the
+ * URL as a link and the site's favicon as an image, which are precisely the two places the default
+ * does not save you. The way to go somewhere is `browse.navigate`, which runs the URL through
+ * `browseNavigationPolicy` in the main process rather than handing it to Chromium here.
+ */
+export type BrowseStateDto = {
+  attached: boolean
+  url: string | null
+  title: string | null
+  isLoading: boolean
+  canGoBack: boolean
+  canGoForward: boolean
+  /** The registry row this URL belongs to, or null. Drives attribution, not permission (4.4). */
+  siteId: string | null
+  /** Set when the last navigation failed, so the UI can say what happened rather than spin. */
+  lastError: string | null
+}
+
+/**
  * What core returns: IDs, never URLs (spec 4.2). Only a transport knows its own scheme, so
  * it decorates these into the DTOs above — /api/files/:id/thumb over HTTP,
  * spm://file/:id/thumb in Electron.

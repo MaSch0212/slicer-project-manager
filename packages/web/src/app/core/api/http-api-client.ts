@@ -1,7 +1,10 @@
 import type { ApiClient, UploadBody } from '@spm/contract/api-client.ts'
 import type {
+  BrowseBounds,
+  BrowseStateDto,
   Capabilities,
   LocalLibraryDto,
+  ModelSiteDto,
   ProjectDetailDto,
   ProjectDto,
   ProjectQuery,
@@ -151,6 +154,39 @@ export class HttpApiClient implements ApiClient {
     return Promise.reject(
       new AppError('Forbidden', 'this shell cannot configure the slicers on this machine'),
     )
+  }
+
+  /**
+   * Refused for a reason narrower than "a browser cannot browse", which would be absurd.
+   *
+   * The model browser is a **`WebContentsView`**: a native pane the main process owns, with its own
+   * session, no preload and a navigation policy on its own `webContents`. None of that exists over
+   * HTTP, and the reason it has to exist at all is that the four sites refuse third-party framing —
+   * so the web build cannot offer this feature by embedding an iframe either, and there is no
+   * server route that would help. `Capabilities.canBrowseModelSites` is false on this transport, so
+   * nothing in the UI reaches these; the refusal is what keeps the promise every method of this
+   * class makes — a rejection is always an `AppError` with a `code` the caller can switch on, never
+   * a `TypeError` from a method that turned out not to be there.
+   */
+  // Named, unused parameters for the reason the slicer block gives: an arrow taking none still
+  // satisfies `implements ApiClient`, but its call signature is what a caller of this class sees.
+  readonly browse = {
+    sites: (): Promise<ModelSiteDto[]> => this.noBrowse(),
+    attach: (_bounds: BrowseBounds, _url?: string): Promise<BrowseStateDto> => this.noBrowse(),
+    detach: (): Promise<void> => this.noBrowse(),
+    hide: (): Promise<void> => this.noBrowse(),
+    show: (): Promise<BrowseStateDto> => this.noBrowse(),
+    setBounds: (_bounds: BrowseBounds): Promise<void> => this.noBrowse(),
+    navigate: (_url: string): Promise<BrowseStateDto> => this.noBrowse(),
+    back: (): Promise<BrowseStateDto> => this.noBrowse(),
+    forward: (): Promise<BrowseStateDto> => this.noBrowse(),
+    reload: (): Promise<BrowseStateDto> => this.noBrowse(),
+    state: (): Promise<BrowseStateDto> => this.noBrowse(),
+    clearLastPage: (): Promise<void> => this.noBrowse(),
+  }
+
+  private noBrowse(): Promise<never> {
+    return Promise.reject(new AppError('Forbidden', 'this shell cannot embed a model browser'))
   }
 
   readonly account = {

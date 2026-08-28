@@ -1,6 +1,9 @@
 import type {
+  BrowseBounds,
+  BrowseStateDto,
   Capabilities,
   LocalLibraryDto,
+  ModelSiteDto,
   ProjectDetailDto,
   ProjectDto,
   ProjectQuery,
@@ -217,6 +220,81 @@ export interface ApiClient {
      * process has already removed.
      */
     discardSessions(launchIds: string[]): Promise<{ discarded: number }>
+  }
+
+  /**
+   * The model browser: a native view of somebody else's website, inside this window (spec E §3–4).
+   *
+   * Gated by `Capabilities.canBrowseModelSites`, and refused by `HttpApiClient` for the same reason
+   * the `slicers` block is: the view is a `WebContentsView` in *this process on this machine*, and
+   * over HTTP that machine is a browser tab. Every method is a `shellCall` in the desktop shell —
+   * never a `libraryCall` — because in remote mode there is no open library and a `libraryCall`
+   * refuses a null session by design.
+   *
+   * **This block grows in three instalments**, one per task that implements it, because
+   * `DispatchTable` is a mapped type over this interface: a method declared here without a dispatch
+   * entry fails `deno task typecheck`, which is the guarantee wanted and which means each addition
+   * has to be atomic with its implementation. These eleven are the view; the download methods and
+   * the landing come with the tasks that write them.
+   *
+   * **The security seam, stated where a caller reads it.** The renderer never names a filesystem
+   * location and never hands a URL to Chromium in the privileged document. `navigate` runs its
+   * argument through `browseNavigationPolicy` **in the main process** and rejects a blocked one, and
+   * the strings that come back — see `BrowseStateDto` — are a stranger's, to be rendered as text.
+   */
+  browse: {
+    /** The site registry (4.4), so the page can render the start links without duplicating it. */
+    sites(): Promise<ModelSiteDto[]>
+
+    /**
+     * Creates the view and shows it, at `url` — defaulting to the last page of the previous
+     * session, and then to the registry's first start URL.
+     *
+     * **At most one per shell**: an `attach` on a shell that already has a view destroys the
+     * previous one first (4.3). The load is not awaited — two of the four sites answer with a
+     * Cloudflare challenge that clears itself after five or six seconds — so the state that comes
+     * back is the state at the moment of attaching, and `state()` is what the page polls.
+     *
+     * That `url` default is **persisted third-party browsing history**, one entry long, in
+     * `userData`, which the user did not ask for. Spec 9.14 is open on whether it should exist;
+     * `clearLastPage` is what removes it, and spec 7.3's claim that it is "cleared with the browse
+     * profile" is inaccurate — the file sits beside the profile directory, not inside it.
+     */
+    attach(bounds: BrowseBounds, url?: string): Promise<BrowseStateDto>
+
+    /**
+     * Destroys the view. Safe to call when there is none, and what route teardown calls (4.3).
+     *
+     * Destroys rather than hides, deliberately: a hidden view is a live third-party page still
+     * running script and still able to start a download nobody is watching. The partition is
+     * persistent, so the cost is a scroll position and not a login.
+     */
+    detach(): Promise<void>
+
+    /**
+     * Stops the view painting without destroying it, and puts it back (4.1).
+     *
+     * **The answer for a modal.** The view is a native sibling of the renderer, not a DOM element,
+     * so it paints over anything the app draws under its rectangle with no z-index to negotiate.
+     * Never a route change's tool: that is `detach`.
+     */
+    hide(): Promise<void>
+    show(): Promise<BrowseStateDto>
+
+    /** CSS pixels. The shell converts and intersects; see `BrowseBounds` (4.2). */
+    setBounds(bounds: BrowseBounds): Promise<void>
+
+    /** `browseNavigationPolicy` decides, in the shell — `http(s)`, `blob:`, `data:` (3.5). */
+    navigate(url: string): Promise<BrowseStateDto>
+    back(): Promise<BrowseStateDto>
+    forward(): Promise<BrowseStateDto>
+    reload(): Promise<BrowseStateDto>
+
+    /** Polled while `/browse` is mounted: URL, title, loading, history. See 4.5. */
+    state(): Promise<BrowseStateDto>
+
+    /** Forgets the remembered last page. The only thing that does (E decision 8). */
+    clearLastPage(): Promise<void>
   }
 
   account: {

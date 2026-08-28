@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { matchKey } from '@spm/contract/match-key.ts'
-import { MODEL_SITES } from '../src/browse/registry.ts'
+import { MODEL_SITES, siteForUrl } from '../src/browse/registry.ts'
 
 /**
  * The four measured model sites, and the key that decides whether a browsed URL is a project the
@@ -262,4 +262,44 @@ test('URL shapes no measured URL exercises — SYNTHETIC, constructed rather tha
     matchKey('https://cults3d.com/en/3d-model/various/hyper-hopper/', MODEL_SITES),
     'cults3d:hyper-hopper',
   )
+})
+
+/* -------------------------------------------------------------------------------------------
+ * siteForUrl — attribution, and never permission
+ * ---------------------------------------------------------------------------------------- */
+
+/**
+ * What `BrowseStateDto.siteId` is built from, and what task 3 attributes a download with.
+ *
+ * One table, both answers, for the reason the policy suite gives about its own: a lookup that
+ * answered `null` for everything would satisfy a suite made only of misses — and `null` is the
+ * *common* case here, because nothing stops a user browsing anywhere they like.
+ */
+test('a URL is attributed to the site that serves it, and to nothing else', () => {
+  for (const [url, expected] of [
+    ['https://www.thingiverse.com/thing:7401409', 'thingiverse'],
+    // Not a model page, and still Thingiverse: this answers who wrote the page, not what it is.
+    ['https://www.thingiverse.com/', 'thingiverse'],
+    ['https://thingiverse.com/thing:1', 'thingiverse'],
+    // The host is lowercased and `www.`-stripped exactly as `matchKey` does it, because a page
+    // attributed to Thingiverse and keyed as something else is worse than either alone.
+    ['https://WWW.Thingiverse.COM/thing:1', 'thingiverse'],
+    ['https://www.printables.com/model/1807378-universal-clip?lang=de', 'printables'],
+    ['https://makerworld.com/en/models/2093108-dji-neo-2-the-box', 'makerworld'],
+    ['https://cults3d.com/en/3d-model/various/hyper-hopper', 'cults3d'],
+
+    // A subdomain is not the site. `hosts` is an equality list, so a CDN that serves a site's
+    // bytes is not the site that published the model.
+    ['https://cdn.thingiverse.com/assets/1.stl', null],
+    // A port makes a different host, which is the same rule `matchKey` applies when it picks a row.
+    ['https://thingiverse.com:8443/thing:1', null],
+
+    ['https://example.com/anything', null],
+    ['https://not-thingiverse.com/thing:1', null],
+    ['blob:https://www.thingiverse.com/ae5e9664', null],
+    ['not a url', null],
+    ['', null],
+  ] as const) {
+    assert.equal(siteForUrl(url)?.id ?? null, expected, url)
+  }
 })

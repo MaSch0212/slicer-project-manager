@@ -1,9 +1,20 @@
-import { app, BrowserWindow, dialog, Menu, protocol, shell } from 'electron'
+import {
+  app,
+  BrowserWindow,
+  dialog,
+  Menu,
+  protocol,
+  session,
+  shell,
+  WebContentsView,
+} from 'electron'
 import { spawn } from 'node:child_process'
 import { existsSync, statSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { extname, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { BrowseHost } from './browse/host.ts'
+import { BROWSE_FILE_NAME } from './browse/last-page.ts'
 import { parseFileRequest, serveLibraryFile } from './files.ts'
 import { windowIconFile } from './icons.ts'
 import { registerInvokeHandler } from './ipc.ts'
@@ -996,7 +1007,17 @@ export function main(): void {
     confirmRemote: showRemoteConfirmation,
     // The transport changed, so the renderer has to be rebuilt rather than reloaded. The route
     // comes with it: usually home, but the connect flow's own release lands on the connect page.
-    onTransportChanged: (route) => replaceWindows(shellHost.transport(), route),
+    //
+    // **The browse view goes first, and that ordering is the point** (spec 4.3). `replaceWindows`
+    // builds the new window and destroys the old, in that order and for a measured reason — so a
+    // browse view the shell still held a reference to would be a handle on a destroyed window, and
+    // the renderer that had it on screen is about to be thrown away regardless. This is
+    // `ShellHost`'s existing "switching modes must not leak the previous mode's client" property,
+    // with E's native view joining the things it covers.
+    onTransportChanged: (route) => {
+      browseHost.detach()
+      replaceWindows(shellHost.transport(), route)
+    },
     // A navigation and not a replacement, for the case where the transport did *not* change —
     // the connect page runs on the IPC transport a local or unset window already has.
     onNavigate: (route) => {
@@ -1004,6 +1025,34 @@ export function main(): void {
         void window.loadURL(`${RENDERER_ORIGIN}${pathFor(route)}`)
     },
     onLibraryChanged: reloadOpenWindows,
+  })
+
+  /*
+   * The model browser's native view (spec E §3–4). Built here and nowhere else, so that the shell
+   * holds at most one for the life of the process.
+   *
+   * **Everything Electron-shaped it needs is passed in**, which is what lets `browse/host.ts`'s
+   * bounds arithmetic and lifecycle run under plain `node --test`. `WebContentsView` crosses as the
+   * **class**: a factory here would be a second place a `webPreferences` object could be built, and
+   * the one that matters — the browse view's — must stay in one file with nothing spread into it
+   * (constraint 8). Nothing in this function names a `webPreferences` for it, and nothing should.
+   *
+   * `session.fromPartition` rather than the session itself: it is called lazily inside the host,
+   * because it needs `app.whenReady()` and this runs before that.
+   *
+   * The window is resolved **per call**, like every other accessor in this block. `getAllWindows()[0]`
+   * and not `getFocusedWindow()`, which is null whenever the app is in the background — a bounds
+   * report that arrived while the user was in another application would then find no window and
+   * silently do nothing. During the one moment `replaceWindows` has two windows up there is no
+   * browse view, because the callback above destroyed it before building the replacement.
+   */
+  const browseHost = new BrowseHost({
+    WebContentsView,
+    fromPartition: (partition) => session.fromPartition(partition),
+    window: () => BrowserWindow.getAllWindows()[0] ?? null,
+    // Beside `state.json` and `slicers.json`, never inside either (D decision 4): one corrupt write
+    // should cost the user their last browsed page or their library choice, never both.
+    lastPageFile: join(app.getPath('userData'), BROWSE_FILE_NAME),
   })
 
   // The one thing in this process that starts a subprocess the user asked for. `spawn` is
@@ -1071,6 +1120,33 @@ export function main(): void {
         sessions: () => Promise.resolve(sessions.list()),
         resolveSession: (launchId, action, opts) => sessions.resolve(launchId, action, opts),
         discardSessions: (launchIds) => sessions.discardMany(launchIds),
+      },
+      /*
+       * The model browser. On the shell and not on a session for the same reason the slicer block
+       * is: a `WebContentsView` is a property of this process, and in remote mode `deps.session` is
+       * null so a `libraryCall` entry could not run at all.
+       *
+       * Every one of the eleven is a one-line forward to `BrowseHost`, and the ones that look like
+       * they should do more here deliberately do not. `navigate` does not check its URL — the
+       * policy lives in the host beside the four hooks that enforce it, and a second check here
+       * would be a second copy of it. `attach` does not resolve a default URL — the remembered page
+       * and the registry are the host's. `Promise.resolve` wraps the synchronous ones for the same
+       * reason the slicer block does: the `ApiClient` shape says `Promise`, and the work is a
+       * method call on an object in this process.
+       */
+      browse: {
+        sites: () => Promise.resolve(browseHost.sites()),
+        attach: (bounds, url) => Promise.resolve(browseHost.attach(bounds, url)),
+        detach: () => Promise.resolve(browseHost.detach()),
+        hide: () => Promise.resolve(browseHost.hide()),
+        show: () => Promise.resolve(browseHost.show()),
+        setBounds: (bounds) => Promise.resolve(browseHost.setBounds(bounds)),
+        navigate: (url) => Promise.resolve(browseHost.navigate(url)),
+        back: () => Promise.resolve(browseHost.back()),
+        forward: () => Promise.resolve(browseHost.forward()),
+        reload: () => Promise.resolve(browseHost.reload()),
+        state: () => Promise.resolve(browseHost.state()),
+        clearLastPage: () => Promise.resolve(browseHost.clearLastPage()),
       },
     },
   }))

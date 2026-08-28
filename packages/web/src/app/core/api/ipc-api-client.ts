@@ -1,7 +1,10 @@
 import type { ApiClient, UploadBody } from '@spm/contract/api-client.ts'
 import type {
+  BrowseBounds,
+  BrowseStateDto,
   Capabilities,
   LocalLibraryDto,
+  ModelSiteDto,
   ProjectDetailDto,
   ProjectDto,
   ProjectQuery,
@@ -259,6 +262,35 @@ export class IpcApiClient implements ApiClient {
       this.invoke('slicers.resolveSession', [launchId, action, opts ?? {}]),
     discardSessions: (launchIds: string[]): Promise<{ discarded: number }> =>
       this.invoke('slicers.discardSessions', [launchIds]),
+  }
+
+  /**
+   * The model browser, which the main process answers out of a `WebContentsView` it owns.
+   *
+   * Nothing here holds a view, a URL policy or a rectangle in device pixels: `attach` and
+   * `setBounds` send CSS pixels and the shell decides what becomes of them, and `navigate` sends a
+   * string the shell runs through its own policy. That asymmetry is the point — this side is the
+   * untrusted one, and it is also the one whose document holds the bridge, so the strings that come
+   * back in a `BrowseStateDto` are a stranger's and are rendered as text only.
+   *
+   * `attach`'s optional `url` is spread rather than always sent: the dispatch tuple is
+   * `[bounds, url?]`, and passing an explicit `undefined` would be an argument list of length two
+   * with a hole in it rather than one of length one.
+   */
+  readonly browse = {
+    sites: (): Promise<ModelSiteDto[]> => this.invoke('browse.sites'),
+    attach: (bounds: BrowseBounds, url?: string): Promise<BrowseStateDto> =>
+      this.invoke('browse.attach', url === undefined ? [bounds] : [bounds, url]),
+    detach: (): Promise<void> => this.invoke('browse.detach'),
+    hide: (): Promise<void> => this.invoke('browse.hide'),
+    show: (): Promise<BrowseStateDto> => this.invoke('browse.show'),
+    setBounds: (bounds: BrowseBounds): Promise<void> => this.invoke('browse.setBounds', [bounds]),
+    navigate: (url: string): Promise<BrowseStateDto> => this.invoke('browse.navigate', [url]),
+    back: (): Promise<BrowseStateDto> => this.invoke('browse.back'),
+    forward: (): Promise<BrowseStateDto> => this.invoke('browse.forward'),
+    reload: (): Promise<BrowseStateDto> => this.invoke('browse.reload'),
+    state: (): Promise<BrowseStateDto> => this.invoke('browse.state'),
+    clearLastPage: (): Promise<void> => this.invoke('browse.clearLastPage'),
   }
 
   readonly account = {

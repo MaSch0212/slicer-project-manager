@@ -15,7 +15,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, before, test } from 'node:test'
 import type { ApiClient } from '@spm/contract/api-client.ts'
-import type { SlicerConfigDto, SlicerLaunchDto } from '@spm/contract/dtos.ts'
+import type { BrowseStateDto, SlicerConfigDto, SlicerLaunchDto } from '@spm/contract/dtos.ts'
 import { AppError } from '@spm/contract/errors.ts'
 import { closeLibrary, ensureLocalUser, openLibrary, type Library } from '@spm/core'
 import { writeZip } from '../../core/test/fixtures/make-3mf.ts'
@@ -124,6 +124,77 @@ const shell: ShellApi = {
       return Promise.resolve({ discarded: launchIds.length })
     },
   },
+  browse: {
+    sites: () => {
+      browseCalls.push('sites')
+      return Promise.resolve([
+        { id: 'thingiverse', displayName: 'Thingiverse', homeUrl: 'https://x/' },
+      ])
+    },
+    attach: (bounds, url) => {
+      // The rectangle is spelled out field by field rather than JSON-stringified: `x` and `y`
+      // swapped with `width` and `height` is exactly the mistake the compiler cannot see, and a
+      // stringified object would record it as happily as the right one.
+      browseCalls.push(
+        `attach ${bounds.x},${bounds.y},${bounds.width},${bounds.height} ${url ?? '-'}`,
+      )
+      return Promise.resolve(browseState)
+    },
+    detach: () => {
+      browseCalls.push('detach')
+      return Promise.resolve()
+    },
+    hide: () => {
+      browseCalls.push('hide')
+      return Promise.resolve()
+    },
+    show: () => {
+      browseCalls.push('show')
+      return Promise.resolve(browseState)
+    },
+    setBounds: (bounds) => {
+      browseCalls.push(`setBounds ${bounds.x},${bounds.y},${bounds.width},${bounds.height}`)
+      return Promise.resolve()
+    },
+    navigate: (url) => {
+      browseCalls.push(`navigate ${url}`)
+      return Promise.resolve(browseState)
+    },
+    back: () => {
+      browseCalls.push('back')
+      return Promise.resolve(browseState)
+    },
+    forward: () => {
+      browseCalls.push('forward')
+      return Promise.resolve(browseState)
+    },
+    reload: () => {
+      browseCalls.push('reload')
+      return Promise.resolve(browseState)
+    },
+    state: () => {
+      browseCalls.push('state')
+      return Promise.resolve(browseState)
+    },
+    clearLastPage: () => {
+      browseCalls.push('clearLastPage')
+      return Promise.resolve()
+    },
+  },
+}
+
+/** What the shell's browse half was asked, so the eleven are exercised on their arguments. */
+const browseCalls: string[] = []
+
+const browseState: BrowseStateDto = {
+  attached: true,
+  url: 'https://www.thingiverse.com/thing:1',
+  title: 'a title',
+  isLoading: false,
+  canGoBack: false,
+  canGoForward: false,
+  siteId: 'thingiverse',
+  lastError: null,
 }
 
 /**
@@ -215,6 +286,18 @@ function exerciseAll(client: ApiClient): Record<ApiPath, () => Promise<unknown>>
     'slicers.sessions': () => client.slicers.sessions(),
     'slicers.resolveSession': () => client.slicers.resolveSession('launch-1', 'discard'),
     'slicers.discardSessions': () => client.slicers.discardSessions(['launch-1']),
+    'browse.sites': () => client.browse.sites(),
+    'browse.attach': () => client.browse.attach({ x: 0, y: 0, width: 800, height: 600 }),
+    'browse.detach': () => client.browse.detach(),
+    'browse.hide': () => client.browse.hide(),
+    'browse.show': () => client.browse.show(),
+    'browse.setBounds': () => client.browse.setBounds({ x: 0, y: 0, width: 800, height: 600 }),
+    'browse.navigate': () => client.browse.navigate('https://example.invalid/'),
+    'browse.back': () => client.browse.back(),
+    'browse.forward': () => client.browse.forward(),
+    'browse.reload': () => client.browse.reload(),
+    'browse.state': () => client.browse.state(),
+    'browse.clearLastPage': () => client.browse.clearLastPage(),
   }
 }
 
@@ -550,6 +633,20 @@ test('every library-backed route refuses when no folder is open', async () => {
     'slicers.sessions',
     'slicers.resolveSession',
     'slicers.discardSessions',
+    // All eleven browse routes, for the third instance of the same reason: the model browser is a
+    // native view in *this process*, and in remote mode `deps.session` is null.
+    'browse.sites',
+    'browse.attach',
+    'browse.detach',
+    'browse.hide',
+    'browse.show',
+    'browse.setBounds',
+    'browse.navigate',
+    'browse.back',
+    'browse.forward',
+    'browse.reload',
+    'browse.state',
+    'browse.clearLastPage',
   ]
   for (const path of Object.keys(dispatch) as ApiPath[]) {
     if (fromShell.includes(path)) continue
@@ -1121,6 +1218,92 @@ test('the slicer routes reach the shell with their arguments in the right order'
     'resolveSession launch-1 import project-9',
     'discardSessions launch-1,launch-2',
   ])
+})
+
+/**
+ * The eleven browse routes, on their arguments and with no library open.
+ *
+ * Both halves in one test because they are the same claim: every one of them is a `shellCall`, so
+ * none touches a library, and rewriting any of them as a `libraryCall` turns this red twice over —
+ * once because `session: null` would answer `Conflict`, and once because `browseCalls` would be
+ * short.
+ */
+test('the browse routes reach the shell with their arguments, and need no library', async () => {
+  browseCalls.length = 0
+  const deps = { session: null, shell }
+  await dispatch['browse.sites'](deps, [])
+  await dispatch['browse.attach'](deps, [{ x: 1, y: 2, width: 3, height: 4 }])
+  await dispatch['browse.attach'](deps, [
+    { x: 5, y: 6, width: 7, height: 8 },
+    'https://www.printables.com/model/1807378-universal-clip',
+  ])
+  await dispatch['browse.setBounds'](deps, [{ x: 9, y: 10, width: 11, height: 12 }])
+  await dispatch['browse.navigate'](deps, ['https://makerworld.com/en/models/2093108-dji-neo-2'])
+  await dispatch['browse.show'](deps, [])
+  await dispatch['browse.hide'](deps, [])
+  await dispatch['browse.back'](deps, [])
+  await dispatch['browse.forward'](deps, [])
+  await dispatch['browse.reload'](deps, [])
+  await dispatch['browse.state'](deps, [])
+  await dispatch['browse.clearLastPage'](deps, [])
+  await dispatch['browse.detach'](deps, [])
+
+  assert.deepEqual(browseCalls, [
+    'sites',
+    // The optional `url` really is absent rather than arriving as the string "undefined", and the
+    // four rectangle fields are in the order the caller wrote them: `x` and `width` swapped here
+    // typechecks everywhere and would put the view in the wrong half of the window.
+    'attach 1,2,3,4 -',
+    'attach 5,6,7,8 https://www.printables.com/model/1807378-universal-clip',
+    'setBounds 9,10,11,12',
+    'navigate https://makerworld.com/en/models/2093108-dji-neo-2',
+    'show',
+    'hide',
+    'back',
+    'forward',
+    'reload',
+    'state',
+    'clearLastPage',
+    'detach',
+  ])
+})
+
+test('a browse route rejects a wrong argument tuple with Validation, and calls nothing', async () => {
+  browseCalls.length = 0
+  const wrong: [ApiPath, unknown[]][] = [
+    // Arity, in both directions.
+    ['browse.sites', [{}]],
+    ['browse.state', [null]],
+    ['browse.detach', ['now']],
+    ['browse.attach', []],
+    ['browse.attach', [{ x: 0, y: 0, width: 1, height: 1 }, 'https://a/', 'extra']],
+    ['browse.setBounds', []],
+    ['browse.navigate', []],
+    ['browse.navigate', ['https://a/', 'https://b/']],
+    // A rectangle that is not one. `NaN` and `Infinity` are the two `z.number()` alone lets past,
+    // and every comparison in the intersection answers `false` about them — so a request built
+    // from either is a rectangle nothing downstream can reason about.
+    ['browse.setBounds', [{ x: Number.NaN, y: 0, width: 100, height: 100 }]],
+    ['browse.setBounds', [{ x: 0, y: 0, width: Number.POSITIVE_INFINITY, height: 100 }]],
+    ['browse.setBounds', [{ x: 0, y: 0, width: 100 }]],
+    ['browse.setBounds', [{ x: '0', y: 0, width: 100, height: 100 }]],
+    ['browse.setBounds', [[0, 0, 100, 100]]],
+    // `z.strictObject`: a key this validation was not written for is a refusal, not a silently
+    // dropped field — and the field that would be dropped here is one the renderer must not have.
+    ['browse.setBounds', [{ x: 0, y: 0, width: 100, height: 100, chromeInset: 0 }]],
+    // Not a string, and not an unbounded one. The bound is on what a *renderer* may send; whether
+    // the URL may be opened is `browseNavigationPolicy`'s answer, in the shell.
+    ['browse.navigate', [{ url: 'https://a/' }]],
+    ['browse.navigate', ['']],
+    ['browse.navigate', [`https://example.invalid/${'x'.repeat(2049)}`]],
+    ['browse.attach', [{ x: 0, y: 0, width: 1, height: 1 }, '']],
+  ]
+  for (const [path, args] of wrong) {
+    const error = await rejection(dispatch[path]({ session: null, shell }, args))
+    assert.equal(error.code, 'Validation', `${path} ${JSON.stringify(args)}`)
+    assert.match(error.message, new RegExp(path.replace('.', '\\.')))
+  }
+  assert.deepEqual(browseCalls, [], 'nothing reached the shell')
 })
 
 test('a slicer route rejects a wrong argument tuple with Validation, and calls nothing', async () => {

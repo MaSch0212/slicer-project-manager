@@ -6,9 +6,12 @@ import { z } from 'zod'
 import type { ApiClient } from '@spm/contract/api-client.ts'
 import { createDecorators } from '@spm/contract/decorate.ts'
 import type {
+  BrowseBounds,
+  BrowseStateDto,
   Capabilities,
   FileDto,
   LocalLibraryDto,
+  ModelSiteDto,
   RemoteLibraryDto,
   SlicerConfigDto,
   SlicerId,
@@ -154,6 +157,31 @@ export type ShellApi = {
     ): Promise<FileDto | null>
     discardSessions(launchIds: string[]): Promise<{ discarded: number }>
   }
+  /**
+   * The model browser (spec E §3–4). On the shell for the same reason the slicer block is: the
+   * view is a native pane in *this process*, and in remote mode `deps.session` is null so a
+   * `libraryCall` entry could not run at all.
+   *
+   * `app.ts` implements it over `BrowseHost`, which is where the containment lives — the absent
+   * preload, the `persist:spm-browse` partition, the four navigation hooks and the permission
+   * refusal. Nothing about any of that is visible from this file, and that is the point: this
+   * module has to stay importable without `electron`.
+   */
+  browse: {
+    sites(): Promise<ModelSiteDto[]>
+    attach(bounds: BrowseBounds, url?: string): Promise<BrowseStateDto>
+    detach(): Promise<void>
+    hide(): Promise<void>
+    show(): Promise<BrowseStateDto>
+    setBounds(bounds: BrowseBounds): Promise<void>
+    /** The URL is untrusted; `BrowseHost` runs it through `browseNavigationPolicy` (constraint 13). */
+    navigate(url: string): Promise<BrowseStateDto>
+    back(): Promise<BrowseStateDto>
+    forward(): Promise<BrowseStateDto>
+    reload(): Promise<BrowseStateDto>
+    state(): Promise<BrowseStateDto>
+    clearLastPage(): Promise<void>
+  }
 }
 
 /**
@@ -271,6 +299,24 @@ const installIdSchema = z.string().min(1).max(512)
  * no record of its own. See `slicers.resolveSession` for why nothing joins it onto a path.
  */
 const launchIdSchema = z.string().min(1).max(512)
+
+/**
+ * Where the `/browse` page says it wants the native view, in CSS pixels of its own document.
+ *
+ * `z.strictObject`, so a key this validation was not written for is a refusal rather than a
+ * silently dropped field, and **finite** numbers, because `z.number()` accepts `NaN` and
+ * `Infinity` and a rectangle built from either is a rectangle every later comparison answers
+ * `false` about. Negative and oversized values are deliberately *not* refused here: they are
+ * ordinary — a page scrolled up reports a negative `y` — and what bounds them is the intersection
+ * with the rectangle the main process computes for itself (spec 4.2), which is a decision this
+ * side of the boundary never sees.
+ */
+const browseBoundsSchema = z.strictObject({
+  x: z.number().finite(),
+  y: z.number().finite(),
+  width: z.number().finite(),
+  height: z.number().finite(),
+})
 
 /**
  * How an upload arrives. See `WireUploadBody` in protocol.ts for the two arms and for why a
@@ -655,6 +701,57 @@ export const dispatch: DispatchTable = {
     // than any plausible sessions directory is a bug or an attempt at one.
     z.tuple([z.array(launchIdSchema).max(500)]),
     (shell, launchIds) => shell.slicers.discardSessions(launchIds),
+  ),
+
+  /*
+   * The model browser: eleven `shellCall`s, and — as with the slicer block — not one `libraryCall`
+   * among them. In remote mode `deps.session` is null, and `libraryCall` refuses a null session by
+   * design, so a `libraryCall` browse entry could not run in the mode where the desktop shell is
+   * the only thing that has a `WebContentsView` at all.
+   *
+   * `browseBoundsSchema` is `z.strictObject` of four **finite** numbers, which is the whole of what
+   * the renderer may say about geometry: the inset it must not cover and the minimum area below
+   * which its request becomes a `hide` are constants in `browse/host.ts` that this side never
+   * names. `z.number()` alone accepts `NaN` and `Infinity` — `Number.isFinite` is the check that
+   * makes `{ x: NaN }` a `Validation` failure here rather than a rectangle for the main process to
+   * be careful about later.
+   *
+   * `browse.navigate` takes a string and nothing more. The refusal is `browseNavigationPolicy`'s,
+   * in `BrowseHost`, because it is a *policy* decision and not an argument shape — pinning the
+   * allowed schemes in a zod schema here would be a second copy of the policy, one edit away from
+   * disagreeing with the four hooks that enforce it.
+   */
+  'browse.sites': shellCall('browse.sites', z.tuple([]), (shell) => shell.browse.sites()),
+  // The one entry in this table with explicit type arguments, and it is the trailing `?` that
+  // needs them: inference reads the argument tuple off the callback's parameter list, which
+  // spells an absent argument as `string | undefined` — a *required* element — while the zod
+  // tuple spells it as an optional one, and the two do not unify. Naming `[BrowseBounds, string?]`
+  // says which of the two is meant, and keeps the wire arity honest: `attach(bounds)` sends one
+  // argument, not one and a hole.
+  'browse.attach': shellCall<'browse.attach', [BrowseBounds, string?]>(
+    'browse.attach',
+    z.tuple([browseBoundsSchema, z.string().min(1).max(2048).optional()]),
+    (shell, bounds, url) => shell.browse.attach(bounds, url),
+  ),
+  'browse.detach': shellCall('browse.detach', z.tuple([]), (shell) => shell.browse.detach()),
+  'browse.hide': shellCall('browse.hide', z.tuple([]), (shell) => shell.browse.hide()),
+  'browse.show': shellCall('browse.show', z.tuple([]), (shell) => shell.browse.show()),
+  'browse.setBounds': shellCall(
+    'browse.setBounds',
+    z.tuple([browseBoundsSchema]),
+    (shell, bounds) => shell.browse.setBounds(bounds),
+  ),
+  'browse.navigate': shellCall(
+    'browse.navigate',
+    z.tuple([z.string().min(1).max(2048)]),
+    (shell, url) => shell.browse.navigate(url),
+  ),
+  'browse.back': shellCall('browse.back', z.tuple([]), (shell) => shell.browse.back()),
+  'browse.forward': shellCall('browse.forward', z.tuple([]), (shell) => shell.browse.forward()),
+  'browse.reload': shellCall('browse.reload', z.tuple([]), (shell) => shell.browse.reload()),
+  'browse.state': shellCall('browse.state', z.tuple([]), (shell) => shell.browse.state()),
+  'browse.clearLastPage': shellCall('browse.clearLastPage', z.tuple([]), (shell) =>
+    shell.browse.clearLastPage(),
   ),
 
   /*

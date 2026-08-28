@@ -96,6 +96,49 @@ describe('HttpApiClient', () => {
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
+  /**
+   * The same shape again, for the whole browse block, and all eleven rather than one of them.
+   *
+   * The model browser is a `WebContentsView` the main process owns; over HTTP there is no such
+   * thing and no route that would make one. The `expect(fetchMock)` half is the interesting one for
+   * the same reason it is in the slicer test — a method that fell through to `this.request` would
+   * send `/api/browse/...` at a server that has never heard of it and surface the 404 as
+   * `Internal`, which is a much worse thing for the UI to switch on than a `Forbidden`.
+   *
+   * A rectangle is passed to the two that take one rather than `undefined`: the parameters on this
+   * class are named and unused, and a spec that called them with nothing would still compile if
+   * somebody removed them and with them the call signature `ApiClient` promises.
+   */
+  it('refuses every browse method, without inventing a request for any of them', async () => {
+    const fetchMock = vi.fn()
+    const client = new HttpApiClient('', fetchMock)
+    const bounds = { x: 0, y: 120, width: 800, height: 600 }
+    const calls = [
+      client.browse.sites(),
+      client.browse.attach(bounds),
+      client.browse.attach(bounds, 'https://www.thingiverse.com/'),
+      client.browse.detach(),
+      client.browse.hide(),
+      client.browse.show(),
+      client.browse.setBounds(bounds),
+      client.browse.navigate('https://www.thingiverse.com/'),
+      client.browse.back(),
+      client.browse.forward(),
+      client.browse.reload(),
+      client.browse.state(),
+      client.browse.clearLastPage(),
+    ]
+
+    for (const call of calls) {
+      await expect(call).rejects.toBeInstanceOf(AppError)
+      await expect(call).rejects.toMatchObject({
+        code: 'Forbidden',
+        message: 'this shell cannot embed a model browser',
+      })
+    }
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
   it('turns the error envelope back into an AppError with its details', async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       jsonResponse(

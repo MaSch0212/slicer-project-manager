@@ -158,3 +158,33 @@ export const MODEL_SITES: readonly ModelSiteDef[] = [
     },
   },
 ]
+
+/**
+ * The registry row a URL belongs to, or null.
+ *
+ * **Host only — this answers "who wrote this page", never "may this page be shown".** It is what
+ * `BrowseStateDto.siteId` and a download's attribution are built from, and spec 4.4 is explicit
+ * that the table drives the start page, the matching of 6.2 and the label on a download, and does
+ * **not** restrict navigation. A caller that reached for this to decide whether to allow something
+ * has picked the wrong function: that is `browseNavigationPolicy` in `../urls.ts`, and the reason
+ * there is no host allowlist anywhere in this subsystem is written out in its docblock.
+ *
+ * The normalisation is `matchKey`'s, because the two have to agree or a page can be attributed to
+ * Thingiverse and keyed as something else: the host lowercased with a leading `www.` stripped.
+ * `new URL()` already lowercases the host of an `http(s)` URL, so the `toLowerCase()` earns its
+ * keep only for the schemes that are not special — which cannot match a row here, and which is
+ * exactly why it is cheaper to normalise than to reason about who normalised already.
+ *
+ * A subdomain does **not** match: `hosts` is an equality list, so `cdn.thingiverse.com` is not
+ * Thingiverse for attribution purposes. That is the wanted answer — a file served from a CDN is
+ * not a model page — and it is a property of this being attribution rather than a boundary.
+ */
+export function siteForUrl(
+  url: string,
+  sites: readonly ModelSiteDef[] = MODEL_SITES,
+): ModelSiteDef | null {
+  const parsed = URL.parse(url)
+  if (parsed === null) return null
+  const host = parsed.host.toLowerCase().replace(/^www\./, '')
+  return sites.find((site) => site.hosts.includes(host)) ?? null
+}
