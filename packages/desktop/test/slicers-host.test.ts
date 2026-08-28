@@ -370,21 +370,34 @@ test('two dialogs cannot be stacked: the same product waits, a different one is 
  * resolveInstall
  * ---------------------------------------------------------------------------------------- */
 
+/**
+ * A **registry** row, not the MSIX one, and the reason is worth recording.
+ *
+ * `resolveInstall` `stat`s the path it ends up with on the *real* filesystem, so this test needs
+ * a path that really exists — which means one this suite created under `tmpdir()`. The MSIX half
+ * builds its path with `win32.join(installLocation, exeName)`, deliberately, because the document
+ * always describes a Windows machine; handed a POSIX temp directory that produces
+ * `/tmp/x\orca-slicer.exe`, which is a legal Linux filename and not the file that was created.
+ * Measured: this test passed on Windows and failed on CI. A registry row carries its executable
+ * path verbatim and so has no such seam.
+ */
 test('resolveInstall re-resolves a stale hint through one subprocess and rewrites the file', async () => {
-  const exe = realExe('orca-slicer.exe')
+  const exe = realExe('bambu-studio.exe')
+  const id = 'registry:HKLM:Bambu Studio'
   let runs = 0
   // A document that names a path this suite actually created, so the whole chain — subprocess,
   // parse, validation, rewrite — runs rather than being stubbed in the middle.
   const document = JSON.stringify({
-    registry: [],
-    msix: [
+    registry: [
       {
-        packageFamily: 'OrcaSlicer.OrcaSlicer_3qd7h69xpne0g',
-        packageFullName: 'OrcaSlicer.OrcaSlicer_2.5.0.0_x64__3qd7h69xpne0g',
-        version: '2.5.0.0',
-        installLocation: join(exe, '..'),
+        hive: 'HKLM',
+        key: 'Bambu Studio',
+        displayName: 'Bambu Studio',
+        displayVersion: '02.08.02.61',
+        displayIcon: exe,
       },
     ],
+    msix: [],
   })
   const { host, file } = hostFor({
     run: () => {
@@ -400,10 +413,10 @@ test('resolveInstall re-resolves a stale hint through one subprocess and rewrite
   const stored = JSON.parse(readFileSync(file, 'utf8')) as {
     installs: { pathHint: string }[]
   }
-  stored.installs[0]!.pathHint = join(root, 'gone', 'orca-slicer.exe')
+  stored.installs[0]!.pathHint = join(root, 'gone', 'bambu-studio.exe')
   writeFileSync(file, JSON.stringify(stored))
 
-  const resolved = await host.resolveInstall(ORCA)
+  const resolved = await host.resolveInstall(id)
   assert.equal(resolved.path, exe)
   assert.equal(runs, 2, 'exactly one more subprocess')
   assert.equal(
@@ -414,7 +427,7 @@ test('resolveInstall re-resolves a stale hint through one subprocess and rewrite
   )
 
   // And the next launch is free.
-  assert.equal((await host.resolveInstall(ORCA)).path, exe)
+  assert.equal((await host.resolveInstall(id)).path, exe)
   assert.equal(runs, 2, 'a good hint must not spawn anything')
 })
 
@@ -471,7 +484,11 @@ test('an install that is gone is reported as gone rather than spawned into a hol
  * hint into a spawn of nothing.
  */
 test('a re-resolved path that is not there is missing, not a path to spawn', async () => {
-  const imagined = join(root, 'never-created', 'orca-slicer.exe')
+  // The MSIX arm, and its path is spelled the way the document really spells one — a Windows
+  // path — rather than being built out of this suite's temporary directory. `parseDetection`
+  // joins with `win32.join` on purpose, so a POSIX temp path would come back with a backslash in
+  // it and the test would be measuring the join rather than the `stat`. Nothing at this location
+  // exists on any platform, which is the whole point.
   const document = JSON.stringify({
     registry: [],
     msix: [
@@ -479,15 +496,21 @@ test('a re-resolved path that is not there is missing, not a path to spawn', asy
         packageFamily: 'OrcaSlicer.OrcaSlicer_3qd7h69xpne0g',
         packageFullName: 'OrcaSlicer.OrcaSlicer_2.4.3.0_x64__3qd7h69xpne0g',
         version: '2.4.3.0',
-        installLocation: join(imagined, '..'),
+        installLocation: 'C:\\Program Files\\WindowsApps\\OrcaSlicer.OrcaSlicer_never_installed',
       },
     ],
   })
   const { host } = hostFor({
     run: () => Promise.resolve(document),
+    // True at scan time: this stands in for a machine where the package really is installed.
     io: { isRegularFile: () => true },
   })
   await host.scan()
+  assert.equal(
+    host.get().installs[0]?.path,
+    'C:\\Program Files\\WindowsApps\\OrcaSlicer.OrcaSlicer_never_installed\\orca-slicer.exe',
+    'the MSIX path is the install location joined with the exe name, Windows-style',
+  )
 
   const error = await rejection(host.resolveInstall(ORCA))
   assert.equal(error.code, 'NotFound')
