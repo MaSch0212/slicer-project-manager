@@ -392,7 +392,12 @@ test('the session dies with the host, and a new one starts logged out', async ()
 test('closing a host cancels the request it still has in flight', async () => {
   const remote = host()
   let release = (): void => {}
+  let arrived = (): void => {}
+  const whenArrived = new Promise<void>((settle) => {
+    arrived = settle
+  })
   reply = (_request, response) => {
+    arrived()
     // Accepted and never answered, until this test says so.
     release = (): void => {
       response.writeHead(200, { 'content-type': 'application/json' })
@@ -401,8 +406,11 @@ test('closing a host cancels the request it still has in flight', async () => {
   }
 
   const inFlight = remote.proxy(ask('/projects'))
-  // The request has to have left before closing means anything.
-  await new Promise((settle) => setTimeout(settle, 50))
+  // The request has to have left before closing means anything — waited for on the server's own
+  // handler rather than slept for. A fixed sleep here asserted that a real socket round trip fits
+  // in 50 ms, which is a claim about how busy the machine is; the ceiling below is only there so
+  // a request that never arrives fails instead of hanging the file.
+  await Promise.race([whenArrived, new Promise((settle) => setTimeout(settle, 20_000).unref())])
   assert.equal(received.length, 1, 'the server really did receive it')
 
   remote.close()

@@ -91,6 +91,12 @@ type FakeTicker = PreviewTicker & {
   stopRequested: boolean
   /** `stop()` has *resolved*, which is what a caller must wait for before closing the library. */
   stopped: boolean
+  /**
+   * Settles when `stop()` has finished — the ticker's own promise, and while it is blocked the
+   * one signal in the file that nothing but `finish()` can produce. A switch racing this is how
+   * `a switch does not wait for a preview run` tells "did not wait" from "waited briefly".
+   */
+  whenStopped: Promise<void>
   /** Makes the next `stop()` hang until `finish()`, standing in for a run in flight. */
   block: () => void
   finish: () => void
@@ -119,9 +125,14 @@ function fakeTicker(): FakeTicker {
     finish = resolve
   })
   let blocked = false
+  let ended = (): void => {}
+  const whenStopped = new Promise<void>((resolve) => {
+    ended = resolve
+  })
   const ticker: FakeTicker = {
     stopRequested: false,
     stopped: false,
+    whenStopped,
     block: () => {
       blocked = true
     },
@@ -135,6 +146,7 @@ function fakeTicker(): FakeTicker {
       ticker.stopRequested = true
       await (blocked ? pending : Promise.resolve())
       ticker.stopped = true
+      ended()
     },
   }
   madeTickers.push(ticker)
@@ -739,21 +751,32 @@ test('a switch does not wait for a preview run, and the old library closes when 
   ;(h.tickers[0] as unknown as { block: () => void }).block()
 
   answer = b
-  const startedAt = Date.now()
-  await h.host.prompt(null)
-  const elapsed = Date.now() - startedAt
+  // **Ordering, not elapsed time.** This used to assert a wall-clock bound, and every bound that
+  // told the two behaviours apart was really measuring the machine: it failed once on a loaded
+  // runner for a switch that had waited for nothing. What is asserted instead is the order of two
+  // events that can each only be caused by one thing — the switch, when `open()` returns; the
+  // release, when the `finish()` below lets the blocked `stop()` resolve.
+  const order: string[] = []
+  const switched = h.host.prompt(null).then(() => void order.push('switch'))
+  const released = h.tickers[0]!.whenStopped.then(() => void order.push('release'))
 
-  // **The bound is generous on purpose, and 250 ms was not.** The behaviour this rules out waits
-  // for a run that is blocked until `finish()` below, which is to say for ever — so any finite
-  // bound tells the two apart, and the only thing a tight one adds is a dependency on how busy
-  // the machine is. Measured at 99-157 ms on the developer's machine and 1,593 ms on a shared CI
-  // runner, where 250 ms failed the build for a switch that had not waited for anything.
-  assert.ok(elapsed < 10_000, `the switch waited ${elapsed}ms for the preview run`)
+  // One turn of the event loop, which every pending microtask runs before. Everything the switch
+  // legitimately waits on is a microtask — the picker answers from a resolved promise and `open()`
+  // is synchronous throughout — so a switch that does not await the ticker has *finished* by here,
+  // whatever the machine is doing. A switch that awaits it cannot have finished by here, or at any
+  // later point either: nothing but `finish()` can end that run, so waiting longer never rescues
+  // the assertion the way a bigger millisecond bound would.
+  await new Promise((next) => setImmediate(next))
+
+  assert.deepEqual(order, ['switch'], 'the switch must answer without waiting for the preview run')
+  assert.equal(h.tickers[0]!.stopped, false, 'and the run it outran really was still blocked')
   assert.equal(h.host.dir(), resolve(b), 'the new library is live immediately')
   // Still open: the run is holding it, which is the cost this design accepts and states.
   assert.doesNotThrow(() => first.lib.db.prepare('SELECT 1').get())
 
   h.tickers[0]!.finish()
+  await Promise.all([switched, released])
+  assert.deepEqual(order, ['switch', 'release'], 'and the release happened, second')
   await h.host.whenSettled()
   assert.throws(() => first.lib.db.prepare('SELECT 1').get(), 'it must close once the run ends')
   h.host.shutdown()
