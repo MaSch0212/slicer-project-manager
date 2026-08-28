@@ -411,6 +411,35 @@ export function openZip(path: string): OpenZip {
 }
 
 /**
+ * Whether this file's central directory parses.
+ *
+ * **It exists to tell "mid-write" from "not a ZIP", which nothing else here can.** `entryHash`
+ * falls back to a plain SHA-256 of the bytes when the directory does not parse, which is the
+ * right answer for an `.stl` and exactly the wrong one for a `.3mf` a slicer is halfway through
+ * writing: the fallback produces a perfectly plausible hash of half a file, and a caller
+ * comparing it against a recorded one would report a change that has not finished happening.
+ * The desktop watch (`packages/desktop/src/slicers/sessions.ts`) asks this question of any file
+ * whose first bytes claim to be a ZIP, and treats a `false` as "not settled yet".
+ *
+ * It answers about the **directory**, not the payload: an archive whose directory parses and
+ * whose entries do not still comes back `true`, and reading one of those throws — which is the
+ * same "not settled yet" signal, reached the other way.
+ *
+ * A file that cannot be opened at all — `EBUSY` while a slicer holds it, `ENOENT` — is `false`
+ * too. That is deliberate for the one caller: every reason this can be false is a reason to wait.
+ */
+export function readsAsZip(path: string): boolean {
+  let zip: OpenZip
+  try {
+    zip = openZip(path)
+  } catch {
+    return false
+  }
+  zip.close()
+  return true
+}
+
+/**
  * Reads one entry as a stream of chunks, each at most `maxChunkBytes`, in order.
  *
  * The point is that a 674 MB model part no longer *has* to be one allocation: a consumer that

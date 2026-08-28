@@ -104,22 +104,43 @@ export function entryHash(path: string): string {
  * an `.stl` that came back changed reports `changed: ['cube.stl']` rather than nothing at all.
  */
 export function entryDiff(a: string, b: string): EntryDiff {
-  const left = entryDigests(a)
-  const right = entryDigests(b)
+  return diffDigests(entryDigests(a), entryDigests(b))
+}
+
+/**
+ * The same diff, between two digest maps rather than two paths.
+ *
+ * It exists because **the file a round trip is diffed against is usually gone by the time the
+ * diff is wanted.** Four of the five slicers save back over the file they were handed, so the
+ * launched bytes no longer exist anywhere: the launch record keeps `entryDigests` of the file as
+ * it was launched (`packages/desktop/src/slicers/launch.ts`), and this is what turns that record
+ * plus the returning file into the diff `entryDiff` would have produced had both still been on
+ * disk. `entryDiff` is one line over it, so the two can never drift.
+ */
+export function diffDigests(
+  before: ReadonlyMap<string, string>,
+  after: ReadonlyMap<string, string>,
+): EntryDiff {
   const added: string[] = []
   const removed: string[] = []
   const changed: string[] = []
-  for (const [name, digest] of left) {
-    const other = right.get(name)
+  for (const [name, digest] of before) {
+    const other = after.get(name)
     if (other === undefined) removed.push(name)
     else if (other !== digest) changed.push(name)
   }
-  for (const name of right.keys()) if (!left.has(name)) added.push(name)
+  for (const name of after.keys()) if (!before.has(name)) added.push(name)
   return { added: added.sort(), removed: removed.sort(), changed: changed.sort() }
 }
 
-/** One digest per entry, keyed by name. The non-ZIP fallback is a single entry; see `entryDiff`. */
-function entryDigests(path: string): Map<string, string> {
+/**
+ * One digest per entry, keyed by name — the itemised form of `entryHash`.
+ *
+ * The non-ZIP fallback is a single entry under the file's own basename, so an `.stl` that came
+ * back changed reports `changed: ['cube.stl']` rather than nothing at all. Exported for the
+ * launch record: see `diffDigests`.
+ */
+export function entryDigests(path: string): Map<string, string> {
   const digests = new Map<string, string>()
   const zip = openReadableZip(path)
   if (zip === null) {
