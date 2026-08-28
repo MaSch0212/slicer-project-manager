@@ -86,6 +86,11 @@ export type SeedProject = { name: string; files: Record<string, string | Uint8Ar
  * With a `seed`, the folders and files are written *before* launch and the database still does
  * not exist — so what the app later lists is a library it adopted from disk itself, not rows a
  * test inserted.
+ *
+ * `userDataDir` is a parameter, and defaulted, for the one thing `seed` cannot do: seed a file the
+ * *shell* reads rather than one the library holds. `slicers.spec.ts` writes a `slicers.json` into
+ * it before launch, which is what makes the two-install case testable on a machine that has one
+ * install, or none, or is not Windows at all.
  */
 /**
  * Chromium switches that give the renderer a WebGL context on a machine with no GPU.
@@ -125,10 +130,10 @@ export function seedLibrary(libraryDir: string, seed: SeedProject[]): void {
 export async function launchApp(
   seed: SeedProject[] = [],
   chromiumArgs: string[] = [],
+  userDataDir: string = newUserDataDir(),
 ): Promise<LaunchedApp> {
   const libraryDir = mkdtempSync(join(tmpdir(), 'spm-desktop-'))
   seedLibrary(libraryDir, seed)
-  const userDataDir = newUserDataDir()
   const app = await electron.launch({
     args: [
       MAIN_BUNDLE,
