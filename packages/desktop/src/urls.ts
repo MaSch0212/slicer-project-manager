@@ -122,3 +122,91 @@ export function navigationPolicy(url: string): NavigationPolicy {
   if (parsed.protocol === 'http:' || parsed.protocol === 'https:') return 'external'
   return 'block'
 }
+
+/**
+ * What the **model browser's** view may navigate to. A different policy, not a flag on the one
+ * above.
+ *
+ * **Two answers, not three.** The renderer's third answer is `external`, which hands the URL to
+ * `shell.openExternal` — and a browse view that did that would fire the user's system browser for
+ * every link on every page and never move. `external` is exactly what a model browser must not do,
+ * which is why this is a separate function: the two policies invert on `http(s)`, and a later
+ * merge of them would silently make one of the two features useless.
+ *
+ * This is one of three legs holding arbitrary third-party content inside an app whose renderer has
+ * an IPC bridge to the filesystem, and it is the weakest of the three as a *filter*. The other two
+ * — the browse view's own `persist:` partition, and its absence of a preload — each remove a
+ * capability outright. Nothing here is load-bearing on its own.
+ *
+ * - `allow` — **`http:` and `https:`.** This is a browser.
+ *
+ * - `allow` — **`blob:` and `data:`, and this arm is load-bearing.** The one download this project
+ *   has ever completed came down a `blob:` URL: Thingiverse's "Download all files" produced
+ *   `getURL()` = `blob:https://www.thingiverse.com/ae5e9664-…`, that single URL as the whole
+ *   `getURLChain()`, and 21 060 699 bytes of real ZIP. Under an `http(s)`-only policy that
+ *   download's fate turns on which of three interchangeable DOM idioms the site happens to use,
+ *   all three measured on Electron 44: `<a download href="blob:…">` + `.click()` fires **no hook at
+ *   all** and downloads regardless; `location.href = blobUrl` reaches `will-frame-navigate` and is
+ *   **blocked**; `window.open(blobUrl)` is denied by the window-open handler. The control run —
+ *   same navigation, policy off — completes the download. A `block` here is therefore not a
+ *   security property, it is a coin flip: it stops two idioms, cannot see the third, and costs the
+ *   feature. A `blob:` or `data:` document has no preload, no bridge, and no `spm://` on the browse
+ *   partition; what actually decides a download's outcome is the `will-download` interceptor, which
+ *   sees the item either way.
+ *
+ * - `allow` — **`about:blank`.** The deferred-popup idiom opens `about:blank` and assigns
+ *   `location` afterwards, so blocking it blocks the *open* rather than the destination — the site
+ *   never gets to reveal where it was going, and the window-open handler never gets to judge it.
+ *   `about:blank` inherits the opener's origin, which for a browse view is a site, never
+ *   `spm://app`. Only `about:blank`: `about:` is otherwise a scheme full of browser internals and
+ *   nothing in the table below wants the rest of it.
+ *
+ * - `block` — **`spm:`, belt-and-braces.** The browse partition already refuses it: `protocol.handle`
+ *   registers on `defaultSession` only, so `loadURL('spm://app/')` in a partitioned view came back
+ *   `ERR_FAILED (-2)`, while the *same* load on the default session succeeded. That refusal is a
+ *   property of a session this module cannot see, and a policy that silently depends on one is not
+ *   a policy. The cost of naming it here is zero and the failure mode it covers is somebody moving
+ *   the browse view onto the default session.
+ *
+ * - `block` — **`file:`, the one arm doing work Chromium does not already do**, and it is not
+ *   theoretical: a file **dropped onto a `webContents`** is a `file:` navigation. Blocking it is how
+ *   a dropped `.stl` fails to become the page.
+ *
+ * - `block` — **everything else**, `javascript:`, any custom scheme and an unparseable string
+ *   included. The custom-scheme arm is the *measured-ignorance* answer for MakerWorld's only
+ *   affordance for a logged-out visitor, `Open in Bambu Studio` (spec 9.3): what that hand-off does
+ *   was never measured. Refusing an unmeasured scheme hand-off is the answer that can be revisited
+ *   with a measurement; allowing it is not.
+ *
+ * **`spm:` and `file:` have no branch of their own on purpose.** They fall through to the same
+ * default as everything else, because a branch whose body is the default's body is a branch no test
+ * can distinguish and no mutation can kill. They are named in this docblock and pinned by value in
+ * `test/browse.test.ts` instead.
+ *
+ * **This policy is consulted by four hooks, not one**, and attaching three of them is the gap that
+ * passes every test written against the fourth. Measured on Electron 44: `will-frame-navigate`
+ * fires *first* for the same URL and is the only one that covers subframes; `will-navigate` is
+ * main-frame only; a 302 into a custom scheme arrived at **`will-redirect`** and not at
+ * `will-navigate`, so the custom-scheme arm above is enforced there or it is not enforced at all;
+ * and `setWindowOpenHandler` is the one that stops a site putting an unchromed top-level window on
+ * screen. Attaching them is the browse view's job, not this module's.
+ *
+ * **No host allowlist**, and that is a decision rather than an omission — a list of four hostnames
+ * would read as if it were the security boundary while doing none of that work, and it would break
+ * a site's own CDN, its consent-management vendor, and the identity provider a user logs in
+ * through. The registry in `browse/registry.ts` names sites; it does not gate them.
+ */
+export type BrowseNavigationPolicy = 'allow' | 'block'
+
+export function browseNavigationPolicy(url: string): BrowseNavigationPolicy {
+  let parsed: URL
+  try {
+    parsed = new URL(url)
+  } catch {
+    return 'block'
+  }
+  if (parsed.protocol === 'http:' || parsed.protocol === 'https:') return 'allow'
+  if (parsed.protocol === 'blob:' || parsed.protocol === 'data:') return 'allow'
+  if (parsed.protocol === 'about:' && parsed.pathname === 'blank') return 'allow'
+  return 'block'
+}
