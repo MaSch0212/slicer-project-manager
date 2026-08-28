@@ -350,3 +350,34 @@ test('an entry whose sizes really do live in a data descriptor round-trips', () 
     })
     assert.equal(new TextDecoder().decode(readZipEntryBytes(output, after)), MODEL_XML)
   }))
+
+test('a local header with no signature is refused as unreadable, and leaves nothing behind', () =>
+  withDir((dir) => {
+    const input = join(dir, 'in.3mf')
+    const output = join(dir, 'out.3mf')
+    writeZip(input, SAMPLE)
+    // The central directory still parses, so this is caught during the copy, after the output
+    // file has been created — which is the branch that has to unlink what it wrote.
+    patchZipHeaders(input, ({ name, file, localAt }) => {
+      if (name !== 'Metadata/stored.txt') return
+      file.setUint32(localAt, 0x0badf00d, true)
+    })
+
+    assert.throws(() => rewriteZip(input, output), reason('unreadable'))
+    assert.equal(existsSync(output), false)
+  }))
+
+test('an entry that runs off the end of the file is refused as unreadable', () =>
+  withDir((dir) => {
+    const input = join(dir, 'in.3mf')
+    const output = join(dir, 'out.3mf')
+    writeZip(input, SAMPLE)
+    const beyond = readFileSync(input).length + 4096
+    patchZipHeaders(input, ({ name, file, centralAt }) => {
+      if (name !== 'Metadata/stored.txt') return
+      file.setUint32(centralAt + 20, beyond, true)
+    })
+
+    assert.throws(() => rewriteZip(input, output), reason('unreadable'))
+    assert.equal(existsSync(output), false)
+  }))

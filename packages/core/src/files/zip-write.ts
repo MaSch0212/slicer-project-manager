@@ -209,10 +209,12 @@ export type ZipRewriteResult = {
  * directory from values it has already parsed can simply emit the plain form. An earlier draft of
  * the spec refused zip64 outright; that was wrong by a wide margin.
  *
- * **Refusals**, all `AppError('Validation', …)` with a `reason` in `details`. The vocabulary is
- * chosen so that `strip3mf` can pass the first three straight through to the user instead of
- * flattening them into one message — `'encrypted'` and `'unreadable'` are two of its own three
- * reasons by design, not by luck:
+ * **Refusals**, all `AppError('Validation', …)` with a `reason` in `details`. **Two** of the four
+ * names — `'encrypted'` and `'unreadable'` — are `strip3mf`'s own reasons by design rather than by
+ * luck, so those travel to the user unchanged instead of being flattened into one message. The
+ * other two do not, and are flattened: `'unrepresentable'` reaches the user as `'unreadable'`,
+ * which is the honest thing to tell someone about an archive this writer cannot re-emit, and
+ * `'invalid-request'` is unreachable from `strip3mf` at all:
  *
  * - `'encrypted'` — an entry with general-purpose bit 0 set. Its bytes cannot be reproduced
  *   without the key, and a strong-encryption entry (bit 6) sets bit 0 too.
