@@ -215,6 +215,86 @@ export type SlicerLaunchDto = {
 }
 
 /**
+ * One launch directory under `<userData>/slicer-sessions/`, and what the app can honestly say
+ * about the file in it (spec D 6.3 and 7.2–7.4).
+ *
+ * **Everything here is the result of a comparison, not of a notification.** `fs.watch` is an
+ * optimisation; what decides whether anything came back is a hash of the decompressed entries,
+ * recomputed for every one of these. A missed watch event costs promptness, never correctness.
+ *
+ * **Nothing in this list is ever deleted by the app on its own** (D constraint 10). A session
+ * appears here so a person can answer it; the two answers are `slicers.resolveSession`'s
+ * `import` and `discard`.
+ */
+export type SlicerSessionDto = {
+  /**
+   * How `resolveSession` and `discardSessions` name this one.
+   *
+   * The launch directory's own name for a session the app launched, which is the `launchId` of
+   * the `SlicerLaunchDto` that made it. For an orphan it is whatever the entry under
+   * `slicer-sessions/` is called, which is a file name and not a launch of anything.
+   */
+  launchId: string
+  /**
+   * Empty for an orphan with nothing beside it to say where it belongs, which is then the question
+   * the user is asked. An orphan that turned up *inside* a launch directory carries that launch's
+   * project, because asking a question the app can already answer is a worse kind of honesty.
+   */
+  projectId: string
+  /** Empty for an orphan, whose record is gone and with it the id of what was launched. */
+  fileId: string
+  fileName: string
+  /**
+   * The product this session belongs to: the one that was launched, or — for an orphan, which was
+   * launched by nothing — whatever the file itself classifies as.
+   *
+   * **Null only for an orphan that names no slicer at all**, an `.stl` being the obvious one.
+   * There is genuinely nothing else to put there, and the two alternatives were both worse:
+   * inventing a product the app has no evidence for, or leaving the file out of the list, which is
+   * the one thing the "a file with no record is an unfinished session, not litter" rule forbids.
+   */
+  slicerId: SlicerId | null
+  /** For an orphan, when the file appeared, which is the only "started" it has. */
+  startedAt: number
+  /**
+   * Whether the process **this app spawned** is still running.
+   *
+   * Not "the slicer is open", and never "the slicer was closed": several slicers hand the file
+   * to an already-running instance and exit immediately, so a dead process routinely means a
+   * live slicer. False for every session from a previous run of the app, which spawned nothing
+   * this process can watch.
+   */
+  processAlive: boolean
+  /**
+   * `settling` is a write in progress — 0 bytes, a lock, or a ZIP whose directory does not parse
+   * — and becomes `unreadable` only after a bounded window of it.
+   */
+  fileState: 'unchanged' | 'changed' | 'settling' | 'unreadable'
+  /** A file found with no `launch.json`: the user must say where it belongs. */
+  isOrphan: boolean
+  /** What the file was classified as when it was handed over. Absent for an orphan. */
+  sourceSlicer?: SlicerId | null
+  /**
+   * What the returning file classifies as now, when that differs from `sourceSlicer`.
+   *
+   * A round trip can change what a file *is*: a Bambu project opened in Orca and saved comes back
+   * classified `orca`. The reconcile carries this, the returning file's identity, and not the
+   * record's.
+   */
+  returnedAs?: SlicerId | null
+  sourceSizeBytes?: number
+  returnedSizeBytes?: number
+  /**
+   * Entries added, removed and changed between the file as launched and the file as it is now.
+   *
+   * It reports **that** `Metadata/project_settings.config` changed, never which setting inside it
+   * changed. Absent until the file has settled, and absent for an orphan, which has nothing to be
+   * compared against.
+   */
+  entryDiff?: { added: string[]; removed: string[]; changed: string[] }
+}
+
+/**
  * What core returns: IDs, never URLs (spec 4.2). Only a transport knows its own scheme, so
  * it decorates these into the DTOs above — /api/files/:id/thumb over HTTP,
  * spm://file/:id/thumb in Electron.

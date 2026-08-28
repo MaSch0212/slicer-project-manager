@@ -13,6 +13,7 @@ import type {
   SlicerId,
   SlicerLaunchDto,
   SlicerLaunchOptions,
+  SlicerSessionDto,
   UserDto,
   ZipImportResultDto,
 } from '@spm/contract/dtos.ts'
@@ -136,6 +137,13 @@ export class HttpApiClient implements ApiClient {
       _projectId: string,
       _opts: SlicerLaunchOptions,
     ): Promise<SlicerLaunchDto> => this.noSlicers(),
+    sessions: (): Promise<SlicerSessionDto[]> => this.noSlicers(),
+    resolveSession: (
+      _launchId: string,
+      _action: 'import' | 'discard',
+      _opts?: { projectId?: string },
+    ): Promise<FileDto | null> => this.noSlicers(),
+    discardSessions: (_launchIds: string[]): Promise<{ discarded: number }> => this.noSlicers(),
   }
 
   private noSlicers(): Promise<never> {

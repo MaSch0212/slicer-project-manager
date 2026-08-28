@@ -107,6 +107,18 @@ const shell: ShellApi = {
         pid: 4242,
       })
     },
+    sessions: () => {
+      slicerCalls.push('sessions')
+      return Promise.resolve([])
+    },
+    resolveSession: (launchId, action, opts) => {
+      slicerCalls.push(`resolveSession ${launchId} ${action} ${opts.projectId ?? '-'}`)
+      return Promise.resolve(null)
+    },
+    discardSessions: (launchIds) => {
+      slicerCalls.push(`discardSessions ${launchIds.join(',')}`)
+      return Promise.resolve({ discarded: launchIds.length })
+    },
   },
 }
 
@@ -196,6 +208,9 @@ function exerciseAll(client: ApiClient): Record<ApiPath, () => Promise<unknown>>
     'slicers.setDefault': () => client.slicers.setDefault('orca'),
     'slicers.resetConfig': () => client.slicers.resetConfig(),
     'slicers.open': () => client.slicers.open('file', 'project', { mode: 'as-is' }),
+    'slicers.sessions': () => client.slicers.sessions(),
+    'slicers.resolveSession': () => client.slicers.resolveSession('launch-1', 'discard'),
+    'slicers.discardSessions': () => client.slicers.discardSessions(['launch-1']),
   }
 }
 
@@ -512,8 +527,10 @@ test('every slicer route answers with no library open, because none of them need
 test('every library-backed route refuses when no folder is open', async () => {
   // The routes that answer out of the shell itself are the exceptions, and every one of them is
   // asserted directly above rather than skipped silently here. `library.connect` is one for the
-  // same reason `library.pick` is: with nothing open, they are the only ways out. The seven
-  // slicer routes are, because slicer configuration is a property of the machine.
+  // same reason `library.pick` is: with nothing open, they are the only ways out. All ten slicer
+  // routes are, because slicer configuration and the launch directories are properties of the
+  // machine — and because in remote mode `deps.session` is null and there is nothing else they
+  // could be.
   const fromShell: ApiPath[] = [
     'capabilities',
     'library.pick',
@@ -526,6 +543,9 @@ test('every library-backed route refuses when no folder is open', async () => {
     'slicers.setDefault',
     'slicers.resetConfig',
     'slicers.open',
+    'slicers.sessions',
+    'slicers.resolveSession',
+    'slicers.discardSessions',
   ]
   for (const path of Object.keys(dispatch) as ApiPath[]) {
     if (fromShell.includes(path)) continue
@@ -1053,7 +1073,7 @@ test('the argument list itself is validated, not just its contents', async () =>
 })
 
 /**
- * The seven slicer routes, on their arguments rather than on their arity alone.
+ * The ten slicer routes, on their arguments rather than on their arity alone.
  *
  * Every one of them is a `shellCall`, so none of them touches a library — which is the point:
  * `deps.session` is null in remote mode, and a `libraryCall` slicer entry would be refused there
@@ -1069,6 +1089,9 @@ test('the slicer routes reach the shell with their arguments in the right order'
   await call('slicers.setDefault', ['orca'])
   await call('slicers.resetConfig')
   await call('slicers.open', ['file-1', 'project-1', { mode: 'new-project', slicerId: 'bambu' }])
+  await call('slicers.sessions')
+  await call('slicers.resolveSession', ['launch-1', 'import', { projectId: 'project-9' }])
+  await call('slicers.discardSessions', [['launch-1', 'launch-2']])
 
   // `bind` is the one with two arguments, and swapping them is invisible to the compiler.
   assert.deepEqual(slicerCalls, [
@@ -1082,6 +1105,11 @@ test('the slicer routes reach the shell with their arguments in the right order'
     // Two opaque ids of the same shape, in an order the compiler cannot see: a `fileId` and a
     // `projectId` swapped here would typecheck everywhere and answer `NotFound` at runtime.
     'open file-1 project-1 new-project bambu',
+    'sessions',
+    // Three arguments of three different shapes: a `launchId` and a `projectId` swapped here
+    // would send a returning file to whichever project happened to share the id.
+    'resolveSession launch-1 import project-9',
+    'discardSessions launch-1,launch-2',
   ])
 })
 
@@ -1115,6 +1143,22 @@ test('a slicer route rejects a wrong argument tuple with Validation, and calls n
     ['slicers.remove', [{ id: 'manual:one' }]],
     ['slicers.remove', ['x'.repeat(513)]],
     ['slicers.bind', ['cura', 42]],
+    // The three session routes. `resolveSession` takes exactly three, and the action is a closed
+    // pair — a renderer naming a third one would otherwise reach a `switch` written for two.
+    ['slicers.sessions', ['launch-1']],
+    ['slicers.resolveSession', ['launch-1']],
+    ['slicers.resolveSession', ['launch-1', 'import']],
+    ['slicers.resolveSession', ['launch-1', 'import', {}, 'extra']],
+    ['slicers.resolveSession', ['launch-1', 'delete', {}]],
+    ['slicers.resolveSession', ['', 'import', {}]],
+    ['slicers.resolveSession', ['x'.repeat(513), 'import', {}]],
+    // `z.strictObject` again: a key this validation was not written for is a refusal, not a
+    // silently dropped field — and the field that would be dropped here names a project.
+    ['slicers.resolveSession', ['launch-1', 'import', { project: 'p' }]],
+    ['slicers.discardSessions', ['launch-1']],
+    ['slicers.discardSessions', [['launch-1'], 'extra']],
+    ['slicers.discardSessions', [[42]]],
+    ['slicers.discardSessions', [Array.from({ length: 501 }, (_, i) => `l-${i}`)]],
   ]
   for (const [path, args] of wrong) {
     const error = await rejection(call(path, args))

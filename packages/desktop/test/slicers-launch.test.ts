@@ -18,6 +18,7 @@ import {
   closeLibrary,
   createProject,
   ensureLocalUser,
+  entryDigests,
   entryHash,
   classifyFile,
   openLibrary,
@@ -46,7 +47,6 @@ import { SlicersHost } from '../src/slicers/host.ts'
 import {
   LAUNCH_RECORD_NAME,
   notices,
-  REMOTE_LAUNCH_UNSUPPORTED,
   SlicerLauncher,
   type SlicerLaunchRecord,
 } from '../src/slicers/launch.ts'
@@ -183,6 +183,10 @@ function harness(options: HarnessOptions = {}): Harness {
     }),
     session: () => (options.hasLibrary === false ? null : { lib, ctx }),
     isRemote: () => options.isRemote === true,
+    // Local mode throughout this file. `test/slicers-sessions.test.ts` owns the remote launch,
+    // where there is a proxy to answer with; a null one here is what makes a stray remote-mode
+    // launch fail loudly rather than silently reading a library that is not the one being served.
+    remote: () => null,
     spawn:
       options.spawn ??
       ((command, args) => {
@@ -489,7 +493,20 @@ test('launch.json records the launch, with launchedHash equal to entryHash of wh
     fileName: 'bracket.3mf',
     launchedHash: entryHash(join(directory, 'bracket.3mf')),
     startedAt: 1_756_400_000_123,
+    // Task 5's three, and each one is a fact the reconcile cannot recover afterwards: four of
+    // five slicers save back *over* this file, so once the first Ctrl+S lands nothing on disk can
+    // still say what it was, how big it was, or what was in it.
+    sourceSlicer: 'cura',
+    sourceSizeBytes: statSync(join(directory, 'bracket.3mf')).size,
+    launchedEntries: Object.fromEntries(entryDigests(join(directory, 'bracket.3mf'))),
   })
+  // Not the source's digests: the copy was stripped, so a diff against the original would blame
+  // the slicer for entries this app removed.
+  assert.notDeepEqual(
+    record.launchedEntries,
+    Object.fromEntries(entryDigests(file.absPath)),
+    'the record kept the source digests rather than those of the launched copy',
+  )
   assert.equal(record.launchId, result.launchId)
   // The hash is of the *stripped copy*, which is the file the slicer has — not of the source.
   assert.notEqual(record.launchedHash, entryHash(file.absPath))
@@ -664,25 +681,36 @@ test('a file that belongs to another project is not launchable through this one'
   const mine = project('Mine')
   const theirs = project('Theirs')
   const file = await addFile(theirs, 'bracket.3mf', curaProject)
+  // A file of its own in the project being named, which is what makes this a *pair* check rather
+  // than an "is this project empty" check. Without it, a launcher that took whichever file the
+  // project happened to list first would refuse here for the wrong reason and pass.
+  const decoy = await addFile(mine, 'decoy.3mf', curaProject)
 
   const error = await rejection(h.launcher.open(file.id, mine, { mode: 'as-is' }))
 
   assert.equal(error.code, 'NotFound')
   assert.equal(h.spawns.length, 0)
+
+  // And the same project does launch its own file, so the refusal above is not this fixture
+  // refusing everything.
+  await h.launcher.open(decoy.id, mine, { mode: 'as-is' })
+  assert.deepEqual(h.spawns[0]?.args, [decoy.absPath])
 })
 
-test('no library open, and a remote library, are two different refusals', async () => {
+test('no library open is a refusal, and so is remote mode with no server attached', async () => {
   const closed = await rejection(
     harness({ hasLibrary: false }).launcher.open('f', 'p', { mode: 'as-is' }),
   )
   assert.equal(closed.code, 'Conflict')
-  assert.equal(closed.details?.['reason'], undefined)
+  assert.match(closed.message, /no library folder is open/)
 
+  // Remote mode reaches a different refusal now that it is built: there is no *server*, which is
+  // not the same failure as there being no folder, and the message has to say which it was.
   const remote = await rejection(
     harness({ isRemote: true }).launcher.open('f', 'p', { mode: 'as-is' }),
   )
   assert.equal(remote.code, 'Conflict')
-  assert.equal(remote.details?.['reason'], REMOTE_LAUNCH_UNSUPPORTED)
+  assert.match(remote.message, /not connected to a server/)
 })
 
 test('no default slicer and nothing chosen is a refusal, not a guess', async () => {

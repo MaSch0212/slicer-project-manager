@@ -13,6 +13,7 @@ import type {
   SlicerId,
   SlicerLaunchDto,
   SlicerLaunchOptions,
+  SlicerSessionDto,
   UserDto,
   ZipImportResultDto,
 } from '@spm/contract/dtos.ts'
@@ -245,6 +246,19 @@ export class IpcApiClient implements ApiClient {
       projectId: string,
       opts: SlicerLaunchOptions,
     ): Promise<SlicerLaunchDto> => this.invoke('slicers.open', [fileId, projectId, opts]),
+    sessions: (): Promise<SlicerSessionDto[]> => this.invoke('slicers.sessions'),
+    // `opts ?? {}`, so the argument list is always three long. The dispatch table validates it
+    // with a `z.tuple`, which counts elements; an omitted third argument and an explicit
+    // `undefined` are the same length on this side and not on that one, and the difference would
+    // be a `Validation` failure on the commonest call this method has.
+    resolveSession: (
+      launchId: string,
+      action: 'import' | 'discard',
+      opts?: { projectId?: string },
+    ): Promise<FileDto | null> =>
+      this.invoke('slicers.resolveSession', [launchId, action, opts ?? {}]),
+    discardSessions: (launchIds: string[]): Promise<{ discarded: number }> =>
+      this.invoke('slicers.discardSessions', [launchIds]),
   }
 
   readonly account = {

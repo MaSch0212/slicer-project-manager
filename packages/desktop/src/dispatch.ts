@@ -7,12 +7,14 @@ import type { ApiClient } from '@spm/contract/api-client.ts'
 import { createDecorators } from '@spm/contract/decorate.ts'
 import type {
   Capabilities,
+  FileDto,
   LocalLibraryDto,
   RemoteLibraryDto,
   SlicerConfigDto,
   SlicerId,
   SlicerLaunchDto,
   SlicerLaunchOptions,
+  SlicerSessionDto,
 } from '@spm/contract/dtos.ts'
 import { AppError } from '@spm/contract/errors.ts'
 import {
@@ -136,6 +138,20 @@ export type ShellApi = {
      * the same per-call session accessor the dispatch deps get.
      */
     open(fileId: string, projectId: string, opts: SlicerLaunchOptions): Promise<SlicerLaunchDto>
+    /**
+     * What became of the files already handed over (spec 6.3, 7.2–7.4). `app.ts` implements the
+     * three over `SlicerSessions`, which is separate from both `SlicersHost` and `SlicerLauncher`
+     * for the reason each of those is separate from the other: it is a third job — the lifetime of
+     * a launch directory — and it is the only one that outlives the run of the app that started it.
+     */
+    sessions(): Promise<SlicerSessionDto[]>
+    /** Ids, never a path. The main process matches the id against sessions it enumerated itself. */
+    resolveSession(
+      launchId: string,
+      action: 'import' | 'discard',
+      opts: { projectId?: string },
+    ): Promise<FileDto | null>
+    discardSessions(launchIds: string[]): Promise<{ discarded: number }>
   }
 }
 
@@ -248,6 +264,12 @@ const slicerIdSchema = z.enum(SLICER_IDS)
  * keeps an object, or a megabyte of text, out of that lookup.
  */
 const installIdSchema = z.string().min(1).max(512)
+
+/**
+ * A slicer session's id: a launch id, or `<launch directory>/<file name>` for a file found with
+ * no record of its own. See `slicers.resolveSession` for why nothing joins it onto a path.
+ */
+const launchIdSchema = z.string().min(1).max(512)
 
 /**
  * How an upload arrives. See `WireUploadBody` in protocol.ts for the two arms and for why a
@@ -595,6 +617,40 @@ export const dispatch: DispatchTable = {
   ),
   'slicers.resetConfig': shellCall('slicers.resetConfig', z.tuple([]), (shell) =>
     shell.slicers.resetConfig(),
+  ),
+  'slicers.sessions': shellCall('slicers.sessions', z.tuple([]), (shell) =>
+    shell.slicers.sessions(),
+  ),
+  /**
+   * The two routes that can remove a file, and the only two in the app that can remove one the
+   * user did not put where it is.
+   *
+   * `launchIdSchema` is wider than `idSchema` because a session's id is not always a launch id: a
+   * file found with no record of its own is named by where it was found, `<directory>/<file>`, and
+   * a file name is as long as a slicer makes it. **Nothing joins that string onto a path.** The
+   * main process enumerates the sessions directory and matches the id against what it found, so
+   * the only paths it ever touches are ones it produced itself — there is no traversal to defend
+   * against because there is no arithmetic. This bound only keeps an object, or a megabyte of
+   * text, out of that comparison.
+   *
+   * `z.strictObject` for the options, and a tuple of exactly three, for the same reasons
+   * `slicers.open` above gives.
+   */
+  'slicers.resolveSession': shellCall(
+    'slicers.resolveSession',
+    z.tuple([
+      launchIdSchema,
+      z.enum(['import', 'discard']),
+      z.strictObject({ projectId: idSchema.optional() }),
+    ]),
+    (shell, launchId, action, opts) => shell.slicers.resolveSession(launchId, action, opts),
+  ),
+  'slicers.discardSessions': shellCall(
+    'slicers.discardSessions',
+    // Bounded: the renderer builds this list from what `sessions()` gave it, and a list longer
+    // than any plausible sessions directory is a bug or an attempt at one.
+    z.tuple([z.array(launchIdSchema).max(500)]),
+    (shell, launchIds) => shell.slicers.discardSessions(launchIds),
   ),
 
   /*

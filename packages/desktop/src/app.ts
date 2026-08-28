@@ -28,6 +28,7 @@ import { ShellHost, type ShellRoute } from './shell.ts'
 import { SLICERS_FILE_NAME } from './slicers/config.ts'
 import { SlicersHost } from './slicers/host.ts'
 import { SlicerLauncher, SLICER_SESSIONS_DIR } from './slicers/launch.ts'
+import { SlicerSessions } from './slicers/sessions.ts'
 import { STATE_FILE_NAME } from './state.ts'
 import { navigationPolicy, RENDERER_HOST, RENDERER_ORIGIN, RESERVED_PATH_SEGMENT } from './urls.ts'
 
@@ -995,16 +996,30 @@ export function main(): void {
   // an unread pipe attached to it — would make quitting the app kill the user's slicer, or wedge
   // it on a full buffer. Nothing here reads its output; the only thing this process learns from
   // the child is that it has a pid.
+  const sessionsDir = join(app.getPath('userData'), SLICER_SESSIONS_DIR)
+  // What became of everything the launcher has ever handed over — the watch, the comparison, the
+  // sweeps and the reconcile. Built before the launcher because the launcher reports every launch
+  // it makes to it, and reached per call for the library and the server for the same reason
+  // everything else here is: both can change without a restart.
+  const sessions = new SlicerSessions({
+    sessionsDir,
+    session: () => shellHost.session(),
+    isRemote: () => shellHost.mode() === 'remote',
+    remote: () => shellHost.remote(),
+  })
+
   const launcher = new SlicerLauncher({
-    sessionsDir: join(app.getPath('userData'), SLICER_SESSIONS_DIR),
+    sessionsDir,
     slicers,
     session: () => shellHost.session(),
     isRemote: () => shellHost.mode() === 'remote',
+    remote: () => shellHost.remote(),
     spawn: (command, args) => {
       const child = spawn(command, [...args], { detached: true, stdio: 'ignore' })
       child.unref()
       return child
     },
+    onLaunched: (launch) => sessions.track(launch),
   })
 
   // Before `whenReady`, and before any window: `ipcMain.handle` is not tied to a window, and
@@ -1033,6 +1048,9 @@ export function main(): void {
         // deliberately knows nothing about one. Both are reached per call, like everything else
         // in this object.
         open: (fileId, projectId, opts) => launcher.open(fileId, projectId, opts),
+        sessions: () => Promise.resolve(sessions.list()),
+        resolveSession: (launchId, action, opts) => sessions.resolve(launchId, action, opts),
+        discardSessions: (launchIds) => sessions.discardMany(launchIds),
       },
     },
   }))
@@ -1050,6 +1068,19 @@ export function main(): void {
           () => shellHost.remote(),
         ),
       )
+
+      // The sweep at next start: it lists what previous runs left unfinished and **deletes
+      // nothing** (constraint 10). Before the window, so the first `slicers.sessions()` the
+      // renderer makes sees a directory that has already been tidied of empty leftovers rather
+      // than one being tidied underneath it. It never touches a directory holding a file.
+      try {
+        sessions.sweepAtStart()
+      } catch (error) {
+        // A `userData` this process cannot read is not a reason to refuse to start: nothing above
+        // depends on the sweep having run, and `slicers.sessions()` will fail the same way and say
+        // so where the user can see it.
+        console.warn('desktop: could not look at the slicer sessions directory', error)
+      }
 
       // Opened *before* the window when there is something to open, so the renderer's first
       // `projects.list` finds a library rather than a `Conflict` it would have to recover from.
@@ -1102,6 +1133,7 @@ export function main(): void {
       // own shutdown is skipped: a library opened moments earlier would be left with its preview
       // ticker running and its SQLite handle open until the process died anyway. Called here so
       // the one path that leaves without quitting normally still lets go of what it took.
+      sessions.close()
       shellHost.shutdown()
       app.exit(1)
     }
@@ -1112,5 +1144,10 @@ export function main(): void {
     if (process.platform !== 'darwin') app.quit()
   })
 
-  app.on('will-quit', () => shellHost.shutdown())
+  app.on('will-quit', () => {
+    // Before the shell, because a watcher firing into a half-shut-down host is the one ordering
+    // here that could still do work. Neither call throws; both are idempotent.
+    sessions.close()
+    shellHost.shutdown()
+  })
 }

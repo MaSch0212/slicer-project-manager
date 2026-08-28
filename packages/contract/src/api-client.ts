@@ -13,6 +13,7 @@ import type {
   SlicerId,
   SlicerLaunchDto,
   SlicerLaunchOptions,
+  SlicerSessionDto,
   UserDto,
 } from './dtos.ts'
 import type {
@@ -156,6 +157,52 @@ export interface ApiClient {
      * launch is refused outright and never falls back to the unstripped original.
      */
     open(fileId: string, projectId: string, opts: SlicerLaunchOptions): Promise<SlicerLaunchDto>
+
+    /**
+     * Every launch directory under `<userData>/slicer-sessions/` (spec 6.3): the launches this
+     * run made, the ones previous runs left unreconciled, and the files found with no record.
+     *
+     * **This is the comparison, run fresh.** Each call re-hashes the decompressed entries of the
+     * file in each directory; `fs.watch` and the poll behind it only decide how promptly the
+     * answer is ready, never what it is.
+     *
+     * It never deletes anything, and neither does the sweep at app start.
+     */
+    sessions(): Promise<SlicerSessionDto[]>
+
+    /**
+     * Answers one session, which is the only thing that removes a launch directory's file.
+     *
+     * `import` adds the returning file to the project as a **new** file under a derived,
+     * non-clashing name — `bracket (orca).3mf`, then `bracket (orca) (2).3mf` — and never over
+     * the original: a cross-slicer round trip is lossy, and deleting the original is a separate
+     * action with a control that already exists. It answers with the file that was added.
+     *
+     * `discard` removes the file and answers `null`. The record beside it stays, gaining a
+     * `sweptAt`, so a file recreated at the same path by the next Ctrl+S lands beside something
+     * that still says which project it came from.
+     *
+     * `opts.projectId` is needed for an **orphan** alone — a file whose record is gone, where
+     * only the user can say where it belongs. For a session that still has its `launch.json` the
+     * project is already known and the argument is ignored.
+     *
+     * Refuses with `Conflict` while the file is still settling or has been reported unreadable:
+     * importing half a write is the failure this whole loop exists to avoid.
+     */
+    resolveSession(
+      launchId: string,
+      action: 'import' | 'discard',
+      opts?: { projectId?: string },
+    ): Promise<FileDto | null>
+
+    /**
+     * Discards several sessions at once — the bulk action over the stale ones.
+     *
+     * Answers how many went, which is not always the number asked for: a session that vanished
+     * between the list and the call is not an error, and neither is one whose file another
+     * process has already removed.
+     */
+    discardSessions(launchIds: string[]): Promise<{ discarded: number }>
   }
 
   account: {
