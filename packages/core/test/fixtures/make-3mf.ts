@@ -1,21 +1,21 @@
 import { writeFileSync } from 'node:fs'
 import { deflateRawSync } from 'node:zlib'
+import {
+  centralHeaderBytes,
+  crc32,
+  endOfCentralDirectoryBytes,
+  localHeaderBytes,
+} from '../../src/files/zip-write.ts'
 
-const CRC_TABLE = (() => {
-  const table = new Uint32Array(256)
-  for (let i = 0; i < 256; i++) {
-    let c = i
-    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1
-    table[i] = c >>> 0
-  }
-  return table
-})()
-
-export function crc32(bytes: Uint8Array): number {
-  let c = 0xffffffff
-  for (const byte of bytes) c = CRC_TABLE[(c ^ byte) & 0xff]! ^ (c >>> 8)
-  return (c ^ 0xffffffff) >>> 0
-}
+/**
+ * The CRC table and the three header layouts used to be written out a second time here, beside
+ * `src/files/zip-write.ts`'s copies. They are imported now, so the repo has one of each: this
+ * fixture and the rewriter do different jobs — build from scratch with fresh compression versus
+ * copy an existing archive's compressed bytes — but they put the same three records on the wire.
+ *
+ * `crc32` is re-exported because `make-png.ts` and `png.test.ts` take it from here.
+ */
+export { crc32 }
 
 export function concatBytes(parts: Uint8Array[]): Uint8Array {
   const total = parts.reduce((n, p) => n + p.length, 0)
@@ -80,52 +80,57 @@ export function writeZip(path: string, entries: ZipInput[], zip64?: Zip64Options
     const name = encoder.encode(entry.name)
     const checksum = crc32(raw)
 
-    const local = new Uint8Array(30 + name.length)
-    const lv = new DataView(local.buffer)
-    lv.setUint32(0, 0x04034b50, true)
-    lv.setUint16(4, 20, true)
-    lv.setUint16(8, method, true)
-    lv.setUint32(14, checksum, true)
-    lv.setUint32(18, stored.length, true)
-    lv.setUint32(22, raw.length, true)
-    lv.setUint16(26, name.length, true)
-    local.set(name, 30)
+    const local = localHeaderBytes({
+      versionNeeded: 20,
+      flags: 0,
+      method,
+      modTime: 0,
+      modDate: 0,
+      crc: checksum,
+      compressedSize: stored.length,
+      uncompressedSize: raw.length,
+      name,
+    })
     body.push(local, stored)
 
     // The zip64 extended information extra field is positional: uncompressed size, then
     // compressed size, then local header offset, and only for the fields the base record
     // saturated. All three are saturated together here, which is what a real producer does.
     const extraWords = zip64?.saturateEntries ? 3 : zip64?.saturateEntryOffsetOnly ? 1 : 0
-    const extraLength = extraWords === 0 ? 0 : 4 + extraWords * 8
-    const cd = new Uint8Array(46 + name.length + extraLength)
-    const cv = new DataView(cd.buffer)
-    cv.setUint32(0, 0x02014b50, true)
+    const extra = new Uint8Array(extraWords === 0 ? 0 : 4 + extraWords * 8)
+    if (extraWords > 0) {
+      const xv = new DataView(extra.buffer)
+      xv.setUint16(0, 0x0001, true)
+      xv.setUint16(2, extraWords * 8, true)
+      if (extraWords === 3) {
+        xv.setBigUint64(4, BigInt(raw.length), true)
+        xv.setBigUint64(12, BigInt(stored.length), true)
+        xv.setBigUint64(20, BigInt(offset), true)
+      } else {
+        xv.setBigUint64(4, BigInt(offset), true)
+      }
+    }
     // 4.5 ("45") is the version that introduced zip64; a plain archive keeps the 2.0 it always
     // claimed, so a fixture built without zip64 options is byte-for-byte the file it was before.
     const version = extraWords === 0 ? 20 : 45
-    cv.setUint16(4, version, true)
-    cv.setUint16(6, version, true)
-    cv.setUint16(10, method, true)
-    cv.setUint32(16, checksum, true)
-    cv.setUint32(20, zip64?.saturateEntries ? U32_MAX : stored.length, true)
-    cv.setUint32(24, zip64?.saturateEntries ? U32_MAX : raw.length, true)
-    cv.setUint16(28, name.length, true)
-    cv.setUint16(30, extraLength, true)
-    cv.setUint32(42, extraWords === 0 ? offset : U32_MAX, true)
-    cd.set(name, 46)
-    if (extraWords > 0) {
-      const at = 46 + name.length
-      cv.setUint16(at, 0x0001, true)
-      cv.setUint16(at + 2, extraWords * 8, true)
-      if (extraWords === 3) {
-        cv.setBigUint64(at + 4, BigInt(raw.length), true)
-        cv.setBigUint64(at + 12, BigInt(stored.length), true)
-        cv.setBigUint64(at + 20, BigInt(offset), true)
-      } else {
-        cv.setBigUint64(at + 4, BigInt(offset), true)
-      }
-    }
-    central.push(cd)
+    central.push(
+      centralHeaderBytes({
+        versionMadeBy: version,
+        versionNeeded: version,
+        flags: 0,
+        method,
+        modTime: 0,
+        modDate: 0,
+        crc: checksum,
+        compressedSize: zip64?.saturateEntries ? U32_MAX : stored.length,
+        uncompressedSize: zip64?.saturateEntries ? U32_MAX : raw.length,
+        internalAttributes: 0,
+        externalAttributes: 0,
+        localHeaderOffset: extraWords === 0 ? offset : U32_MAX,
+        name,
+        extra,
+      }),
+    )
 
     offset += local.length + stored.length
   }
@@ -154,14 +159,13 @@ export function writeZip(path: string, entries: ZipInput[], zip64?: Zip64Options
     tail.push(record, locator)
   }
 
-  const eocd = new Uint8Array(22)
-  const ev = new DataView(eocd.buffer)
-  ev.setUint32(0, 0x06054b50, true)
-  ev.setUint16(8, zip64?.saturateTotal ? U16_MAX : entries.length, true)
-  ev.setUint16(10, zip64?.saturateTotal ? U16_MAX : entries.length, true)
-  ev.setUint32(12, zip64?.saturateCdSize ? U32_MAX : cdBytes.length, true)
-  ev.setUint32(16, zip64?.saturateCdOffset ? U32_MAX : offset, true)
-  tail.push(eocd)
+  tail.push(
+    endOfCentralDirectoryBytes({
+      total: zip64?.saturateTotal ? U16_MAX : entries.length,
+      cdSize: zip64?.saturateCdSize ? U32_MAX : cdBytes.length,
+      cdOffset: zip64?.saturateCdOffset ? U32_MAX : offset,
+    }),
+  )
 
   writeFileSync(path, concatBytes([...body, cdBytes, ...tail]))
 }

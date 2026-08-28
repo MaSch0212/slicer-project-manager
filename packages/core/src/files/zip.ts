@@ -2,12 +2,37 @@ import { closeSync, openSync, readSync, statSync } from 'node:fs'
 import { inflateRawSync } from 'node:zlib'
 import { AppError } from '@spm/contract/errors.ts'
 
+/**
+ * One central-directory record.
+ *
+ * The first five fields are everything a *reader* needs. The rest are carried for the *rewriter*
+ * (`files/zip-write.ts`), which has to reproduce a record it did not author: the general-purpose
+ * flags decide whether an entry is encrypted (bit 0) or defers its sizes to a data descriptor
+ * (bit 3), and the CRC, DOS timestamp and attribute words are payload-independent facts about
+ * the entry that a copy has no business inventing.
+ *
+ * They live here rather than in a second parser inside `zip-write.ts` for the same reason the CRC
+ * table moved out of the test fixture: the repo gets **one** central-directory layout, read in one
+ * place. Nothing below the rewriter reads them.
+ */
 export type ZipEntry = {
   name: string
   method: number
   compressedSize: number
   uncompressedSize: number
   localHeaderOffset: number
+  /** General-purpose bit flag. Bit 0 is encryption, bit 3 a data descriptor, bit 11 UTF-8 names. */
+  flags: number
+  /** CRC-32 of the *uncompressed* data, as the central directory declares it. */
+  crc: number
+  /** MS-DOS modification time and date, verbatim. Not decoded; nothing here needs a Date. */
+  modTime: number
+  modDate: number
+  /** High byte is the host system, low byte the ZIP spec version the writer claimed. */
+  versionMadeBy: number
+  versionNeeded: number
+  internalAttributes: number
+  externalAttributes: number
 }
 
 const EOCD_SIG = 0x06054b50
@@ -246,6 +271,14 @@ export function readZipEntries(path: string): ZipEntry[] {
         uncompressedSize: sizes.uncompressedSize,
         localHeaderOffset: sizes.localHeaderOffset,
         name: decoder.decode(cd.subarray(p + CD_MIN, p + CD_MIN + nameLength)),
+        versionMadeBy: view.getUint16(p + 4, true),
+        versionNeeded: view.getUint16(p + 6, true),
+        flags: view.getUint16(p + 8, true),
+        modTime: view.getUint16(p + 12, true),
+        modDate: view.getUint16(p + 14, true),
+        crc: view.getUint32(p + 16, true),
+        internalAttributes: view.getUint16(p + 36, true),
+        externalAttributes: view.getUint32(p + 38, true),
       })
       p = next
     }
