@@ -46,7 +46,17 @@
     "removeTag": "Schlagwort entfernen",
     "confirmDelete": "Dieses Projekt löschen? Projekt und Schlagwörter werden entfernt; die Dateien bleiben auf der Festplatte.",
     "confirmDeleteWithFiles": "Dieses Projekt löschen und alle zugehörigen Dateien von der Festplatte entfernen? Das kann nicht rückgängig gemacht werden.",
-    "confirmDeleteAction": "Ja, löschen"
+    "confirmDeleteAction": "Ja, löschen",
+    "slicerChoice": "Slicer",
+    "slicerAutomatic": "Automatisch",
+    "openInSlicer": "Unverändert öffnen in",
+    "newSlicerProject": "Neues Slicer-Projekt erstellen aus",
+    "handedTo": "{{ file }} an {{ slicer }} übergeben",
+    "dismiss": "Ausblenden",
+    "curaHazardTitle": "Cura speichert nie über die geöffnete Datei",
+    "curaHazard": "Strg+S ist in Cura immer „Speichern unter“ und schlägt Curas eigenen Ordner vor, nicht den dieses Projekts. Auf dem vermessenen Rechner liegt dieser Ordner innerhalb der Modellbibliothek – wer Strg+S und dann Enter drückt, schreibt dort eine Kopie hin statt zurück in dieses Projekt.",
+    "curaHazardContinue": "Trotzdem an Cura übergeben",
+    "curaHazardDontShow": "Nicht mehr anzeigen"
   },
   "import": {
     "title": "Import",

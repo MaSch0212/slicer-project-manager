@@ -5,10 +5,17 @@ import { describe, expect, it, vi } from 'vitest'
 import { provideJigControls, withAutoColorScheme } from '@awdlab/jig/api/ng'
 import { nova } from '@awdlab/jig-themes/nova'
 import { AppError } from '@spm/contract/errors.ts'
-import type { FileDto, ProjectDetailDto } from '@spm/contract/dtos.ts'
-import { API_CLIENT } from '../../core/api/api-client.token'
+import type {
+  Capabilities,
+  FileDto,
+  ProjectDetailDto,
+  SlicerConfigDto,
+  SlicerLaunchDto,
+} from '@spm/contract/dtos.ts'
+import { API_CLIENT, SHELL_CLIENT } from '../../core/api/api-client.token'
+import { CapabilitiesStore } from '../../core/capabilities.store'
 import en from '../../core/i18n/locales/en.json'
-import { ProjectDetailPage } from './project-detail.page'
+import { ProjectDetailPage, resolveLaunchSlicer } from './project-detail.page'
 import { provideJigForTests } from '../../../testing/jig'
 
 const file: FileDto = {
@@ -48,6 +55,71 @@ const fetched = (over: Partial<ProjectDetailDto> = {}): ProjectDetailDto => ({
 
 type Mock = ReturnType<typeof vi.fn>
 
+/** A `.3mf` Cura wrote, which is the only kind of file the as-is control is offered for. */
+const project3mf: FileDto = {
+  id: 'f2',
+  name: 'bracket.3mf',
+  kind: 'slicer_project',
+  slicer: 'cura',
+  sizeBytes: 4096,
+  previewState: 'ready',
+  rawUrl: '/api/files/f2/raw',
+}
+
+const slicerConfig: SlicerConfigDto = {
+  installs: [
+    {
+      id: 'msix:OrcaSlicer.OrcaSlicer_3qd7h69xpne0g',
+      slicerId: 'orca',
+      label: 'OrcaSlicer',
+      version: '2.4.3.0',
+      path: 'C:\\OrcaSlicer\\orca-slicer.exe',
+      origin: 'msix',
+      state: 'ok',
+    },
+    {
+      id: 'registry:HKLM:Cura',
+      slicerId: 'cura',
+      label: 'UltiMaker Cura 5.13.0',
+      version: '5.13.0',
+      path: 'C:\\Cura\\UltiMaker-Cura.exe',
+      origin: 'registry',
+      state: 'ok',
+    },
+  ],
+  bindings: { orca: 'msix:OrcaSlicer.OrcaSlicer_3qd7h69xpne0g', cura: 'registry:HKLM:Cura' },
+  defaultSlicerId: 'orca',
+  detectionSupported: true,
+}
+
+const launchDto: SlicerLaunchDto = {
+  launchId: 'launch-1',
+  slicerId: 'orca',
+  installLabel: 'OrcaSlicer',
+  stripped: true,
+  notices: ['It will show one informational notice, "loading geometry data only".'],
+  pid: 4242,
+}
+
+/** Every other test on this page: the launch controls must not render at all. */
+const NO_SLICERS: Capabilities = {
+  requiresAuth: false,
+  canManageUsers: false,
+  canPickLocalFolder: false,
+  canLaunchSlicer: false,
+  canConfigureSlicers: false,
+  canBrowseModelSites: false,
+}
+
+const CAPABILITIES: Capabilities = {
+  requiresAuth: false,
+  canManageUsers: false,
+  canPickLocalFolder: true,
+  canLaunchSlicer: true,
+  canConfigureSlicers: true,
+  canBrowseModelSites: false,
+}
+
 function setup(
   overrides: {
     get?: Mock
@@ -58,6 +130,8 @@ function setup(
     upload?: Mock
     rename?: Mock
     deleteFile?: Mock
+    /** Set to enable the launch controls; the capability alone is not enough. */
+    slicers?: { get?: Mock; open?: Mock }
   } = {},
   /**
    * Routes the page's own links can actually reach. Empty by default — RouterLink only needs
@@ -79,6 +153,12 @@ function setup(
       delete: overrides.deleteFile ?? vi.fn().mockResolvedValue(undefined),
     },
   }
+  const shell = {
+    slicers: {
+      get: overrides.slicers?.get ?? vi.fn(() => Promise.resolve(slicerConfig)),
+      open: overrides.slicers?.open ?? vi.fn(() => Promise.resolve(launchDto)),
+    },
+  }
   TestBed.configureTestingModule({
     providers: [
       ...provideJigForTests(),
@@ -91,12 +171,22 @@ function setup(
       // a UrlTree plus the root ActivatedRoute that provideRouter supplies.
       provideRouter(routes),
       { provide: API_CLIENT, useValue: api },
+      { provide: SHELL_CLIENT, useValue: shell },
+      // A stub rather than the real store loading over `API_CLIENT`: the flag has to be settled
+      // *before* the component's resource reads it, and a store that resolves it asynchronously
+      // would make every launch assertion depend on when that landed.
+      {
+        provide: CapabilitiesStore,
+        useValue: {
+          capabilities: () => (overrides.slicers ? CAPABILITIES : NO_SLICERS),
+        } as unknown as CapabilitiesStore,
+      },
     ],
   })
   const navigate = vi.spyOn(TestBed.inject(Router), 'navigate').mockResolvedValue(true)
   const fixture = TestBed.createComponent(ProjectDetailPage)
   fixture.componentRef.setInput('id', 'p1')
-  return { fixture, api, navigate, page: fixture.componentInstance }
+  return { fixture, api, shell, navigate, page: fixture.componentInstance }
 }
 
 const settle = () => TestBed.inject(ApplicationRef).whenStable()
@@ -698,6 +788,177 @@ describe('ProjectDetailPage', () => {
       // The control: the tile itself is still rendered, so the query above is looking at a row
       // that exists.
       expect(fixture.nativeElement.querySelector('.spm-file-thumb')).not.toBeNull()
+    })
+  })
+
+  describe('handing a file to a slicer', () => {
+    const withSlicers = (over: { open?: Mock; get?: Mock } = {}) =>
+      setup({
+        slicers: over,
+        get: vi.fn(() => Promise.resolve(fetched({ files: [file, { ...project3mf }] }))),
+      })
+
+    it('offers "open as it is" for a slicer project only, and the other path for every file', async () => {
+      const { fixture } = withSlicers()
+      await settle()
+
+      const labels = [...fixture.nativeElement.querySelectorAll('button')].map(
+        (button: HTMLButtonElement) => button.getAttribute('aria-label') ?? '',
+      )
+      expect(labels).toContain(`${en.projects.openInSlicer} bracket.3mf`)
+      expect(labels).not.toContain(`${en.projects.openInSlicer} benchy.stl`)
+      expect(labels).toContain(`${en.projects.newSlicerProject} bracket.3mf`)
+      expect(labels).toContain(`${en.projects.newSlicerProject} benchy.stl`)
+    })
+
+    it('renders no launch control at all where the shell cannot launch one', async () => {
+      const { fixture } = setup({
+        get: vi.fn(() => Promise.resolve(fetched({ files: [file, { ...project3mf }] }))),
+      })
+      await settle()
+
+      const labels = [...fixture.nativeElement.querySelectorAll('button')].map(
+        (button: HTMLButtonElement) => button.getAttribute('aria-label') ?? '',
+      )
+      expect(labels).not.toContain(`${en.projects.newSlicerProject} benchy.stl`)
+      expect(text(fixture)).not.toContain(en.projects.slicerChoice)
+    })
+
+    it('sends ids and a mode, and never a path or a slicer it was not given', async () => {
+      const { page, shell } = withSlicers()
+      await settle()
+
+      await page.onLaunch(file, 'new-project')
+
+      expect(shell.slicers.open).toHaveBeenCalledWith('f1', 'p1', { mode: 'new-project' })
+      // `slicerId` absent rather than null: "not stated" is what makes the main process apply its
+      // own rule, and a null would be a `Validation` failure at the channel.
+      const [, , opts] = shell.slicers.open.mock.calls[0] as [string, string, object]
+      expect('slicerId' in opts).toBe(false)
+    })
+
+    it('sends the chosen slicer when the user picks one', async () => {
+      const { page, shell } = withSlicers()
+      await settle()
+      page.chosenSlicer.set('bambu')
+
+      await page.onLaunch({ ...project3mf }, 'as-is')
+
+      expect(shell.slicers.open).toHaveBeenCalledWith('f2', 'p1', {
+        mode: 'as-is',
+        slicerId: 'bambu',
+      })
+    })
+
+    it('says what it handed over and to what, and never that anything opened', async () => {
+      const { fixture, page } = withSlicers()
+      await settle()
+
+      await page.onLaunch(file, 'new-project')
+      await settle()
+
+      const shown = text(fixture)
+      expect(shown).toContain('Handed benchy.stl to OrcaSlicer (OrcaSlicer)')
+      expect(shown).toContain('loading geometry data only')
+      // Constraint 11, asserted as an absence because that is what the constraint is.
+      expect(shown.toLowerCase()).not.toContain('opened in')
+    })
+
+    it("shows the shell's own refusal rather than a generic apology", async () => {
+      const { fixture, page } = withSlicers({
+        open: vi
+          .fn()
+          .mockRejectedValue(
+            new AppError(
+              'Validation',
+              'mixed.3mf could not be prepared for a new project because stripping it left slicer configuration behind. Opening it as it is, without stripping, is still available.',
+              { reason: 'configuration-left-behind' },
+            ),
+          ),
+      })
+      await settle()
+
+      await page.onLaunch(file, 'new-project')
+      await settle()
+
+      expect(text(fixture)).toContain('stripping it left slicer configuration behind')
+      expect(text(fixture)).not.toContain(en.errors.generic)
+    })
+
+    it('warns about Cura before handing it anything, and does not launch until answered', async () => {
+      const { fixture, page, shell } = withSlicers()
+      await settle()
+      // Cura is what the file itself names, so an as-is launch with no explicit choice is a Cura
+      // launch — which the page has to work out for itself, before the call.
+      await page.onLaunch({ ...project3mf }, 'as-is')
+      await settle()
+
+      expect(shell.slicers.open).not.toHaveBeenCalled()
+      expect(text(fixture)).toContain(en.projects.curaHazardTitle)
+
+      await page.onCuraContinue()
+      await settle()
+
+      expect(shell.slicers.open).toHaveBeenCalledWith('f2', 'p1', { mode: 'as-is' })
+      expect(text(fixture)).not.toContain(en.projects.curaHazardTitle)
+    })
+
+    it('warns every time until the user says not to, and then never again', async () => {
+      const { page, shell } = withSlicers()
+      await settle()
+
+      await page.onLaunch({ ...project3mf }, 'as-is')
+      await page.onCuraContinue()
+      // Not ticked, so the next Cura launch is held back again.
+      await page.onLaunch({ ...project3mf }, 'as-is')
+      expect(shell.slicers.open).toHaveBeenCalledTimes(1)
+
+      page.curaDontShowAgain.set(true)
+      await page.onCuraContinue()
+      await page.onLaunch({ ...project3mf }, 'as-is')
+
+      expect(shell.slicers.open).toHaveBeenCalledTimes(3)
+    })
+
+    it('does not warn about Cura for a launch that would not use it', async () => {
+      const { page, shell } = withSlicers()
+      await settle()
+
+      // The same Cura-authored file down the other path: that one defaults to the configured
+      // default, which is Orca, so there is nothing to warn about.
+      await page.onLaunch({ ...project3mf }, 'new-project')
+
+      expect(shell.slicers.open).toHaveBeenCalledWith('f2', 'p1', { mode: 'new-project' })
+      expect(page.curaPending()).toBeNull()
+    })
+
+    it('offers only the products with an install bound to them', async () => {
+      const { page } = withSlicers()
+      await settle()
+
+      expect(page['slicerOptions']()).toEqual([
+        { label: 'UltiMaker Cura', value: 'cura' },
+        { label: 'OrcaSlicer', value: 'orca' },
+      ])
+    })
+  })
+
+  describe('resolveLaunchSlicer', () => {
+    it('prefers what the user chose over everything else', () => {
+      expect(resolveLaunchSlicer('as-is', 'cura', 'bambu', 'orca')).toBe('bambu')
+      expect(resolveLaunchSlicer('new-project', undefined, 'bambu', 'orca')).toBe('bambu')
+    })
+
+    it('uses the slicer the file names for as-is, and the default for a new project', () => {
+      expect(resolveLaunchSlicer('as-is', 'cura', null, 'orca')).toBe('cura')
+      // The new-project path deliberately does not: its target is usually *not* the product that
+      // wrote the file, so defaulting to it would make the common case need an override.
+      expect(resolveLaunchSlicer('new-project', 'cura', null, 'orca')).toBe('orca')
+    })
+
+    it('falls through to the default, and to nothing when there is not one', () => {
+      expect(resolveLaunchSlicer('as-is', undefined, null, 'orca')).toBe('orca')
+      expect(resolveLaunchSlicer('as-is', undefined, null, null)).toBeNull()
     })
   })
 })

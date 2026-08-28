@@ -5,7 +5,7 @@ import { JigInputField } from '@awdlab/jig/input-field'
 import { JigMessage } from '@awdlab/jig/message'
 import { isAppError } from '@spm/contract/errors.ts'
 import { TranslateService } from '../../core/i18n/translate.service'
-import { SHELL_CLIENT } from './shell-client.token'
+import { SHELL_CLIENT } from '../../core/api/api-client.token'
 
 /**
  * Which library this is: a folder on this computer, or a server (spec 2.6).

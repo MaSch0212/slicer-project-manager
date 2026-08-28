@@ -138,3 +138,37 @@ test('a picked executable that is not there says so, and does not send the user 
     await app.close()
   }
 })
+
+/**
+ * The launch channel, over a real bridge, with nothing installed to launch.
+ *
+ * The unit suite (`test/slicers-launch.test.ts`) is where both launch paths are proved, because
+ * it can inject the spawn and assert the exact path that was handed over. What it cannot see is
+ * this: that the control on the ordinary project page reaches `slicers.open` through the preload's
+ * argument sanitiser and `dispatch.ts`'s validation at all, and that the shell's own sentence —
+ * not a generic apology — is what comes back out the other end.
+ *
+ * It refuses rather than launching on purpose. There is no slicer this suite may start: a spawn
+ * here would open a real application on the machine running the tests, and on the Linux runner
+ * there is nothing to open. `TWO_CURAS` has no binding and no default, so the launcher answers the
+ * one refusal that needs no install to exist.
+ */
+test('the launch control reaches the shell, and the refusal keeps the wording it was given', async () => {
+  const { app } = await launchWithSlicers(TWO_CURAS)
+  try {
+    const page = await firstWindowOf(app)
+    await page.waitForURL('spm://app/projects', { timeout: 30_000 })
+    await page.locator('.spm-project-link').first().click()
+
+    const start = page.getByRole('button', { name: 'Start a new slicer project from notes.txt' })
+    await expect(start).toHaveCount(1)
+    await start.click()
+
+    // The launcher's sentence, word for word, having crossed the boundary as an `AppError`.
+    await expect(page.getByRole('alert')).toContainText(
+      'no slicer was chosen, and no default slicer is set',
+    )
+  } finally {
+    await app.close()
+  }
+})

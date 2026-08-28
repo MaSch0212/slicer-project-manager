@@ -46,7 +46,17 @@
     "removeTag": "Remove tag",
     "confirmDelete": "Delete this project? The project and its tags are removed; the files stay on disk.",
     "confirmDeleteWithFiles": "Delete this project and erase every one of its files from the disk? This cannot be undone.",
-    "confirmDeleteAction": "Yes, delete"
+    "confirmDeleteAction": "Yes, delete",
+    "slicerChoice": "Slicer",
+    "slicerAutomatic": "Automatic",
+    "openInSlicer": "Open as it is in",
+    "newSlicerProject": "Start a new slicer project from",
+    "handedTo": "Handed {{ file }} to {{ slicer }}",
+    "dismiss": "Dismiss",
+    "curaHazardTitle": "Cura never saves over the file it opened",
+    "curaHazard": "Cura's Ctrl+S is always Save As, and it defaults to its own folder rather than this project's. On the machine this was measured on that folder sits inside the model library, so pressing Ctrl+S and then Enter writes a copy there instead of back into this project.",
+    "curaHazardContinue": "Hand it to Cura anyway",
+    "curaHazardDontShow": "Don't show this again"
   },
   "import": {
     "title": "Import",

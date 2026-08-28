@@ -7,7 +7,7 @@ import type { SlicerConfigDto, SlicerId, SlicerInstallDto } from '@spm/contract/
 import { AppError, DETECTION_FAILED } from '@spm/contract/errors.ts'
 import { TranslateService } from '../../../core/i18n/translate.service'
 import { provideJigForTests } from '../../../../testing/jig'
-import { SHELL_CLIENT } from '../shell-client.token'
+import { SHELL_CLIENT } from '../../../core/api/api-client.token'
 import { DesktopSlicersPage } from './slicers.page'
 
 /**

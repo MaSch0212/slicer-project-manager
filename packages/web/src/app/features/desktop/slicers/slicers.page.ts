@@ -22,7 +22,7 @@ import tablerTrash from '@iconify/icons-tabler/trash'
 import type { SlicerConfigDto, SlicerId, SlicerInstallDto } from '@spm/contract/dtos.ts'
 import { DETECTION_FAILED, isAppError } from '@spm/contract/errors.ts'
 import { TranslateService } from '../../../core/i18n/translate.service'
-import { SHELL_CLIENT } from '../shell-client.token'
+import { SHELL_CLIENT } from '../../../core/api/api-client.token'
 
 /**
  * Every product the app knows about, in the order `packages/desktop/src/slicers/registry.ts`

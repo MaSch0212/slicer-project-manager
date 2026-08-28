@@ -20,14 +20,23 @@ import { JigHint } from '@awdlab/jig/hint'
 import { JigInput } from '@awdlab/jig/input'
 import { JigInputField } from '@awdlab/jig/input-field'
 import { JigMessage } from '@awdlab/jig/message'
+import { JigSelect } from '@awdlab/jig/select'
 import { JigSpinner } from '@awdlab/jig/spinner'
 import { JigTag } from '@awdlab/jig/tag'
 import { JigTooltip } from '@awdlab/jig/tooltip'
 import tabler3dCubeSphere from '@iconify/icons-tabler/3d-cube-sphere'
 import tablerArrowLeft from '@iconify/icons-tabler/arrow-left'
+import tablerFilePlus from '@iconify/icons-tabler/file-plus'
 import tablerPencil from '@iconify/icons-tabler/pencil'
+import tablerPrinter from '@iconify/icons-tabler/printer'
 import tablerTrash from '@iconify/icons-tabler/trash'
-import type { FileDto, ProjectDetailDto } from '@spm/contract/dtos.ts'
+import type {
+  FileDto,
+  ProjectDetailDto,
+  SlicerId,
+  SlicerLaunchDto,
+  SlicerLaunchMode,
+} from '@spm/contract/dtos.ts'
 import { isAppError, type QuotaExceededDetails } from '@spm/contract/errors.ts'
 import {
   fileNameSchema,
@@ -35,7 +44,9 @@ import {
   tagNameSchema,
   type ProjectPatchInput,
 } from '@spm/contract/schemas.ts'
-import { API_CLIENT } from '../../core/api/api-client.token'
+import { API_CLIENT, SHELL_CLIENT } from '../../core/api/api-client.token'
+import { CapabilitiesStore } from '../../core/capabilities.store'
+import { CuraHazardStore } from '../../core/cura-hazard.store'
 import { formatBytes } from '../../core/format-bytes'
 import { TranslateService } from '../../core/i18n/translate.service'
 
@@ -77,6 +88,60 @@ function sameEditModel(a: EditModel, b: EditModel): boolean {
   )
 }
 
+/**
+ * Every product, in the order the registry lists them, with the name to show for it.
+ *
+ * Duplicated from `packages/desktop/src/slicers/registry.ts` in one direction only, exactly as
+ * `features/desktop/slicers/slicers.page.ts` duplicates it and for the same reasons: the renderer
+ * must not import from the desktop package (spec 2.5), and these are brand names rather than
+ * translated copy so they are not in the locale files either. What can drift is the *list*, and
+ * the assertion below is what stops a sixth `SlicerId` from silently missing a row.
+ */
+const SLICER_NAMES = [
+  { id: 'cura', name: 'UltiMaker Cura' },
+  { id: 'prusaslicer', name: 'PrusaSlicer' },
+  { id: 'anycubic', name: 'Anycubic Slicer Next' },
+  { id: 'bambu', name: 'Bambu Studio' },
+  { id: 'orca', name: 'OrcaSlicer' },
+] as const satisfies readonly { id: SlicerId; name: string }[]
+
+type AssertNever<T extends never> = T
+export type LaunchSlicerNamesAreComplete = AssertNever<
+  Exclude<SlicerId, (typeof SLICER_NAMES)[number]['id']>
+>
+
+export function slicerDisplayName(id: SlicerId): string {
+  return SLICER_NAMES.find((product) => product.id === id)!.name
+}
+
+/**
+ * Which product a launch would use, as the page has to work it out **before** making the call.
+ *
+ * **This is the same rule the main process applies, written twice on purpose, and the duplication
+ * is worth naming.** The Cura warning has to be shown before the launch, and only the main
+ * process knows which slicer the launch will actually pick — so either the page reproduces the
+ * rule, or the warning arrives after the file has already been handed over, which is not a
+ * warning. The page therefore does not offer either control until it has loaded the same
+ * configuration the main process reads, and the answer the launch comes back with
+ * (`SlicerLaunchDto.slicerId`) is still the authority for everything shown afterwards.
+ *
+ * Exported so `project-detail.page.spec.ts` can drive the rule directly, including the two cases
+ * the buttons cannot reach.
+ */
+export function resolveLaunchSlicer(
+  mode: SlicerLaunchMode,
+  fileSlicer: SlicerId | undefined,
+  chosen: SlicerId | null,
+  defaultSlicerId: SlicerId | null,
+): SlicerId | null {
+  if (chosen !== null) return chosen
+  if (mode === 'as-is' && fileSlicer !== undefined) return fileSlicer
+  return defaultSlicerId
+}
+
+/** A launch the page is holding back until the user has answered the Cura warning. */
+type PendingLaunch = { file: FileDto; mode: SlicerLaunchMode }
+
 @Component({
   selector: 'spm-project-detail-page',
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -91,6 +156,7 @@ function sameEditModel(a: EditModel, b: EditModel): boolean {
     JigInput,
     JigInputField,
     JigMessage,
+    JigSelect,
     JigSpinner,
     JigTag,
     JigTooltip,
@@ -249,6 +315,68 @@ function sameEditModel(a: EditModel, b: EditModel): boolean {
               (change)="onFileInput($event)"
             />
 
+            @if (canLaunch()) {
+              <jig-input-field
+                class="spm-block"
+                inputId="launch-slicer"
+                [label]="t.translations().projects.slicerChoice"
+              >
+                <jig-select
+                  inputId="launch-slicer"
+                  [label]="t.translations().projects.slicerChoice"
+                  [options]="slicerOptions()"
+                  [placeholder]="t.translations().projects.slicerAutomatic"
+                  [value]="chosenSlicer()"
+                  (valueChange)="chosenSlicer.set($event ?? null)"
+                />
+              </jig-input-field>
+
+              <!--
+                Constraint 11: a successful spawn is not evidence the file opened. Three of five
+                slicers never put a filename in a window title and one of them was measured
+                discarding a file in front of a healthy process, so the app says what it did —
+                handed the file over — and never that anything opened.
+              -->
+              @if (launched(); as launch) {
+                <jig-message color="info" role="status">
+                  <span>{{ handedMessage(launch) }}</span>
+                  <ul>
+                    @for (notice of launch.launch.notices; track notice) {
+                      <li>{{ notice }}</li>
+                    }
+                  </ul>
+                  <button jigButton kind="text" type="button" (click)="launched.set(null)">
+                    {{ t.translations().projects.dismiss }}
+                  </button>
+                </jig-message>
+              }
+
+              @if (curaPending() !== null) {
+                <jig-message color="warning" role="alert">
+                  <strong>{{ t.translations().projects.curaHazardTitle }}</strong>
+                  <p>{{ t.translations().projects.curaHazard }}</p>
+                  <span class="spm-check">
+                    <jig-checkbox
+                      #curaAgainBox
+                      [value]="curaDontShowAgain()"
+                      (valueChange)="curaDontShowAgain.set($event === true)"
+                    />
+                    <label [for]="curaAgainBox.inputId()">
+                      {{ t.translations().projects.curaHazardDontShow }}
+                    </label>
+                  </span>
+                  <div class="spm-row">
+                    <button jigButton kind="primary" type="button" (click)="onCuraContinue()">
+                      {{ t.translations().projects.curaHazardContinue }}
+                    </button>
+                    <button jigButton kind="text" type="button" (click)="curaPending.set(null)">
+                      {{ t.translations().projects.cancel }}
+                    </button>
+                  </div>
+                </jig-message>
+              }
+            }
+
             <ul class="spm-files">
               @for (file of detail.files; track file.id) {
                 <li class="spm-file">
@@ -333,6 +461,42 @@ function sameEditModel(a: EditModel, b: EditModel): boolean {
                         >
                           <jig-icon [icon]="icons.view" />
                         </a>
+                      }
+                      <!--
+                        Two launch paths, and the difference is visible because it has to be: one
+                        opens the user's own project where it lives, the other starts a new slicer
+                        project from the file — usually in a slicer other than the one that wrote
+                        it, and from a stripped copy outside the library.
+
+                        "Open as it is" is offered for a slicer project alone, which is what the
+                        main process accepts on that path: for a mesh it would launch the file in
+                        place and let the slicer propose its project over the top of it.
+                      -->
+                      @if (canLaunch()) {
+                        @if (file.kind === 'slicer_project') {
+                          <button
+                            jigButton
+                            kind="icon"
+                            type="button"
+                            [jigTooltip]="t.translations().projects.openInSlicer + ' ' + file.name"
+                            jigTooltipAutoAriaMode="label"
+                            (click)="onLaunch(file, 'as-is')"
+                          >
+                            <jig-icon [icon]="icons.openInSlicer" />
+                          </button>
+                        }
+                        <button
+                          jigButton
+                          kind="icon"
+                          type="button"
+                          [jigTooltip]="
+                            t.translations().projects.newSlicerProject + ' ' + file.name
+                          "
+                          jigTooltipAutoAriaMode="label"
+                          (click)="onLaunch(file, 'new-project')"
+                        >
+                          <jig-icon [icon]="icons.newSlicerProject" />
+                        </button>
                       }
                       <button
                         jigButton
@@ -425,6 +589,18 @@ function sameEditModel(a: EditModel, b: EditModel): boolean {
 })
 export class ProjectDetailPage {
   private readonly api = inject(API_CLIENT)
+  /**
+   * The shell, not the library, and that is the whole reason the second token exists.
+   *
+   * `API_CLIENT` is whatever transport the *library* is on: in the desktop shell's remote mode it
+   * is `HttpApiClient`, which refuses every `slicers` method by design. The slicers are a property
+   * of the machine the user is sitting at whichever library is open, so the launch controls talk
+   * to `SHELL_CLIENT` — the IPC transport in both desktop modes, and in the browser an
+   * `HttpApiClient` that refuses, where `canLaunchSlicer` is false and none of this renders.
+   */
+  private readonly shell = inject(SHELL_CLIENT)
+  private readonly capabilities = inject(CapabilitiesStore)
+  private readonly cura = inject(CuraHazardStore)
   private readonly router = inject(Router)
   protected readonly t = inject(TranslateService)
 
@@ -433,6 +609,8 @@ export class ProjectDetailPage {
     rename: tablerPencil,
     delete: tablerTrash,
     view: tabler3dCubeSphere,
+    openInSlicer: tablerPrinter,
+    newSlicerProject: tablerFilePlus,
   }
 
   readonly id = input.required<string>()
@@ -487,6 +665,61 @@ export class ProjectDetailPage {
     source: this.id,
     computation: () => false,
   })
+
+  /* ---------------------------------------------------------------------------------------
+   * Handing a file to a slicer
+   * ------------------------------------------------------------------------------------ */
+
+  /**
+   * The slicer configuration of **this machine**, loaded only where a launch is possible.
+   *
+   * The page needs it for two things it cannot do without: the products that actually have an
+   * install bound, and the configured default — which is what decides whether a launch with no
+   * explicit choice would land in Cura. Both controls stay hidden until it has arrived, which is
+   * what keeps `resolveLaunchSlicer` from having to guess.
+   */
+  protected readonly slicerConfig = resource({
+    params: () => this.capabilities.capabilities().canLaunchSlicer,
+    loader: ({ params }) => (params ? this.shell.slicers.get() : Promise.resolve(null)),
+  })
+
+  protected readonly canLaunch = computed(
+    () => this.slicerConfig.hasValue() && this.slicerConfig.value() !== null,
+  )
+
+  /** The products with an install bound to them; nothing else can be launched today. */
+  protected readonly slicerOptions = computed(() => {
+    const config = this.slicerConfig.hasValue() ? this.slicerConfig.value() : null
+    if (config === null) return []
+    return SLICER_NAMES.filter((product) => config.bindings[product.id] !== undefined).map(
+      (product) => ({ label: product.name, value: product.id }),
+    )
+  })
+
+  /** `null` means "let the main process decide", which is what most launches do. */
+  readonly chosenSlicer = linkedSignal<string, SlicerId | null>({
+    source: this.id,
+    computation: () => null,
+  })
+
+  /**
+   * The last launch, and the name of the file it was given.
+   *
+   * The name is carried alongside rather than looked up from the launch: `SlicerLaunchDto` names
+   * no file, deliberately — it answers about the *launch* — and the file could have been renamed
+   * or deleted by the time the message is read.
+   */
+  readonly launched = linkedSignal<string, { launch: SlicerLaunchDto; fileName: string } | null>({
+    source: this.id,
+    computation: () => null,
+  })
+
+  /** A launch waiting on the Cura warning, and whether the user ticked "don't show again". */
+  readonly curaPending = linkedSignal<string, PendingLaunch | null>({
+    source: this.id,
+    computation: () => null,
+  })
+  readonly curaDontShowAgain = signal(false)
 
   /**
    * Seeded from the project, but re-seeded only when the project's identity or its *stored*
@@ -656,6 +889,62 @@ export class ProjectDetailPage {
   }
 
   /**
+   * A launch the user asked for — held back once for Cura, and only once.
+   *
+   * The warning is a notice with a way past it and not a gate: Cura against a file is perfectly
+   * useful for viewing and slicing, and refusing to launch it would make the feature less useful
+   * than not having it. See `CuraHazardStore` for what is being warned about and why the app can
+   * neither cause it nor fix it.
+   */
+  async onLaunch(file: FileDto, mode: SlicerLaunchMode): Promise<void> {
+    const config = this.slicerConfig.hasValue() ? this.slicerConfig.value() : null
+    const willUse = resolveLaunchSlicer(
+      mode,
+      file.slicer,
+      this.chosenSlicer(),
+      config?.defaultSlicerId ?? null,
+    )
+    if (willUse === 'cura' && !this.cura.acknowledged()) {
+      this.curaPending.set({ file, mode })
+      return
+    }
+    await this.launch(file, mode)
+  }
+
+  async onCuraContinue(): Promise<void> {
+    const pending = this.curaPending()
+    if (pending === null) return
+    if (this.curaDontShowAgain()) this.cura.acknowledge()
+    this.curaPending.set(null)
+    await this.launch(pending.file, pending.mode)
+  }
+
+  private async launch(file: FileDto, mode: SlicerLaunchMode): Promise<void> {
+    this.errorMessage.set(null)
+    this.launched.set(null)
+    const chosen = this.chosenSlicer()
+    try {
+      const launch = await this.shell.slicers.open(file.id, this.id(), {
+        mode,
+        // Omitted rather than sent as null: `slicerId` is optional in the contract, and "not
+        // stated" is what makes the main process apply its own rule and say which it picked.
+        ...(chosen === null ? {} : { slicerId: chosen }),
+      })
+      this.launched.set({ launch, fileName: file.name })
+    } catch (error) {
+      this.errorMessage.set(this.describeLaunch(error))
+    }
+  }
+
+  /** Constraint 11: what was handed over, and to what. Never that anything opened. */
+  protected handedMessage(launched: { launch: SlicerLaunchDto; fileName: string }): string {
+    return interpolate(this.t.translations().projects.handedTo, {
+      file: launched.fileName,
+      slicer: `${slicerDisplayName(launched.launch.slicerId)} (${launched.launch.installLabel})`,
+    })
+  }
+
+  /**
    * Every mutation on this page routes through here (ruling 64): one error surface, one
    * reload, and nothing escaping as an unhandled rejection. Resolves to whether it worked,
    * for the callers that need to know (the tag input keeps its text on a failure).
@@ -670,6 +959,20 @@ export class ProjectDetailPage {
       this.errorMessage.set(this.describe(error))
       return false
     }
+  }
+
+  /**
+   * A refused launch shows the shell's own sentence rather than a generic apology.
+   *
+   * Every refusal this call can produce says something the user can act on — which of three
+   * problems stopped a strip and that the other path is still open, or which of two installs of a
+   * product they have to choose between — and mapping those onto "something went wrong" would
+   * throw away the whole point of the main process having phrased them. They are English whatever
+   * the chosen language, exactly as the install labels on `/settings/slicers` already are; giving
+   * them a translatable vocabulary is a change to the IPC contract, not to this line.
+   */
+  private describeLaunch(error: unknown): string {
+    return isAppError(error) ? error.message : this.t.translations().errors.generic
   }
 
   private describe(error: unknown): string {
