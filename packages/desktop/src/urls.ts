@@ -140,7 +140,12 @@ export function navigationPolicy(url: string): NavigationPolicy {
  *
  * - `allow` — **`http:` and `https:`.** This is a browser.
  *
- * - `allow` — **`blob:` and `data:`, and this arm is load-bearing.** The one download this project
+ * - `allow` — **`blob:` and `data:`. `blob:` is the measured one and it is load-bearing; `data:`
+ *   rides along with it.** Nothing measured makes `data:` load-bearing — no download, on any of the
+ *   four sites, came down one — and it is allowed because it is the same kind of
+ *   document-the-page-made-itself as a `blob:`, with the same absence of a preload, a bridge and a
+ *   reachable `spm://`, so refusing it would buy nothing while leaving one more idiom to discover
+ *   the hard way. The `blob:` evidence: the one download this project
  *   has ever completed came down a `blob:` URL: Thingiverse's "Download all files" produced
  *   `getURL()` = `blob:https://www.thingiverse.com/ae5e9664-…`, that single URL as the whole
  *   `getURLChain()`, and 21 060 699 bytes of real ZIP. Under an `http(s)`-only policy that
@@ -181,7 +186,7 @@ export function navigationPolicy(url: string): NavigationPolicy {
  * **`spm:` and `file:` have no branch of their own on purpose.** They fall through to the same
  * default as everything else, because a branch whose body is the default's body is a branch no test
  * can distinguish and no mutation can kill. They are named in this docblock and pinned by value in
- * `test/browse.test.ts` instead.
+ * `test/browse-policy.test.ts` instead.
  *
  * **This policy is consulted by four hooks, not one**, and attaching three of them is the gap that
  * passes every test written against the fourth. Measured on Electron 44: `will-frame-navigate`

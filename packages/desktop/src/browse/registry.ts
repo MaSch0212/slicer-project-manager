@@ -44,6 +44,14 @@ function segments(url: URL): string[] {
  * `2093108-dji-neo-2-the-box` and the slug-less `2093108` (which the site 307s to the canonical)
  * read as `2093108`, and a segment that merely *starts* with digits and continues into letters
  * does not.
+ *
+ * **What the unpinned marker costs**, since the terminator note above only covers the other half:
+ * the marker is matched at *any* depth, so a path that merely contains the segment reads as a
+ * model. `https://www.printables.com/social/1-user/model/999-x` keys as `printables:999` against
+ * this registry, verified. No such URL is known on either site — every observed Printables and
+ * MakerWorld path has the marker at depth 0 or 1 — so this is a shape the rule would mis-key if it
+ * appeared, not one it mis-keys today. Pinning the marker to position 0 is not the fix: that is
+ * exactly what makes MakerWorld's locale segment stop working, measured by doing it.
  */
 function idAfter(url: URL, marker: string): string | null {
   const parts = segments(url)
@@ -110,13 +118,31 @@ export const MODEL_SITES: readonly ModelSiteDef[] = [
      * guarded: `decodeURIComponent` throws on a lone `%`, and a URL that cannot be decoded should
      * key on its raw segment rather than blow up a page that is only trying to suggest a project.
      *
-     * **The known cost of this row**, recorded rather than papered over: a *listing* page such as
-     * `/en/3d-model/various` also has a final segment, so it keys as `cults3d:various` — which
-     * would collide with a model whose slug is literally `various`. The alternative (requiring the
-     * four-segment shape the spike observed) invents a pattern from four sampled URLs, and the
-     * collision it would prevent needs a user to have stored a listing page as a project website.
-     * Spec 6.2's row wins; this note is here so a future reader knows the choice was made rather
-     * than missed.
+     * **The known cost of this row, stated as the whole class rather than one example.** The row
+     * reads the final segment of *any* Cults3D path, so **every non-model page on the site lands in
+     * the model key namespace**, and any two Cults3D URLs whose final segments match share a key.
+     * Run through `matchKey` against this registry:
+     *
+     * ```
+     * https://cults3d.com/en/3d-model/various/hyper-hopper  =>  cults3d:hyper-hopper
+     * https://cults3d.com/en/users/hyper-hopper             =>  cults3d:hyper-hopper
+     * https://cults3d.com/en/tags/hyper-hopper              =>  cults3d:hyper-hopper
+     * https://cults3d.com/en                                =>  cults3d:en
+     * ```
+     *
+     * A designer profile whose handle equals one of their own model slugs is the realistic pairing
+     * here — considerably more likely than a model slugged `various` colliding with the
+     * `/en/3d-model/various` listing, which is the only case an earlier draft of this note
+     * described. The locale home is the same class: `https://cults3d.com/` is not what a user
+     * copies. Measured 2026-08-29 over the network, it answers **200 with no redirect**, but its
+     * own `<link rel="canonical">` is `https://cults3d.com/en` — so the URL a browsing user sits on
+     * and pastes is the locale-prefixed one, and that keys as `cults3d:en`.
+     *
+     * The alternative — requiring the four-segment shape the spike observed — invents a pattern
+     * from four sampled URLs, and would break the moment Cults3D varied its depth. Spec 6.2's row
+     * wins, and spec 6.3's rule that a match is a suggestion the user confirms is what makes the
+     * cost survivable. This note is here so a future reader knows the choice was made rather than
+     * missed, and `browse-registry.test.ts` pins every line of the block above by value.
      */
     identity: (url) => {
       const parts = segments(url)

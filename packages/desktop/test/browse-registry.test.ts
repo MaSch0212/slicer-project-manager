@@ -49,16 +49,71 @@ test('every homeUrl parses, is https, and is on one of the row own hosts', () =>
   }
 })
 
-test('identity() returns null for the site own home URL, because a home page is not a model', () => {
+test('identity() returns null for the registry homeUrl — but only for that exact spelling', () => {
+  /*
+   * The narrow claim, and it is worth naming what it does not cover. `homeUrl` is the bare origin
+   * for all four rows, and none of them reads it as a model. That is **not** the same as "a home
+   * page is not a model", which is what an earlier version of this test name said.
+   *
+   * Cults3D is where the two come apart. `https://cults3d.com/` answers 200 with no redirect
+   * (measured 2026-08-29 over the network), but its own `<link rel="canonical">` is
+   * `https://cults3d.com/en` — so the URL a browsing user's address bar carries, and the one they
+   * would paste into `projects.website`, is the locale-prefixed form, and that form has a final
+   * path segment like any other. It keys as `cults3d:en`. The next test pins that by value rather
+   * than leaving the gap between "the registry's home URL" and "the home page" unstated.
+   */
   for (const site of MODEL_SITES) {
     assert.equal(site.identity(new URL(site.homeUrl)), null, site.id)
   }
 })
 
-test('a home URL keys to its host, not to the site — an unmatched page must not collapse', () => {
+test('a registry home URL keys to its host, not to the site — an unmatched page must not collapse', () => {
   assert.deepEqual(
     MODEL_SITES.map((site) => matchKey(site.homeUrl, MODEL_SITES)),
     ['thingiverse.com', 'printables.com', 'makerworld.com', 'cults3d.com'],
+  )
+})
+
+test("Cults3D's row puts every non-model page in the model key namespace — the cost, pinned", () => {
+  /*
+   * Not a bug report: this is the measured consequence of spec 6.2's row, which keys a Cults3D URL
+   * on its final path segment because nothing else in the path survives a locale change. Reading
+   * *any* final segment means every non-model page lands in the same namespace, and two Cults3D
+   * URLs whose final segments match share a key.
+   *
+   * The realistic pairing is a designer profile whose handle equals one of their own model slugs —
+   * considerably more likely than the listing-vs-model case an earlier note described. It is
+   * asserted here so that task 5 reads the whole class rather than one example, and so a future
+   * narrowing of the row has a red test telling it what it changed.
+   *
+   * spec 6.3 is what makes this survivable: a match is a suggestion the user confirms, never
+   * something applied silently.
+   */
+  const model = matchKey('https://cults3d.com/en/3d-model/various/hyper-hopper', MODEL_SITES)
+  assert.equal(model, 'cults3d:hyper-hopper')
+  for (const url of [
+    'https://cults3d.com/en/users/hyper-hopper',
+    'https://cults3d.com/en/tags/hyper-hopper',
+  ]) {
+    assert.equal(matchKey(url, MODEL_SITES), model, url)
+  }
+
+  // The localized home is the same class. `https://cults3d.com/` is not what a user copies.
+  assert.equal(matchKey('https://cults3d.com/en', MODEL_SITES), 'cults3d:en')
+  assert.equal(matchKey('https://cults3d.com/de', MODEL_SITES), 'cults3d:de')
+})
+
+test('the id-bearing rows read their marker at any depth, and that is aggressive in one direction', () => {
+  /*
+   * The other half of the terminator note in `idAfter`. Searching for `model`/`models` anywhere in
+   * the path is what makes MakerWorld's locale segment free — pinning it to position 0 was
+   * mutated and reddens the MakerWorld rows — but it also means a deeper path containing the
+   * marker reads as a model. No such URL is known on either site; this pins the shape so a future
+   * reader knows it was measured rather than missed.
+   */
+  assert.equal(
+    matchKey('https://www.printables.com/social/1-user/model/999-x', MODEL_SITES),
+    'printables:999',
   )
 })
 
