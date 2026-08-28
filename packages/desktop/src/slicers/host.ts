@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import type { SlicerConfigDto, SlicerId } from '@spm/contract/dtos.ts'
-import { AppError } from '@spm/contract/errors.ts'
+import { AppError, DETECTION_FAILED } from '@spm/contract/errors.ts'
 import {
   emptyConfig,
   NODE_RESOLVE_FILE_CHECK,
@@ -26,11 +26,11 @@ import { SLICERS } from './registry.ts'
 /**
  * `details.reason` on the `Internal` a failed detection throws.
  *
- * A constant rather than a literal because the settings page switches on it, and a string two
- * packages both spell by hand is a string that drifts. Task 3 imports the DTO, not this — the
- * value is what crosses the boundary, so it is written into the handoff table as well.
+ * It moved to `@spm/contract/errors.ts` in task 3 and is re-exported here so this module's own
+ * callers and tests read unchanged. The move is the point: the settings page switches on this
+ * value across the IPC boundary, and the alternative was two packages each spelling it by hand.
  */
-export const DETECTION_FAILED = 'detection-failed'
+export { DETECTION_FAILED }
 
 /**
  * The one thing that owns `slicers.json`, and the only place its lifecycle lives.
