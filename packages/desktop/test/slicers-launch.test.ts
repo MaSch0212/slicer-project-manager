@@ -10,7 +10,7 @@ import {
   writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { basename, dirname, join } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 import { after, before, test } from 'node:test'
 import type { SlicerId } from '@spm/contract/dtos.ts'
 import { AppError } from '@spm/contract/errors.ts'
@@ -493,6 +493,9 @@ test('launch.json records the launch, with launchedHash equal to entryHash of wh
     fileName: 'bracket.3mf',
     launchedHash: entryHash(join(directory, 'bracket.3mf')),
     startedAt: 1_756_400_000_123,
+    // Which library this came out of. `slicer-sessions/` is per-machine and every id above is
+    // per-library, so without this a session survives a folder switch as an unanswerable row.
+    library: `local:${resolve(libDir)}`,
     // Task 5's three, and each one is a fact the reconcile cannot recover afterwards: four of
     // five slicers save back *over* this file, so once the first Ctrl+S lands nothing on disk can
     // still say what it was, how big it was, or what was in it.

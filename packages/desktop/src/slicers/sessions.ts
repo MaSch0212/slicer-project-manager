@@ -30,7 +30,13 @@ import {
 import { writeJsonFile } from '../json-store.ts'
 import type { DesktopSession } from '../library.ts'
 import { FILE_URL_BASE } from '../urls.ts'
-import { LAUNCH_RECORD_NAME, type LaunchedSession, type SlicerLaunchRecord } from './launch.ts'
+import {
+  LAUNCH_RECORD_NAME,
+  libraryKeyOf,
+  sameLibrary,
+  type LaunchedSession,
+  type SlicerLaunchRecord,
+} from './launch.ts'
 import { isSlicerId } from './registry.ts'
 import { remoteProject, remoteUpload, requireRemote, type RemoteProxy } from './remote-files.ts'
 
@@ -105,14 +111,15 @@ import { remoteProject, remoteUpload, requireRemote, type RemoteProxy } from './
  */
 export const SWEPT_RECORD_TTL_MS = 90 * 24 * 60 * 60 * 1000
 
-/**
- * After this long with no activity a session is *listed as stale* — listed, never deleted.
- * **Also a judgement, not a measurement.**
- *
- * The renderer applies it, because the only thing it needs is `startedAt`, which every session
- * carries. It is exported so the one number has one home.
+/*
+ * **The thirty-day stale threshold is deliberately not here.** It lived here for one round,
+ * exported and referenced by nothing, under a docblock claiming it gave the number "one home" —
+ * which was false in the strongest way, because the number had two homes and this was the one
+ * nothing read. Staleness is applied entirely in the renderer, over the `startedAt` every
+ * `SlicerSessionDto` carries, so the renderer is where it lives:
+ * `packages/web/src/app/core/slicer-sessions.card.ts`. Nothing in this package needs it, and an
+ * unread copy here would be a second definition pretending to be the first.
  */
-export const STALE_SESSION_MS = 30 * 24 * 60 * 60 * 1000
 
 /**
  * How long a file may go on being unreadable before the app says so rather than waiting.
@@ -166,7 +173,7 @@ export type SlicerSessionsOptions = {
   session: () => DesktopSession | null
   /** Whether the shell is pointed at a server rather than at a folder. */
   isRemote: () => boolean
-  /** The server, for the remote import. Null in local mode. */
+  /** The server, for the remote import and for `libraryKeyOf`. Null in local mode. */
   remote: () => RemoteProxy | null
   now?: () => number
   watch?: WatchDirectory
@@ -221,7 +228,28 @@ type Session = {
   path: string
   directory: string
   record: SlicerLaunchRecord | null
+  /**
+   * Whether this session was launched from a library that is not the one open now.
+   *
+   * `slicer-sessions/` is per-*machine* while every id in a record is per-*library*, so without
+   * this a folder switch left `/settings/slicers` listing every library the app had ever launched
+   * from, indistinguishably — and an import resolved its `projectId` against whatever was open,
+   * answered `NotFound`, and reached the user as "something went wrong". Nothing is deleted and
+   * switching back recovers everything; what was wrong was presenting a mixture as one memory.
+   *
+   * Always false for an orphan and for a record written before the field existed: "cannot tell"
+   * is not "belongs to somebody else", and hiding a session on a guess is the one move a list
+   * whose job is to surface things must not make.
+   */
+  foreign: boolean
 }
+
+/**
+ * What one file looked like the last time it was hashed, so an unchanged file is not hashed again.
+ *
+ * See `#hashes` for why this exists and exactly what it can and cannot miss.
+ */
+type HashedOnce = { key: string; hash: string }
 
 /** What a read of the file on disk found. See {@link probeFile}. */
 type Probe =
@@ -278,6 +306,36 @@ export class SlicerSessions {
   /** See `comparisonCount`. Incremented by the watch and the poll, never by `list()`. */
   #comparisons = 0
 
+  /**
+   * The last hash computed for each path, against the `(mtime, size, inode)` it had then.
+   *
+   * **`list()` is the hot path, and it was re-hashing everything on every project page visit.**
+   * The card mounts whenever a launch is possible and asks on construction, so every navigation
+   * ran `entryHash` over every launch directory — decompressing every entry of every archive, and
+   * a whole-file SHA-256 for anything that is not one — synchronously, on the main process,
+   * behind an IPC call. `sweepAtStart` had already been given exactly this diagnosis and exactly
+   * this fix a round earlier; the hot path had not.
+   *
+   * **What survives:** `list()` is still the mechanism of record and still *asks the disk* every
+   * time. What it skips is recomputing a hash for bytes whose modification time, size and inode
+   * are all unchanged since the last time it read them — which is the same use of mtime `#onPoll`
+   * already makes, as a hint about whether to bother.
+   *
+   * **What it can miss, stated rather than implied:** a write that changes content while
+   * preserving mtime *and* size *and* inode. Nothing measured does that — the four in-place savers
+   * either skip the write entirely when nothing is dirty (mtime unchanged, content unchanged, the
+   * cache is right) or write and move mtime — and the cost is bounded, because the next write that
+   * does move mtime re-hashes. It is the same trade the poll makes, made once more in a place
+   * where the alternative is a frozen window.
+   *
+   * Invalidated by a mismatch on any of the three, and by `#sweep`, which is the one thing here
+   * that removes a file out from under a cached entry.
+   */
+  readonly #hashes = new Map<string, HashedOnce>()
+
+  /** For tests: how many times a hash was actually computed rather than reused. */
+  #hashed = 0
+
   constructor(options: SlicerSessionsOptions) {
     this.#sessionsDir = options.sessionsDir
     this.#session = options.session
@@ -305,7 +363,18 @@ export class SlicerSessions {
    * `processAlive`, which is the one fact only the spawner can know.
    */
   list(): SlicerSessionDto[] {
-    return this.#scan().map((session) => session.dto)
+    const all = this.#scan()
+    const mine = all.filter((session) => !session.foreign)
+    const foreign = all.length - mine.length
+    if (foreign > 0) {
+      // Not an error and not hidden work: they belong to a library that is not open, and opening
+      // it brings them straight back. Said in the log because a count that silently drops is the
+      // shape this fix exists to remove.
+      console.info(
+        `desktop: ${foreign} slicer session(s) belong to a library that is not open, and are not listed`,
+      )
+    }
+    return mine.map((session) => session.dto)
   }
 
   /**
@@ -438,7 +507,12 @@ export class SlicerSessions {
    */
   async discardMany(launchIds: readonly string[]): Promise<{ discarded: number }> {
     const wanted = new Set(launchIds)
-    const found = this.#scan().filter((session) => wanted.has(session.dto.launchId))
+    // `!foreign` for the same reason `#require` refuses one: a session belonging to a library that
+    // is not open is not this window's to answer, and a bulk action is the last place to make an
+    // exception to that.
+    const found = this.#scan().filter(
+      (session) => wanted.has(session.dto.launchId) && !session.foreign,
+    )
     for (const session of found) this.#sweep(session)
     return await Promise.resolve({ discarded: found.length })
   }
@@ -504,6 +578,17 @@ export class SlicerSessions {
    */
   comparisonCount(): number {
     return this.#comparisons
+  }
+
+  /**
+   * How many times a file has actually been hashed.
+   *
+   * Here for the same reason `comparisonCount` is: a memo that works and a memo that does nothing
+   * produce identical `list()` output, so without this the whole of `#hashes` would be a branch
+   * no assertion could fail on — which is the same as not having written it.
+   */
+  hashCount(): number {
+    return this.#hashed
   }
 
   #onChanged(tracked: Tracked): void {
@@ -618,6 +703,8 @@ export class SlicerSessions {
    */
   #scan(): Session[] {
     if (!existsSync(this.#sessionsDir)) return []
+    // Once per enumeration, not once per session: it resolves a path and reads two accessors.
+    const library = libraryKeyOf(this.#isRemote(), this.#session(), this.#remote())
     const sessions: Session[] = []
     for (const entry of readdirSync(this.#sessionsDir, { withFileTypes: true })) {
       if (entry.isFile()) {
@@ -632,7 +719,7 @@ export class SlicerSessions {
         .map((child) => child.name)
       for (const name of files) {
         if (record !== null && name === record.fileName) {
-          sessions.push(this.#launched(entry.name, directory, record))
+          sessions.push(this.#launched(entry.name, directory, record, library))
         } else {
           if (record !== null) {
             console.warn(
@@ -648,7 +735,12 @@ export class SlicerSessions {
   }
 
   /** The file a `launch.json` describes: everything the DTO can carry is known for this one. */
-  #launched(launchId: string, directory: string, record: SlicerLaunchRecord): Session {
+  #launched(
+    launchId: string,
+    directory: string,
+    record: SlicerLaunchRecord,
+    library: string | null,
+  ): Session {
     const path = join(directory, record.fileName)
     const { state: fileState, sizeBytes } = this.#inspect(path, record.launchedHash)
     const settled = fileState === 'unchanged' || fileState === 'changed'
@@ -674,7 +766,7 @@ export class SlicerSessions {
         ? { entryDiff: diffOf(record.launchedEntries, path) }
         : {}),
     }
-    return { dto, path, directory, record }
+    return { dto, path, directory, record, foreign: !sameLibrary(record.library, library) }
   }
 
   /**
@@ -719,12 +811,24 @@ export class SlicerSessions {
       isOrphan: true,
       ...(returnedSizeBytes === undefined ? {} : { returnedSizeBytes }),
     }
-    return { dto, path, directory, record }
+    // Never foreign. An orphan has no record and therefore no library, and a file with nothing to
+    // explain it is exactly what sweep rule 2 says must always be offered to somebody.
+    return { dto, path, directory, record, foreign: false }
   }
 
   #require(launchId: string): Session {
     const session = this.#scan().find((candidate) => candidate.dto.launchId === launchId)
     if (!session) throw new AppError('NotFound', 'no such slicer session', { launchId })
+    // Named rather than answered `NotFound`: the session is there, it simply is not this
+    // library's, and "that file came from a different library" is something a person can act on
+    // where "no such session" would send them looking for a bug.
+    if (session.foreign) {
+      throw new AppError(
+        'Conflict',
+        'that file was launched from a different library; open that library again to answer it',
+        { launchId },
+      )
+    }
     return session
   }
 
@@ -751,7 +855,9 @@ export class SlicerSessions {
     path: string,
     launchedHash: string | null,
   ): { state: SlicerSessionDto['fileState']; sizeBytes?: number } {
-    const probe = probeFile(path)
+    const probe = probeFile(path, this.#hashes, () => {
+      this.#hashed += 1
+    })
     if (probe.state === 'settling') {
       const since = this.#unsettledSince.get(path) ?? this.#now()
       this.#unsettledSince.set(path, since)
@@ -867,6 +973,14 @@ export class SlicerSessions {
   #sweep(session: Session): void {
     rmSync(session.path, { force: true })
     this.#unsettledSince.delete(session.path)
+    // **Hygiene first, and correctness only in a case nothing can provoke.** The path is gone, so
+    // its entry can never be hit again by that file, and without this the map grows by one entry
+    // per swept launch for the life of the process. The correctness half — a file recreated at
+    // this path matching the swept one on mtime *and* size *and* inode — cannot be written as a
+    // test that means anything: forcing all three would take `utimesSync` plus an inode the
+    // platform chooses, so the assertion would pass or fail on which filesystem ran it. Removing
+    // this line leaves every test green, and it is kept for the leak rather than for the race.
+    this.#hashes.delete(session.path)
     this.#untrack(session.dto.launchId)
     if (session.record !== null && session.dto.isOrphan === false) {
       writeJsonFile(join(session.directory, LAUNCH_RECORD_NAME), {
@@ -911,7 +1025,7 @@ export class SlicerSessions {
  * an `.obj` take the plain-hash path and never settle for ever. The bytes and not the extension,
  * because the extension is the user's and the magic is the writer's.
  */
-function probeFile(path: string): Probe {
+function probeFile(path: string, cache: Map<string, HashedOnce>, onHash: () => void): Probe {
   let info
   try {
     info = statSync(path)
@@ -920,12 +1034,25 @@ function probeFile(path: string): Probe {
   }
   if (!info.isFile()) return { state: 'gone' }
   if (info.size === 0) return { state: 'settling', why: 'the file is still empty' }
+  // The identity of these bytes as the filesystem sees them. The inode is in it because it is
+  // free and because on a rename-into-place — which is how an atomic writer works — it is the
+  // field most likely to have moved; on a platform that reports 0 for it, mtime and size carry
+  // the whole weight, which is what they carry everywhere else in this file anyway.
+  const key = `${info.mtimeMs}:${info.size}:${String(info.ino)}`
+  const cached = cache.get(path)
+  if (cached !== undefined && cached.key === key) {
+    return { state: 'ready', hash: cached.hash, sizeBytes: info.size }
+  }
   try {
     if (looksLikeZip(path) && !readsAsZip(path)) {
       return { state: 'settling', why: 'the archive directory does not parse yet' }
     }
-    return { state: 'ready', hash: entryHash(path), sizeBytes: info.size }
+    onHash()
+    const hash = entryHash(path)
+    cache.set(path, { key, hash })
+    return { state: 'ready', hash, sizeBytes: info.size }
   } catch (error) {
+    // Not cached: a read that failed says nothing about what the bytes will be once it succeeds.
     return { state: 'settling', why: error instanceof Error ? error.message : String(error) }
   }
 }

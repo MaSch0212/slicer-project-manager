@@ -162,6 +162,8 @@ type HarnessOptions = {
   isRemote?: boolean
   remote?: RemoteProxy | null
   hasLibrary?: boolean
+  /** Which folder the open library reports, so a folder switch is a value rather than a fixture. */
+  libraryDir?: string
 }
 
 function harness(options: HarnessOptions = {}): Harness {
@@ -172,7 +174,13 @@ function harness(options: HarnessOptions = {}): Harness {
   const watched: Watched[] = []
   const sessions = new SlicerSessions({
     sessionsDir,
-    session: () => (options.hasLibrary === false ? null : { lib, ctx }),
+    session: () =>
+      options.hasLibrary === false
+        ? null
+        : {
+            lib: options.libraryDir === undefined ? lib : { ...lib, dir: options.libraryDir },
+            ctx,
+          },
     isRemote: () => options.isRemote === true,
     remote: () => options.remote ?? null,
     now: () => clock.now,
@@ -549,6 +557,139 @@ test('a record written before task 5 can still be imported and swept', async () 
 })
 
 /* -------------------------------------------------------------------------------------------
+ * Which library a session belongs to
+ * ---------------------------------------------------------------------------------------- */
+
+test('a session from a library that is not open is not listed, and is not answerable', async () => {
+  const h = harness()
+  const { directory, path } = launchDirectory(h, 'launch-elsewhere', 'bracket.3mf', curaProject, {
+    library: `local:${join(root, 'some-other-library')}`,
+  })
+
+  // `slicer-sessions/` is per-machine and every id in a record is per-library, so without the
+  // library key this sat on `/settings/slicers` beside the open library's own sessions, and an
+  // import resolved its `projectId` against whatever happened to be open.
+  assert.deepEqual(h.sessions.list(), [])
+
+  const refused = await rejection(h.sessions.resolve('launch-elsewhere', 'import', {}))
+  assert.equal(refused.code, 'Conflict')
+  assert.match(refused.message, /different library/)
+  // Nothing was deleted, and nothing was uploaded. Switching back is the whole recovery.
+  assert.equal(existsSync(path), true)
+  assert.equal(existsSync(directory), true)
+  assert.deepEqual(await h.sessions.discardMany(['launch-elsewhere']), { discarded: 0 })
+})
+
+test('the same session lists again once its own library is open', () => {
+  const elsewhere = join(root, 'the-other-library')
+  const h = harness({ libraryDir: elsewhere })
+  launchDirectory(h, 'launch-theirs', 'bracket.3mf', curaProject, {
+    library: `local:${elsewhere}`,
+  })
+
+  // The pair to the test above, against the same fixture: if the filter refused everything, both
+  // would pass, and only this one says the key is being compared rather than merely present.
+  assert.equal(only(h.sessions.list()).launchId, 'launch-theirs')
+})
+
+test('an orphan beside a foreign record is still listed, because it is nobody else to lose', () => {
+  const h = harness()
+  const { directory } = launchDirectory(h, 'launch-foreign', 'bracket.3mf', curaProject, {
+    library: `local:${join(root, 'not-this-one')}`,
+  })
+  // What a Cura Save-As into somebody else's launch directory leaves behind. The launched file is
+  // that library's business; this one has no record of its own, and the two rules meet here —
+  // "only this library's sessions" must not quietly become "and none of the files it cannot
+  // explain either", which is the one thing sweep rule 2 forbids outright.
+  curaProject(join(directory, 'came-back.3mf'))
+
+  assert.deepEqual(
+    h.sessions.list().map((session) => [session.launchId, session.isOrphan]),
+    [['launch-foreign/came-back.3mf', true]],
+  )
+  assert.equal(existsSync(join(directory, 'came-back.3mf')), true)
+})
+
+test('a remote session is told apart by its origin, not merely by being remote', () => {
+  const remote = recordingRemote()
+  const h = harness({ isRemote: true, remote: remote.proxy })
+  launchDirectory(h, 'launch-here', 'a.3mf', curaProject, {
+    library: 'remote:https://library.invalid',
+  })
+  launchDirectory(h, 'launch-there', 'b.3mf', curaProject, {
+    library: 'remote:https://someone-else.invalid',
+  })
+
+  assert.deepEqual(
+    h.sessions.list().map((session) => session.launchId),
+    ['launch-here'],
+  )
+})
+
+test('a record with no library at all is still listed, and an orphan always is', () => {
+  const h = harness({ libraryDir: join(root, 'a-third-library') })
+  // Written before the field existed. "Cannot tell" is not "belongs to somebody else", and
+  // hiding these would be this change deleting the user's memory of unfinished work.
+  taskFourRecord(h, 'launch-task4-lib', 'bracket.3mf', 'project-4', curaProject)
+  curaProject(join(h.sessionsDir, 'stray.3mf'))
+
+  assert.deepEqual(
+    h.sessions
+      .list()
+      .map((session) => session.launchId)
+      .sort(),
+    ['launch-task4-lib', 'stray.3mf'],
+  )
+})
+
+/* -------------------------------------------------------------------------------------------
+ * Not re-reading what has not moved
+ * ---------------------------------------------------------------------------------------- */
+
+test('listing twice hashes once, and a write is still noticed', () => {
+  const h = harness()
+  const { path } = launchDirectory(h, 'launch-memo', 'bracket.3mf', (target) =>
+    projectWithSetting(target, 'one'),
+  )
+  // The fixture hashes with `entryHash` directly, not through the host, so nothing is memoised yet.
+  assert.equal(h.sessions.hashCount(), 0)
+
+  // The hot path: the card mounts on every project page visit and asks on construction. This used
+  // to decompress every entry of every archive under `slicer-sessions/` on each of them,
+  // synchronously, on the main process, behind an IPC call.
+  assert.equal(only(h.sessions.list()).fileState, 'unchanged')
+  const afterFirst = h.sessions.hashCount()
+  assert.equal(afterFirst, 1, 'the first list has to actually read the file')
+  for (let i = 0; i < 5; i += 1) assert.equal(only(h.sessions.list()).fileState, 'unchanged')
+  assert.equal(h.sessions.hashCount(), afterFirst, 'nothing moved, and it read the bytes anyway')
+
+  // And the half that matters: `list()` is still the mechanism of record. It asks the disk every
+  // time; what it skips is recomputing a hash for bytes whose mtime, size and inode all agree.
+  projectWithSetting(path, 'two')
+  assert.equal(only(h.sessions.list()).fileState, 'changed')
+  assert.ok(h.sessions.hashCount() > afterFirst, 'a changed file was answered from the memo')
+})
+
+test('a file recreated after a sweep is hashed again rather than remembered', () => {
+  const h = harness()
+  const { directory, path, record } = launchDirectory(h, 'launch-memo-2', 'bracket.3mf', (target) =>
+    projectWithSetting(target, 'one'),
+  )
+  const child = trackLaunch(h, 'launch-memo-2', directory, path, record.launchedHash)
+  child.exit()
+  h.clock.advance(11_000)
+  assert.equal(existsSync(path), false)
+
+  // Row 20 puts a complete file back at exactly this path. A memo the sweep had not invalidated
+  // would answer for it out of what the *previous* file hashed to.
+  projectWithSetting(path, 'two')
+  const before = h.sessions.hashCount()
+
+  assert.equal(only(h.sessions.list()).fileState, 'changed')
+  assert.ok(h.sessions.hashCount() > before)
+})
+
+/* -------------------------------------------------------------------------------------------
  * Change detection, end to end
  * ---------------------------------------------------------------------------------------- */
 
@@ -772,10 +913,16 @@ test('the real fs.watch reaches the settle loop on this platform', async () => {
     assert.equal(sessions.comparisonCount(), 0)
 
     bambuLineageProject(path, ['OrcaSlicer-Version'])
-    // A real event, so a real wait — short, and generous enough for a slow runner. The debounce
-    // after it is on the injected clock.
-    await new Promise((resolve) => setTimeout(resolve, 300))
-    clock.advance(1_000)
+
+    // A real event, so a real wait — but polled to a generous ceiling rather than slept for a
+    // fixed 300 ms, which is the shape `library.test.ts` was fixed for in this same task: the
+    // behaviour being ruled out is "the event never arrives", so any ceiling separates the two and
+    // a tight one only measures how busy the machine is. It exits on the first tick that sees it.
+    const deadline = Date.now() + 20_000
+    while (sessions.comparisonCount() === 0 && Date.now() < deadline) {
+      await new Promise((settle) => setTimeout(settle, 25))
+      clock.advance(1_000)
+    }
 
     assert.ok(sessions.comparisonCount() > 0, 'fs.watch never reached the settle loop')
   } finally {
@@ -992,6 +1139,9 @@ test('a remote launch downloads through the proxy and launches out of the launch
   assert.equal(record.projectId, 'p-1')
   assert.equal(record.fileId, 'f-1')
   assert.equal(record.sourceSlicer, 'cura')
+  // Which library this came out of. In remote mode that is an origin, and two servers with a
+  // project of the same id are otherwise indistinguishable in `slicer-sessions/`.
+  assert.equal(record.library, 'remote:https://library.invalid')
 })
 
 test('a remote launch of an .stl also goes through a launch directory', async () => {
@@ -1197,6 +1347,22 @@ test('a remote failure keeps its code across the wire', async () => {
   assert.equal(error.message, 'no room')
 })
 
+test('a 200 that is not a project is a sentence, not a TypeError dressed as one', async () => {
+  // A proxy's idea of an error page, or a server this app is not actually talking to. Cast
+  // unchecked, this reached `detail.files.find` and arrived at the user as `Internal` carrying a
+  // Node message about reading a property of undefined.
+  const remote = new RemoteHost('https://library.invalid', () => Promise.resolve(jsonResponse({})))
+  const { launcher, spawns, sessionsDir } = remoteLauncher(remote)
+
+  const error = await rejection(launcher.open('f-1', 'p-1', { mode: 'new-project' }))
+
+  assert.equal(error.code, 'Internal')
+  assert.match(error.message, /did not answer with a project/)
+  assert.doesNotMatch(error.message, /undefined|Cannot read/)
+  assert.equal(spawns.length, 0)
+  assert.deepEqual(readdirSync(sessionsDir), [])
+})
+
 test('a remote server naming a file something unusable is refused before anything is written', async () => {
   const remote = new RemoteHost('https://library.invalid', (input) =>
     Promise.resolve(
@@ -1292,6 +1458,7 @@ function recordingRemote(): { proxy: RemoteProxy; calls: { method: string; path:
   return {
     calls,
     proxy: {
+      origin: 'https://library.invalid',
       proxy: (request: Request) => {
         const url = new URL(request.url)
         calls.push({ method: request.method, path: url.pathname })

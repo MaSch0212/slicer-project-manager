@@ -31,7 +31,17 @@ import { RENDERER_ORIGIN } from '../urls.ts'
  * cannot be assigned to is a seam that only ever sees doubles. A real `RemoteHost` satisfies this
  * unchanged.
  */
-export type RemoteProxy = { proxy(request: Request): Promise<Response> }
+export type RemoteProxy = {
+  proxy(request: Request): Promise<Response>
+  /**
+   * Which server this is, for the launch record.
+   *
+   * A launch directory outlives the library it came from, and in remote mode "the library" is an
+   * origin. Without it a session launched against one server is indistinguishable from one
+   * launched against another — see `libraryKeyOf`.
+   */
+  readonly origin: string
+}
 
 /**
  * A request on the **renderer's** origin, which is what `proxy` takes.
@@ -68,7 +78,27 @@ export async function remoteProject(
 ): Promise<ProjectDetailDto> {
   const response = await remote.proxy(apiRequest(`/projects/${encodeURIComponent(projectId)}`))
   if (!response.ok) throw await failureOf(response, 'could not read that project')
-  return (await response.json()) as ProjectDetailDto
+  let body: unknown
+  try {
+    body = await response.json()
+  } catch {
+    body = null
+  }
+  // Checked rather than cast. A 200 carrying `{}` — a proxy's idea of an error page, a server
+  // this app is not actually talking to — otherwise reached `detail.files.find` as a `TypeError`
+  // and arrived at the user normalised to `Internal` with a Node message in it. This is the
+  // shallowest possible check, and deliberately so: the field this code goes on to *use* from a
+  // file is its name, and that is validated against `fileNameSchema` at the call site.
+  if (!isProjectDetail(body)) {
+    throw new AppError('Internal', 'that server did not answer with a project')
+  }
+  return body
+}
+
+function isProjectDetail(value: unknown): value is ProjectDetailDto {
+  if (typeof value !== 'object' || value === null) return false
+  const detail = value as { id?: unknown; files?: unknown }
+  return typeof detail.id === 'string' && Array.isArray(detail.files)
 }
 
 /**

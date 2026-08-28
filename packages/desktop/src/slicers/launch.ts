@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { copyFileSync, mkdirSync, renameSync, rmSync, statSync } from 'node:fs'
-import { basename, extname, join } from 'node:path'
+import { basename, extname, join, resolve } from 'node:path'
 import type {
   SlicerId,
   SlicerLaunchDto,
@@ -145,6 +145,16 @@ export type SlicerLaunchRecord = {
   fileName: string
   launchedHash: string
   startedAt: number
+  /**
+   * Which library this launch came out of: the resolved folder locally, the origin remotely.
+   *
+   * **A `projectId` alone does not identify anything.** Ids are per-library, the sessions
+   * directory is per-*machine*, and `SlicerSessions` resolves the open library per call — so
+   * without this a session launched from one folder is listed beside one launched from another,
+   * and an import resolves its `projectId` against whatever happens to be open now and answers
+   * `NotFound` with nothing saying why. See `libraryKeyOf`.
+   */
+  library?: string
   /** What the **source** classified as. `SlicerSessionDto.returnedAs` is measured against it. */
   sourceSlicer?: SlicerId | null
   /** The size of the copy as handed over, which an in-place save overwrites and so destroys. */
@@ -447,6 +457,7 @@ export class SlicerLauncher {
     const { install, path: executable } = await this.#slicers.resolveInstall(installId)
 
     const launchId = this.#newLaunchId()
+    const library = libraryKeyOf(remote, this.#session(), this.#remote())
     const directory = join(this.#sessionsDir, launchId)
     const plan =
       source.absPath === null
@@ -466,6 +477,10 @@ export class SlicerLauncher {
         fileName: basename(plan.path),
         launchedHash,
         startedAt: this.#now(),
+        // Null only where neither a folder nor a server is open, which no launch can reach —
+        // both source paths above have already refused by then. Written as `undefined` in that
+        // impossible case rather than as a string that would be wrong.
+        ...(library === null ? {} : { library }),
         sourceSlicer: plan.source.classification.slicer,
         sourceSizeBytes: statSync(plan.path).size,
         // The itemised form of `launchedHash`, and the only thing that can still answer "what did
@@ -735,6 +750,43 @@ type SourceFile = {
  * legible as an interrupted download rather than as something a slicer put there.
  */
 const DOWNLOAD_SUFFIX = '.spm-download'
+
+/**
+ * Which library a launch belongs to, as one comparable string.
+ *
+ * `local:<resolved folder>` or `remote:<origin>`. The prefix is not decoration: without it a
+ * server called `C:\\models` and a folder of that name would compare equal, which is silly but
+ * free to rule out, and it makes a record legible to a person reading `launch.json` by hand.
+ *
+ * **Compared with `sameLibrary`, never with `===`.** Windows paths are case-insensitive, so the
+ * same folder reached through the picker twice can be spelled two ways, and a session that
+ * compared unequal to its own library would be hidden from the only page that can answer it.
+ *
+ * `null` when nothing is open. Callers treat that as "cannot tell" rather than as "foreign":
+ * refusing to list a session because the app has not finished starting would be the wrong kind of
+ * caution on a list whose whole job is to surface things.
+ */
+export function libraryKeyOf(
+  isRemote: boolean,
+  session: DesktopSession | null,
+  remote: { readonly origin: string } | null,
+): string | null {
+  if (isRemote) return remote === null ? null : `remote:${remote.origin}`
+  return session === null ? null : `local:${resolve(session.lib.dir)}`
+}
+
+/**
+ * Whether two library keys name the same library, or whether either is simply unknown.
+ *
+ * Unknown compares *equal* on purpose, and it is the whole of the backward-compatibility story: a
+ * record written before this field existed has no library, and hiding every one of those from the
+ * session list would be this change deleting the user's memory of unfinished work to fix a
+ * labelling problem.
+ */
+export function sameLibrary(a: string | null | undefined, b: string | null | undefined): boolean {
+  if (a === null || a === undefined || b === null || b === undefined) return true
+  return process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b
+}
 
 /** `as-is` needs a slicer project. Shared, because both modes refuse it with the same sentence. */
 function refuseNotAProject(source: { indexed: Classification }): never {
