@@ -428,3 +428,102 @@ test('the outcome check does not fire on references to parts that survived', () 
     assert.deepEqual(result.rewritten, [])
     assert.ok(readZipEntryText(output, find(output, '_rels/.rels')).includes('/3D/3dmodel.model'))
   }))
+
+test('an entity-encoded target is resolved the way a parser would resolve it', () =>
+  withDir((dir) => {
+    // Legal XML: a conforming consumer is handed `/Metadata/custom_gcode_per_layer.xml`. This
+    // slipped past both the element patterns and the outcome check until `resolvePartName`
+    // learned to decode character references — and it slipped past because `&#46;` contains the
+    // `#` that the fragment split was eating.
+    const shapes: Record<string, string> = {
+      decimal: '/Metadata/custom_gcode_per_layer&#46;xml',
+      hex: '/Metadata/custom_gcode_per_layer&#x2E;xml',
+      mixed: '/Metadata/custom&#x5F;gcode_per_layer&#46;xml',
+    }
+    for (const [label, target] of Object.entries(shapes)) {
+      const input = join(dir, `${label}.3mf`)
+      const output = join(dir, `${label}-out.3mf`)
+      withRels(
+        input,
+        `<Relationships><Relationship Id="a" Target="${target}" Type="t"/></Relationships>`,
+      )
+
+      const result = strip3mf(input, output)
+
+      assert.deepEqual(result.rewritten, ['_rels/.rels'], label)
+      assert.equal(
+        readZipEntryText(output, find(output, '_rels/.rels')).includes('custom'),
+        false,
+        label,
+      )
+    }
+  }))
+
+test('a reference that only looks entity-encoded is left as the literal text it is', () =>
+  withDir((dir) => {
+    // Two shapes, one per degenerate branch, and deliberately not one shape carrying both: with
+    // both in the same target each branch masks the other and a mutation to either stays green.
+    // `&#999999999;` is not a character and `&nope;` is not an entity, so a parser resolves
+    // neither and neither target names a part in the package. Each is chosen so that *swallowing*
+    // the reference it cannot resolve would spell `/Metadata/custom_gcode_per_layer.xml` — a part
+    // that was removed — and the relationship would be deleted on the strength of text that does
+    // not say that. Leaving it literal is the safe direction, the same one the percent-escape
+    // catch beside it takes.
+    const shapes: Record<string, string> = {
+      outOfRange: '/Metadata/custom_gcode_per_layer&#999999999;.xml',
+      unknownEntity: '/Metadata/custom_gcode_per_layer&nope;.xml',
+    }
+    for (const [label, target] of Object.entries(shapes)) {
+      const input = join(dir, `${label}.3mf`)
+      const output = join(dir, `${label}-out.3mf`)
+      withRels(
+        input,
+        `<Relationships><Relationship Id="a" Target="${target}" Type="t"/></Relationships>`,
+      )
+
+      const result = strip3mf(input, output)
+
+      assert.deepEqual(result.rewritten, [], label)
+      assert.ok(readZipEntryText(output, find(output, '_rels/.rels')).includes(target), label)
+    }
+  }))
+
+test('the three known false positives of the outcome check are refusals, deliberately', () =>
+  withDir((dir) => {
+    // Each of these is legal and would have stripped cleanly before the outcome check existed.
+    // Pinned so a later change to that check has to notice it moved them, and because a refusal
+    // that nobody wrote down is indistinguishable from a bug. Constraint 9's direction: naming
+    // the part beats the silent success this replaced. None occurs in a measured flavour.
+    const shapes: Record<string, string> = {
+      comment: `<Relationships><!-- was Target="${GONE}" --><Relationship Id="a" Target="/3D/3dmodel.model" Type="t"/></Relationships>`,
+      cdata: `<Relationships><![CDATA[ Target="${GONE}" ]]><Relationship Id="a" Target="/3D/3dmodel.model" Type="t"/></Relationships>`,
+      externalRelative: `<Relationships><Relationship Id="a" Target="Metadata/custom_gcode_per_layer.xml" TargetMode="External" Type="t"/></Relationships>`,
+    }
+    for (const [label, rels] of Object.entries(shapes)) {
+      const input = join(dir, `${label}.3mf`)
+      const output = join(dir, `${label}-out.3mf`)
+      withRels(input, rels)
+      assert.throws(() => strip3mf(input, output), reason('configuration-left-behind'), label)
+      assert.equal(existsSync(output), false, label)
+    }
+  }))
+
+test('a comment wrapping a whole well-formed relationship is still repaired, not refused', () =>
+  withDir((dir) => {
+    const input = join(dir, 'in.3mf')
+    const output = join(dir, 'out.3mf')
+    // The distinction that keeps the false-positive class as narrow as it is: the element pattern
+    // matches inside a comment too, so the reference is removed rather than merely detected.
+    withRels(
+      input,
+      `<Relationships><!-- <Relationship Id="a" Target="${GONE}" Type="t"/> --><Relationship Id="b" Target="/3D/3dmodel.model" Type="t"/></Relationships>`,
+    )
+
+    const result = strip3mf(input, output)
+
+    assert.deepEqual(result.rewritten, ['_rels/.rels'])
+    assert.equal(
+      readZipEntryText(output, find(output, '_rels/.rels')).includes('custom_gcode_per_layer'),
+      false,
+    )
+  }))

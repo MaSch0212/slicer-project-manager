@@ -140,8 +140,9 @@ export function strip3mf(inputPath: string, outputPath: string): Strip3mfResult 
     return result
   } catch (error) {
     discard(outputPath)
-    // `rewriteZip`'s own `'encrypted'` is already one of the three reasons, so it travels
-    // unchanged; its `'unrepresentable'` is not, and lands in `'unreadable'` with everything else.
+    // Two of `rewriteZip`'s four reasons — `'encrypted'` and `'unreadable'` — are already among
+    // the three a user is told, so they travel unchanged. Its `'unrepresentable'` and
+    // `'invalid-request'` are not, and land in `'unreadable'` below with everything else.
     if (stripRefusalReason(error) !== null) throw error
     throw refusal('unreadable', 'the 3MF could not be rewritten', { cause: String(error) })
   }
@@ -255,6 +256,11 @@ function repairReferences(name: string, text: string, removed: ReadonlySet<strin
   }
   return dropElements(text, RELATIONSHIP_ELEMENT, (element) => {
     // An external relationship names a URI, not a part, so it can never be one of the removed.
+    // `danglingReference` does not make this distinction and cannot: it is blind to the element
+    // an attribute sits in. So an external relationship with a *relative* target that resolves
+    // onto a removed part is repaired-as-nothing here and then refused there. Contradictory only
+    // in appearance — this one is about what is safe to delete, that one about what is safe to
+    // ship — and it is listed among that function's known false positives.
     if (attribute(element, 'TargetMode') === 'External') return false
     const target = attribute(element, 'Target')
     if (target === null) return false
@@ -266,16 +272,31 @@ function repairReferences(name: string, text: string, removed: ReadonlySet<strin
 /**
  * The name of a removed part still referenced by `text`, or `null` when none is.
  *
- * A check on the **outcome**, not on the pattern, and that is the whole point: it scans for the
- * two attributes that can name a part — wherever they appear, in whatever element, prefixed or
- * not, with or without a `>` in some neighbouring value — resolves each, and asks whether the
- * result is a part this strip removed. So it holds for XML shapes neither the patterns above nor
- * their author anticipated, and a reference that survives becomes a refusal that names the part
- * rather than a success that quietly ships a dangling one.
+ * A check on the **outcome** rather than on the pattern: it scans for the two attributes that can
+ * name a part — wherever they appear, in whatever element, prefixed or not, with or without a `>`
+ * in some neighbouring value — resolves each the way a parser would, and asks whether the result
+ * is a part this strip removed. A reference that survives becomes a refusal naming the part
+ * instead of a success quietly shipping a dangling one.
  *
- * A false positive is possible in principle — the same attribute text inside an XML comment would
- * be counted — and is the right direction to err: constraint 9 refuses rather than degrades, and
- * the alternative is the failure this replaced.
+ * **What it does not cover, because a probe found it rather than an author guessing it.** An
+ * earlier draft of this comment claimed the check "holds for XML shapes neither the patterns above
+ * nor their author anticipated". It did not, and the counter-example was the original defect
+ * again: an entity-encoded target went past both. That is now decoded in `resolvePartName`, and
+ * the general claim is withdrawn rather than re-made one shape wider. What is true is narrower and
+ * checkable: **this sees any reference written as a `Target=` or `PartName=` attribute whose value
+ * a parser would resolve to a removed part, through character references and percent-escapes.** A
+ * reference carried some other way — a `Target` assembled from an entity-expanded DTD, a namespace
+ * this code does not know names parts — would still pass. No measured flavour writes any of that,
+ * and this comment is the record of where the line is, not a promise there is none.
+ *
+ * **Known false positives**, all three probed, all three refusals on files that are legal and
+ * previously stripped cleanly: the same attribute text inside **an XML comment**, inside **a CDATA
+ * section**, or on **an external relationship with a relative URI** — `repairReferences` skips
+ * `TargetMode="External"` deliberately and this check cannot, being blind to the element the
+ * attribute sits in, which is the same blindness that gives it its reach. Erring this way is
+ * constraint 9's direction: a refusal that names the part beats the silent success it replaced.
+ * Skipping comments and CDATA would mean tracking their nesting — a second partial XML parser
+ * beside the one whose partiality caused this finding, each new rule a new way to blind the check.
  */
 function danglingReference(
   name: string,
@@ -345,6 +366,43 @@ function dropElements(
   return changed ? out : null
 }
 
+/** The five entities XML predefines. Everything else numeric is handled by code point. */
+const NAMED_ENTITIES = new Map([
+  ['amp', '&'],
+  ['lt', '<'],
+  ['gt', '>'],
+  ['quot', '"'],
+  ['apos', "'"],
+])
+const CHARACTER_REFERENCE = /&(?:#(\d+)|#[xX]([0-9a-fA-F]+)|([a-zA-Z]+));/g
+
+/**
+ * What an XML parser hands a consumer for an attribute value: character references resolved.
+ *
+ * Not a nicety. `Target="…custom_gcode_per_layer&#46;xml"` is legal XML naming
+ * `…custom_gcode_per_layer.xml`, and the review found it slipping past both the element patterns
+ * and the outcome check — a strip returning success over an archive still naming a removed part,
+ * which is verbatim the defect the outcome check was added to close.
+ */
+function decodeCharacterReferences(text: string): string {
+  if (!text.includes('&')) return text
+  return text.replace(
+    CHARACTER_REFERENCE,
+    (whole: string, decimal?: string, hex?: string, named?: string) => {
+      if (named !== undefined) return NAMED_ENTITIES.get(named) ?? whole
+      const digits = decimal ?? hex
+      if (digits === undefined) return whole
+      const code = Number.parseInt(digits, decimal !== undefined ? 10 : 16)
+      try {
+        return String.fromCodePoint(code)
+      } catch {
+        // Outside the Unicode range, so not a character and not part of a part name.
+        return whole
+      }
+    },
+  )
+}
+
 /**
  * The part name an OPC `Target` or `PartName` refers to, as a ZIP entry name; `null` for anything
  * that does not name a part in this package.
@@ -353,11 +411,18 @@ function dropElements(
  * `_rels/.rels` is the root-level part, and the same string in `3D/_rels/x.rels` is
  * `3D/3D/3dmodel.model`. A leading `/` makes it absolute from the package root, which is the form
  * `[Content_Types].xml` always uses.
+ *
+ * **Two decodings, and the order is load-bearing.** XML character references come off first,
+ * because that is what a parser resolves before the value is ever a URI — and because `&#46;`
+ * contains a `#`, so splitting the fragment first turns `…layer&#46;xml` into `…layer&` and
+ * silently loses the extension. That was the mechanism of the hole this closes. Percent-escapes
+ * come off second, being a property of the URI the parser produced.
  */
 function resolvePartName(partName: string, reference: string): string | null {
+  const literal = decodeCharacterReferences(reference)
   // An absolute URI (http:, mailto:) names something outside the package.
-  if (/^[a-zA-Z][a-zA-Z0-9+.\-]*:/.test(reference)) return null
-  const withoutFragment = reference.split('#')[0]!.split('?')[0]!
+  if (/^[a-zA-Z][a-zA-Z0-9+.\-]*:/.test(literal)) return null
+  const withoutFragment = literal.split('#')[0]!.split('?')[0]!
   let decoded = withoutFragment
   try {
     decoded = decodeURIComponent(withoutFragment)
