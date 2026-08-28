@@ -829,15 +829,24 @@ That is consistent with `canBrowseModelSites` being false in the browser column 
 **Amended 2026-08-28, against a measurement.** The conclusion stands and the reason given
 for it was wrong. Both halves were re-tested on Electron 44.0.0 in one session, minutes
 apart, against the same four URLs: as an `<iframe>` inside a page carrying no CSP of its
-own all four were refused — `X-Frame-Options: SAMEORIGIN` for Thingiverse, Printables and
-Cults3D, CSP `frame-ancestors 'none'` for MakerWorld — and **all four of those same URLs
-loaded as top-level `WebContentsView`s**. Those headers govern embedding _as a frame_, and
-a `WebContentsView` is a separate top-level frame tree rather than a subframe, so they do
-not apply to it. The sentence is therefore "**a `WebContentsView` is not a frame**", not
-"the sites allow it" — which is what the paragraph above implies and what would mislead
-the next reader. The practical conclusion is unchanged: a browser has nothing but a frame
-to offer these sites, so the web build cannot do this and `canBrowseModelSites` stays
-false in the browser column. See subsystem E §1.3 and
+own **all four were refused**, and **all four of those same URLs loaded as top-level
+`WebContentsView`s**. `X-Frame-Options` and `frame-ancestors` govern embedding _as a
+frame_, and a `WebContentsView` is a separate top-level frame tree rather than a subframe,
+so they do not apply to it. The sentence is therefore "**a `WebContentsView` is not a
+frame**", not "the sites allow it" — which is what the paragraph above implies and what
+would mislead the next reader. The practical conclusion is unchanged: a browser has
+nothing but a frame to offer these sites, so the web build cannot do this and
+`canBrowseModelSites` stays false in the browser column.
+
+**What refused each one, since the obvious one-line summary misattributes half of them.**
+Thingiverse's and Printables' framed requests were answered **403 by Cloudflare**, and the
+`x-frame-options: SAMEORIGIN` on them is the **block page's** header — Thingiverse's real
+top-level response for the same URL carried neither XFO nor CSP. Cults3D answered 200 with
+`x-frame-options: SAMEORIGIN` and no CSP at all. MakerWorld answered 200 with **both**
+`x-frame-options: SAMEORIGIN` **and** CSP `frame-ancestors 'none'`; naming only the CSP
+for it is a second, smaller misattribution. So "these sites set XFO" is a true statement
+about two of the four and a statement about Cloudflare's block page for the other two.
+See subsystem E §1.3 and
 `.superpowers/spikes/2026-08-28-model-browser-facts.md` §7.
 
 ## 10. Open questions

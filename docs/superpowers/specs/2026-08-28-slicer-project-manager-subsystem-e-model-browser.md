@@ -4,8 +4,11 @@
 - **Status:** Approved (design); implementation plan pending
 - **Parent:** [`2026-08-22-slicer-project-manager-design.md`](2026-08-22-slicer-project-manager-design.md)
   — binding. Where this document and the parent disagree, the parent wins and this one is wrong —
-  except at 1.3, where the parent is corrected in place against a measurement, the way D corrected
-  it before.
+  except at 1.3, where the parent is **corrected in place against a measurement**. D amended the
+  parent too, but over a convention (which subsystems get their own spec), not over a measured claim;
+  this is the first time a parent statement of fact has been re-measured and found to have the wrong
+  reason attached, so the precedent is thinner than "the way D did it" and the correction is written
+  to stand on the measurement rather than on the precedent.
 - **Measurements:** `.superpowers/spikes/2026-08-28-model-browser-facts.md`, both probe runs, on the
   developer's Windows 11 machine against Electron 44.0.0 and the four live model sites. Section
   references of the form "(§5)" are to that document.
@@ -38,7 +41,9 @@ framed, and a browser has nothing but a frame to offer them.
 - **Anything that would require defeating bot protection.** All four sites sit behind Cloudflare
   (§10). Two of them serve a non-interactive managed challenge that clears itself in about six
   seconds. The design **tolerates an interstitial and never attempts to bypass one** — no UA
-  spoofing (measured not to matter, §10), no challenge solving, no CAPTCHA handling. If a site ever
+  spoofing, no challenge solving, no CAPTCHA handling. On the UA, the spike's own words are the
+  ceiling of what may be claimed: it was **not shown to matter** (row 28), which is weaker than
+  "measured not to matter" and is the wording this document uses everywhere. If a site ever
   escalates to an interactive challenge, the user solves it in the view, because a human is driving.
 - **Anything on the web build.** Measured impossible (§7): the sites refuse framing and a browser
   cannot make a `WebContentsView`.
@@ -56,9 +61,8 @@ desktop app is the only viable route". The conclusion holds. The reason given fo
 the wrong reason would mislead the next person who reads it.
 
 **Measured both ways in the same session, minutes apart** (§7): all four URLs were refused as an
-`<iframe>` inside a plain HTTP page carrying no CSP of its own — `X-Frame-Options: SAMEORIGIN` for
-Thingiverse, Printables and Cults3D, CSP `frame-ancestors 'none'` for MakerWorld — and **all four of
-those same URLs loaded as top-level `WebContentsView`s**, with real titles and real DOM.
+`<iframe>` inside a plain HTTP page carrying no CSP of its own, and **all four of those same URLs
+loaded as top-level `WebContentsView`s**, with real titles and real DOM.
 
 `X-Frame-Options` and `frame-ancestors` govern embedding **as a frame**. A `WebContentsView` is a
 separate top-level frame tree, not a subframe, so neither header applies to it. So the sentence is
@@ -66,10 +70,19 @@ separate top-level frame tree, not a subframe, so neither header applies to it. 
 web build cannot offer this, an embedded native view can — is unchanged, and parent §9 is amended in
 place to say so.
 
-One consequence worth keeping: the refusal Thingiverse gave was **Cloudflare's 403 block page**
-carrying `x-frame-options: SAMEORIGIN`, while the top-level response for the same URL carried
-neither XFO nor CSP at all. A design that read "Thingiverse sets XFO" off that would be reading a
-property of the block page, not of the site.
+**What refused each one, because the one-line version misattributes half of them** — and the parent's
+amendment carries this too, since the parent is binding and outlives this document:
+
+| Site        | Framed response                                                                  | Whose header that is                                                               |
+| ----------- | -------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| Thingiverse | **403 by Cloudflare**, `x-frame-options: SAMEORIGIN`                             | **The block page's.** The real top-level response for the same URL carried neither |
+| Printables  | **403 by Cloudflare**, `x-frame-options: SAMEORIGIN`                             | The block page's                                                                   |
+| Cults3D     | 200, `x-frame-options: SAMEORIGIN`, **no CSP header at all**                     | The site's                                                                         |
+| MakerWorld  | 200, **both** `x-frame-options: SAMEORIGIN` **and** CSP `frame-ancestors 'none'` | The site's — and naming only the CSP for it is a second, smaller misattribution    |
+
+So "these sites set `X-Frame-Options`" is a true statement about two of the four and a statement
+about Cloudflare's block page for the other two. A design that read a site property off the block
+page would be reading the wrong thing.
 
 ## 2. What was measured
 
@@ -215,16 +228,20 @@ exactly one preload and it is delivered by `webPreferences.preload` in `createMa
 
 ### 3.4 The `persist:` partition is a security property, not tidiness
 
-The browse view runs on `persist:spm-browse`. Six things that buys, every one of them measured:
+The browse view runs on `persist:spm-browse`. What that buys, stated at the strength the
+measurements actually support — **one decisive property, three real but lesser ones, and one item
+that is a cost the partition creates rather than a benefit it confers.** The list is written this
+way on purpose: a future author arguing to relax the partition should be arguing against the
+accurate list, and an inflated one invites the argument "these all turned out to be nothing".
 
-| What                                | Measured                                                                                                                              | Why E wants it                                                                                                                               |
-| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| Separate cookies and `localStorage` | Verified both directions: a value set in the partition was invisible from a default-session view at the same origin, and vice versa   | A site's cookies are never in the same jar as anything the app itself stores, and the app's session state is not readable by a site          |
-| Separate storage directory          | `…\Roaming\<app>\Partitions\spm-browse` against `…\Roaming\<app>`                                                                     | The browsing profile is one directory the user can delete, and it is not the app's own                                                       |
-| **`spm://` is not handled there**   | `isProtocolHandled('spm')`: `true` on the default session, `false` on the partition. A top-level navigation rejects `ERR_FAILED (-2)` | **The decisive one.** See below                                                                                                              |
-| Its own `will-download` stream      | Identical listeners on both sessions; only the partition's fired (row 19)                                                             | The browse interceptor cannot capture the app's own `spm://app/_spm/files/<id>/raw` downloads, and nothing on `defaultSession` sees a site's |
-| Its own permission handler          | `setPermissionRequestHandler` on each session fired only for its own view's request                                                   | 3.6 — and it means the browse partition needs one **written for it explicitly**, or it has Electron's defaults                               |
-| Popups stay inside it               | A popup is created on the opener's session; storage path ended in the opener's partition (§14.2 `p17`)                                | A site's popup does not fall back to `defaultSession`                                                                                        |
+| What                                | Measured                                                                                                                              | What it is actually worth                                                                                                                                                                                                                    |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **`spm://` is not handled there**   | `isProtocolHandled('spm')`: `true` on the default session, `false` on the partition. A top-level navigation rejects `ERR_FAILED (-2)` | **The decisive one, and the only one of the five that changes what a site can reach.** See below                                                                                                                                             |
+| Its own `will-download` stream      | Identical listeners on both sessions; only the partition's fired (row 19)                                                             | Real and structural: the browse interceptor cannot capture the app's own `spm://app/_spm/files/<id>/raw` downloads, and nothing on `defaultSession` sees a site's. The two streams cannot be confused because they are not the same stream   |
+| Separate cookies and `localStorage` | Verified both directions: a value set in the partition was invisible from a default-session view at the same origin, and vice versa   | **Privacy and a deletable profile, not confidentiality.** A site could not read the app's storage on the default session either — the app's origin is `spm://app` and the same-origin policy already forbids it. Do not claim more than this |
+| Separate storage directory          | `…\Roaming\<app>\Partitions\spm-browse` against `…\Roaming\<app>`                                                                     | The browsing profile is one directory the user can delete without touching the app's own state. Operational, not a boundary                                                                                                                  |
+| Popups stay inside it               | A popup is created on the opener's session; storage path ended in the opener's partition (§14.2 `p17`)                                | A site's popup does not fall back to `defaultSession` — so the decisive row above covers popups too, without a second mechanism                                                                                                              |
+| Its own permission handler          | `setPermissionRequestHandler` on each session fired only for its own view's request                                                   | **A cost, not a benefit.** The partition means the app's existing handling does not apply and E must write one (3.7), or the browse session runs on Electron's defaults. Listing it as a win is how it gets forgotten                        |
 
 **The `spm://` row is the one that makes this a security property.** On the **default** session the
 same top-level navigation **succeeds**: `loadURL('spm://app/')` from an embedded view returned
@@ -261,11 +278,55 @@ not be a browser.
 
 **`browseNavigationPolicy(url)`, in `urls.ts`, beside `navigationPolicy` and tested the same way:**
 
-| Answer  | For                                                                                       | Why                                                                                                                                                                         |
-| ------- | ----------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `allow` | `http:` and `https:`                                                                      | This is a browser. The inversion of the renderer's policy, and the reason it is a separate function rather than a flag                                                      |
-| `block` | `spm:`                                                                                    | Belt-and-braces behind 3.4: the partition already refuses it with `ERR_FAILED`, and a policy that relies on a session property nothing in `urls.ts` can see is not a policy |
-| `block` | everything else — `file:`, `data:`, `javascript:`, a custom scheme, an unparseable string | Same default as the renderer's, same reason: the list worth refusing is open-ended and the list worth allowing is one entry long                                            |
+| Answer  | For                                                                     | Why                                                                                                                                                                                                       |
+| ------- | ----------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `allow` | `http:` and `https:`                                                    | This is a browser. The inversion of the renderer's policy, and the reason it is a separate function rather than a flag                                                                                    |
+| `allow` | **`blob:` and `data:`**                                                 | **A download depends on it.** See below — this is the arm a first draft of this document got wrong, and the wrongness was measured                                                                        |
+| `allow` | `about:blank`                                                           | The deferred-popup idiom opens `about:blank` and assigns `location` afterwards (3.6, I6). Blocking it blocks the open, not the destination                                                                |
+| `block` | `spm:`                                                                  | Belt-and-braces behind 3.4: the partition already refuses it with `ERR_FAILED`, and a policy that relies on a session property nothing in `urls.ts` can see is not a policy                               |
+| `block` | `file:`                                                                 | **The one arm doing work Chromium does not already do**, and it is not theoretical: a file dropped onto a `webContents` is a `file:` navigation. Blocking it is how a dropped file does not become a page |
+| `block` | everything else — `javascript:`, a custom scheme, an unparseable string | Same default as the renderer's: the list worth refusing is open-ended and the list worth allowing is short                                                                                                |
+
+**`blob:` and `data:` must be `allow`, and a first draft of this section had them under the
+catch-all `block`.** That draft would have broken downloading from the one site where a download was
+ever measured. Row 22 says Thingiverse's download URL **is** a `blob:`, and a scratch app on
+Electron 44 measured what the three DOM idioms that can start one actually do:
+
+| Idiom                                     | Hooks that fired                                     | Download starts?   |
+| ----------------------------------------- | ---------------------------------------------------- | ------------------ |
+| `<a download href="blob:…">` + `.click()` | **none at all**                                      | **yes**            |
+| `location.href = blobUrl`, policy on      | `will-frame-navigate` → blocked                      | **no**             |
+| `location.href = blobUrl`, policy off     | `will-frame-navigate`, `will-navigate`, both `block` | **yes**, completes |
+| `window.open(blobUrl)`, deny-all handler  | `window-open` → deny                                 | **no**             |
+
+The control run is the decisive one: with the policy off, the same navigation produces a completed
+download, and with it on the download never starts. So under a `block` for `blob:`, **whether E can
+download from a site turns on which of three interchangeable DOM idioms that site's JavaScript
+happens to use** — one of which is invisible to every hook and works regardless. That is not a
+security property, it is a coin flip presented as one, and the document had presented the `block` as
+costless.
+
+Allowing them costs nothing that matters here. A `blob:` or `data:` document is same-origin-ish with
+the page that made it and has no preload and no bridge; it cannot reach `spm://` on this partition;
+and a navigation to one that is _not_ a download is a page the browse view can display and the user
+can navigate away from. The download interceptor (5.1) is what actually decides the outcome, and it
+sees the item either way.
+
+**Which hooks enforce this, named**, because §3.9's property 5 turns on getting this list complete and an earlier draft named only one of them, and
+`will-navigate` is not the whole surface. Measured on Electron 44:
+
+- **`will-frame-navigate`** fires _first_, for the same URL, and covers subframes. `will-navigate` is
+  main-frame only.
+- **`will-navigate`** then fires for a main-frame navigation.
+- **`will-redirect`** is the one a server-side redirect reaches. Measured with a 302 into
+  `bambustudio://open?model=1`: it arrived at `will-redirect` and **not** at `will-navigate`. So
+  3.5's custom-scheme arm — which is load-bearing for MakerWorld's only affordance — is enforced
+  _there_ or it is not enforced at all.
+- **`setWindowOpenHandler`** for a new window (3.6).
+
+All four are attached to the browse view's own `webContents`, and all four consult
+`browseNavigationPolicy`. Attaching three of the four is the kind of gap that passes every test
+written against the fourth.
 
 **No host allowlist**, and this is a decision rather than an omission. Containment comes from the
 partition and the absent preload, not from a list of hostnames; a list would read as if it were the
@@ -274,6 +335,23 @@ consent-management vendor, and the identity provider a user logs in through are 
 5.7 says the login is the user's to perform. **Not measured:** no login was performed anywhere
 (§11.3), so "logins go through other hosts" is reasoning about how the web works, not something this
 spike observed. It is recorded as an open question (9.4) rather than presented as a finding.
+
+**What this policy is actually for, since as a _filter_ it is the weakest of the three legs.** The
+partition (3.4) and the absent preload (3.2) each remove a capability outright. This one mostly
+duplicates decisions Chromium already makes: it cannot reach `spm://` on this partition anyway, and
+`javascript:` and a bare custom scheme go nowhere useful on their own. Two things are genuinely its
+own, and the section should say so rather than let a reader conclude the leg is decorative:
+
+- **`file:`, which nothing else covers.** A file **dropped onto a `webContents`** is a `file:`
+  navigation, and Chromium performs it. Without this arm, dragging a file onto the browse view turns
+  the user's own disk into a page inside the app — the one concrete thing in this table that is not
+  already refused somewhere else.
+- **Keeping the renderer's policy _off_ this view.** `navigationPolicy` answers `external` for
+  `http(s)` and `applyNavigationPolicy` hands that to `shell.openExternal`. Attached to the browse
+  view — which is what a careless reuse of the existing function would do — every link in the model
+  browser would fire the user's system browser and the view would never move. This is a **composition
+  fix**, and rows 11 and 12 are its measurement: the existing policy does not reach an embedded view,
+  and the fix is emphatically not "call the existing one here too".
 
 The **custom-scheme** arm is not hypothetical: MakerWorld's only logged-out affordance is
 `Open in Bambu Studio` (row 29), which is a custom-scheme hand-off. `block` is the measured-ignorance
@@ -305,16 +383,51 @@ bridge, `spm://app`, **is not served on the browse partition at all** (row 8). T
 the same-origin case rather than relying on it not arising. That is the sixth reason for the
 partition and the one that is easiest to lose in a refactor.
 
-**The handler is still deny-by-default**, for reasons that are about the product rather than the
-bridge: a site's popup would be a top-level `BrowserWindow` outside the app's own frame and outside
-whatever chrome `/browse` draws, and it would be a second window with no back button and no address
-bar. E's handler therefore does one thing the renderer's does not: for an `http(s)` target it
-**navigates the browse view itself** to the URL and returns `{ action: 'deny' }`, so a
-`target="_blank"` link on a model page goes where the user expects. Anything else is denied outright.
+**The handler still does real work that Chromium does not do for us**, and an earlier draft filed
+that under "product rather than bridge", which undersells it. With no handler a site puts an
+**unchromed top-level `BrowserWindow`** on the user's screen — no address bar, no back button, no
+indication it is a site rather than the app, and outside whatever chrome `/browse` draws. Chromium
+has no objection to that; the handler is the only thing that does. That is a security-shaped
+property (a page that can present itself as the application) and not only a tidiness one.
 
-If a later change ever needs to _allow_ a real popup, it forces `noopener` — measured to null the
-opener link and to make `window.open` return `null` to the caller (§14.2 `p05`, `p22`). That is a
-design note carried forward, not a description of what E builds.
+**But deny-everything is wrong here, and this is where E's handler differs from the renderer's.**
+
+- For a `target="_blank"` link on a model page — `http(s)` — the handler **navigates the browse view
+  itself** and returns `{ action: 'deny' }`. The user goes where they expected, inside the chrome,
+  with a back button.
+- For a **popup the page actually needs to be a popup**, denying breaks a real and common thing:
+  sign-in. The dominant idiom is `window.open(idp)` plus `opener.postMessage(...)`, and navigating
+  in place destroys both halves — there is no opener left to message and no page left to return to.
+  §5.7 makes logging in the user's job and §9.4 leans on identity providers being reachable, so a
+  document that requires logins to work and removes the mechanism most of them use is arguing with
+  itself.
+  Worse, the _deferred_ form is denied by a rule that never considered it: measured, `const w =
+window.open(); w.location = url` reaches the handler with the target `about:blank`, which the
+  first draft of 3.5 did not list at all and the catch-all therefore blocked. The site never gets
+  as far as naming its destination.
+
+**So: `{ action: 'allow' }` for `http(s)`, `about:blank`, `blob:` and `data:` when the page asked
+for a named or featured window rather than a plain `_blank` link, with `overrideBrowserWindowOptions`
+pinning the trust flags explicitly — `sandbox: true`, `contextIsolation: true`,
+`nodeIntegration: false`, `webSecurity: true`, the browse `partition`, and no `preload`. Everything
+else is denied.** The measured table is what makes that safe rather than hopeful: a popup never has
+a bridge of its own (row 14), it is created on the opener's session so it stays in the browse
+partition (row 13, §14.2 `p17`), and `spm://` is not served there — so the one case that could reach
+a bridge does not exist. Pinning the options is not decoration: `p11` measured that a
+`webPreferences.preload` supplied through this very handler gives a popup a **full live bridge at any
+origin**, so this handler is itself one of the two places the bridge can be handed away, and it must
+name what it wants rather than inherit it.
+
+**`noopener` is deliberately _not_ forced.** It is measured to sever the opener link (§14.2 `p05`,
+`p22`), which is exactly what makes it useless here: `opener.postMessage` is the half of the login
+idiom that carries the result back. The reach it severs is a reach that does not exist on this
+partition anyway. It stays recorded as the mechanism to use if E ever needs to allow a popup whose
+opener _does_ hold a bridge — which, by 3.4, is a configuration this design does not have.
+
+**None of this has been run against a real login.** No account was created anywhere (§11.3), so the
+popup arm above is designed from the measured `window.open` table plus knowledge of the idiom, not
+from watching a sign-in complete. 9.12 records it and says the settling cost is one hand-driven login
+in the view.
 
 ### 3.7 The permission handler
 
@@ -350,18 +463,52 @@ It also cannot iframe `spm://app/`: `ERR_BLOCKED_BY_RESPONSE`, the app's own `fr
 doing its job (row 17). That directive is now load-bearing for E and not only for the renderer, which
 is worth knowing before someone relaxes it.
 
-### 3.9 The five properties, in one place
+### 3.9 The properties, in one place
 
 An implementer or a reviewer should be able to check these without reading the argument again. Each
 one has a measurement behind it and an assertion in 8.3.
 
 1. The browse view is a `WebContentsView` with **no `preload`**, and the main window is never
    navigated to a site.
-2. It is on **`persist:spm-browse`**, and `spm://` is **not** handled on that session.
-3. `packages/desktop/src` contains **no** `registerPreloadScript` and **no** `setPreloads`.
-4. `will-navigate` and `setWindowOpenHandler` are attached to **the view's own `webContents`**, with
-   `browseNavigationPolicy`, not the renderer's.
-5. The browse session has its **own permission handler**, denying everything.
+2. Its `webPreferences` carry **`sandbox: true`, `contextIsolation: true`, `nodeIntegration: false`
+   and `webSecurity: true`** — explicitly, not by default. Row 3 proved these are **not sufficient**
+   (the compromised configuration had all three of the first ones and a live bridge), which is why
+   the document leads with property 1; it does not make them unnecessary. `webSecurity: false` on
+   this one constructor would switch off the same-origin policy for third-party content in a process
+   that serves the user's files, and **not one assertion in 8.3 as first drafted would have gone
+   red**. It is exactly the "one line from being reversed" this section is built around.
+3. It is on **`persist:spm-browse`**, and `spm://` is **not** handled on that session.
+4. `packages/desktop/src` contains **no** `registerPreloadScript` and **no** `setPreloads`.
+5. **All four navigation hooks** — `will-frame-navigate`, `will-navigate`, `will-redirect` and
+   `setWindowOpenHandler` — are attached to **the view's own `webContents`** and consult
+   `browseNavigationPolicy`, not the renderer's. Three of four is a gap that passes every test
+   written against the fourth, and `will-redirect` is the one that carries the custom-scheme case
+   (3.5).
+6. The browse session has its **own permission handler**, denying everything.
+7. **Every string that comes out of the browse view is untrusted data in the renderer** (3.10).
+
+### 3.10 Site-controlled strings cross into the privileged renderer
+
+`BrowseStateDto` and `BrowseDownloadDto` (7.3) carry six fields whose contents a site chooses:
+`title`, `url` and `lastError` from the view, and `fileName`, `sourceUrl` and `pageUrl` from the
+download. Every one of them is rendered inside `spm://app` — the document that holds the bridge —
+and every one of them is written by the other side of the boundary this whole section is about.
+
+Angular escapes interpolated text by default, so the default is safe. **That is a reason to write the
+rule down, not a reason to leave it to whoever writes the page**: the safety is a property of one
+templating idiom, and the page will want to render a URL as a link and a favicon as an image, which
+are precisely the two places the default does not save you.
+
+**The rule.** Values from these two DTOs are rendered **as text only**. Never into `innerHTML`,
+`[innerHTML]`, `bypassSecurityTrust*`, a `[href]`, a `[src]`, a CSS `url()`, or a `window.open`. A
+`title` is text. A `url` is text — shown, not linked; the way to go somewhere is `browse.navigate`,
+which runs the URL through `browseNavigationPolicy` in the main process rather than handing it to
+Chromium in the privileged document. And they are truncated for display, because a page can set a
+title of any length and the app's own chrome should not be re-laid-out by one.
+
+The same rule already applies to the remote server's strings and to file names off disk; this is the
+first place in the app where the author of the string is a deliberate adversary rather than an
+accident, which is why it gets a section instead of a habit.
 
 ## 4. The browse surface and its lifecycle
 
@@ -377,7 +524,11 @@ each of which an implementer would otherwise discover the hard way:
 - **It paints over the renderer unconditionally.** There is no z-index relationship to negotiate: a
   dialog, a toast, a dropdown or a route transition rendered by Angular under the view's rectangle is
   invisible. So the app's own chrome must live **outside** the rectangle, and any modal the app
-  raises while browsing must first shrink or detach the view.
+  raises while browsing must first **hide** the view — `browse.hide()` / `browse.show()` in 7.3,
+  which exist for exactly this and are the reason `detach` is not the answer: `detach` destroys, and
+  a modal is not a reason to lose the page the user was on. (A first draft of this sentence said
+  "shrink or detach", and offered an API that could do neither without side effects — shrinking to
+  zero area is undefined against 4.2's clamp, and detaching throws the page away.)
 - **It outlives its route unless something destroys it.** Angular unmounting the `/browse` component
   does nothing to a native view. A view that survives a route change is a site painted over the
   project list — which is not a cosmetic bug, it is a third-party page rendered inside what the user
@@ -389,18 +540,32 @@ The renderer owns the _intent_; the main process owns the _rectangle_.
 
 The `/browse` page renders an empty placeholder element and reports its bounding rectangle, in CSS
 pixels, through `browse.setBounds`. The main process converts by the window's current
-`zoomFactor`/scale, **clamps to the window's content bounds**, and applies. It clamps rather than
-trusts because the renderer is the untrusted side of this boundary (C plan, constraint 4) and an
-unclamped rectangle is a site drawn over the whole window including whatever chrome the app uses to
-say "this is a site".
+`zoomFactor`/scale and applies it **inside a rectangle the main process computes for itself**.
+
+**Not "clamped to the content bounds", which was the first draft and does not achieve the property
+it was written for.** A rectangle _equal to_ the content bounds **is** the whole window — so that
+clamp stops `NaN`, negatives and off-screen values, and does nothing at all about "a site drawn over
+the app's own chrome", which is the sentence it was written under. To hold that property the main
+process must reserve the chrome band itself: it computes
+`allowed = contentBounds minus the browse chrome inset`, a constant the main process owns, and
+intersects the renderer's request with it. The renderer cannot widen `allowed`, because it never
+names it.
+
+**A minimum area, for the reverse attack.** A renderer that reports `1×1` keeps a live third-party
+page running invisibly — which is precisely what 4.3 rejects hiding for, arrived at through the API
+4.3 leaves open. So a request below a minimum area is treated as a request to **hide** (7.3's
+`hide()`), not honoured as a rectangle: the page stops painting and stops being a thing the user
+cannot see but which is nonetheless live. A renderer that wants the view gone still has to say so,
+and saying so is a call the shell can act on rather than a geometry it has to interpret.
 
 Reported on: element resize, window resize, and the page's own scroll. The main process also
 re-applies on the window's `resize` event, so a resize between two renderer reports never leaves the
 view stranded — the renderer's report is the intent and the window's event is the correction.
 
 **This is designed, not measured.** §11.9 is explicit that nothing in the spike touched layout,
-resize or focus, and it names this as the famously fiddly part of `WebContentsView`. 9.6 records it
-as the open question it is.
+resize or focus, and it names this as the famously fiddly part of `WebContentsView`. Whether the
+inset-and-intersect actually achieves the property — as against merely being a better-shaped rule
+than the clamp — is 9.6, and it is unmeasured.
 
 ### 4.3 The route, and leaving it
 
@@ -427,6 +592,32 @@ waiting for a crash:
   handle on a destroyed window. `ShellHost`'s existing "switching modes must not leak the previous
   mode's client" property (`shell.ts`) is exactly the same property, and E's view joins the things it
   covers.
+
+**A download in flight survives the detach, and that is the surprising direction.** Measured on
+Electron 44: destroying the owning `WebContentsView` mid-download does **not** cancel an `http`
+download. The `DownloadItem` lives on the _session_, `updated` went on firing, and the bytes went on
+landing — 2.8 MB on disk at the moment of destruction, 25.9 MB four seconds later.
+
+That is the right behaviour and 4.3 survives it: a user who navigates away from `/browse` while a
+21 MB zip is coming down keeps the zip. But it settles two things the first draft left unnamed, and
+they have different answers:
+
+- **The `will-download` listener is attached to the _session_, once, for the life of the process —
+  not to the view, per attach.** A view-lifetime listener would be removed by `detach`, so a download
+  that started before it and completed after would lose its `done` handler and its record would never
+  reach a terminal state. The listener is registered when the browse session is first created and
+  outlives every view; it is the only thing that can be, given the item outlives the view.
+- **After `detach` there is nothing polling** (5.3 polls only while `/browse` is mounted). So the
+  completion surface cannot be the browse page. The record is written to disk as it goes (5.3, C2),
+  and the app tells the user out of band — the same place 5.2's refusal notice appears — so a
+  download that finished while they were elsewhere is offered rather than merely present.
+
+**One useful corollary, measured in the same run:** a 700 MB `blob:` download was already fully
+written at the first poll. Blob downloads are effectively instantaneous, because the bytes are
+already in the page's memory when `will-download` fires. So for the Thingiverse shape — the one
+download that was ever measured end to end — the window in which a detach can catch a download
+mid-flight is negligible. The handling above exists for the `http` case, which is Printables and
+Cults3D if they turn out to work that way (5.6), and which is unmeasured on those sites.
 
 ### 4.4 The site registry, and what `/browse` opens on
 
@@ -465,8 +656,12 @@ read the DOM once still saw "Just a moment…", while a run that polled every 2 
 5.6 s. What is being waited for is a **navigation**, not a timer, so the app waits on the view's own
 `did-navigate` / `did-finish-load` and shows progress rather than counting seconds.
 
-**What it never does:** spoof a user agent (row 28 — measured not to matter, and the spec says so in
-those words so nobody re-adds it as a fix), retry in a loop, solve a challenge, or present a
+**What it never does:** spoof a user agent (row 28 — **not shown to matter**, which is the spike's
+own wording and the strongest claim available: one run spoofed a plain Chrome UA and still saw the
+interstitial, another used the default Electron UA and the challenge cleared, and the difference
+between the runs was the polling wait rather than the UA. Nobody may re-add spoofing as a fix on the
+strength of that row, and nobody may cite it as proof the UA is irrelevant either), retry in a loop,
+solve a challenge, or present a
 challenge page as an error. If a page is still challenging after a generous window, the app says the
 site is verifying the connection and leaves the view where it is, because the view is a browser and
 the user can look at it.
@@ -504,10 +699,33 @@ everything it does not refuse.
 under `userData`, it is in no project, no `files` row exists for it, and nothing has been uploaded.
 The user's decision happens afterwards, with time, in the UI (5.4).
 
-**Refused, synchronously: a download past the session's ceiling.** A per-browse-session cap on
-concurrent downloads and on total staged bytes. This is the one refusal that needs no user input and
-so is the one that fits inside the handler, and it exists because an unattended `will-download` is a
-disk-fill primitive for any page that wants one.
+**Refused, synchronously: a download past the staging ceiling.** It exists because an unattended
+`will-download` is a disk-fill primitive for any page that wants one, and because it is the only
+refusal that needs no user input and therefore the only one that fits inside a handler where nothing
+can be awaited.
+
+**The numbers are a judgement, and are labelled one rather than presented as measured.** Nothing in
+the spike bears on them; they are chosen against the one real download there is — 21 060 699 bytes
+(row 20) — so that the honest case is nowhere near the limit and a malicious one hits it quickly:
+
+| Cap                                 | Value | Reasoning                                                                                                                                         |
+| ----------------------------------- | ----- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Concurrent downloads in flight      | 4     | A user clicking download on four models before landing any is plausible; forty is not a user                                                      |
+| Total **staged** bytes, all records | 4 GiB | ~200 Thingiverse-sized archives sitting undecided. A real backlog is single digits, and this is a ceiling on undecided files rather than on usage |
+| Single download                     | 2 GiB | Above any model archive that has been observed, and below the size at which a staging directory becomes the user's disk problem                   |
+
+They are constants in one place in `packages/desktop`, not settings: a user has no basis for choosing
+them and a UI for them would imply the app knows what the right answer is. If a real library ever
+pushes against them, that is a measurement and the constants move with it.
+
+**What the user sees, because the page cannot be told.** `preventDefault()` destroys the item by the
+next tick (row 21), so nothing is delivered to the site: no error event, no failed download entry, no
+DOM change. From the page's point of view the click did nothing, which is indistinguishable from the
+Cults3D consent-overlay case (row 30) — so silence here would train a user to believe the feature is
+broken. The shell therefore raises the notice itself, out of band, in the same surface 4.3 uses for a
+download that completed while the user was elsewhere: which download was refused, which cap it hit,
+and a control that discards staged downloads to make room. Without that, the ceiling is a silent
+failure mode with a plausible innocent explanation, which is the worst kind.
 
 **Not refused: `hasUserGesture() === false`.** It is recorded on the download record and shown, never
 acted on. Row 25 is why: the flag distinguishes `webContents.downloadURL()` from a real click, but a
@@ -515,11 +733,64 @@ click driven by `executeJavaScript` also reports `false` — so it is evidence a
 started and not a verdict, and refusing on it would silently break sites whose download button is a
 scripted `blob:` construction. Which is Thingiverse's, the one download that was actually measured.
 
-### 5.3 Where the bytes go
+### 5.3 Where the bytes go, and the record beside them
 
-`<userData>/model-downloads/<downloadId>/<filename>`, one directory per download — the same shape as
-D's per-launch directory and for the same reason: one directory, one file, one record, no ambiguity
-about what belongs to what.
+`<userData>/model-downloads/<downloadId>/` holds **two** files: the downloaded bytes, and
+`download.json` beside them. That is D's per-launch shape, and taking only the first half of it —
+which a first draft of this section did, while citing D — is a defect with a measurement behind it.
+
+**Why the record is not optional.** Two independent reasons, and the second is the serious one.
+
+**One: nothing in `BrowseDownloadDto` is recoverable from a directory listing.** 7.3 requires
+`sourceUrl`, `pageUrl`, `siteId`, `mimeType`, `totalBytes`, `hadUserGesture`, `startedAt` and a
+terminal `state`, and 8.3 requires `browse.downloads()` to answer for a directory found at the next
+app start with `isOrphan: true`. The process that knew those values is gone. Only a file can carry
+them across, which is exactly the argument `SlicerLaunchRecord`'s docblock already makes — "the app
+that created it may have been killed … the only thing that can say which project a returning `.3mf`
+belongs to is this file sitting next to it".
+
+**Two: with `setSavePath()` in use there is no marker distinguishing a truncated file from a complete
+one.** Measured on Electron 44: Chromium writes **straight to the final path** — no `.crdownload`, no
+partial suffix, no sidecar of its own. Destroying the owning view mid-download left `dl2-big.bin` at
+**26 214 400 of 41 943 040 bytes**, sitting at its final name, byte-for-byte indistinguishable from a
+completed download of a 26 MB file. A sweep with nothing but a directory listing enumerates it, offers
+it, and `browse.land` uploads a **truncated archive into the user's project, silently**. That is D's
+data-loss class with a corrupt file where D had a deleted one, and D's fix is the one that applies:
+a record that outlives the process.
+
+```
+download.json
+  downloadId, startedAt
+  fileName                 the sanitised basename beside this file
+  sourceUrl, pageUrl, siteId, mimeType, hadUserGesture
+  totalBytes               getTotalBytes() at will-download; 0 when the server sent no length
+  state                    'progressing' until done, then 'completed' | 'cancelled' | 'interrupted'
+  receivedBytes            last observed; rewritten on the terminal transition, not per tick
+  library                  which library this was staged against — D's libraryKeyOf, same reason
+```
+
+Written through `json-store.ts` — the atomic `write, fsync, rename` this process already uses for
+`state.json` and `slicers.json`, and which exists for precisely this. Written **before**
+`setSavePath()` returns, so a kill one millisecond later still leaves a directory that explains
+itself; rewritten once on `done`. Not per `updated` tick: that is five writes on a 21 MB download
+(row 24) and an fsync each, for a number the poll already has in memory.
+
+**No `version` key**, following `SlicerLaunchRecord`'s reasoning rather than `slicers.json`'s: this
+is written once and only ever read, so a reader that does not understand a record can say so from the
+fields it finds, and a version gate would help with nothing that is currently foreseeable.
+
+**The sweep refuses what it cannot vouch for.** At start, for each directory:
+
+- No `download.json`, or unparseable → the file is listed as **unverifiable** and cannot be landed.
+  It can be discarded, or revealed in local mode. It is never deleted implicitly (D's rule, and the
+  whole point of a sweep that enumerates rather than tidies).
+- `state` not `'completed'` → same. A record that never reached its terminal transition is a process
+  that died mid-download.
+- `state: 'completed'` but the bytes on disk do not match the record's size → same, and this is the
+  assertion the measurement above exists for. When `totalBytes` is `0` (no `content-length`) the size
+  cannot be checked at all, and the file is **unverifiable** rather than assumed good — an unknown
+  is not a pass.
+- Everything agreeing → an ordinary staged download with `isOrphan: true`.
 
 The filename is `item.getFilename()`. **Not `Content-Disposition`** — row 23: it was an empty string
 on the real download, while `getFilename()` was populated and sane in every case measured. Sanitised
@@ -527,17 +798,18 @@ through the same rules `files.upload` already applies (core's `safeJoin` refuses
 traversal), because the name comes from a remote server.
 
 Progress is real (row 24): `updated` fires repeatedly with `getReceivedBytes()`,
-`getPercentComplete()` and `getCurrentBytesPerSecond()` populated, and `done` fires once. The record
-carries them; the `/browse` page polls `browse.downloads()` while it is mounted, which is the same
-request/response shape D's session card uses rather than a new event channel.
+`getPercentComplete()` and `getCurrentBytesPerSecond()` populated, and `done` fires once. The
+in-memory record carries them; the `/browse` page polls `browse.downloads()` while it is mounted,
+which is the same request/response shape D's session card uses rather than a new event channel.
 
 `getETag()` and `getLastModifiedTime()` came back **empty on every download measured** (row 23), so
 nothing in the design may use them — no caching, no "have I downloaded this before" check built on
-them.
+them, and in particular no integrity check. The record's own `totalBytes` is the only integrity
+signal there is, which is why the sweep leans on it and why a `0` there is treated as ignorance.
 
-**Swept at start, never deleted implicitly.** Staged downloads from previous runs are enumerated and
-offered, exactly as D's `sessions.sweepAtStart()` enumerates unfinished launches and deletes nothing.
-A user who quit mid-decision gets their file back rather than losing it silently.
+**Swept at start, never deleted implicitly.** Exactly as D's `sessions.sweepAtStart()` enumerates
+unfinished launches and deletes nothing. A user who quit mid-decision gets their file back rather
+than losing it silently — and, now, gets told when what came back cannot be trusted.
 
 ### 5.4 Landing a download into a project
 
@@ -545,11 +817,14 @@ A user who quit mid-decision gets their file back rather than losing it silently
 common case is that nothing matches.
 
 The landing is a `shellCall` — `browse.land(downloadId, projectId, { name })` — and it resolves the
-bytes itself. In **local mode** it calls core's `uploadFile` with a `createReadStream` of the staged
-file, wrapped to the streaming `UploadBody` core takes. In **remote mode** it goes through
-`remoteUpload` in `packages/desktop/src/slicers/remote-files.ts`, which already streams a file from a
-directory to `POST /api/projects/:id/files` through `RemoteHost.proxy` with the session cookie, the
-`UPLOAD_LENGTH_HEADER` the server's quota check requires, and the percent-encoded name header.
+bytes itself. It refuses a download the sweep marked unverifiable (5.3) before it opens anything. In
+**local mode** it calls core's `uploadFile` with a `createReadStream` of the staged file, wrapped to
+the streaming `UploadBody` core takes. In **remote mode** it calls `remoteUpload` in
+`packages/desktop/src/slicers/remote-files.ts`, which posts to `/projects/:id/files` through
+`RemoteHost.proxy` with the session cookie, the `UPLOAD_LENGTH_HEADER` the server's quota check
+requires, and the percent-encoded name header. `remoteUpload` takes a `ReadableStream` and a size —
+**the caller builds the stream**, so the `createReadStream` and the `Readable.toWeb` are E's, the
+same way `SlicerSessions` does it; the function does not read a directory for you.
 
 Three properties fall out of that and are the reason for it:
 
@@ -583,18 +858,39 @@ four `.stl` names were in the DOM.
 **E lands the archive whole, as one file, classified `kind='other'`.** It does not extract.
 
 That is a worse outcome for the user than extraction and it is stated plainly rather than dressed up:
-they get one `.zip` in the project with no preview and no model rows. What they do next is
-**unzip it into the project folder and rescan** — which works today, needs nothing from E, and is
-correct by the parent's own design: disk is the source of truth for which files exist (§3.2), a
-rescan adopts what it finds, classifies it and seeds previews (§3.5), and dropping files into project
-folders by hand is a first-class workflow the parent explicitly supports.
+they get one `.zip` in the project with no preview and no model rows.
 
-Extraction is not in E because it is a `core` change, and the brief's instruction and the C plan's
-constraint 2 both point the other way. It would need: a use case that expands an archive into a
-project, a quota check over the _expanded_ size rather than the archive's, per-entry name-clash
-handling, and a zip-slip guard on every entry name. Core has the reader for it (`files/zip.ts`) and
-a precedent for walking an archive into a library (`importCuraManagerZip`), so it is a plausible
-follow-up rather than a wall. Recorded as 9.1.
+**In local mode there is a remedy and it works today**: unzip into the project folder and rescan.
+That needs nothing from E and is correct by the parent's own design — disk is the source of truth for
+which files exist (§3.2), a rescan adopts what it finds, classifies it and seeds previews (§3.5), and
+dropping files into project folders by hand is a first-class workflow the parent explicitly supports.
+
+**In remote mode there is no remedy at all, and 7.1 ships the capability there anyway.** The first
+draft of this section cited the unzip-and-rescan remedy without qualification, which is wrong for half
+the users E is enabled for. The project folder is on the server; `canPickLocalFolder` is false in that
+column by design (parent §2.4); a rescan there rescans the server's disk, not anything the user can
+reach; and the app has **no reveal-in-folder affordance anywhere** — `showItemInFolder` and `openPath`
+occur nowhere in `packages/desktop/src` or `packages/web/src`. So a remote user who takes the one
+download flow that was measured end to end — the 21 MB Thingiverse zip — gets an opaque file in their
+library with no models, no previews and **no route to the contents from inside the app**. Their real
+options are to unzip on the machine hosting the server, or to download the model again in their own
+browser and upload the pieces, which is the feature not working.
+
+Three ways out were considered:
+
+| Option                                        | Verdict                                                                                                                                                                                                                                                                                       |
+| --------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Gate `canBrowseModelSites` to local mode only | **Rejected.** It is a shell capability and the union exists for exactly this row (7.1); and single-file downloads — which is what Printables and Cults3D may well produce (5.6, unmeasured) — work fine remotely. Removing the whole feature to avoid one file shape costs more than it saves |
+| Land the archive and say nothing              | **Rejected.** That is what the first draft did by omission                                                                                                                                                                                                                                    |
+| **Land the archive and say so, in the UI**    | **Taken for E.** When the landed file is an archive and the mode is remote, the app says the archive cannot be expanded from here and names what that costs. A user who knows is a user who can decide; a user who does not is a user with a broken library entry                             |
+
+**And the honest scoping of extraction changes with it.** Extraction is not a nice-to-have deferred
+for tidiness: **it is a precondition for E being fully useful in remote mode**, and 9.1 now says that
+rather than filing it under "plausible follow-up". It stays out of E because it is a `core` change and
+the C plan's constraint 2 points the other way — it needs a use case that expands an archive into a
+project, a quota check over the _expanded_ size, per-entry name-clash handling and a zip-slip guard.
+Core has the reader (`files/zip.ts`) and a precedent for walking an archive into a library
+(`importCuraManagerZip`), so the shape is known. What has changed is the priority, not the scope.
 
 ### 5.6 What is not known about downloading from three of the four sites
 
@@ -731,9 +1027,12 @@ through in remote mode. **That column is now false on evidence rather than by as
 measured that the sites refuse framing and a `WebContentsView` is what loads them, and a browser
 build has no `WebContentsView`.
 
-Both docblocks in that file say "`canBrowseModelSites` stays false until E ships it, which is a
-deliberate departure from the spec table: a capability whose feature does not exist lights up UI that
-goes nowhere". E ships it, so those two sentences go with the flip.
+Both docblocks in that file carry a sentence that goes with the flip, and they are **not** the same
+sentence — `LOCAL_SHELL_CAPABILITIES`' says "`canBrowseModelSites` stays false until E ships it,
+which is a deliberate departure from the spec table: a capability whose feature does not exist lights
+up UI that goes nowhere", while `REMOTE_SHELL_CAPABILITIES`' says only "`canBrowseModelSites` is
+false until E, as above". Both are edited; quoting the long one for both, as a first draft did, is the
+kind of small inaccuracy that sends an implementer looking for text that is not there.
 
 **And one test loses its subject.** `test/capabilities.test.ts:110` — "a backend cannot veto a
 capability the shell has" — was **re-pointed at `canBrowseModelSites` by D** for exactly this reason:
@@ -790,17 +1089,33 @@ browse: {
   /**
    * Creates the browse view and shows it. Idempotent per window: an `attach` on a shell that
    * already has one destroys the previous view first (4.3).
-   * `url` defaults to the last page of the previous session, then to nothing.
+   * `url` defaults to the last page of the previous session, then to the registry's start list.
+   * That default is **persisted third-party browsing history**, one entry long, in `userData`
+   * — so it is named as such, it is cleared with the browse profile, and 9.14 asks whether it
+   * should exist at all.
    */
   attach(bounds: BrowseBounds, url?: string): Promise<BrowseStateDto>
 
   /** Destroys the view. Safe to call when there is none. Called on route teardown (4.3). */
   detach(): Promise<void>
 
-  /** CSS pixels in the host page's coordinate space; the shell converts and clamps (4.2). */
+  /**
+   * Stops the view painting without destroying it, and puts it back (4.1).
+   * **The answer for a modal**, which must not cost the user the page they were on — `detach`
+   * would. A hidden view is still live, which is why it is a modal's tool and never a route
+   * change's: 4.3 destroys on teardown and that does not change.
+   */
+  hide(): Promise<void>
+  show(): Promise<BrowseStateDto>
+
+  /**
+   * CSS pixels in the host page's coordinate space. The shell converts, then intersects with a
+   * rectangle it computes itself — never a clamp to the whole content area (4.2). A request below
+   * the minimum area is treated as `hide()`, not honoured.
+   */
   setBounds(bounds: BrowseBounds): Promise<void>
 
-  /** `http(s)` only — `browseNavigationPolicy` refuses the rest, in the shell (3.5). */
+  /** `browseNavigationPolicy` decides, in the shell — `http(s)`, `blob:`, `data:` (3.5). */
   navigate(url: string): Promise<BrowseStateDto>
   back(): Promise<BrowseStateDto>
   forward(): Promise<BrowseStateDto>
@@ -949,6 +1264,13 @@ is.
   non-`spm://` origin, expected `"undefined"` with `Object.keys` empty. Break it by adding
   `webPreferences.preload` to the view and confirm red — that configuration is measured to go green
   on every other test in the suite.
+- **The browse view keeps its four trust flags.** `getLastWebPreferences()` on the _view's_
+  `webContents`, expected `sandbox: true`, `contextIsolation: true`, `nodeIntegration: false`,
+  `webSecurity: true` — the same instrument `shell.spec.ts:423` uses on the window, for the same
+  three flags plus the one that matters most here. 8.2 says this object cannot answer the _preload_
+  question; that is not a reason to stop asking it the questions it can answer. Row 3 showed these
+  are not **sufficient**; nothing showed they are unnecessary, and without this assertion
+  `webSecurity: false` on that one constructor turns nothing red.
 - **The browse view is not on the default session.** `webContents.session === session.defaultSession`
   expected `false`, and `getStoragePath()` expected to end in the partition name. This is the guard
   for 3.3 as well as for 3.4.
@@ -963,6 +1285,15 @@ is.
   with the policy on the window instead, the navigation completes and the hook log is empty, so a
   test that only asserts "the policy function returns block" for that URL passes while the app is
   broken.
+- **A `blob:` download completes through all three idioms** (3.5): `<a download>` plus `.click()`,
+  `location.href = blobUrl`, and `window.open(blobUrl)` — each against a blob the test page builds
+  itself, with the policy on. All three must produce a staged download. This is the assertion the
+  first draft's `block` for `blob:` would have failed, and it is the one that keeps E's only measured
+  download shape working; asserting `browseNavigationPolicy('blob:…') === 'allow'` as a unit test is
+  necessary and does **not** substitute for it, because the defect was in which hook sees what.
+- **`will-redirect` enforces the policy.** A local server answering 302 into a custom scheme,
+  asserted refused. Measured: that redirect reaches `will-redirect` and **not** `will-navigate`
+  (3.5), so a suite that only drives `will-navigate` is green with the arm missing.
 - **`setWindowOpenHandler` is attached to the view**, and a `window.open` from the embedded page
   creates **no** new `BrowserWindow` (count before and after) while the view itself navigates for an
   `http(s)` target (3.6).
@@ -977,6 +1308,12 @@ is.
   sub-path forms of a Thingiverse thing, the MakerWorld no-slug 307 target, and an unrecognised host
   falling back. This is where §9's measurements become a test rather than a memory, and it is the
   only coverage 6.2's derived rule will ever get.
+- **The sweep refuses what it cannot vouch for** (5.3), against a temp directory, four cases: no
+  `download.json`; an unparseable one; `state: 'progressing'`; and `state: 'completed'` with a file
+  **shorter than the recorded `totalBytes`** — the truncation case, which is the one with a
+  measurement behind it and which a directory listing cannot see. Each must come back unlandable, and
+  `browse.land` must refuse each. Break it by having the sweep trust the listing and confirm a
+  truncated archive uploads clean, because that is exactly what the first draft specified.
 - **The staging lifecycle, against a temp directory**: a sweep at start **lists** an orphan rather
   than deleting it; `discard` is the only thing that removes one; a landed download's directory is
   removed only after the upload returned; a failed upload leaves it. D's equivalent rules were both
@@ -1008,12 +1345,18 @@ is.
 Answered where the evidence allows, and marked unmeasured with the cost of settling it where it does
 not.
 
-1. **Should a downloaded archive be extracted into the project?** **Answered: not in E** (5.5). It is
-   a `core` change — a use case, a quota check over the expanded size, per-entry clash handling and a
-   zip-slip guard — and browsing is a shell concern that the C plan's constraint 2 says must not leak
-   into the server. The user's path today is to unzip into the project folder and rescan, which the
-   parent's own design (§3.2, §3.5) supports as a first-class workflow. Core has the reader and a
-   precedent (`importCuraManagerZip`), so this is a plausible follow-up with a known shape.
+1. **Should a downloaded archive be extracted into the project?** **Answered: not in E, and E is
+   incomplete in remote mode because of it** (5.5). It is a `core` change — a use case, a quota check
+   over the expanded size, per-entry clash handling and a zip-slip guard — and browsing is a shell
+   concern that the C plan's constraint 2 says must not leak into the server. In **local** mode the
+   user unzips into the project folder and rescans, which the parent's design (§3.2, §3.5) supports
+   as a first-class workflow. In **remote** mode **there is no remedy at all**: the folder is on the
+   server, `canPickLocalFolder` is false, a rescan rescans the server's disk, and no
+   `showItemInFolder`/`openPath` affordance exists anywhere in the app. So for the one download flow
+   ever measured end to end, a remote user gets an opaque file and no route to its contents.
+   Extraction is therefore a **precondition for E being fully useful in remote mode**, not a
+   nice-to-have; E ships the archive whole and says so in the UI. Core has the reader and a precedent
+   (`importCuraManagerZip`), so the shape is known and only the priority changed.
 2. **Do Printables and Cults3D downloads actually intercept?** **Unmeasured** (§11.1, §11.2). The
    mechanism is measured end to end on Thingiverse and it is a session-level hook, so nothing in the
    design depends on which button started the download — but "the feature works on three of the four
@@ -1040,9 +1383,11 @@ not.
    as §3's permissions row, against the check handler.
 6. **Do `WebContentsView` bounds, resize and focus behave acceptably in the real Angular shell?**
    **Unmeasured** (§11.9), and named by the spike as the famously fiddly part. 4.2's design — the
-   renderer reports intent, the main process clamps and re-applies on the window's own resize — is
-   reasoning. _To settle:_ build the route and use it; this is the one question that cannot be
-   answered by a spike more cheaply than by the implementation.
+   renderer reports intent, the main process intersects with an inset it computes itself, and a
+   sub-minimum request becomes a `hide` — is reasoning, and specifically it is **not established that
+   the inset achieves the property it is written for** rather than merely being a better-shaped rule
+   than the clamp it replaced. _To settle:_ build the route and use it; this is the one question that
+   cannot be answered by a spike more cheaply than by the implementation.
 7. **Should `slicers/remote-files.ts` move to `src/remote-files.ts`?** **Answered: yes, but not in
    E** (5.4). Its contents are generic and two subsystems now use them, so the folder is a lie. The
    move touches D's tests and its own docblock and belongs to its own change; E imports it where it
@@ -1064,3 +1409,43 @@ not.
     path, `WebContentsView` layout and the challenge behaviour are all plausibly platform-sensitive.
     E ships what was measured on Windows 11. _To settle:_ a machine of each and a spike of the same
     shape as this one's.
+12. **Do popup-based logins work under 3.6's handler?** **Unmeasured.** No login was performed
+    anywhere (§11.3), so the popup arm is designed from the measured `window.open` table plus
+    knowledge of the idiom — including the deferred `window.open()`-then-assign-`location` form,
+    which reaches the handler with the target `about:blank` and which a deny-all handler kills before
+    the site names its destination. This matters because §5.7 makes logging in the user's job and 9.4
+    leans on identity providers being reachable. _To settle:_ one hand-driven sign-in in the view on
+    any of the four sites, watching `setWindowOpenHandler`, `did-create-window` and whether the
+    result comes back. Cheap, and it settles 9.4 and 9.13 at the same time.
+13. **What does a `WebContentsView` popup, as opposed to a `BrowserWindow` popup, do?** **Unmeasured**
+    (§14.7). Only `BrowserWindow` popups — what `window.open` actually makes — were measured. If 3.6's
+    allow arm is ever reshaped to render a popup inside the app's own frame rather than as a separate
+    window, that is a configuration nothing here covers.
+14. **Should `attach` remember the last page?** **Unresolved, and it is a privacy question rather than
+    a technical one.** 7.3 defaults `url` to the previous session's last page, which is one entry of
+    persisted third-party browsing history in `userData` — small, but it is history, and the user did
+    not ask for it. It is cleared with the browse profile. _To settle:_ a decision, not a measurement:
+    either keep it and say so where the user can see it, or drop it and always open on the registry's
+    start list. E ships it because returning to a half-finished search is the common case, and records
+    that the argument is not strong.
+15. **What tells the user about a download that finished, or was refused, while they were elsewhere?**
+    **Designed, not settled** (4.3, 5.2). The item outlives the view and the poll does not, and
+    `preventDefault()` tells the page nothing — so both need a surface outside `/browse`. This
+    document says one must exist and does not design it, because that is a UI question about the whole
+    app's notification surface rather than about browsing, and the app does not currently have one.
+16. **Where does the download record belong if a second subsystem ever wants one?** `download.json`
+    beside the bytes (5.3) is D's shape and the right one for E. If a third staging area appears, the
+    sweep-and-verify logic will exist three times. Recorded now because that is the moment to extract
+    it, and not before.
+17. **Which download idiom do the other three sites use?** **Answered for the policy, open for the
+    sites.** 3.5 measures what all three idioms do under both policies and allows `blob:`/`data:` so
+    that none of them turns on a coin flip — but only Thingiverse's shape was ever observed, and it is
+    a `blob:` built by script. Whether Printables serves a plain `https` redirect, a signed URL or a
+    blob is unmeasured (§11.4) and would change nothing in the policy; it would change what 4.3's
+    in-flight handling is exercised by, since a blob download is effectively instantaneous and an
+    `https` one is not. _To settle:_ folded into 9.2.
+18. **Are the staging caps the right numbers?** **A judgement, labelled as one** (5.2): 4 concurrent,
+    4 GiB staged, 2 GiB single, chosen against the one real download there is (21 060 699 bytes) so
+    that an honest backlog is nowhere near them. Nothing measured bears on them. _To settle:_ they are
+    constants in one place; if a real library pushes against them that is the measurement, and the
+    constants move with it.
