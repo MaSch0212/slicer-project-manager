@@ -98,3 +98,60 @@ test('the admin route is reachable for an admin and lists users', async ({ page 
   // match would be ambiguous. The cell being asserted on is the username cell.
   await expect(page.getByRole('cell', { name: 'admin', exact: true })).toBeVisible()
 })
+
+test('the brand mark and the icon assets are served at the site root', async ({ page }) => {
+  // The browser half of what `packages/desktop/test/shell.spec.ts` asserts for the Electron
+  // renderer. The two are not the same risk: these files reach the browser through Angular's
+  // `assets` copy of `packages/web/public`, and reach the desktop renderer through that *plus*
+  // the `spm://` handler's content-type map. A change to angular.json's assets glob breaks this
+  // one and nothing else.
+  await page.goto('/login')
+
+  const mark = page.locator('.spm-brand-mark')
+  await expect(mark).toBeVisible()
+  // `naturalWidth`, because a broken image is still visible, still in the DOM, and still reports
+  // `complete === true`. This is the only property that separates "loaded" from "404".
+  expect(await mark.evaluate((img: HTMLImageElement) => img.naturalWidth)).toBeGreaterThan(0)
+  // Decorative: the link's own text names the app, so the image must not add a second name.
+  expect(await mark.getAttribute('alt')).toBe('')
+
+  const responses = await Promise.all(
+    [
+      'favicon.ico',
+      'favicon.svg',
+      'apple-touch-icon.png',
+      'icon-192.png',
+      'icon-512.png',
+      'manifest.webmanifest',
+    ].map(async (name) => {
+      const response = await page.request.get(`/${name}`)
+      const body = await response.body()
+      return [name, response.status(), response.headers()['content-type'], magicOf(body)]
+    }),
+  )
+  // The status alone would pass against the SPA fallback answering every unknown path with
+  // index.html, which is exactly what a missing asset looks like. The fourth field is the file's
+  // own magic bytes, so a served index.html reads as `html` in the diff instead of passing.
+  //
+  // A byte count was the first version of this, and it was wrong in a way worth keeping: the
+  // manifest is 464 bytes, so `byteLength > 500` failed on the one file whose type mattered most.
+  expect(responses).toEqual([
+    ['favicon.ico', 200, 'image/vnd.microsoft.icon', 'ico'],
+    ['favicon.svg', 200, 'image/svg+xml', 'svg'],
+    ['apple-touch-icon.png', 200, 'image/png', 'png'],
+    ['icon-192.png', 200, 'image/png', 'png'],
+    ['icon-512.png', 200, 'image/png', 'png'],
+    ['manifest.webmanifest', 200, 'application/manifest+json', 'json'],
+  ])
+})
+
+/** What a file's first four bytes say it is, so a served index.html cannot pass as an image. */
+function magicOf(body: Buffer): string {
+  const hex = body.subarray(0, 4).toString('hex')
+  if (hex.startsWith('89504e47')) return 'png'
+  if (hex.startsWith('00000100')) return 'ico'
+  if (hex.startsWith('3c3f786d')) return 'svg'
+  if (hex.startsWith('3c21646f')) return 'html'
+  if (body[0] === 0x7b) return 'json'
+  return hex
+}

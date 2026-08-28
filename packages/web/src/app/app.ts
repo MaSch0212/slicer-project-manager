@@ -39,7 +39,35 @@ import { SettingsStore } from './core/settings.store'
           <!-- One tab stop for the whole bar, arrow keys between the items, and the end
                placement stays right-aligned as the window narrows. -->
           <jig-toolbar>
-            <a class="spm-brand" routerLink="/projects">{{ t.translations().app.title }}</a>
+            <!-- The same mark the browser tab shows: packages/web/public/favicon.svg, which the
+                 Angular build copies to the site root unhashed.
+
+                 alt="" is what does the work. The link's own text already names the app, so a
+                 second accessible name here would have a screen reader announce "Slicer Project
+                 Manager Slicer Project Manager". aria-hidden says the same thing twice on
+                 purpose: this is exactly the kind of decoration someone later "fixes" by adding
+                 alt text.
+
+                 width and height are the intrinsic box, so the header does not reflow between
+                 layout and image decode. The src is resolved through the base href="/" in
+                 index.html, which is what makes it spm://app/favicon.svg in the Electron
+                 renderer rather than a lookup relative to the current route.
+
+                 No backticks in this comment, and no dollar-brace either: the template is a JS
+                 template literal, so both are syntax before they are text. Measured -- a first
+                 version of this comment quoted the file path in backticks and esbuild failed
+                 with 'Expected "}" but found "packages"'. -->
+            <a class="spm-brand" routerLink="/projects">
+              <img
+                class="spm-brand-mark"
+                src="favicon.svg"
+                alt=""
+                aria-hidden="true"
+                width="28"
+                height="28"
+              />
+              {{ t.translations().app.title }}
+            </a>
 
             <!-- One <ng-container placement="end">, not one attribute per link: the toolbar
                  resolves projection slots at compile time, so a control-flow block whose root

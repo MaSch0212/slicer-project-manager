@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { join, resolve } from 'node:path'
+import { contentTypeFor } from '@spm/core'
 import { resolveWebRoot, serveStatic, staticFilePath } from '../src/static.ts'
 import { withServer } from './harness.ts'
 
@@ -119,6 +120,51 @@ Deno.test('makeHandler serves non-API requests from the web root it was given', 
       },
       { env: { webRoot: root } },
     )
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
+})
+
+Deno.test('the icon assets are served as themselves, not as octet-stream', async () => {
+  // Measured before this existed, against the real `packages/web/dist/web/browser`: `favicon.svg`,
+  // `favicon.ico` and `manifest.webmanifest` all came back **200 application/octet-stream**,
+  // because `serveStatic` knew three extensions by name and handed everything else to core's
+  // library-file map, which knows none of these.
+  //
+  // Two of those three are real breakage rather than untidiness. Chromium does not sniff SVG for
+  // an `<img>` — it requires `image/svg+xml` — so the brand mark in the app header was a broken
+  // image in the browser while rendering correctly in the Electron shell, whose own map already
+  // had `.svg`. And Chromium refuses a manifest that is not served as JSON, so the Android
+  // home-screen icon the manifest exists for would not have been used.
+  //
+  // Files written here rather than read from `dist/`: this suite must not need a built bundle,
+  // and the assertion is about the *mapping*, which does not care what is in the file.
+  const root = mkdtempSync(join(tmpdir(), 'spm-static-types-'))
+  try {
+    writeFileSync(join(root, 'index.html'), '<!doctype html>root')
+    for (const name of ['favicon.svg', 'favicon.ico', 'manifest.webmanifest', 'icon-192.png']) {
+      writeFileSync(join(root, name), 'x')
+    }
+    const at = (path: string) => serveStatic(new URL(`http://localhost${path}`), root)
+    const types: Record<string, string | null> = {}
+    for (const name of ['favicon.svg', 'favicon.ico', 'manifest.webmanifest', 'icon-192.png']) {
+      types[name] = (await at(`/${name}`)).headers.get('content-type')
+    }
+    assert.deepEqual(types, {
+      'favicon.svg': 'image/svg+xml',
+      'favicon.ico': 'image/vnd.microsoft.icon',
+      'manifest.webmanifest': 'application/manifest+json',
+      // Already correct before the icons arrived — core's map has `png` — and here so a rewrite
+      // of the lookup that dropped the fallback to `contentTypeFor` fails rather than passing.
+      'icon-192.png': 'image/png',
+    })
+
+    // Core's map must not learn `svg`. `packages/desktop/src/app.ts` carries a measured table of
+    // what each type in it does when navigated to at the renderer's origin, and an SVG document
+    // both commits *and* can run script — the one entry that would invalidate it. This asserts
+    // the separation rather than trusting a comment to preserve it.
+    assert.equal(contentTypeFor('drawing.svg'), 'application/octet-stream')
+    assert.equal(contentTypeFor('anything.webmanifest'), 'application/octet-stream')
   } finally {
     rmSync(root, { recursive: true, force: true })
   }

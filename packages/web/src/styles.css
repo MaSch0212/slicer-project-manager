@@ -91,11 +91,31 @@ p {
 }
 
 .spm-brand {
+  /* inline-flex, not inline: the mark and the title have to share a baseline-independent centre
+     line. As inline content the 28px image sits on the text baseline and hangs below it, which
+     puts the mark a few pixels low against a bold 20px title -- visible, and the kind of thing no
+     test reports. */
+  display: inline-flex;
+  align-items: center;
+  /* `--jig-size-padding-sm` and not a gap token: the theme engine injects its tokens at runtime,
+     so a name that does not exist resolves to nothing and the gap silently becomes 0. This is one
+     of the four --jig-size-* names this file already depends on. */
+  gap: var(--jig-size-padding-sm);
   font-size: var(--jig-font-size-lg);
   font-weight: var(--jig-font-weight-bold);
   color: var(--jig-color-text);
   text-decoration: none;
   white-space: nowrap;
+}
+
+.spm-brand-mark {
+  /* The mark's own artwork is full-bleed vertically and inset ~6% horizontally, so a square box
+     gives a mark exactly as tall as the box. `flex: none` keeps it that way when the toolbar
+     squeezes the brand at narrow widths -- without it the image is a flex item and shrinks
+     before the nav does. */
+  flex: none;
+  width: 28px;
+  height: 28px;
 }
 
 .spm-main {
