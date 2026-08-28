@@ -5,5 +5,18 @@
 # That happened: a single `git checkout -- package.json` was enough to break `pnpm verify`
 # locally while CI, which checks out on Linux, stayed green.
 #
-# No tracked file in this repo is binary, so text=auto is unambiguous here.
+# That line used to end "no tracked file in this repo is binary, so text=auto is unambiguous
+# here." The app icons made it false: `deno task icons` writes six PNGs and two `.ico` files, and
+# they are committed.
+#
+# `text=auto` would in fact have handled them — git sniffs for a NUL in the first 8000 bytes and
+# leaves anything it finds one in alone, and every PNG has one in its signature. The explicit
+# `binary` lines below are not there because that heuristic is wrong; they are there because it is
+# a heuristic, and the failure mode when it misses is a `.ico` with every 0x0a in it rewritten to
+# 0x0d0a — a file that still looks plausible in `git status` and decodes nowhere.
+#
+# `binary` is git's own shorthand for `-text -diff`: never convert line endings, and do not try to
+# show a textual diff of it.
 * text=auto eol=lf
+*.png binary
+*.ico binary

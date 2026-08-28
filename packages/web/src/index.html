@@ -5,7 +5,32 @@
     <title>Slicer Project Manager</title>
     <base href="/" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <link rel="icon" type="image/x-icon" href="favicon.ico" />
+
+    <!--
+      Every file referenced here is written by `deno task icons` from `assets/icons/*.svg` and
+      lives in `packages/web/public/`, which the Angular build copies to the site root unhashed.
+      `tools/icons.test.ts` re-decodes all of them; it is in `deno task verify`.
+
+      The order of the two `rel="icon"` links is the whole trick. A browser that understands
+      `type="image/svg+xml"` takes the SVG and gets a mark that stays sharp at any zoom; one that
+      does not ignores that link and falls back to the `.ico`, whose three frames are declared so
+      nothing has to guess. Listing the `.ico` first is what makes that fallback work in browsers
+      that take the *first* icon they can parse rather than the best.
+
+      `apple-touch-icon` is not redundant with the manifest: iOS reads this file by name for the
+      home-screen icon and does not consult `manifest.webmanifest` for it.
+
+      This head is shared with the Electron renderer, where the document is at `spm://app/` — see
+      `packages/desktop/src/app.ts` for the two things that had to change there for the manifest
+      link to be served and allowed.
+    -->
+    <link rel="icon" href="favicon.ico" sizes="16x16 32x32 48x48" />
+    <link rel="icon" href="favicon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="apple-touch-icon.png" />
+    <link rel="manifest" href="manifest.webmanifest" />
+    <!-- The dark stop of the tile's own gradient (`assets/icons/app.svg`, `#199afc` to `#0229bf`),
+         so the Android address bar and the manifest agree on one colour. -->
+    <meta name="theme-color" content="#0229bf" />
   </head>
   <body>
     <app-root></app-root>

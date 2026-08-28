@@ -29,6 +29,7 @@
   },
   "tasks": {
     "install": "deno install --allow-scripts",
+    "icons": "deno run -A tools/generate-icons.ts",
     "dev": "echo \"Run two terminals: deno task dev:ui  |  deno task dev:server\"",
     "dev:ui": "cd packages/web && node node_modules/@angular/cli/bin/ng.js serve --port 4200",
     "dev:server": "SPM_DEV_UI_ORIGIN=http://localhost:4200 SPM_LOG_LEVEL=debug deno run --env-file -A --watch --no-clear-screen packages/server/main.ts",
@@ -43,7 +44,7 @@
     "lint": "deno run -A node_modules/eslint/bin/eslint.js .",
     "fmt": "deno run -A node_modules/prettier/bin/prettier.cjs --write .",
     "fmt:check": "deno run -A node_modules/prettier/bin/prettier.cjs --check .",
-    "typecheck": "deno task typecheck:contract && deno task typecheck:core && deno task typecheck:server && deno task typecheck:web && deno task typecheck:desktop",
+    "typecheck": "deno task typecheck:contract && deno task typecheck:core && deno task typecheck:server && deno task typecheck:web && deno task typecheck:desktop && deno task typecheck:tools",
     "typecheck:contract": "deno run -A node_modules/typescript/bin/tsc --noEmit -p packages/contract/tsconfig.json",
     "typecheck:core": "deno run -A node_modules/typescript/bin/tsc --noEmit -p packages/core/tsconfig.json",
     "typecheck:server": "deno check packages/server/main.ts packages/server/import-curamanager.ts",
@@ -53,14 +54,16 @@
     "typecheck:web:e2e": "cd packages/web && node node_modules/typescript/bin/tsc --noEmit -p tsconfig.e2e.json",
     "typecheck:web:seed": "deno check packages/web/e2e/seed.ts",
     "typecheck:desktop": "deno run -A node_modules/typescript/bin/tsc --noEmit -p packages/desktop/tsconfig.json",
+    "typecheck:tools": "deno check tools/generate-icons.ts tools/icons.test.ts",
     "test:contract": "node --test \"packages/contract/test/**/*.test.ts\"",
     "test:core:node": "node --test \"packages/core/test/**/*.test.ts\"",
     "test:core:deno": "deno test --allow-read --allow-write --allow-env packages/core/test/",
     "test:server": "deno test --allow-all packages/server/test/",
     "test:web": "cd packages/web && node node_modules/@angular/cli/bin/ng.js test --no-watch",
     "test:desktop:unit": "node --test \"packages/desktop/test/**/*.test.ts\"",
+    "test:icons": "node --test \"tools/*.test.ts\"",
     "e2e": "cd packages/web && node node_modules/@playwright/test/cli.js test",
     "test:desktop": "cd packages/desktop && node ../../node_modules/@playwright/test/cli.js test",
-    "verify": "deno task lint && deno task fmt:check && deno task typecheck && deno task test:contract && deno task test:core:node && deno task test:core:deno && deno task test:server && deno task test:desktop:unit && deno task test:web"
+    "verify": "deno task lint && deno task fmt:check && deno task typecheck && deno task test:contract && deno task test:core:node && deno task test:core:deno && deno task test:server && deno task test:desktop:unit && deno task test:icons && deno task test:web"
   }
 }
