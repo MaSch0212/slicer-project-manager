@@ -1,14 +1,5 @@
-import {
-  closeSync,
-  fsyncSync,
-  mkdirSync,
-  openSync,
-  readFileSync,
-  renameSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs'
-import { dirname } from 'node:path'
+import { readFileSync } from 'node:fs'
+import { writeJsonFile } from './json-store.ts'
 
 /**
  * What the shell remembers between launches, and the one file it writes it to.
@@ -16,8 +7,10 @@ import { dirname } from 'node:path'
  * Split out of `library.ts` by task 5, because it stopped being about the library folder. Task 4
  * put one key in this file; the shell now has a *mode* as well, and a remote server it may be
  * pointed at instead of a folder — three keys that have to move together or not at all. The
- * writer below was already atomic and fsync'd in anticipation of exactly that: a torn write used
+ * writer was already atomic and fsync'd in anticipation of exactly that: a torn write used
  * to cost one forgotten folder, and now it would cost the whole of the shell's configuration.
+ * D moved it to `json-store.ts` so `slicers.json` gets the same guarantees out of the same code;
+ * `writeState` below is what this file's own keys are written with, and is unchanged in effect.
  *
  * Nothing here imports `electron`, so `test/state.test.ts` drives every branch under plain
  * `node --test` against a real temporary file; the writer's atomicity is asserted in
@@ -137,42 +130,14 @@ export function rememberDir(stateFile: string, dir: string): void {
 }
 
 /**
- * Replaces the state file, atomically.
+ * Replaces the state file, atomically — `json-store.ts`'s write-temp/fsync/rename.
  *
- * Write to a temp file, flush it, then rename over the real one. A torn file used to cost one
- * forgotten folder, which `readState` already degrades to first run — but the object now carries
- * the shell's mode and a remote server URL as well, and then half a file loses the whole
- * configuration rather than one path. `renameSync` replaces an existing file on Windows as well
- * as on POSIX, which is what lets this be a rename and not a delete-then-write.
- *
- * **The `fsync` is the half that makes it survive a crash and not only a concurrent reader.**
- * Without it the rename can reach the directory before the data reaches the disk — ext4's
- * `data=ordered` and NTFS both allow it — and what a reader finds afterwards is a zero-length
- * `state.json`, which is the exact outcome the paragraph above says this prevents.
- *
- * What is still not forced is the *directory* entry: an fsync on the containing directory (not
- * possible on Windows) is what would make the rename itself durable. Left, and stated: the
- * failure it guards is a power cut in the millisecond after the rename, and its cost is one
- * forgotten choice, not a corrupt one.
+ * A one-line function and deliberately still a function: it is the shape every caller in this
+ * file uses, it names `state.json` as the thing being replaced, and `test/library.test.ts`'s
+ * atomicity assertions reach the writer through it. The reasoning for each step of the sequence
+ * — including what the fsync buys and the directory entry that is still not forced — lives on
+ * `writeJsonFile` and is not duplicated here.
  */
 export function writeState(stateFile: string, state: ShellState): void {
-  mkdirSync(dirname(stateFile), { recursive: true })
-  const temp = `${stateFile}.${process.pid}.tmp`
-  try {
-    const handle = openSync(temp, 'w')
-    try {
-      writeFileSync(handle, `${JSON.stringify(state, null, 2)}\n`)
-      fsyncSync(handle)
-    } finally {
-      closeSync(handle)
-    }
-    renameSync(temp, stateFile)
-  } catch (error) {
-    // A temp file that never became the state file is litter in the user's `userData`. This
-    // removes the one this call made; a hard kill *between* the flush and the rename still leaves
-    // one behind, and nothing sweeps those — a sweep would race a second instance of the app
-    // mid-write, and the litter is one short file per crash.
-    rmSync(temp, { force: true })
-    throw error
-  }
+  writeJsonFile(stateFile, state)
 }
