@@ -21,13 +21,13 @@ It ships in two forms from one codebase:
 
 ### 1.1 Subsystems and what this spec covers
 
-|       | Subsystem                                                                           | Depends on | This spec                                                                                                      |
-| ----- | ----------------------------------------------------------------------------------- | ---------- | -------------------------------------------------------------------------------------------------------------- |
-| **A** | Deno backend (SQLite, file store, auth/users) + Angular project browser + web build | —          | **Full, implementable detail**                                                                                 |
-| **B** | 3D model previews (thumbnails + interactive viewer)                                 | A          | Skeleton + pipeline design                                                                                     |
-| **C** | Electron shell (offline local folder, native dialogs)                               | A          | Skeleton + extension points                                                                                    |
-| **D** | Slicer configuration and launching                                                  | C          | Extension points only — full detail in [subsystem D](2026-08-28-slicer-project-manager-subsystem-d-slicers.md) |
-| **E** | Model browser (embedded browsing, download interception, project matching)          | C          | Extension points only                                                                                          |
+|       | Subsystem                                                                           | Depends on | This spec                                                                                                            |
+| ----- | ----------------------------------------------------------------------------------- | ---------- | -------------------------------------------------------------------------------------------------------------------- |
+| **A** | Deno backend (SQLite, file store, auth/users) + Angular project browser + web build | —          | **Full, implementable detail**                                                                                       |
+| **B** | 3D model previews (thumbnails + interactive viewer)                                 | A          | Skeleton + pipeline design                                                                                           |
+| **C** | Electron shell (offline local folder, native dialogs)                               | A          | Skeleton + extension points                                                                                          |
+| **D** | Slicer configuration and launching                                                  | C          | Extension points only — full detail in [subsystem D](2026-08-28-slicer-project-manager-subsystem-d-slicers.md)       |
+| **E** | Model browser (embedded browsing, download interception, project matching)          | C          | Extension points only — full detail in [subsystem E](2026-08-28-slicer-project-manager-subsystem-e-model-browser.md) |
 
 B–E each get their own spec and plan cycle. This document fixes the cross-cutting
 architecture they must all fit into — package boundaries, data model, API contract, auth,
@@ -38,7 +38,8 @@ structural.
 their rows above are unchanged because this document's coverage of them did not change. D is the
 first subsystem to produce a second spec, which is why its row points at one. The sentence is left
 standing as the intent rather than deleted — a subsystem large enough to need a spec should get
-one — but it describes a rule two subsystems have already, deliberately, not followed.
+one — but it describes a rule two subsystems have already, deliberately, not followed. **E followed
+it**, on 2026-08-28, and its row points at its own spec too.
 
 ### 1.2 Explicitly out of scope
 
@@ -824,6 +825,20 @@ redirect downloads, and that the four major model sites (Thingiverse, Printables
 MakerWorld, Cults3D) all refuse third-party framing — so an embedded browser in the
 desktop app is the only viable route, and the web build cannot offer this feature at all.
 That is consistent with `canBrowseModelSites` being false in the browser column of 2.4.
+
+**Amended 2026-08-28, against a measurement.** The conclusion stands and the reason given
+for it was wrong. Both halves were re-tested on Electron 44.0.0 in one session, minutes
+apart, against the same four URLs: as an `<iframe>` inside a page carrying no CSP of its
+own all four were refused — `X-Frame-Options: SAMEORIGIN` for Thingiverse, Printables and
+Cults3D, CSP `frame-ancestors 'none'` for MakerWorld — and **all four of those same URLs
+loaded as top-level `WebContentsView`s**. Those headers govern embedding _as a frame_, and
+a `WebContentsView` is a separate top-level frame tree rather than a subframe, so they do
+not apply to it. The sentence is therefore "**a `WebContentsView` is not a frame**", not
+"the sites allow it" — which is what the paragraph above implies and what would mislead
+the next reader. The practical conclusion is unchanged: a browser has nothing but a frame
+to offer these sites, so the web build cannot do this and `canBrowseModelSites` stays
+false in the browser column. See subsystem E §1.3 and
+`.superpowers/spikes/2026-08-28-model-browser-facts.md` §7.
 
 ## 10. Open questions
 
