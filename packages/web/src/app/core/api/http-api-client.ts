@@ -9,6 +9,8 @@ import type {
   RemoteLibraryDto,
   RescanResultDto,
   SettingsDto,
+  SlicerConfigDto,
+  SlicerId,
   UserDto,
   ZipImportResultDto,
 } from '@spm/contract/dtos.ts'
@@ -103,6 +105,36 @@ export class HttpApiClient implements ApiClient {
       Promise.reject(new AppError('Forbidden', 'this shell has no local library folder')),
     connect: (): Promise<RemoteLibraryDto | null> =>
       Promise.reject(new AppError('Forbidden', 'this shell cannot be pointed at another server')),
+  }
+
+  /**
+   * Refused for the same reason `library.pick` is, and it is worth being precise about which one.
+   *
+   * Not "the server has no slicers" — a Deno server could in principle have slicers installed
+   * beside it. It is that slicer configuration is a property of **the machine the user is sitting
+   * at**, and over HTTP that machine is a browser tab. `Capabilities.canConfigureSlicers` is
+   * false on this transport, so nothing in the UI reaches these; the refusal is what keeps the
+   * promise every method of this class makes — a rejection is always an `AppError` with a `code`
+   * the caller can switch on, never a `TypeError` from a method that turned out not to be there.
+   */
+  // The parameters are named, unused and deliberate: an arrow that takes none still satisfies
+  // `implements ApiClient`, but its *call signature* is what a caller of this class sees, so a
+  // spec — or a component holding an `HttpApiClient` directly — would fail to compile on the
+  // arguments the interface says it may pass.
+  readonly slicers = {
+    get: (): Promise<SlicerConfigDto> => this.noSlicers(),
+    scan: (): Promise<SlicerConfigDto> => this.noSlicers(),
+    addManual: (_slicerId: SlicerId): Promise<SlicerConfigDto | null> => this.noSlicers(),
+    remove: (_installId: string): Promise<SlicerConfigDto> => this.noSlicers(),
+    bind: (_slicerId: SlicerId, _installId: string): Promise<SlicerConfigDto> => this.noSlicers(),
+    setDefault: (_slicerId: SlicerId): Promise<SlicerConfigDto> => this.noSlicers(),
+    resetConfig: (): Promise<SlicerConfigDto> => this.noSlicers(),
+  }
+
+  private noSlicers(): Promise<never> {
+    return Promise.reject(
+      new AppError('Forbidden', 'this shell cannot configure the slicers on this machine'),
+    )
   }
 
   readonly account = {

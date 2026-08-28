@@ -67,6 +67,35 @@ describe('HttpApiClient', () => {
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
+  /**
+   * The same shape, for the whole slicer block, and all seven rather than one of them.
+   *
+   * Over HTTP the machine the user is sitting at is a browser tab, so there is nothing here to
+   * configure and no route that would configure it. The interesting half is `expect(fetchMock)`:
+   * a method that fell through to `this.request` would send a request to a path the server has
+   * never heard of and surface a 404 as `Internal`, which is a much worse thing for the UI to
+   * switch on than a `Forbidden` it can recognise.
+   */
+  it('refuses every slicer method, without inventing a request for any of them', async () => {
+    const fetchMock = vi.fn()
+    const client = new HttpApiClient('', fetchMock)
+    const calls = [
+      client.slicers.get(),
+      client.slicers.scan(),
+      client.slicers.addManual('cura'),
+      client.slicers.remove('manual:one'),
+      client.slicers.bind('cura', 'manual:one'),
+      client.slicers.setDefault('orca'),
+      client.slicers.resetConfig(),
+    ]
+
+    for (const call of calls) {
+      await expect(call).rejects.toBeInstanceOf(AppError)
+      await expect(call).rejects.toMatchObject({ code: 'Forbidden' })
+    }
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
   it('turns the error envelope back into an AppError with its details', async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       jsonResponse(

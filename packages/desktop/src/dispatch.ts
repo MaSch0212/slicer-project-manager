@@ -5,7 +5,13 @@ import { Readable } from 'node:stream'
 import { z } from 'zod'
 import type { ApiClient } from '@spm/contract/api-client.ts'
 import { createDecorators } from '@spm/contract/decorate.ts'
-import type { Capabilities, LocalLibraryDto, RemoteLibraryDto } from '@spm/contract/dtos.ts'
+import type {
+  Capabilities,
+  LocalLibraryDto,
+  RemoteLibraryDto,
+  SlicerConfigDto,
+  SlicerId,
+} from '@spm/contract/dtos.ts'
 import { AppError } from '@spm/contract/errors.ts'
 import {
   changePasswordSchema,
@@ -50,6 +56,7 @@ import {
 } from '@spm/core'
 import type { DesktopSession } from './library.ts'
 import type { WireUploadBody } from './protocol.ts'
+import { SLICER_IDS } from './slicers/registry.ts'
 import { ACTIVATION_URL_BASE, FILE_URL_BASE } from './urls.ts'
 
 /**
@@ -101,6 +108,23 @@ export type ShellApi = {
    * and `capabilities.ts` is the one place the union is computed.
    */
   capabilities(): Promise<Capabilities>
+  /**
+   * Slicer configuration, which is a property of the machine and not of the open library.
+   *
+   * The whole block is on the shell rather than on a session, and that is what makes it work in
+   * both modes: in remote mode `deps.session` is null, so a `libraryCall` slicer entry would be
+   * refused before it ran. `app.ts` implements this over `SlicersHost`.
+   */
+  slicers: {
+    get(): Promise<SlicerConfigDto>
+    scan(): Promise<SlicerConfigDto>
+    /** Opens a native file dialog; null when the user cancels. The renderer names no path. */
+    addManual(slicerId: SlicerId): Promise<SlicerConfigDto | null>
+    remove(installId: string): Promise<SlicerConfigDto>
+    bind(slicerId: SlicerId, installId: string): Promise<SlicerConfigDto>
+    setDefault(slicerId: SlicerId): Promise<SlicerConfigDto>
+    resetConfig(): Promise<SlicerConfigDto>
+  }
 }
 
 /**
@@ -193,6 +217,25 @@ type ArgsSchema<A extends readonly unknown[]> = {
  * text, from reaching a prepared statement.
  */
 const idSchema = z.string().min(1).max(64)
+
+/**
+ * The five products, as a closed set the renderer cannot step outside.
+ *
+ * Built from `SLICER_IDS` rather than written out again, so a sixth slicer is one edit in the
+ * registry table and not two that can disagree. `z.enum` over a readonly tuple is what makes a
+ * value that is not one of the five a `Validation` failure before it reaches a `Record` lookup.
+ */
+const slicerIdSchema = z.enum(SLICER_IDS)
+
+/**
+ * An install id — `registry:<hive>:<key>`, `msix:<family>` or `manual:<uuid>`.
+ *
+ * Wider than `idSchema`: a registry id carries an uninstall subkey name, and those are as long
+ * as a vendor makes them. There is nothing else to check here — the real check is that the id is
+ * one of the ones actually in `slicers.json`, which is a lookup and answers `NotFound`. This only
+ * keeps an object, or a megabyte of text, out of that lookup.
+ */
+const installIdSchema = z.string().min(1).max(512)
 
 /**
  * How an upload arrives. See `WireUploadBody` in protocol.ts for the two arms and for why a
@@ -481,6 +524,45 @@ export const dispatch: DispatchTable = {
    */
   'library.connect': shellCall('library.connect', z.tuple([z.string()]), (shell, url) =>
     shell.connectRemote(url),
+  ),
+
+  /*
+   * Slicer configuration: seven `shellCall`s, and not one `libraryCall` among them.
+   *
+   * That is not a style choice. `libraryCall` refuses a null session by design, and in remote
+   * mode `deps.session` *is* null — so a `libraryCall` slicer entry could not work at all in the
+   * mode where the desktop shell is most obviously the only thing that can launch anything. The
+   * configuration is a property of this machine; the library is whatever is open.
+   *
+   * **Constraint 4, and where it bites here.** No entry below takes a filesystem path.
+   * `addManual` takes a `SlicerId` and the executable comes from a native dialog the main process
+   * owns — the same asymmetry `library.pick` has against `library.connect`, and for the same
+   * reason: a path from the renderer is a filesystem operation on an attacker-chosen location,
+   * and this one would end in a `spawn`. The renderer's whole vocabulary here is five product
+   * names and an install id it was given.
+   */
+  'slicers.get': shellCall('slicers.get', z.tuple([]), (shell) => shell.slicers.get()),
+  'slicers.scan': shellCall('slicers.scan', z.tuple([]), (shell) => shell.slicers.scan()),
+  'slicers.addManual': shellCall(
+    'slicers.addManual',
+    z.tuple([slicerIdSchema]),
+    (shell, slicerId) => shell.slicers.addManual(slicerId),
+  ),
+  'slicers.remove': shellCall('slicers.remove', z.tuple([installIdSchema]), (shell, installId) =>
+    shell.slicers.remove(installId),
+  ),
+  'slicers.bind': shellCall(
+    'slicers.bind',
+    z.tuple([slicerIdSchema, installIdSchema]),
+    (shell, slicerId, installId) => shell.slicers.bind(slicerId, installId),
+  ),
+  'slicers.setDefault': shellCall(
+    'slicers.setDefault',
+    z.tuple([slicerIdSchema]),
+    (shell, slicerId) => shell.slicers.setDefault(slicerId),
+  ),
+  'slicers.resetConfig': shellCall('slicers.resetConfig', z.tuple([]), (shell) =>
+    shell.slicers.resetConfig(),
   ),
 
   /*

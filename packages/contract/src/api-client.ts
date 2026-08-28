@@ -9,6 +9,8 @@ import type {
   RescanResultDto,
   ZipImportResultDto,
   SettingsDto,
+  SlicerConfigDto,
+  SlicerId,
   UserDto,
 } from './dtos.ts'
 import type {
@@ -78,6 +80,56 @@ export interface ApiClient {
      * transport itself has changed.
      */
     connect(url: string): Promise<RemoteLibraryDto | null>
+  }
+
+  /**
+   * The slicers installed on **this machine**, and which install each product launches.
+   *
+   * Gated by `Capabilities.canConfigureSlicers`. `HttpApiClient` refuses every method here for
+   * the same reason it refuses `library.pick`: a browser talking to a server has no machine of
+   * its own to configure, and there is no route for one. This is deliberately not a library
+   * concern — the configuration is a property of the computer, not of whichever library is open,
+   * so it is answered by the shell in both of the desktop shell's modes.
+   *
+   * **No method here takes a filesystem path.** `addManual` names a product and the path comes
+   * from a native dialog the main process owns, exactly as `library.pick` does; the renderer is
+   * the untrusted side of that boundary and never names a location on disk.
+   */
+  slicers: {
+    /** What is configured right now. Cheap: one small file, no subprocess. */
+    get(): Promise<SlicerConfigDto>
+    /**
+     * Looks for installed slicers and merges what it finds into what is already there.
+     *
+     * The expensive one — a PowerShell subprocess, measured at 880 ms — so it is a button and not
+     * something the app does at start-up. A scan adds new installs, marks vanished ones `missing`
+     * rather than dropping them, touches no manual entry, and **never re-points a binding the
+     * user has made**.
+     */
+    scan(): Promise<SlicerConfigDto>
+    /**
+     * Asks the user for an executable and records it as an install of `slicerId`.
+     *
+     * Resolves to `null` when the user cancels — not an error, exactly like `library.pick`. This
+     * is the answer to everything detection cannot see: per-user and portable installs, a vendor
+     * whose registry entry does not name the main executable, and any sixth slicer someone wants
+     * to point a `.3mf` at.
+     */
+    addManual(slicerId: SlicerId): Promise<SlicerConfigDto | null>
+    /** Forgets an install, and any binding to it. A detected one returns on the next scan. */
+    remove(installId: string): Promise<SlicerConfigDto>
+    /** The one decision the app asks the user to make: which install a product launches. */
+    bind(slicerId: SlicerId, installId: string): Promise<SlicerConfigDto>
+    /** The product used for a file that names no slicer, which is most of a library. */
+    setDefault(slicerId: SlicerId): Promise<SlicerConfigDto>
+    /**
+     * Throws the stored configuration away.
+     *
+     * The only way out of a `slicers.json` written by a newer build, which this one refuses to
+     * overwrite: a downgrade quietly replacing a newer configuration is worse than the feature
+     * being unavailable until somebody says otherwise.
+     */
+    resetConfig(): Promise<SlicerConfigDto>
   }
 
   account: {

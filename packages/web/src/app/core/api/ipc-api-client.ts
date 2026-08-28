@@ -9,6 +9,8 @@ import type {
   RemoteLibraryDto,
   RescanResultDto,
   SettingsDto,
+  SlicerConfigDto,
+  SlicerId,
   UserDto,
   ZipImportResultDto,
 } from '@spm/contract/dtos.ts'
@@ -217,6 +219,25 @@ export class IpcApiClient implements ApiClient {
     pick: (): Promise<LocalLibraryDto | null> => this.invoke('library.pick'),
     connect: (url: string): Promise<RemoteLibraryDto | null> =>
       this.invoke('library.connect', [url]),
+  }
+
+  /**
+   * Slicer configuration, which the main process answers out of `slicers.json` and a PowerShell
+   * subprocess. `addManual` takes only the product: the executable comes from a native dialog,
+   * because a path from this side is a path from the untrusted side.
+   */
+  readonly slicers = {
+    get: (): Promise<SlicerConfigDto> => this.invoke('slicers.get'),
+    scan: (): Promise<SlicerConfigDto> => this.invoke('slicers.scan'),
+    addManual: (slicerId: SlicerId): Promise<SlicerConfigDto | null> =>
+      this.invoke('slicers.addManual', [slicerId]),
+    remove: (installId: string): Promise<SlicerConfigDto> =>
+      this.invoke('slicers.remove', [installId]),
+    bind: (slicerId: SlicerId, installId: string): Promise<SlicerConfigDto> =>
+      this.invoke('slicers.bind', [slicerId, installId]),
+    setDefault: (slicerId: SlicerId): Promise<SlicerConfigDto> =>
+      this.invoke('slicers.setDefault', [slicerId]),
+    resetConfig: (): Promise<SlicerConfigDto> => this.invoke('slicers.resetConfig'),
   }
 
   readonly account = {

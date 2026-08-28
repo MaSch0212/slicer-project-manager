@@ -24,6 +24,8 @@ import {
 import { API_PATH_PREFIX, MODE_SWITCH, type BridgeMode } from './protocol.ts'
 import type { RemoteHost } from './remote.ts'
 import { ShellHost, type ShellRoute } from './shell.ts'
+import { SLICERS_FILE_NAME } from './slicers/config.ts'
+import { SlicersHost } from './slicers/host.ts'
 import { STATE_FILE_NAME } from './state.ts'
 import { navigationPolicy, RENDERER_HOST, RENDERER_ORIGIN, RESERVED_PATH_SEGMENT } from './urls.ts'
 
@@ -736,6 +738,43 @@ export const showRemoteConfirmation: RemoteConfirmer = async (options: ConfirmOp
   return confirmedAt(response)
 }
 
+/**
+ * The dialog a manual slicer entry comes from, and the only place a slicer path is chosen.
+ *
+ * **The renderer never names this path** (constraint 4). `slicers.addManual` takes a `SlicerId`
+ * and nothing else; the executable is picked here, in a dialog the main process owns — the same
+ * asymmetry `library.pick` has against `library.connect`, and a stronger reason for it, because
+ * this path ends in a `spawn` rather than in an `openLibrary`.
+ *
+ * Parented for the reason `showRemoteConfirmation` is: it is raised in answer to something the
+ * user did on a page, and there is always a page that asked.
+ *
+ * The filter is `.exe` on Windows and "any file" everywhere else. That is not laziness about
+ * macOS and Linux — it is that an `.app` bundle is a *directory* and a Linux binary has no
+ * extension, so a filter list invented here would hide the very files a non-Windows user would
+ * need to pick. `openFile` (not `openDirectory`) either way; what is actually enforced is on the
+ * other side of this call, in `SlicersHost`, which checks the path is a regular file that exists.
+ */
+export async function showExecutablePicker(): Promise<string | null> {
+  const parent = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0]
+  const options = {
+    title: 'Choose a slicer program',
+    properties: ['openFile' as const],
+    filters:
+      process.platform === 'win32'
+        ? [
+            { name: 'Programs', extensions: ['exe'] },
+            { name: 'All files', extensions: ['*'] },
+          ]
+        : [{ name: 'All files', extensions: ['*'] }],
+  }
+  const result = await (parent
+    ? dialog.showOpenDialog(parent, options)
+    : dialog.showOpenDialog(options))
+  const [chosen] = result.filePaths
+  return result.canceled || chosen === undefined ? null : chosen
+}
+
 /** Answers the shell's *startup* mode question without a dialog. See `resolveModePicker`. */
 export const FAKE_MODE_ENV = 'SPM_FAKE_MODE'
 
@@ -902,6 +941,12 @@ export function main(): void {
   // `app.getPath('userData')` is read once, after `setName` (which is what the directory is named
   // after) and before `whenReady`, which it does not require.
   const stateFile = join(app.getPath('userData'), STATE_FILE_NAME)
+  // Beside `state.json`, never inside it (D decision 4): one corrupt write should cost the user
+  // their slicer bindings or their library choice, never both. The two share `json-store.ts`.
+  const slicers = new SlicersHost({
+    configFile: join(app.getPath('userData'), SLICERS_FILE_NAME),
+    pickExecutable: () => showExecutablePicker(),
+  })
   // Resolved per call: `app.getLocale()` is only dependable once Electron is ready, and this runs
   // before that. The dialogs are the one thing this process says to a user in their own words —
   // see `PICKER_STRINGS` and `MODE_STRINGS`.
@@ -949,6 +994,18 @@ export function main(): void {
       pickLibraryFolder: () => shellHost.pickLocalFolder(),
       connectRemote: (url) => shellHost.connectRemote(url),
       capabilities: () => shellHost.capabilities(),
+      // Not on `ShellHost`: slicer configuration has nothing to do with which library is open,
+      // and putting it there would give that class a second, unrelated job. Both objects are
+      // reached the same way, per call, for the same reason `session` is.
+      slicers: {
+        get: () => Promise.resolve(slicers.get()),
+        scan: () => slicers.scan(),
+        addManual: (slicerId) => slicers.addManual(slicerId),
+        remove: (installId) => Promise.resolve(slicers.remove(installId)),
+        bind: (slicerId, installId) => Promise.resolve(slicers.bind(slicerId, installId)),
+        setDefault: (slicerId) => Promise.resolve(slicers.setDefault(slicerId)),
+        resetConfig: () => Promise.resolve(slicers.resetConfig()),
+      },
     },
   }))
 

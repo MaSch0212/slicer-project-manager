@@ -15,6 +15,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, before, test } from 'node:test'
 import type { ApiClient } from '@spm/contract/api-client.ts'
+import type { SlicerConfigDto } from '@spm/contract/dtos.ts'
 import { AppError } from '@spm/contract/errors.ts'
 import { closeLibrary, ensureLocalUser, openLibrary, type Library } from '@spm/core'
 import { writeZip } from '../../core/test/fixtures/make-3mf.ts'
@@ -87,6 +88,29 @@ const shell: ShellApi = {
     return Promise.resolve({ origin: 'https://example.invalid' })
   },
   capabilities: () => Promise.resolve(LOCAL_SHELL_CAPABILITIES),
+  slicers: {
+    get: () => Promise.resolve(slicerCall('get')),
+    scan: () => Promise.resolve(slicerCall('scan')),
+    addManual: (slicerId) => Promise.resolve(slicerCall('addManual', slicerId)),
+    remove: (installId) => Promise.resolve(slicerCall('remove', installId)),
+    bind: (slicerId, installId) => Promise.resolve(slicerCall('bind', slicerId, installId)),
+    setDefault: (slicerId) => Promise.resolve(slicerCall('setDefault', slicerId)),
+    resetConfig: () => Promise.resolve(slicerCall('resetConfig')),
+  },
+}
+
+/**
+ * What the shell's slicer half was asked, so the seven routes are exercised on their *arguments*
+ * and not only on their arity.
+ *
+ * The mapped type over `ApiClient` cannot see an argument tuple at all — `Dispatched` takes
+ * `unknown[]` — so `bind` with its two arguments the wrong way round typechecks clean everywhere
+ * and would only show up here.
+ */
+const slicerCalls: string[] = []
+function slicerCall(method: string, ...args: string[]): SlicerConfigDto {
+  slicerCalls.push([method, ...args].join(' '))
+  return { installs: [], bindings: {}, defaultSlicerId: null, detectionSupported: false }
 }
 
 /** Calls a route the way `ipc.ts` does, so a test cannot accidentally bypass the validation. */
@@ -153,6 +177,13 @@ function exerciseAll(client: ApiClient): Record<ApiPath, () => Promise<unknown>>
     'files.delete': () => client.files.delete('id'),
     'library.pick': () => client.library.pick(),
     'library.connect': () => client.library.connect('https://example.invalid'),
+    'slicers.get': () => client.slicers.get(),
+    'slicers.scan': () => client.slicers.scan(),
+    'slicers.addManual': () => client.slicers.addManual('cura'),
+    'slicers.remove': () => client.slicers.remove('manual:one'),
+    'slicers.bind': () => client.slicers.bind('cura', 'manual:one'),
+    'slicers.setDefault': () => client.slicers.setDefault('orca'),
+    'slicers.resetConfig': () => client.slicers.resetConfig(),
   }
 }
 
@@ -426,11 +457,52 @@ test('library.connect answers without a library, and hands the URL to the shell 
   }
 })
 
+/**
+ * **The whole reason the slicer routes are `shellCall`s, asserted rather than argued.**
+ *
+ * In remote mode `deps.session` is null. `libraryCall` refuses a null session by design, so a
+ * slicer entry built with it would answer `Conflict` for every call in the mode where the desktop
+ * shell is the only thing that could launch a slicer at all. Rewriting any one of the seven as a
+ * `libraryCall` turns its line below red.
+ */
+test('every slicer route answers with no library open, because none of them needs one', async () => {
+  slicerCalls.length = 0
+  const empty: SlicerConfigDto = {
+    installs: [],
+    bindings: {},
+    defaultSlicerId: null,
+    detectionSupported: false,
+  }
+  assert.deepEqual(await dispatch['slicers.get']({ session: null, shell }, []), empty)
+  assert.deepEqual(await dispatch['slicers.scan']({ session: null, shell }, []), empty)
+  assert.deepEqual(await dispatch['slicers.resetConfig']({ session: null, shell }, []), empty)
+  assert.deepEqual(await dispatch['slicers.addManual']({ session: null, shell }, ['bambu']), empty)
+  assert.deepEqual(await dispatch['slicers.remove']({ session: null, shell }, ['manual:x']), empty)
+  assert.deepEqual(
+    await dispatch['slicers.bind']({ session: null, shell }, ['bambu', 'manual:x']),
+    empty,
+  )
+  assert.deepEqual(await dispatch['slicers.setDefault']({ session: null, shell }, ['bambu']), empty)
+  assert.equal(slicerCalls.length, 7)
+})
+
 test('every library-backed route refuses when no folder is open', async () => {
-  // The three routes that answer out of the shell itself are the exceptions, and they are
-  // asserted directly above rather than skipped silently here. `library.connect` is one of them
-  // for the same reason `library.pick` is: with nothing open, they are the only ways out.
-  const fromShell: ApiPath[] = ['capabilities', 'library.pick', 'library.connect']
+  // The routes that answer out of the shell itself are the exceptions, and every one of them is
+  // asserted directly above rather than skipped silently here. `library.connect` is one for the
+  // same reason `library.pick` is: with nothing open, they are the only ways out. The seven
+  // slicer routes are, because slicer configuration is a property of the machine.
+  const fromShell: ApiPath[] = [
+    'capabilities',
+    'library.pick',
+    'library.connect',
+    'slicers.get',
+    'slicers.scan',
+    'slicers.addManual',
+    'slicers.remove',
+    'slicers.bind',
+    'slicers.setDefault',
+    'slicers.resetConfig',
+  ]
   for (const path of Object.keys(dispatch) as ApiPath[]) {
     if (fromShell.includes(path)) continue
     const error = await rejection(dispatch[path]({ session: null, shell }, []))
@@ -954,6 +1026,67 @@ test('the argument list itself is validated, not just its contents', async () =>
       JSON.stringify(body),
     )
   }
+})
+
+/**
+ * The seven slicer routes, on their arguments rather than on their arity alone.
+ *
+ * Every one of them is a `shellCall`, so none of them touches a library — which is the point:
+ * `deps.session` is null in remote mode, and a `libraryCall` slicer entry would be refused there
+ * before it ran. The calls below are made with a real session present and reach the shell anyway.
+ */
+test('the slicer routes reach the shell with their arguments in the right order', async () => {
+  slicerCalls.length = 0
+  await call('slicers.get')
+  await call('slicers.scan')
+  await call('slicers.addManual', ['prusaslicer'])
+  await call('slicers.remove', ['registry:HKCU:Thing'])
+  await call('slicers.bind', ['cura', 'registry:HKLM\\WOW6432Node:UltiMaker Cura 5.13.0-5.13.0'])
+  await call('slicers.setDefault', ['orca'])
+  await call('slicers.resetConfig')
+
+  // `bind` is the one with two arguments, and swapping them is invisible to the compiler.
+  assert.deepEqual(slicerCalls, [
+    'get',
+    'scan',
+    'addManual prusaslicer',
+    'remove registry:HKCU:Thing',
+    'bind cura registry:HKLM\\WOW6432Node:UltiMaker Cura 5.13.0-5.13.0',
+    'setDefault orca',
+    'resetConfig',
+  ])
+})
+
+test('a slicer route rejects a wrong argument tuple with Validation, and calls nothing', async () => {
+  slicerCalls.length = 0
+  const wrong: [ApiPath, unknown[]][] = [
+    // Too many, and too few.
+    ['slicers.get', ['cura']],
+    ['slicers.scan', [{}]],
+    ['slicers.resetConfig', [null]],
+    ['slicers.addManual', []],
+    ['slicers.addManual', ['cura', 'extra']],
+    ['slicers.bind', ['cura']],
+    ['slicers.bind', ['cura', 'id', 'extra']],
+    ['slicers.remove', []],
+    // Not a `SlicerId`: the renderer's whole vocabulary here is five product names.
+    ['slicers.addManual', ['CURA']],
+    ['slicers.addManual', ['superslicer']],
+    ['slicers.setDefault', ['']],
+    ['slicers.setDefault', [{ slicerId: 'cura' }]],
+    ['slicers.bind', ['superslicer', 'manual:one']],
+    // Not a plausible install id.
+    ['slicers.remove', ['']],
+    ['slicers.remove', [{ id: 'manual:one' }]],
+    ['slicers.remove', ['x'.repeat(513)]],
+    ['slicers.bind', ['cura', 42]],
+  ]
+  for (const [path, args] of wrong) {
+    const error = await rejection(call(path, args))
+    assert.equal(error.code, 'Validation', `${path} ${JSON.stringify(args)}`)
+    assert.match(error.message, new RegExp(path.replace('.', '\\.')))
+  }
+  assert.deepEqual(slicerCalls, [], 'nothing reached the shell')
 })
 
 test('a traversing file name never reaches the filesystem', async () => {
