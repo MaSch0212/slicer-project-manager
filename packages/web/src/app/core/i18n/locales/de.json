@@ -105,6 +105,8 @@
     "defaultLead": "Wird für jede Datei verwendet, die keinen eigenen Slicer nennt — also für die meisten.",
     "defaultNone": "Noch nichts zur Auswahl. Suchen oder fügen Sie zuerst einen Slicer hinzu.",
     "defaultPlaceholder": "Slicer wählen",
+    "unbind": "Nichts dafür starten",
+    "clearDefault": "Kein Standard-Slicer",
     "reset": "Slicer-Konfiguration verwerfen",
     "errorLoad": "Die Slicer-Konfiguration konnte nicht gelesen werden.",
     "errorForbidden": "Slicer lassen sich nur in der Desktop-App einrichten.",

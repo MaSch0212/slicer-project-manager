@@ -47,6 +47,7 @@ import {
 import { API_CLIENT, SHELL_CLIENT } from '../../core/api/api-client.token'
 import { CapabilitiesStore } from '../../core/capabilities.store'
 import { CuraHazardStore } from '../../core/cura-hazard.store'
+import { SLICER_PRODUCTS, slicerDisplayName } from '../../core/slicer-products'
 import { SlicerSessionsCard } from '../../core/slicer-sessions.card'
 import { formatBytes } from '../../core/format-bytes'
 import { TranslateService } from '../../core/i18n/translate.service'
@@ -87,32 +88,6 @@ function sameEditModel(a: EditModel, b: EditModel): boolean {
     a.notes === b.notes &&
     a.isArchived === b.isArchived
   )
-}
-
-/**
- * Every product, in the order the registry lists them, with the name to show for it.
- *
- * Duplicated from `packages/desktop/src/slicers/registry.ts` in one direction only, exactly as
- * `features/desktop/slicers/slicers.page.ts` duplicates it and for the same reasons: the renderer
- * must not import from the desktop package (spec 2.5), and these are brand names rather than
- * translated copy so they are not in the locale files either. What can drift is the *list*, and
- * the assertion below is what stops a sixth `SlicerId` from silently missing a row.
- */
-const SLICER_NAMES = [
-  { id: 'cura', name: 'UltiMaker Cura' },
-  { id: 'prusaslicer', name: 'PrusaSlicer' },
-  { id: 'anycubic', name: 'Anycubic Slicer Next' },
-  { id: 'bambu', name: 'Bambu Studio' },
-  { id: 'orca', name: 'OrcaSlicer' },
-] as const satisfies readonly { id: SlicerId; name: string }[]
-
-type AssertNever<T extends never> = T
-export type LaunchSlicerNamesAreComplete = AssertNever<
-  Exclude<SlicerId, (typeof SLICER_NAMES)[number]['id']>
->
-
-export function slicerDisplayName(id: SlicerId): string {
-  return SLICER_NAMES.find((product) => product.id === id)!.name
 }
 
 /**
@@ -708,7 +683,7 @@ export class ProjectDetailPage {
   protected readonly slicerOptions = computed(() => {
     const config = this.slicerConfig.hasValue() ? this.slicerConfig.value() : null
     if (config === null) return []
-    return SLICER_NAMES.filter((product) => config.bindings[product.id] !== undefined).map(
+    return SLICER_PRODUCTS.filter((product) => config.bindings[product.id] !== undefined).map(
       (product) => ({ label: product.name, value: product.id }),
     )
   })

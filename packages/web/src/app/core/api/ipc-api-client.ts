@@ -236,9 +236,9 @@ export class IpcApiClient implements ApiClient {
       this.invoke('slicers.addManual', [slicerId]),
     remove: (installId: string): Promise<SlicerConfigDto> =>
       this.invoke('slicers.remove', [installId]),
-    bind: (slicerId: SlicerId, installId: string): Promise<SlicerConfigDto> =>
+    bind: (slicerId: SlicerId, installId: string | null): Promise<SlicerConfigDto> =>
       this.invoke('slicers.bind', [slicerId, installId]),
-    setDefault: (slicerId: SlicerId): Promise<SlicerConfigDto> =>
+    setDefault: (slicerId: SlicerId | null): Promise<SlicerConfigDto> =>
       this.invoke('slicers.setDefault', [slicerId]),
     resetConfig: (): Promise<SlicerConfigDto> => this.invoke('slicers.resetConfig'),
     open: (

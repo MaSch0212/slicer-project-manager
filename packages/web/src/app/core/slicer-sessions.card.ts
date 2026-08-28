@@ -17,6 +17,7 @@ import { JigTag } from '@awdlab/jig/tag'
 import type { SlicerSessionDto } from '@spm/contract/dtos.ts'
 import { isAppError, type QuotaExceededDetails } from '@spm/contract/errors.ts'
 import { API_CLIENT, SHELL_CLIENT } from './api/api-client.token'
+import { slicerDisplayName } from './slicer-products'
 import { TranslateService } from './i18n/translate.service'
 import { formatBytes } from './format-bytes'
 
@@ -47,18 +48,24 @@ import { formatBytes } from './format-bytes'
  * ## Stale
  *
  * A session whose launch is more than {@link STALE_SESSION_MS} old is labelled stale and offered
- * to the bulk discard. It is a **judgement, not a measurement**, and it is deliberately about the
- * launch rather than about the file — a stale session may well hold a file that came back
+ * to the bulk discard. It is deliberately about the launch rather than about the file — a stale session may well hold a file that came back
  * yesterday, which is exactly why being stale is a label and never a reason to delete anything.
  */
 
 /**
- * Thirty days, the same number `packages/desktop/src/slicers/sessions.ts` writes down.
+ * Thirty days, after which a session is *listed as stale* — listed, never deleted.
  *
- * Spelled twice because the renderer may not import from the desktop package (spec 2.5) and the
- * number is not something a `SlicerSessionDto` carries — `startedAt` is, and this is what the
- * renderer does with it. The spec 6.3 paragraph that chose it is the one home of the reasoning;
- * `slicer-sessions.card.spec.ts` pins the value so a change to one and not the other is loud.
+ * **A judgement, not a measurement**, chosen in spec 6.3, which is the one home of the reasoning.
+ * And **this is the only copy of the number in the codebase**: the desktop package used to export
+ * one too, read by nothing, under a docblock claiming it gave the number "one home". It did the
+ * opposite, and the spec that was supposed to keep the two honest asserted
+ * `STALE_SESSION_MS === 30 * 24 * 60 * 60 * 1000` — a constant compared against its own literal,
+ * in the module that defines it, which stays green whatever the other copy says. Deleting the
+ * unread one is the honest fix; inventing a coupling to guard would have been the other kind.
+ *
+ * It lives *here* rather than there because staleness is applied here and nowhere else: the main
+ * process does not act on it, and `SlicerSessionDto` carries `startedAt` precisely so a consumer
+ * can age a session itself.
  */
 export const STALE_SESSION_MS = 30 * 24 * 60 * 60 * 1000
 
@@ -398,9 +405,14 @@ export class SlicerSessionsCard {
     if (session.isOrphan) parts.push(strings.orphanLead)
     if (session.returnedAs !== undefined && session.returnedAs !== null) {
       parts.push(
+        // Product names, not ids. Every other surface in the app says "OrcaSlicer"; this said
+        // "orca", which reads as a different thing rather than as the same thing abbreviated.
         interpolate(strings.returnedAs, {
-          source: session.sourceSlicer ?? strings.unknownSlicer,
-          returned: session.returnedAs,
+          source:
+            session.sourceSlicer == null
+              ? strings.unknownSlicer
+              : slicerDisplayName(session.sourceSlicer),
+          returned: slicerDisplayName(session.returnedAs),
         }),
       )
     }

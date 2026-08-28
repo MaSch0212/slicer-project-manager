@@ -193,7 +193,12 @@ describe('SlicerSessionsCard', () => {
   })
 
   it('labels a session stale after thirty days, and not before', async () => {
-    expect(STALE_SESSION_MS).toBe(30 * 24 * 60 * 60 * 1000)
+    // Not `expect(STALE_SESSION_MS).toBe(30 * 24 * 60 * 60 * 1000)`, which was here and was an
+    // assertion that a constant equals its own literal in the module that defines it — green
+    // whatever anything else says. What is worth pinning is the *unit*: a threshold accidentally
+    // written in seconds would still satisfy every relative assertion below, because they are all
+    // built from the constant itself.
+    expect(STALE_SESSION_MS / (24 * 60 * 60 * 1000)).toBe(30)
     const { fixture } = await setup([
       session({ launchId: 'fresh', startedAt: NOW - STALE_SESSION_MS + 1000 }),
       session({ launchId: 'old-1', startedAt: NOW - STALE_SESSION_MS - 1000 }),

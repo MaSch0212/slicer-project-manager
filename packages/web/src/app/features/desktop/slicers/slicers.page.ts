@@ -23,31 +23,8 @@ import type { SlicerConfigDto, SlicerId, SlicerInstallDto } from '@spm/contract/
 import { DETECTION_FAILED, isAppError } from '@spm/contract/errors.ts'
 import { TranslateService } from '../../../core/i18n/translate.service'
 import { SHELL_CLIENT } from '../../../core/api/api-client.token'
+import { SLICER_PRODUCTS } from '../../../core/slicer-products'
 import { SlicerSessionsCard } from '../../../core/slicer-sessions.card'
-
-/**
- * Every product the app knows about, in the order `packages/desktop/src/slicers/registry.ts`
- * lists them, with the name to show for it.
- *
- * The names are duplicated from that registry's `displayName`, deliberately and in one direction
- * only: the renderer must not import from `packages/desktop` (spec 2.5), and these are brand
- * names rather than translated copy, so they are not in the locale files either. What can
- * genuinely drift is the *list*, and the assertion below is what stops it — a sixth `SlicerId`
- * fails to compile here until it has a row.
- */
-const SLICER_PRODUCTS = [
-  { id: 'cura', name: 'UltiMaker Cura' },
-  { id: 'prusaslicer', name: 'PrusaSlicer' },
-  { id: 'anycubic', name: 'Anycubic Slicer Next' },
-  { id: 'bambu', name: 'Bambu Studio' },
-  { id: 'orca', name: 'OrcaSlicer' },
-] as const satisfies readonly { id: SlicerId; name: string }[]
-
-type AssertNever<T extends never> = T
-/** The `satisfies` above catches a row the union does not have; this catches the other direction. */
-export type SlicerProductsAreComplete = AssertNever<
-  Exclude<SlicerId, (typeof SLICER_PRODUCTS)[number]['id']>
->
 
 /** One product's row on the page: what is installed for it, and what is bound. */
 type ProductRow = {
@@ -227,6 +204,22 @@ function classify(error: unknown): FailureKind {
                   (valueChange)="onSetDefault($event)"
                 />
               </jig-input-field>
+              @if (cfg.defaultSlicerId !== null) {
+                <!-- The only way back. Without it a default could be set and never unset, and
+                     the launch paths handle its absence perfectly well: they refuse and name the
+                     choice, which is what a default exists to let a user opt out of. -->
+                <span>
+                  <button
+                    jigButton
+                    kind="text"
+                    type="button"
+                    [disabled]="busy()"
+                    (click)="onSetDefault(null)"
+                  >
+                    {{ t.translations().slicers.clearDefault }}
+                  </button>
+                </span>
+              }
             } @else {
               <p class="spm-muted">{{ t.translations().slicers.defaultNone }}</p>
             }
@@ -304,6 +297,17 @@ function classify(error: unknown): FailureKind {
                   <jig-icon [icon]="icons.add" />
                   {{ t.translations().slicers.addManual }}
                 </button>
+                @if (product.boundId !== null) {
+                  <button
+                    jigButton
+                    kind="text"
+                    type="button"
+                    [disabled]="busy()"
+                    (click)="onUnbind(product.id)"
+                  >
+                    {{ t.translations().slicers.unbind }}
+                  </button>
+                }
               </span>
             </section>
           }
@@ -431,13 +435,26 @@ export class DesktopSlicersPage {
 
   async onBind(slicerId: SlicerId, installId: string | null): Promise<void> {
     // The group re-emits its bound value as the input re-syncs after a replace; binding to what
-    // is already bound would be a second IPC round trip for nothing.
+    // is already bound would be a second IPC round trip for nothing. `null` used to return here
+    // too, which silently made "launch nothing for this product" unreachable — see `onUnbind`.
     if (installId === null || installId === this.config()?.bindings[slicerId]) return
     await this.#run(() => this.shell.slicers.bind(slicerId, installId))
   }
 
+  /**
+   * Unbinds a product, which is the only way back from a binding the app made by itself.
+   *
+   * A product with exactly one install is bound the moment it is detected, and `remove` does not
+   * undo that: the install is still installed, so the next scan finds it and binds it again for
+   * being the only one. Rendered only where there is something to unbind.
+   */
+  async onUnbind(slicerId: SlicerId): Promise<void> {
+    if (this.config()?.bindings[slicerId] === undefined) return
+    await this.#run(() => this.shell.slicers.bind(slicerId, null))
+  }
+
   async onSetDefault(slicerId: SlicerId | null): Promise<void> {
-    if (slicerId === null || slicerId === this.config()?.defaultSlicerId) return
+    if (slicerId === this.config()?.defaultSlicerId) return
     await this.#run(() => this.shell.slicers.setDefault(slicerId))
   }
 

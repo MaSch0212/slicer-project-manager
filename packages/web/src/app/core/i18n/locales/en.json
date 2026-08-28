@@ -105,6 +105,8 @@
     "defaultLead": "Used for every file that does not name a slicer of its own, which is most of a library.",
     "defaultNone": "Nothing to choose from yet. Find or add a slicer first.",
     "defaultPlaceholder": "Choose a slicer",
+    "unbind": "Launch nothing for this",
+    "clearDefault": "No default slicer",
     "reset": "Throw the slicer configuration away",
     "errorLoad": "The slicer configuration could not be read.",
     "errorForbidden": "Slicers can only be configured in the desktop app.",

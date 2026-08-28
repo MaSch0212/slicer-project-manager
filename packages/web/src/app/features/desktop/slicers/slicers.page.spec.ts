@@ -366,6 +366,50 @@ describe('DesktopSlicersPage', () => {
     })
   })
 
+  it('offers a way back from a binding the app made by itself', async () => {
+    const bound = { ...TWO_CURAS, bindings: { cura: CURA_513.id } }
+    const { fixture, slicers, translate } = await setup(bound)
+
+    buttonNamed(fixture, translate.translations().slicers.unbind)?.click()
+    await fixture.whenStable()
+
+    // `null`, and not `remove`: the install is still installed, so the next scan finds it and —
+    // being the only one of its product, once the second Cura is gone — binds it again.
+    expect(slicers.bind).toHaveBeenCalledWith('cura', null)
+  })
+
+  it('renders no unbind control for a product that is not bound', async () => {
+    // The pair. TWO_CURAS binds nothing, so a control that rendered anyway would be an unbind
+    // button for a binding that does not exist — and the assertion above would pass regardless.
+    const { fixture, translate } = await setup(TWO_CURAS)
+
+    expect(buttonNamed(fixture, translate.translations().slicers.unbind)).toBeNull()
+  })
+
+  it('offers a way back from a default once there is one', async () => {
+    const withDefault: SlicerConfigDto = {
+      ...TWO_CURAS,
+      bindings: { cura: CURA_513.id },
+      defaultSlicerId: 'cura',
+    }
+    const { fixture, slicers, translate } = await setup(withDefault)
+
+    buttonNamed(fixture, translate.translations().slicers.clearDefault)?.click()
+    await fixture.whenStable()
+
+    // A default that could be set and never unset was a setting with no way back; the launch
+    // paths handle its absence by refusing and naming the choice, which is the point of it.
+    expect(slicers.setDefault).toHaveBeenCalledWith(null)
+  })
+
+  it('renders no clear-default control where there is no default', async () => {
+    // The pair, and the reason the one above says anything: a control rendered unconditionally
+    // would satisfy it while offering to clear a setting nobody has made.
+    const { fixture, translate } = await setup({ ...TWO_CURAS, bindings: { cura: CURA_513.id } })
+
+    expect(buttonNamed(fixture, translate.translations().slicers.clearDefault)).toBeNull()
+  })
+
   describe('a platform detection cannot run on', () => {
     it('hides the rescan control and says detection is Windows-only', async () => {
       const { fixture, translate } = await setup({ ...NOTHING_FOUND, detectionSupported: false })

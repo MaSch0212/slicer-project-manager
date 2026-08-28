@@ -129,8 +129,9 @@ export class HttpApiClient implements ApiClient {
     scan: (): Promise<SlicerConfigDto> => this.noSlicers(),
     addManual: (_slicerId: SlicerId): Promise<SlicerConfigDto | null> => this.noSlicers(),
     remove: (_installId: string): Promise<SlicerConfigDto> => this.noSlicers(),
-    bind: (_slicerId: SlicerId, _installId: string): Promise<SlicerConfigDto> => this.noSlicers(),
-    setDefault: (_slicerId: SlicerId): Promise<SlicerConfigDto> => this.noSlicers(),
+    bind: (_slicerId: SlicerId, _installId: string | null): Promise<SlicerConfigDto> =>
+      this.noSlicers(),
+    setDefault: (_slicerId: SlicerId | null): Promise<SlicerConfigDto> => this.noSlicers(),
     resetConfig: (): Promise<SlicerConfigDto> => this.noSlicers(),
     open: (
       _fileId: string,
