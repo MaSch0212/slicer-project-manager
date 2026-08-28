@@ -57,9 +57,16 @@ export type EntryDiff = {
  * SHA-256 over, for each entry in **name order**: the entry name, then the entry's **decompressed**
  * bytes, with the generated-on line of `Metadata/Slic3r_PE.config` excluded.
  *
- * For a file that is not a readable ZIP — an `.stl`, an `.obj`, or a `.3mf` caught mid-write — it
- * is a plain SHA-256 of the file's bytes. Nothing measured argues against that; it is the fallback
- * it looks like. A file that is unreadable *as a file* still throws.
+ * For a file whose **central directory does not parse** — an `.stl`, an `.obj`, a `.3mf` truncated
+ * mid-write — it is a plain SHA-256 of the file's bytes. Nothing measured argues against that; it
+ * is the fallback it looks like.
+ *
+ * The fallback is keyed on that parse and nothing else, which is narrower than "not a ZIP" and
+ * narrower than "mid-write". A file whose directory parses but whose payload does not — a
+ * half-flushed entry behind an intact directory, an unsupported compression method — **throws**
+ * rather than falling back, and so does a file that cannot be read at all. Task 5's settle window
+ * is what that case is for: an exception there means "not settled yet", and turning it into a
+ * plausible hash of half a file would defeat exactly that.
  *
  * Name and content are length-framed rather than simply concatenated. Without framing an archive
  * holding `{a: "bc"}` hashes identically to one holding `{ab: "c"}`, which is a silent
