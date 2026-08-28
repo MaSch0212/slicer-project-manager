@@ -105,6 +105,20 @@ jobs:
           grep -rl DesktopConnectPage packages/web/dist/electron/browser \
             || { echo "::error::routes.electron.ts no longer reaches the connect page"; exit 1; }
 
+      # Spec D's /settings/slicers. It reaches the shell over IPC to read and write slicers.json
+      # and to open a native executable picker, so it must be as absent from the web bundle as
+      # the two above. The shared /settings page links to it -- by routerLink string only, gated
+      # on a capability -- and that link is what would drag it in if the rule were ever broken.
+      - name: web bundle carries no desktop slicers page
+        run: |
+          if grep -rl DesktopSlicersPage packages/web/dist/web/browser; then
+            echo "::error::the slicer settings page leaked into the web bundle"; exit 1
+          fi
+      - name: electron bundle carries the desktop slicers page
+        run: |
+          grep -rl DesktopSlicersPage packages/web/dist/electron/browser \
+            || { echo "::error::routes.electron.ts no longer reaches the slicer settings page"; exit 1; }
+
       # Same shape, for the second fileReplacement: API_CLIENT resolves to IpcApiClient in the
       # electron build and to HttpApiClient in the web one. The marker is a string literal from
       # ipc-api-client.ts (BRIDGE_MISSING) and not the class name, because the minifier renames
