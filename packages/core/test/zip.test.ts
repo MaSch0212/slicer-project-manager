@@ -15,6 +15,7 @@ import {
   DEFAULT_ZIP_CHUNK_BYTES,
   findZipEntry,
   openZip,
+  readsAsZip,
   readZipEntries,
   readZipEntryBytes,
   readZipEntryChunks,
@@ -542,5 +543,40 @@ test('an entry whose declared length is impossible is a Validation error', async
       () => readZipEntryBytes(path, { ...entry, localHeaderOffset: -1 }),
       (e: unknown) => validation(e) && /impossible offset/.test((e as Error).message),
     )
+  })
+})
+
+/**
+ * The predicate the desktop settle window rests on, driven here rather than only by consequence.
+ *
+ * It exists to tell "a `.3mf` mid-write" from "a file that was never a ZIP", which `entryHash`
+ * cannot: that falls back to a plain SHA-256 when the directory does not parse, which is right for
+ * an `.stl` and produces a plausible hash of half a file for the other. Every row below is a case
+ * the caller actually meets, and the `true` rows are what stop the whole thing being satisfied by
+ * a predicate that refuses everything.
+ */
+test('readsAsZip answers about the central directory, and only about that', async () => {
+  await withDir((dir) => {
+    const good = join(dir, 'good.3mf')
+    writeSample(good)
+    assert.equal(readsAsZip(good), true)
+
+    // The whole point: a real archive truncated mid-write. The local header is there and the
+    // central directory is not, which is exactly what a slicer's save looks like halfway through.
+    const half = join(dir, 'half.3mf')
+    writeFileSync(half, readFileSync(good).subarray(0, 40))
+    assert.equal(readsAsZip(half), false)
+
+    // Not a ZIP at all, and not a failure either — the caller asks this only of files whose first
+    // bytes claim to be one, and an `.stl` that answered `false` here would settle for ever.
+    const mesh = join(dir, 'cube.stl')
+    writeFileSync(mesh, 'solid cube\nendsolid cube\n')
+    assert.equal(readsAsZip(mesh), false)
+
+    // Empty, and absent. Every reason this can be false is a reason for the caller to wait.
+    const empty = join(dir, 'empty.3mf')
+    writeFileSync(empty, new Uint8Array(0))
+    assert.equal(readsAsZip(empty), false)
+    assert.equal(readsAsZip(join(dir, 'nothing-here.3mf')), false)
   })
 })

@@ -139,6 +139,15 @@ export function diffDigests(
  * The non-ZIP fallback is a single entry under the file's own basename, so an `.stl` that came
  * back changed reports `changed: ['cube.stl']` rather than nothing at all. Exported for the
  * launch record: see `diffDigests`.
+ *
+ * **It disagrees with `entryHash` on an archive holding two entries of the same name**, and the
+ * disagreement is worth stating because it is observable. `entryHash` frames and hashes every
+ * record it finds; a `Map` cannot hold two values for one key, so this keeps the last — which is
+ * what a reader extracting the archive would also end up with. An archive where only a shadowed
+ * duplicate changed therefore hashes differently and diffs to nothing, and the session reads
+ * `changed` with an empty diff. No 3MF writer emits duplicate names — nothing in the reference
+ * library has one — so this is a stated limit rather than a bug with a reproduction, and the
+ * failure it produces is a diff that says less than it might, never one that says something false.
  */
 export function entryDigests(path: string): Map<string, string> {
   const digests = new Map<string, string>()
