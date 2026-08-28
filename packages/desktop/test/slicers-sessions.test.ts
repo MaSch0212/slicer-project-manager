@@ -740,6 +740,41 @@ test('an import adds a derived name, twice, and never touches the original', asy
   )
 })
 
+test('the derived name follows what the file classifies as now, not what was launched', async () => {
+  const h = harness()
+  const projectId = project('Round trip identity')
+  const { path } = launchDirectory(
+    h,
+    'launch-identity',
+    'bracket.3mf',
+    (target) => bambuLineageProject(target, ['X-BBL-Client-Type']),
+    { projectId, sourceSlicer: 'bambu', slicerId: 'orca', launchedHash: 'not-what-is-there' },
+  )
+  // What came back is a *Cura* project — which is neither what went out (`bambu`) nor the product
+  // that was launched (`orca`). A name taken from the record would say one of those two.
+  curaProject(path)
+
+  const added = (await h.sessions.resolve('launch-identity', 'import', {})) as FileDto
+
+  assert.equal(added.name, 'bracket (cura).3mf')
+})
+
+test('discarding an orphan beside a record touches neither the record nor the launched file', async () => {
+  const h = harness()
+  const { directory, path } = launchDirectory(h, 'launch-neighbour', 'bracket.3mf', curaProject)
+  const stray = join(directory, 'bracket-v2.3mf')
+  curaProject(stray)
+
+  await h.sessions.resolve('launch-neighbour/bracket-v2.3mf', 'discard', {})
+
+  assert.equal(existsSync(stray), false)
+  // The neighbour is a different session with a different file. Writing a `sweptAt` onto its
+  // record would say the app had removed a file that is still sitting right there.
+  assert.equal(existsSync(path), true)
+  assert.equal(readRecordAt(directory).sweptAt, undefined)
+  assert.equal(existsSync(directory), true)
+})
+
 test('an orphan needs a project, and takes the one it is given', async () => {
   const h = harness()
   const projectId = project('Adopted')

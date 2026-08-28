@@ -618,7 +618,7 @@ export class SlicerSessions {
   /** The file a `launch.json` describes: everything the DTO can carry is known for this one. */
   #launched(launchId: string, directory: string, record: SlicerLaunchRecord): Session {
     const path = join(directory, record.fileName)
-    const fileState = this.#stateOf(path, record.launchedHash)
+    const { state: fileState, sizeBytes } = this.#inspect(path, record.launchedHash)
     const settled = fileState === 'unchanged' || fileState === 'changed'
     const returned = settled ? classifyFile(path).slicer : null
     const sourceSlicer = record.sourceSlicer ?? null
@@ -635,7 +635,9 @@ export class SlicerSessions {
       sourceSlicer,
       ...(fileState === 'changed' && returned !== sourceSlicer ? { returnedAs: returned } : {}),
       ...(record.sourceSizeBytes === undefined ? {} : { sourceSizeBytes: record.sourceSizeBytes }),
-      ...(settled ? { returnedSizeBytes: statSync(path).size } : {}),
+      // From the same read the state came from, rather than a second `stat`: a file that vanished
+      // between the two would otherwise throw out of `list()` and take every other session with it.
+      ...(sizeBytes === undefined ? {} : { returnedSizeBytes: sizeBytes }),
       ...(fileState === 'changed' && record.launchedEntries !== undefined
         ? { entryDiff: diffOf(record.launchedEntries, path) }
         : {}),
@@ -664,15 +666,11 @@ export class SlicerSessions {
     record: SlicerLaunchRecord | null,
   ): Session {
     const path = join(directory, name)
-    const fileState = this.#stateOf(path, null)
-    const settled = fileState === 'unchanged' || fileState === 'changed'
+    const { state: fileState, sizeBytes: returnedSizeBytes } = this.#inspect(path, null)
     let startedAt = record?.startedAt ?? 0
-    let returnedSizeBytes: number | undefined
     try {
-      const info = statSync(path)
       // When it appeared, which is the only "started" an orphan has.
-      startedAt = record?.startedAt ?? Math.round(info.mtimeMs)
-      returnedSizeBytes = settled ? info.size : undefined
+      startedAt = record?.startedAt ?? Math.round(statSync(path).mtimeMs)
     } catch {
       // Removed between the readdir and here. It simply reports what it can.
     }
@@ -681,7 +679,8 @@ export class SlicerSessions {
       projectId: record?.projectId ?? '',
       fileId: '',
       fileName: name,
-      slicerId: settled ? classifyFile(path).slicer : null,
+      slicerId:
+        fileState === 'unchanged' || fileState === 'changed' ? classifyFile(path).slicer : null,
       startedAt,
       processAlive: false,
       fileState,
@@ -712,22 +711,33 @@ export class SlicerSessions {
    * the honest answer for one: something is there, and the app did not put it there.
    */
   #stateOf(path: string, launchedHash: string | null): SlicerSessionDto['fileState'] {
+    return this.#inspect(path, launchedHash).state
+  }
+
+  /** The same answer, with the size the read already found. `undefined` unless it settled. */
+  #inspect(
+    path: string,
+    launchedHash: string | null,
+  ): { state: SlicerSessionDto['fileState']; sizeBytes?: number } {
     const probe = probeFile(path)
     if (probe.state === 'settling') {
       const since = this.#unsettledSince.get(path) ?? this.#now()
       this.#unsettledSince.set(path, since)
-      if (this.#now() - since < this.#settleWindowMs) return 'settling'
+      if (this.#now() - since < this.#settleWindowMs) return { state: 'settling' }
       console.warn(
         `desktop: gave up reading ${basename(path)} after the settle window: ${probe.why}`,
       )
-      return 'unreadable'
+      return { state: 'unreadable' }
     }
     this.#unsettledSince.delete(path)
     // A file that vanished under the enumerator. Nothing can be said about it, and it will be
     // absent from the next list.
-    if (probe.state === 'gone') return 'unreadable'
-    if (launchedHash === null) return 'changed'
-    return probe.hash === launchedHash ? 'unchanged' : 'changed'
+    if (probe.state === 'gone') return { state: 'unreadable' }
+    if (launchedHash === null) return { state: 'changed', sizeBytes: probe.sizeBytes }
+    return {
+      state: probe.hash === launchedHash ? 'unchanged' : 'changed',
+      sizeBytes: probe.sizeBytes,
+    }
   }
 
   /* -----------------------------------------------------------------------------------------
@@ -765,15 +775,18 @@ export class SlicerSessions {
    * Which slicer the derived name is attributed to — **the returning file's, not the record's**.
    *
    * A round trip can change what a file *is*: a Bambu project opened in Orca and saved comes back
-   * classified `orca`, and calling the result `bracket (bambu).3mf` because that is what the record
-   * says would put the wrong product's name on it. The record's own `slicerId` is the fallback for
-   * a file whose classification names nothing — a stripped project, a mesh — because the product
-   * the app launched is then the best thing it knows.
+   * classified `orca`, and calling the result `bracket (bambu).3mf` because that is what the
+   * record says would put the wrong product's name on it. So the file is classified again here,
+   * rather than read off `returnedAs` — which is only set when the classification *differs* from
+   * the source, and is therefore absent in exactly the ordinary case where the two agree.
+   *
+   * The record's own `slicerId` is the fallback for a file whose classification names nothing at
+   * all — a stripped project, a mesh — because the product the app launched is then the best
+   * thing it knows. An orphan has no record and falls through to no suffix, which is the honest
+   * answer for a file nothing can attribute.
    */
   #slicerFor(session: Session): SlicerId | null {
-    const returned = session.dto.returnedAs ?? session.dto.slicerId
-    if (returned !== null && returned !== undefined) return returned
-    return session.record?.slicerId ?? null
+    return classifyFile(session.path).slicer ?? session.record?.slicerId ?? null
   }
 
   async #namesIn(projectId: string): Promise<Set<string>> {
