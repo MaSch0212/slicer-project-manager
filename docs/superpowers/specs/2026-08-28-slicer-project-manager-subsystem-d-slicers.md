@@ -622,7 +622,7 @@ same path**, now with no record beside it.
 So "compare before deleting" is a snapshot test for a hazard that is not a snapshot. Two rules
 replace it, and the second is what actually makes the first safe:
 
-1. **Only the user's answer, or an observed-and-settled exit, removes anything.** Sweep 2 runs
+1. **Only the user's answer, or an observed-and-settled exit, removes a file.** Sweep 2 runs
    when the spawned process exits (row 3 makes that observable on Windows) and may delete only a
    file that is _still_ byte-unchanged after a settle period. Row 4 is why even that is not a
    proof of anything: with `single_instance` on, the spawned process hands the file over and exits
@@ -637,6 +637,13 @@ replace it, and the second is what actually makes the first safe:
    orphan instead. Corrected here so a reader comparing the document to
    `packages/desktop/src/slicers/sessions.ts` does not read the implementation as over-reaching
    and "fix" it back.
+
+   **"A file", and not "anything", which the first correction of this paragraph overshot to.** The
+   sweep at next start removes exactly two things, and both are provably empty of information: a
+   launch directory that is completely empty, which is a `mkdir` a crash interrupted before the
+   copy, and a `launch.json` whose file the app itself swept more than 90 days ago. Neither is a
+   file of the user's and neither can be recovered into one. Rule 1 is about the _files_ in a
+   launch directory; those two exceptions are about a directory that no longer holds one.
 
 2. **A file with no record is an unfinished session, not litter.** This is the rule that makes the
    residual risk survivable rather than silent. Whatever the app deletes, row 20 can put back; a

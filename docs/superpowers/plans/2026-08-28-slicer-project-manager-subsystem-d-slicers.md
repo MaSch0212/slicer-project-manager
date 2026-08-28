@@ -663,11 +663,14 @@ and the config reader and writer.
       because the probe is not atomic with the write. Deleting the original is a **separate**
       action with a control that already exists.
 - [ ] **Sweep rule 1** (constraint 10): only the user's answer, or an observed-and-settled exit,
-      removes anything. The exit sweep runs when the spawned process exits and may delete only the
-      **file**, and only while it is _still_ byte-unchanged after a **10 s settle period** — a
+      removes a **file**. The exit sweep runs when the spawned process exits and may delete only
+      the file, and only while it is _still_ byte-unchanged after a **10 s settle period** — a
       judgement chosen against Cura's six-second lock, not a measurement. The directory and its
       `launch.json` stay, which is stricter than this line said while it read "a directory", and is
-      what makes the record-outlives-the-file rule two bullets down do anything at all. Even that is not proof: with
+      what makes the record-outlives-the-file rule two bullets down do anything at all. It read
+      "anything" for one round, which overshot in the other direction: the sweep at next start does
+      remove a completely empty launch directory, and a `launch.json` whose file the app itself
+      swept over 90 days ago. Neither is a file of the user's, and neither can become one. Even that is not proof: with
       `single_instance` on, the spawned process hands the file over and exits while the slicer
       stays open. **A sweep at next start surfaces and does not delete** — every
       `slicer-sessions/*` directory not belonging to the current process becomes a listed session.
