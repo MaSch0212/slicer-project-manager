@@ -743,7 +743,12 @@ test('a switch does not wait for a preview run, and the old library closes when 
   await h.host.prompt(null)
   const elapsed = Date.now() - startedAt
 
-  assert.ok(elapsed < 250, `the switch waited ${elapsed}ms for the preview run`)
+  // **The bound is generous on purpose, and 250 ms was not.** The behaviour this rules out waits
+  // for a run that is blocked until `finish()` below, which is to say for ever — so any finite
+  // bound tells the two apart, and the only thing a tight one adds is a dependency on how busy
+  // the machine is. Measured at 99-157 ms on the developer's machine and 1,593 ms on a shared CI
+  // runner, where 250 ms failed the build for a switch that had not waited for anything.
+  assert.ok(elapsed < 10_000, `the switch waited ${elapsed}ms for the preview run`)
   assert.equal(h.host.dir(), resolve(b), 'the new library is live immediately')
   // Still open: the run is holding it, which is the cost this design accepts and states.
   assert.doesNotThrow(() => first.lib.db.prepare('SELECT 1').get())
