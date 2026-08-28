@@ -657,16 +657,28 @@ slicer**, and getting that wrong loses two real cases. The inputs are the triple
 classification of the source, whether the copy was stripped)_ — the same three axes 3.4 separates —
 and the outputs are drawn from `behaviour` plus the measured table below:
 
-| Launched    | Source                                | Stripped | What the app says                                                                          | Evidence                                                                            |
-| ----------- | ------------------------------------- | -------- | ------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------- |
-| PrusaSlicer | any `.3mf`                            | either   | It will ask what to do with the file before opening it, and nothing loads until you answer | §3, §20 (measured)                                                                  |
-| Bambu       | a project it did not author           | either   | It will say the config is invalid and load geometry only                                   | §20 (measured)                                                                      |
-| Bambu       | **its own project, stripped**         | yes      | The same modal — stripping _creates_ it here, by removing the config Bambu looks for       | §20's stated rule, **inferred**: the probe stripped a Cura project, not a Bambu one |
-| Anycubic    | a Bambu-lineage project               | **no**   | It may discard the file without telling you — which is why the new-project path strips     | §3, §20 (measured)                                                                  |
-| Orca        | a project from another lineage slicer | no       | It will warn about the version and may rewrite print settings                              | §16 (measured)                                                                      |
-| Orca        | a project from another lineage slicer | yes      | One informational notice, "loading geometry data only" — the settings-rewrite one is gone  | §20 (measured)                                                                      |
-| any         | any                                   | either   | A slicer can take up to a minute to show a window (measured 2 s to 35 s)                   | §5 (measured)                                                                       |
-| any         | any                                   | either   | It may open a configuration wizard or an update prompt in front of your model              | §7 (measured)                                                                       |
+| Launched    | Source                                        | Stripped | What the app says                                                                          | Evidence                                                                            |
+| ----------- | --------------------------------------------- | -------- | ------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------- |
+| PrusaSlicer | any `.3mf`                                    | either   | It will ask what to do with the file before opening it, and nothing loads until you answer | §3, §20 (measured)                                                                  |
+| Bambu       | a project it did not author                   | either   | It will say the config is invalid and load geometry only                                   | §20 (measured)                                                                      |
+| Bambu       | **its own project, stripped**                 | yes      | The same modal — stripping _creates_ it here, by removing the config Bambu looks for       | §20's stated rule, **inferred**: the probe stripped a Cura project, not a Bambu one |
+| Anycubic    | a Bambu-lineage project **it did not author** | **no**   | It may discard the file without telling you — which is why the new-project path strips     | §3, §20 (measured)                                                                  |
+| Orca        | a project **it did not author**               | no       | It will warn about the version and may rewrite print settings                              | §16 (measured)                                                                      |
+| Orca        | a project **it did not author**               | yes      | One informational notice, "loading geometry data only" — the settings-rewrite one is gone  | §20 (measured)                                                                      |
+| any         | any                                           | either   | A slicer can take up to a minute to show a window (measured 2 s to 35 s)                   | §5 (measured)                                                                       |
+| any         | any                                           | either   | It may open a configuration wizard or an update prompt in front of your model              | §7 (measured)                                                                       |
+
+**Two of those predicates said "lineage" in an earlier draft and the measurements they cite say
+otherwise.** The Orca rows read "a project from another lineage slicer" — but the measurement is
+§16, Orca opening a **Bambu** project, which is the _same_ lineage, and it drew both the
+version-newer modal and the settings-rewrite notice. Written as "another lineage" the predicate
+suppresses the notice for the exact file that was measured producing it. The Anycubic row read "a
+Bambu-lineage project" with no exclusion, and Anycubic is Bambu-lineage: §3:239 and §20 give the
+cause as a version comparison on the writer's `slice_info.config` header, and §16's header table
+shows Anycubic stamping `X-ACNext-*` of its own — so its own projects are outside the mechanism, and
+warning about them would be a false alarm on the commonest launch there is. Both rows now say "it
+did not author", which is what was measured. `packages/desktop/src/slicers/launch.ts` implements
+them that way; if this table and that code ever disagree again, the measurements decide.
 
 The Bambu-stripped row is the case a slicer-keyed table cannot produce, and it is the one where the
 app's own strip is the cause. It is marked inferred because it is: §20 established that Bambu's
