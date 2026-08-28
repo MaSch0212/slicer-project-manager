@@ -113,17 +113,28 @@ const UNINSTALL_HIVES: readonly (readonly [string, string])[] = [
  * input anywhere near it — but "there is no user input in it today" is what every injection was
  * before it was one, and a `msixPackageFamily` is a string somebody will edit. A family name is
  * an MSIX identity: letters, digits, dots, dashes and one underscore.
+ *
+ * **Exported so it can be driven.** Both of its operands are module-private constants, so nothing
+ * a test could pass to `detectionScript` reaches the refusal — which made the guard, and the
+ * `throw` behind it, unable to fail. `test/slicers-detect.test.ts` calls this directly with the
+ * strings a careless edit would introduce.
+ *
+ * Note what it excludes and why that is the whole list: `'` (which would close a literal), `"`,
+ * `$`, backtick, `;`, `(`, `)`, `{`, `}`, `|`, `&`, newline and space. A value carrying any of
+ * them cannot end up inside the single-quoted literals `detectionScript` builds.
  */
-const SAFE_LITERAL = /^[A-Za-z0-9._\\:*\-]+$/
+export function isSafeScriptLiteral(value: string): boolean {
+  return /^[A-Za-z0-9._\\:*\-]+$/.test(value)
+}
 
 /**
  * The PowerShell that produces `DetectionDocument`.
  *
- * **It contains no double-quote character, and `scriptContainsNoDoubleQuote` in the test suite
- * says so.** That is what makes passing it as one `-Command` argument safe: `child_process`
- * quotes an argument for `CreateProcess` with MSVCRT rules, PowerShell then re-parses the command
- * line with its own, and the two agree on a string with no `"` in it. Measured through a real
- * `execFile` on this machine: 43 265 bytes of valid JSON back, no stderr.
+ * It is handed to the process as `-EncodedCommand` (see `encodedDetectionCommand`), so nothing
+ * about its punctuation matters and there is no quoting invariant for a reader to know about.
+ * The first version passed it as one `-Command` argument, which worked — measured, 43 265 bytes
+ * of valid JSON back with no stderr — but only because the script happens to contain no `"`, and
+ * an invariant that has to be asserted in a test is one a future edit has to be told about.
  *
  * Notes on the shape, each of which is a real behaviour of Windows PowerShell 5.1:
  *
@@ -145,7 +156,7 @@ export function detectionScript(): string {
     (family): family is string => family !== undefined,
   )
   for (const literal of [...families, ...UNINSTALL_HIVES.flat()]) {
-    if (!SAFE_LITERAL.test(literal)) {
+    if (!isSafeScriptLiteral(literal)) {
       throw new Error(`refusing to build a detection script around ${JSON.stringify(literal)}`)
     }
   }
@@ -176,24 +187,59 @@ export function detectionScript(): string {
 export const DETECTION_TIMEOUT_MS = 20_000
 
 /**
+ * The script as `-EncodedCommand` takes it: UTF-16LE, base64.
+ *
+ * This is what removes the quoting question rather than answering it. `child_process` quotes an
+ * argument for `CreateProcess` with MSVCRT rules and PowerShell re-parses the command line with
+ * its own; the two agree on a base64 string in every case, and on an arbitrary script only if
+ * somebody keeps checking. Base64 of UTF-16LE is what the switch is documented to take, and Node
+ * spells that `Buffer.from(text, 'utf16le')`.
+ */
+export function encodedDetectionCommand(script: string = detectionScript()): string {
+  return Buffer.from(script, 'utf16le').toString('base64')
+}
+
+/**
+ * `powershell.exe` by absolute path, not by PATH search.
+ *
+ * `execFile('powershell.exe', …)` asks Windows to find it, which means the process `PATH` decides
+ * which binary this app runs — and this is the one place the app starts a subprocess before a
+ * launch. Naming it outright takes the environment out of that decision. `%SystemRoot%` rather
+ * than a hard-coded `C:\Windows`, because Windows may legitimately be installed elsewhere; the
+ * fallback is only for an environment that has unset it.
+ *
+ * Windows PowerShell 5.1 specifically, and not `pwsh`: `Get-AppxPackage` is in-box there, and 5.1
+ * is present on every supported Windows. Its `ConvertTo-Json` is also what the `\uXXXX` escaping
+ * note above rests on.
+ */
+export function powerShellPath(env: NodeJS.ProcessEnv = process.env): string {
+  const root = env['SystemRoot'] ?? env['windir'] ?? 'C:\\Windows'
+  return win32.join(root, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
+}
+
+/**
  * Runs the script in a real PowerShell and answers with its stdout.
  *
  * `execFile` and not `spawn` with a shell: there is no shell in the chain, so nothing between
- * this argument list and `CreateProcess` re-interprets the script. `timeout` makes Node send
+ * this argument list and `CreateProcess` re-interprets anything. `timeout` makes Node send
  * `killSignal` when it expires — the default `SIGTERM`, which on Windows terminates the process
  * rather than signalling it — so a PowerShell wedged on a corrupt registry hive costs 20 seconds
- * and not the rest of the session.
+ * and not the rest of the session. **Not measured against a real wedged PowerShell**; it rests on
+ * Node's documented behaviour for `timeout` plus the one clean run recorded above.
  *
  * `maxBuffer` is 32 MiB against a measured 43 KB. That is not caution for its own sake: the
  * document carries every uninstall key on the machine, the default is 1 MiB, and exceeding it
  * kills the child and fails the call — a failure mode that would only ever appear on somebody
  * else's much fuller machine.
+ *
+ * Every one of those failures — a timeout, a `powershell.exe` that is not there, an overflowed
+ * buffer — rejects. `SlicersHost` is where that becomes an `AppError` the renderer can phrase.
  */
 export const runPowerShellDetection: RunDetection = () =>
   new Promise<string>((resolve, reject) => {
     execFile(
-      'powershell.exe',
-      ['-NoProfile', '-NonInteractive', '-Command', detectionScript()],
+      powerShellPath(),
+      ['-NoProfile', '-NonInteractive', '-EncodedCommand', encodedDetectionCommand()],
       { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024, timeout: DETECTION_TIMEOUT_MS },
       (error, stdout) => {
         if (error) reject(error)
@@ -212,7 +258,19 @@ export const runPowerShellDetection: RunDetection = () =>
  * Measured on this machine: one `DisplayName` reads `Fork\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0` and its
  * `DisplayVersion` `2.21.0` with thirteen more — a `REG_SZ` written with its declared length
  * including the padding. Left alone they would reach the UI, and a version compared for equality
- * would never match. Trailing NULs are cut here, once, for every string that arrives.
+ * would never match.
+ *
+ * **Every NUL is removed, wherever it is in the string, and not only a trailing run.** That is
+ * the more permissive of the two readings, and it is deliberate rather than incidental: a value
+ * with a NUL in the middle is a value whose writer disagrees with the reader about where it ends,
+ * and there is no spelling of it that both agree on. The alternative — refusing such a row — was
+ * rejected because the measured case is padding on a product that has nothing to do with slicing,
+ * and a detector that dropped rows over it would drop them silently.
+ *
+ * What that permissiveness cannot reach is a `spawn`. Stripping could in principle turn one path
+ * into a different, real one — but a path only becomes an install after `validatedExecutable`,
+ * which requires it to be absolute, to be named exactly like the registry row's `exeName`, and to
+ * exist. A value contrived to survive all three is a value whose author already knew the answer.
  */
 function clean(value: unknown): string {
   return typeof value === 'string' ? value.replaceAll('\0', '').trim() : ''
@@ -223,8 +281,10 @@ function clean(value: unknown): string {
  *
  * `DisplayIcon` is documented as `path[,index]` and may be quoted. All five values on this
  * machine were bare paths, and five files is not a specification, so both forms are handled. The
- * index is cut from the *end* only, and only when it is digits: a path may legitimately contain a
- * comma, and `C:\Tools\Slicer,v2\slicer.exe` must not become `C:\Tools\Slicer`.
+ * index is cut from the *end* only, and only when what follows the last comma is **an optionally
+ * negative run of digits** (`/^-?\d+$/`) — negative because an icon index may be a negative
+ * resource id, and `,-101` is in the test suite. A path may legitimately contain a comma, so
+ * `C:\Tools\Slicer,v2\slicer.exe` must not become `C:\Tools\Slicer`.
  */
 export function executableFromDisplayIcon(displayIcon: string): string | null {
   let text = clean(displayIcon)

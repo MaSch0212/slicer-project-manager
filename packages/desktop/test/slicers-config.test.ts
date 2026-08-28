@@ -6,6 +6,7 @@ import { after, before, test } from 'node:test'
 import {
   emptyConfig,
   mergeDetected,
+  NODE_RESOLVE_FILE_CHECK,
   readConfig,
   resolveInstallPath,
   SLICERS_CONFIG_VERSION,
@@ -16,7 +17,7 @@ import {
   type SlicersConfig,
   type StoredInstall,
 } from '../src/slicers/config.ts'
-import type { DetectedInstall } from '../src/slicers/detect.ts'
+import { NODE_DETECT_IO, type DetectedInstall } from '../src/slicers/detect.ts'
 
 /**
  * `slicers.json`: what a scan does to it, what an unreadable one does to the app, and how a
@@ -330,13 +331,14 @@ function storedFor(path: string, overrides: Partial<StoredInstall> = {}): Slicer
 function countingIo(answer: string | null): ResolveIo & { calls: number } {
   const io = {
     calls: 0,
-    isRegularFile: (path: string): boolean => {
-      try {
-        return readFileSync(path).length >= 0
-      } catch {
-        return false
-      }
-    },
+    // **`NODE_RESOLVE_FILE_CHECK` itself**, not a re-implementation of it.
+    //
+    // It was `readFileSync(path).length >= 0` at first, which refuses a directory by way of
+    // `EISDIR` rather than by being the predicate its name claims — and measured: with the real
+    // check weakened to `statSync(path) !== null`, the directory case below stayed green, because
+    // it was driving the double. The double is now the thing being relied on in production, so
+    // there is one predicate and the test cannot disagree with it.
+    isRegularFile: NODE_RESOLVE_FILE_CHECK,
     reresolve: (): Promise<string | null> => {
       io.calls += 1
       return Promise.resolve(answer)
@@ -344,6 +346,26 @@ function countingIo(answer: string | null): ResolveIo & { calls: number } {
   }
   return io
 }
+
+/**
+ * The production predicate itself, driven on all three answers.
+ *
+ * It is the check `addManual` makes before storing a path and the check that stands between a
+ * stale hint and a `spawn`, and everything else in this file reaches it through an `io`. Asserted
+ * here directly so the three cases are stated once rather than inferred from callers.
+ */
+test('a regular file is a regular file; a directory and a missing path are not', () => {
+  const exe = realExe('orca-slicer.exe')
+  const directory = join(root, `plain-dir-${(seq += 1)}`)
+  mkdirSync(directory, { recursive: true })
+
+  assert.equal(NODE_RESOLVE_FILE_CHECK(exe), true)
+  assert.equal(NODE_RESOLVE_FILE_CHECK(directory), false, 'a directory is not a regular file')
+  assert.equal(NODE_RESOLVE_FILE_CHECK(join(root, 'nothing-here', 'x.exe')), false)
+  // The same question the parse asks, and it must answer the same way.
+  assert.equal(NODE_DETECT_IO.isRegularFile(exe), true)
+  assert.equal(NODE_DETECT_IO.isRegularFile(directory), false)
+})
 
 test('a good hint costs one stat and no subprocess at all', async () => {
   const exe = realExe('orca-slicer.exe')
@@ -385,6 +407,20 @@ test('a hint that exists but is not the right executable is re-resolved', async 
 
   assert.equal(io.calls, 1)
   assert.equal(result.ok && result.path, right)
+})
+
+test('a directory where the executable should be is not a hint worth spawning', async () => {
+  // `mkdirSync` a path whose *name* passes the basename check, so the only thing that can refuse
+  // it is "is it a regular file". This is what `statSync().isFile()` buys over "can I read it".
+  const asDirectory = join(root, `dir-${(seq += 1)}`, 'orca-slicer.exe')
+  mkdirSync(asDirectory, { recursive: true })
+  const found = realExe('orca-slicer.exe')
+  const io = countingIo(found)
+
+  const result = await resolveInstallPath(storedFor(asDirectory), ORCA.id, io)
+
+  assert.equal(io.calls, 1)
+  assert.equal(result.ok && result.path, found)
 })
 
 test('a manual entry is never re-resolved, because there is nothing to re-resolve it from', async () => {

@@ -6,7 +6,7 @@ import { after, before, test } from 'node:test'
 import { AppError } from '@spm/contract/errors.ts'
 import { SLICERS_CONFIG_VERSION, SLICERS_FILE_NAME } from '../src/slicers/config.ts'
 import type { DetectIo } from '../src/slicers/detect.ts'
-import { SlicersHost, type SlicersHostOptions } from '../src/slicers/host.ts'
+import { DETECTION_FAILED, SlicersHost, type SlicersHostOptions } from '../src/slicers/host.ts'
 
 /**
  * The seven configuration operations, end to end against a real `slicers.json`, with the
@@ -364,6 +364,95 @@ test('two dialogs cannot be stacked: the same product waits, a different one is 
   // And the guard is released: a later call opens a dialog again.
   await host.addManual('orca')
   assert.equal(opened, 2)
+})
+
+/* -------------------------------------------------------------------------------------------
+ * When the subprocess itself fails
+ * ---------------------------------------------------------------------------------------- */
+
+/**
+ * A timed-out PowerShell, a `powershell.exe` that is not there and an overflowed `maxBuffer` all
+ * arrive as a plain `Error`. `ipc.ts` would normalise that to `Internal` carrying a Node error
+ * string, which a settings page can neither phrase nor switch on.
+ */
+test('a detection that cannot run is Internal with a reason, and writes nothing', async () => {
+  const { host, file } = hostFor({
+    run: () => Promise.reject(new Error('spawn powershell.exe ETIMEDOUT')),
+  })
+  const warnings: unknown[][] = []
+  const original = console.warn
+  console.warn = (...args: unknown[]): void => void warnings.push(args)
+  let error: AppError
+  try {
+    error = await rejection(host.scan())
+  } finally {
+    console.warn = original
+  }
+
+  assert.equal(error.code, 'Internal')
+  assert.equal(error.message, 'could not look for slicers installed on this machine')
+  assert.equal((error.details as { reason?: string }).reason, DETECTION_FAILED)
+  // The underlying failure is kept, but out of the sentence the user is shown.
+  assert.match(String((error.details as { cause?: string }).cause), /ETIMEDOUT/)
+  assert.equal(error.message.includes('ETIMEDOUT'), false)
+  assert.equal(warnings.length, 1)
+
+  // Nothing was written: a scan that did not run has nothing to say about the file.
+  assert.throws(() => readFileSync(file, 'utf8'), /ENOENT/)
+})
+
+/**
+ * **A detection that fails is not an install that is gone**, and this is the assertion that keeps
+ * those apart.
+ *
+ * The tempting shape is for the re-resolver to answer `null` on any failure. `null` means "the
+ * mechanism ran and did not find this", which marks the install `missing` **and writes that to
+ * disk** — so one timed-out PowerShell would leave the user with a slicer the app believes is
+ * uninstalled, to be un-broken by hand.
+ */
+test('a failed re-resolution leaves the install alone rather than recording it as gone', async () => {
+  const imagined = join(root, 'never-created', 'bambu-studio.exe')
+  const document = JSON.stringify({
+    registry: [
+      {
+        hive: 'HKLM',
+        key: 'Bambu Studio',
+        displayName: 'Bambu Studio',
+        displayVersion: '02.08.02.61',
+        displayIcon: imagined,
+      },
+    ],
+    msix: [],
+  })
+  let runs = 0
+  const { host, file } = hostFor({
+    // The first run is the scan and succeeds; the second is the re-resolution and does not.
+    run: () => {
+      runs += 1
+      return runs === 1
+        ? Promise.resolve(document)
+        : Promise.reject(new Error('spawn powershell.exe ENOENT'))
+    },
+    io: { isRegularFile: () => true },
+  })
+  await host.scan()
+  const before = readFileSync(file, 'utf8')
+
+  const original = console.warn
+  console.warn = (): void => {}
+  let error: AppError
+  try {
+    error = await rejection(host.resolveInstall('registry:HKLM:Bambu Studio'))
+  } finally {
+    console.warn = original
+  }
+
+  assert.equal(error.code, 'Internal')
+  assert.equal((error.details as { reason?: string }).reason, DETECTION_FAILED)
+  assert.equal(runs, 2)
+  // Not `NotFound`, and — the half that matters — not marked missing on disk either.
+  assert.equal(readFileSync(file, 'utf8'), before, 'slicers.json was written on a failed scan')
+  assert.equal(host.get().installs[0]?.state, 'ok')
 })
 
 /* -------------------------------------------------------------------------------------------

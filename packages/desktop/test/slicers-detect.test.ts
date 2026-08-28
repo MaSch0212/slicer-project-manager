@@ -1,13 +1,16 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, win32 } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { test } from 'node:test'
 import {
   detectInstalls,
   detectionScript,
+  encodedDetectionCommand,
   executableFromDisplayIcon,
+  isSafeScriptLiteral,
   parseDetection,
+  powerShellPath,
   type DetectIo,
   type DetectedInstall,
 } from '../src/slicers/detect.ts'
@@ -369,15 +372,85 @@ test('one install seen twice is one install', () => {
  * ---------------------------------------------------------------------------------------- */
 
 /**
- * The invariant that makes `-Command <script>` safe to pass as one argument.
+ * The guard around everything interpolated into the script, driven directly.
  *
- * `child_process` quotes the argument for `CreateProcess` with MSVCRT rules and PowerShell then
- * re-parses the command line with its own; the two agree on a string with no `"` in it. A double
- * quote added to this script would be the kind of thing that works on the author's machine and
- * produces a parse error on someone else's.
+ * `detectionScript` refuses to build a script around a literal that fails this — but both of its
+ * operands are module-private constants, so nothing a test can pass reaches that `throw` and
+ * **deleting the whole loop stayed green**. Exporting the predicate is what makes the guard
+ * falsifiable: these are the strings a careless edit to `msixPackageFamily` would introduce.
  */
-test('the detection script contains no double-quote character', () => {
-  assert.equal(detectionScript().includes('"'), false)
+test('the script-literal guard refuses everything that could close a PowerShell literal', () => {
+  for (const hostile of [
+    "Orca'; Start-Process calc; '",
+    'Orca"; Start-Process calc',
+    'Orca$(Start-Process calc)',
+    'Orca`nStart-Process calc',
+    'Orca; Start-Process calc',
+    'Orca | Start-Process calc',
+    'Orca & calc',
+    'Orca_with a space',
+    `Orca${String.fromCharCode(10)}Slicer`,
+    '',
+  ]) {
+    assert.equal(isSafeScriptLiteral(hostile), false, JSON.stringify(hostile))
+  }
+
+  // And it is not simply refusing everything: every literal the table really carries passes.
+  for (const id of SLICER_IDS) {
+    const family = SLICERS[id].windows.msixPackageFamily
+    if (family) assert.equal(isSafeScriptLiteral(family), true, family)
+  }
+  assert.equal(
+    isSafeScriptLiteral(
+      'HKLM:\\SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*',
+    ),
+    true,
+  )
+})
+
+/**
+ * The script crosses the process boundary base64-encoded, so its punctuation cannot matter.
+ *
+ * This replaced an assertion that the script contained no `"` — true, and the thing that made
+ * `-Command <script>` safe, but an invariant a future editor had to be told about. Round-tripping
+ * the encoding is the whole of what is left to check.
+ */
+test('the script is handed over as base64 UTF-16LE, and survives the round trip', () => {
+  const encoded = encodedDetectionCommand()
+  assert.match(encoded, /^[A-Za-z0-9+/]+={0,2}$/)
+  assert.equal(Buffer.from(encoded, 'base64').toString('utf16le'), detectionScript())
+  // A script that really does need a quote now costs nothing.
+  assert.equal(
+    Buffer.from(encodedDetectionCommand('echo "hi"'), 'base64').toString('utf16le'),
+    'echo "hi"',
+  )
+})
+
+/**
+ * The one subprocess this app starts before a launch, named outright rather than found.
+ *
+ * `execFile('powershell.exe', …)` lets the process `PATH` decide which binary runs. Nothing about
+ * that is exotic to exploit if an attacker can already write to a directory on `PATH`, but it is
+ * a free thing to take away.
+ */
+test('PowerShell is named by absolute path, out of SystemRoot rather than off PATH', () => {
+  assert.equal(
+    powerShellPath({ SystemRoot: 'C:\\Windows' }),
+    'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
+  )
+  // A Windows installed somewhere else is followed; an environment that says nothing is not.
+  assert.equal(
+    powerShellPath({ SystemRoot: 'D:\\Win' }),
+    'D:\\Win\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
+  )
+  assert.equal(win32.isAbsolute(powerShellPath({})), true)
+  assert.equal(
+    powerShellPath({}),
+    'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
+    'an environment that names no Windows still gets an absolute path, not a bare name',
+  )
+  // Never a bare name, which is the whole point.
+  assert.notEqual(powerShellPath({}), 'powershell.exe')
 })
 
 test('the script reads all three hives and every MSIX family in the registry table', () => {

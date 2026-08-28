@@ -17,10 +17,20 @@ import {
   detectInstalls,
   NODE_DETECT_IO,
   runPowerShellDetection,
+  type DetectedInstall,
   type DetectIo,
   type RunDetection,
 } from './detect.ts'
 import { SLICERS } from './registry.ts'
+
+/**
+ * `details.reason` on the `Internal` a failed detection throws.
+ *
+ * A constant rather than a literal because the settings page switches on it, and a string two
+ * packages both spell by hand is a string that drifts. Task 3 imports the DTO, not this — the
+ * value is what crosses the boundary, so it is written into the handoff table as well.
+ */
+export const DETECTION_FAILED = 'detection-failed'
 
 /**
  * The one thing that owns `slicers.json`, and the only place its lifecycle lives.
@@ -50,7 +60,22 @@ export type SlicersHostOptions = {
   configFile: string
   /** The detection subprocess. Injected; see `RunDetection`. */
   run?: RunDetection
+  /**
+   * The filesystem question the **parse** asks, so a fixture needs no real executables.
+   *
+   * Deliberately *not* the same seam as `isRegularFile` below, and the distinction is worth
+   * keeping: this one exists so a document describing another machine can be parsed on this one,
+   * and it is a stub in almost every test. The other is this host's view of the real filesystem,
+   * and stubbing it by accident would make a manual entry or a pre-launch check pass for a file
+   * that is not there.
+   */
   io?: DetectIo
+  /**
+   * Whether a path is a regular file that exists — the check `addManual` and `resolveInstall`
+   * make, on the machine the app is running on. Injectable so both are swappable together;
+   * defaulted to the real filesystem, which is what every caller outside a test uses.
+   */
+  isRegularFile?: (path: string) => boolean
   /**
    * The native file dialog. Defaulted to a cancel rather than to a stub, so a caller that forgets
    * to wire it cannot silently be more permissive than the real shell.
@@ -66,6 +91,7 @@ export class SlicersHost {
   readonly #configFile: string
   readonly #run: RunDetection
   readonly #io: DetectIo
+  readonly #isRegularFile: (path: string) => boolean
   readonly #pickExecutable: ExecutablePicker
   readonly #platform: string
   readonly #now: () => number
@@ -84,6 +110,7 @@ export class SlicersHost {
     this.#configFile = options.configFile
     this.#run = options.run ?? runPowerShellDetection
     this.#io = options.io ?? NODE_DETECT_IO
+    this.#isRegularFile = options.isRegularFile ?? NODE_RESOLVE_FILE_CHECK
     this.#pickExecutable = options.pickExecutable ?? ((): Promise<null> => Promise.resolve(null))
     this.#platform = options.platform ?? process.platform
     this.#now = options.now ?? Date.now
@@ -109,8 +136,34 @@ export class SlicersHost {
   async scan(): Promise<SlicerConfigDto> {
     if (!this.detectionSupported()) return this.get()
     const { config, writable } = this.#load()
-    const detected = await detectInstalls(this.#run, this.#io)
+    const detected = await this.#detect()
     return this.#save(mergeDetected(config, detected, this.#now()), writable)
+  }
+
+  /**
+   * One detection run, with its failures given an identity the renderer can act on.
+   *
+   * A timed-out PowerShell, a `powershell.exe` that is not where it should be and a `maxBuffer`
+   * overflow all arrive here as an `Error` from `child_process`. Left alone, `ipc.ts` normalises
+   * any non-`AppError` throw to `Internal` with its message — which preserves *that* the call
+   * failed but tells a settings page nothing it can phrase, and would put a Node error string in
+   * front of a user. `Internal` is still the code, because none of the others is honest about a
+   * subprocess that did not run; what makes it usable is `details.reason`.
+   *
+   * The underlying message goes in `details.cause` rather than in `message`: the UI shows the
+   * sentence, and the cause is for the log and for a bug report.
+   */
+  async #detect(): Promise<DetectedInstall[]> {
+    try {
+      return await detectInstalls(this.#run, this.#io)
+    } catch (error) {
+      const cause = error instanceof Error ? error.message : String(error)
+      console.warn('desktop: slicer detection could not run', error)
+      throw new AppError('Internal', 'could not look for slicers installed on this machine', {
+        reason: DETECTION_FAILED,
+        cause,
+      })
+    }
   }
 
   /**
@@ -152,7 +205,7 @@ export class SlicersHost {
   async #addManual(slicerId: SlicerId): Promise<SlicerConfigDto | null> {
     const path = await this.#pickExecutable(slicerId)
     if (path === null || path === '') return null
-    if (!NODE_RESOLVE_FILE_CHECK(path)) {
+    if (!this.#isRegularFile(path)) {
       throw new AppError('NotFound', 'that file is not there any more')
     }
     const { config, writable } = this.#load()
@@ -268,7 +321,7 @@ export class SlicersHost {
   async resolveInstall(installId: string): Promise<{ install: StoredInstall; path: string }> {
     const { config, writable } = this.#load()
     const result = await resolveInstallPath(config, installId, {
-      isRegularFile: NODE_RESOLVE_FILE_CHECK,
+      isRegularFile: this.#isRegularFile,
       reresolve: (install) => this.#reresolve(install),
     })
     if (result.changed && writable) writeConfig(this.#configFile, result.config)
@@ -285,10 +338,20 @@ export class SlicersHost {
     return { install: install!, path: result.path }
   }
 
-  /** One detection run, looked up by origin key. Off Windows there is nothing to run. */
+  /**
+   * One detection run, looked up by origin key. Off Windows there is nothing to run.
+   *
+   * **A detection that fails is not an install that is gone**, and the difference is why this
+   * lets `#detect`'s `AppError` out instead of answering `null`. `null` here means "the mechanism
+   * ran and this install was not in what it found", which is what marks the install `missing` and
+   * writes that to disk. A PowerShell that timed out has found nothing about anything, and
+   * recording an install as gone on that basis would leave the user to un-break it by hand.
+   * Rejecting instead leaves `slicers.json` exactly as it was — `resolveInstallPath` never gets
+   * as far as building a new one.
+   */
   async #reresolve(install: StoredInstall): Promise<string | null> {
     if (!this.detectionSupported()) return null
-    const detected = await detectInstalls(this.#run, this.#io)
+    const detected = await this.#detect()
     return detected.find((candidate) => candidate.id === install.id)?.path ?? null
   }
 
