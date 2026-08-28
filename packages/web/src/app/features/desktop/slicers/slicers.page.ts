@@ -23,6 +23,7 @@ import type { SlicerConfigDto, SlicerId, SlicerInstallDto } from '@spm/contract/
 import { DETECTION_FAILED, isAppError } from '@spm/contract/errors.ts'
 import { TranslateService } from '../../../core/i18n/translate.service'
 import { SHELL_CLIENT } from '../../../core/api/api-client.token'
+import { SlicerSessionsCard } from '../../../core/slicer-sessions.card'
 
 /**
  * Every product the app knows about, in the order `packages/desktop/src/slicers/registry.ts`
@@ -145,6 +146,7 @@ function classify(error: unknown): FailureKind {
     JigSelect,
     JigSpinner,
     JigTag,
+    SlicerSessionsCard,
   ],
   template: `
     <main class="spm-main spm-main--narrow">
@@ -308,6 +310,14 @@ function classify(error: unknown): FailureKind {
         } @else if (!failureMessage()) {
           <jig-spinner centered [size]="40" />
         }
+
+        <!--
+          Spec 6.3's unfinished-session list. It is on this page rather than only beside the
+          launch control because a session outlives the project page it was started from — and
+          outlives the run of the app, which is the case a settings page is the only home for.
+          No project is named here, so an orphan is asked which one it belongs to.
+        -->
+        <app-slicer-sessions />
       </div>
     </main>
   `,

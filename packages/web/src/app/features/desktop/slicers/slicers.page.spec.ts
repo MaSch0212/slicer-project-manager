@@ -111,6 +111,13 @@ type Slicers = {
   bind: ReturnType<typeof vi.fn>
   setDefault: ReturnType<typeof vi.fn>
   resetConfig: ReturnType<typeof vi.fn>
+  // The page renders the unfinished-session card, which asks the same bridge for its list. An
+  // empty answer is the ordinary case for these specs and keeps the card out of their way; a
+  // stub without it would make every one of them show the card's own failure banner, which is
+  // what the `[role="alert"]` assertions below would then find.
+  sessions: ReturnType<typeof vi.fn>
+  resolveSession: ReturnType<typeof vi.fn>
+  discardSessions: ReturnType<typeof vi.fn>
 }
 
 type Setup = {
@@ -136,6 +143,9 @@ async function setup(
     bind: vi.fn().mockResolvedValue(config),
     setDefault: vi.fn().mockResolvedValue(config),
     resetConfig: vi.fn().mockResolvedValue(config),
+    sessions: vi.fn().mockResolvedValue([]),
+    resolveSession: vi.fn().mockResolvedValue(null),
+    discardSessions: vi.fn().mockResolvedValue({ discarded: 0 }),
     ...overrides,
   }
   TestBed.configureTestingModule({
@@ -502,6 +512,9 @@ describe('DesktopSlicersPage', () => {
         bind: vi.fn(),
         setDefault: vi.fn(),
         resetConfig: vi.fn(),
+        sessions: vi.fn().mockResolvedValue([]),
+        resolveSession: vi.fn(),
+        discardSessions: vi.fn(),
       }
       TestBed.configureTestingModule({
         providers: [...provideJigForTests(), { provide: SHELL_CLIENT, useValue: { slicers } }],

@@ -47,6 +47,7 @@ import {
 import { API_CLIENT, SHELL_CLIENT } from '../../core/api/api-client.token'
 import { CapabilitiesStore } from '../../core/capabilities.store'
 import { CuraHazardStore } from '../../core/cura-hazard.store'
+import { SlicerSessionsCard } from '../../core/slicer-sessions.card'
 import { formatBytes } from '../../core/format-bytes'
 import { TranslateService } from '../../core/i18n/translate.service'
 
@@ -168,6 +169,7 @@ type PendingLaunch = { file: FileDto; mode: SlicerLaunchMode; chosen: SlicerId |
     JigTag,
     JigTooltip,
     RouterLink,
+    SlicerSessionsCard,
   ],
   template: `
     <main class="spm-main">
@@ -382,6 +384,14 @@ type PendingLaunch = { file: FileDto; mode: SlicerLaunchMode; chosen: SlicerId |
                   </div>
                 </jig-message>
               }
+
+              <!--
+                Beside the launch control, narrowed to this project (plus any orphan, which has to
+                be offered somewhere and is best offered on a page that already names a project).
+                An import adds a file, so the project reloads — the card cannot do that itself
+                without knowing what page it is on.
+              -->
+              <app-slicer-sessions [projectId]="id()" (imported)="project.reload()" />
             }
 
             <ul class="spm-files">

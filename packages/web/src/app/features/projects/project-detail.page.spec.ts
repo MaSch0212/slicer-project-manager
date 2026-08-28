@@ -131,7 +131,7 @@ function setup(
     rename?: Mock
     deleteFile?: Mock
     /** Set to enable the launch controls; the capability alone is not enough. */
-    slicers?: { get?: Mock; open?: Mock }
+    slicers?: { get?: Mock; open?: Mock; sessions?: Mock }
   } = {},
   /**
    * Routes the page's own links can actually reach. Empty by default — RouterLink only needs
@@ -157,6 +157,13 @@ function setup(
     slicers: {
       get: overrides.slicers?.get ?? vi.fn(() => Promise.resolve(slicerConfig)),
       open: overrides.slicers?.open ?? vi.fn(() => Promise.resolve(launchDto)),
+      // The unfinished-session card renders beside the launch control and asks for this on the
+      // way in. Empty is the ordinary case; the card's own behaviour is
+      // `core/slicer-sessions.card.spec.ts`'s subject, and what this spec asserts is only that
+      // the card is mounted where the launch controls are and nowhere else.
+      sessions: overrides.slicers?.sessions ?? vi.fn(() => Promise.resolve([])),
+      resolveSession: vi.fn(() => Promise.resolve(null)),
+      discardSessions: vi.fn(() => Promise.resolve({ discarded: 0 })),
     },
   }
   TestBed.configureTestingModule({
@@ -822,6 +829,28 @@ describe('ProjectDetailPage', () => {
       )
       expect(labels).not.toContain(`${en.projects.newSlicerProject} benchy.stl`)
       expect(text(fixture)).not.toContain(en.projects.slicerChoice)
+    })
+
+    it('shows the unfinished-session card beside the launch controls', async () => {
+      const { fixture, shell } = withSlicers()
+      await settle()
+
+      expect(fixture.nativeElement.querySelector('app-slicer-sessions')).not.toBeNull()
+      expect(shell.slicers.sessions).toHaveBeenCalled()
+      expect(text(fixture)).toContain(en.slicerSessions.title)
+    })
+
+    it('shows no session card at all where the shell cannot launch anything', async () => {
+      // The pair to the test above: `canLaunchSlicer` is false here, so a card that rendered
+      // anyway would be a card asking a refusing transport for a list on every project page in
+      // the browser build.
+      const { fixture } = setup({
+        get: vi.fn(() => Promise.resolve(fetched({ files: [file] }))),
+      })
+      await settle()
+
+      expect(fixture.nativeElement.querySelector('app-slicer-sessions')).toBeNull()
+      expect(text(fixture)).not.toContain(en.slicerSessions.title)
     })
 
     it('sends ids and a mode, and never a path or a slicer it was not given', async () => {

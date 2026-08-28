@@ -1,0 +1,384 @@
+import {
+  ChangeDetectionStrategy,
+  Component,
+  computed,
+  inject,
+  input,
+  output,
+  signal,
+} from '@angular/core'
+import { interpolate, InterpolatePipe } from '@ngneers/signal-translate'
+import { JigButton } from '@awdlab/jig/button'
+import { JigInputField } from '@awdlab/jig/input-field'
+import { JigMessage } from '@awdlab/jig/message'
+import { JigSelect } from '@awdlab/jig/select'
+import { JigSpinner } from '@awdlab/jig/spinner'
+import { JigTag } from '@awdlab/jig/tag'
+import type { SlicerSessionDto } from '@spm/contract/dtos.ts'
+import { isAppError } from '@spm/contract/errors.ts'
+import { API_CLIENT, SHELL_CLIENT } from './api/api-client.token'
+import { TranslateService } from './i18n/translate.service'
+import { formatBytes } from './format-bytes'
+
+/**
+ * After a launch: what came back, what did not, and what the user wants done about it.
+ *
+ * **It lives in `core/` rather than under `features/desktop/`, and that is deliberate.** Two
+ * pages render it — `/settings/slicers`, which is desktop-only, and the project page, which is
+ * shared code that both builds contain — and spec 2.5 forbids shared code importing anything from
+ * `features/desktop/`. Putting one copy here is the alternative to two copies that can drift. It
+ * costs the web bundle a component that never renders there: `canLaunchSlicer` is false in the
+ * browser column, so nothing mounts it, and `SHELL_CLIENT` is an `HttpApiClient` that refuses
+ * every call it would make. That is the capability model doing its job in place of a build-time
+ * condition, which is the same argument the launch controls on the project page already rest on.
+ *
+ * ## What it will not say
+ *
+ * - **Never "the slicer was closed".** The only observable fact is whether the process this app
+ *   spawned is still running, and several slicers hand the file to an already-running instance
+ *   and exit immediately — so a dead process routinely means a live slicer. The label says what
+ *   was measured and nothing more.
+ * - **Never which setting changed.** The diff is computed, by name, over the entries of the
+ *   archive; it can say that `Metadata/project_settings.config` changed and it cannot say what
+ *   inside it did. The limit is printed beside the findings, in the same size type.
+ * - **Never that anything was deleted on the user's behalf.** Nothing in this list disappears
+ *   without one of the two buttons on it being pressed.
+ *
+ * ## Stale
+ *
+ * A session whose launch is more than {@link STALE_SESSION_MS} old is labelled stale and offered
+ * to the bulk discard. It is a **judgement, not a measurement**, and it is deliberately about the
+ * launch rather than about the file — a stale session may well hold a file that came back
+ * yesterday, which is exactly why being stale is a label and never a reason to delete anything.
+ */
+
+/**
+ * Thirty days, the same number `packages/desktop/src/slicers/sessions.ts` writes down.
+ *
+ * Spelled twice because the renderer may not import from the desktop package (spec 2.5) and the
+ * number is not something a `SlicerSessionDto` carries — `startedAt` is, and this is what the
+ * renderer does with it. The spec 6.3 paragraph that chose it is the one home of the reasoning;
+ * `slicer-sessions.card.spec.ts` pins the value so a change to one and not the other is loud.
+ */
+export const STALE_SESSION_MS = 30 * 24 * 60 * 60 * 1000
+
+/** One row, with everything the template would otherwise recompute per binding. */
+type SessionRow = {
+  session: SlicerSessionDto
+  stale: boolean
+  /** True when the user must say where this file belongs before it can be imported. */
+  needsProject: boolean
+  /** Whether "add to the project" is offered at all. */
+  canImport: boolean
+}
+
+@Component({
+  selector: 'app-slicer-sessions',
+  changeDetection: ChangeDetectionStrategy.OnPush,
+  imports: [InterpolatePipe, JigButton, JigInputField, JigMessage, JigSelect, JigSpinner, JigTag],
+  template: `
+    <section class="spm-card spm-stack">
+      <div>
+        <h2>{{ t.translations().slicerSessions.title }}</h2>
+        <p class="spm-muted">{{ t.translations().slicerSessions.lead }}</p>
+      </div>
+
+      @if (failed()) {
+        <jig-message color="error" role="alert">{{ failureMessage() }}</jig-message>
+      }
+
+      @if (loading()) {
+        <jig-spinner [size]="20" />
+      }
+
+      @if (rows().length === 0) {
+        <p class="spm-muted">{{ t.translations().slicerSessions.none }}</p>
+      }
+
+      @if (staleRows().length > 1) {
+        <span>
+          <button
+            jigButton
+            kind="secondary"
+            type="button"
+            [disabled]="busy()"
+            (click)="onDiscardStale()"
+          >
+            {{
+              t.translations().slicerSessions.discardStale
+                | interpolate: { count: staleRows().length }
+            }}
+          </button>
+        </span>
+      }
+
+      @for (row of rows(); track row.session.launchId) {
+        <div class="spm-stack spm-stack--tight spm-session">
+          <div class="spm-row">
+            <strong>{{ row.session.fileName }}</strong>
+            <jig-tag [color]="stateColour(row.session.fileState)">
+              {{ stateLabel(row.session.fileState) }}
+            </jig-tag>
+            @if (row.session.isOrphan) {
+              <jig-tag color="warning">{{ t.translations().slicerSessions.orphan }}</jig-tag>
+            }
+            @if (row.stale) {
+              <jig-tag color="secondary">{{ t.translations().slicerSessions.stale }}</jig-tag>
+            }
+          </div>
+
+          <p class="spm-muted">{{ describe(row.session) }}</p>
+
+          <!--
+            Constraint 11. Whether the process the app spawned is alive is the only thing it can
+            observe, and it is not "the slicer is open": several slicers hand the file over and
+            exit while the window stays up.
+          -->
+          <p class="spm-muted">
+            {{
+              row.session.processAlive
+                ? t.translations().slicerSessions.processAlive
+                : t.translations().slicerSessions.processGone
+            }}
+          </p>
+
+          @if (row.session.entryDiff; as diff) {
+            <div class="spm-stack spm-stack--tight">
+              <span>{{ t.translations().slicerSessions.diffTitle }}</span>
+              <ul>
+                @for (name of diff.changed; track name) {
+                  <li>{{ t.translations().slicerSessions.diffChanged | interpolate: { name } }}</li>
+                }
+                @for (name of diff.added; track name) {
+                  <li>{{ t.translations().slicerSessions.diffAdded | interpolate: { name } }}</li>
+                }
+                @for (name of diff.removed; track name) {
+                  <li>
+                    {{ t.translations().slicerSessions.diffRemoved | interpolate: { name } }}
+                  </li>
+                }
+              </ul>
+              <!-- Stated as plainly as the findings: it says an entry changed, never which
+                   setting inside it did. -->
+              <p class="spm-muted">{{ t.translations().slicerSessions.diffLimit }}</p>
+            </div>
+          }
+
+          @if (row.needsProject) {
+            <jig-input-field
+              class="spm-block"
+              [inputId]="'session-project-' + row.session.launchId"
+              [label]="t.translations().slicerSessions.whichProject"
+            >
+              <jig-select
+                [inputId]="'session-project-' + row.session.launchId"
+                [label]="t.translations().slicerSessions.whichProject"
+                [options]="projectOptions()"
+                [placeholder]="t.translations().slicerSessions.whichProjectPlaceholder"
+                [disabled]="busy()"
+                [value]="chosenProject()"
+                (valueChange)="chosenProject.set($event ?? null)"
+              />
+            </jig-input-field>
+          }
+
+          <div class="spm-row">
+            @if (row.canImport) {
+              <button
+                jigButton
+                kind="primary"
+                type="button"
+                [disabled]="busy() || (row.needsProject && chosenProject() === null)"
+                (click)="onImport(row)"
+              >
+                {{ t.translations().slicerSessions.import }}
+              </button>
+            }
+            <button
+              jigButton
+              kind="text"
+              color="error"
+              type="button"
+              [disabled]="busy()"
+              (click)="onDiscard(row)"
+            >
+              {{ t.translations().slicerSessions.discard }}
+            </button>
+          </div>
+        </div>
+      }
+    </section>
+  `,
+})
+export class SlicerSessionsCard {
+  private readonly shell = inject(SHELL_CLIENT)
+  private readonly api = inject(API_CLIENT)
+  protected readonly t = inject(TranslateService)
+
+  /**
+   * The project this card is being shown beside, or null on a page that is about no project.
+   *
+   * When it is set the list is narrowed to that project's own sessions plus any orphan — an
+   * orphan has to be offered *somewhere*, and a page that is already about a project is the one
+   * place the app can offer to adopt it without asking a second question.
+   */
+  readonly projectId = input<string | null>(null)
+
+  /** Fired after something was imported, so the page holding this can reload what it shows. */
+  readonly imported = output<void>()
+
+  readonly #sessions = signal<SlicerSessionDto[] | null>(null)
+  readonly #busy = signal(false)
+  readonly #failed = signal(false)
+  readonly #now = signal(Date.now())
+  readonly sessions = this.#sessions.asReadonly()
+  readonly busy = this.#busy.asReadonly()
+  readonly failed = this.#failed.asReadonly()
+  readonly loading = computed(() => this.#sessions() === null && !this.#failed())
+
+  /** The project an orphan is being adopted into, on a page that does not already name one. */
+  readonly chosenProject = signal<string | null>(null)
+  readonly #projects = signal<{ label: string; value: string }[]>([])
+  readonly projectOptions = this.#projects.asReadonly()
+
+  /** Resolves once the first load has settled, so a spec can await it rather than count ticks. */
+  readonly ready: Promise<void>
+
+  constructor() {
+    this.ready = this.reload()
+  }
+
+  readonly rows = computed<SessionRow[]>(() => {
+    const scope = this.projectId()
+    const now = this.#now()
+    return (this.#sessions() ?? [])
+      .filter(
+        (session) => scope === null || session.projectId === scope || session.projectId === '',
+      )
+      .map((session) => ({
+        session,
+        stale: now - session.startedAt > STALE_SESSION_MS,
+        needsProject: session.projectId === '' && scope === null,
+        // A file that has not settled is refused by the shell anyway, and offering a button that
+        // is going to be refused is worse than not offering it. `unchanged` keeps its button: for
+        // a new-project launch the copy that was handed over is a genuinely different file from
+        // the original, and the user is the one who knows whether they want it.
+        canImport: session.fileState === 'changed' || session.fileState === 'unchanged',
+      }))
+  })
+
+  readonly staleRows = computed(() => this.rows().filter((row) => row.stale))
+
+  protected readonly failureMessage = computed(() => this.t.translations().slicerSessions.failed)
+
+  async reload(): Promise<void> {
+    this.#failed.set(false)
+    try {
+      const sessions = await this.shell.slicers.sessions()
+      this.#sessions.set(sessions)
+      this.#now.set(Date.now())
+      // Only where somebody actually has to answer "which project", so the ordinary case costs no
+      // second round trip.
+      if (sessions.some((session) => session.projectId === '') && this.projectId() === null) {
+        await this.#loadProjects()
+      }
+    } catch (error) {
+      this.#failed.set(true)
+      this.#sessions.set([])
+      console.error('slicer sessions: could not be listed', error)
+    }
+  }
+
+  async onImport(row: SessionRow): Promise<void> {
+    const projectId = row.needsProject ? this.chosenProject() : this.projectId()
+    await this.#run(async () => {
+      await this.shell.slicers.resolveSession(row.session.launchId, 'import', {
+        ...(projectId === null ? {} : { projectId }),
+      })
+      this.imported.emit()
+    })
+  }
+
+  async onDiscard(row: SessionRow): Promise<void> {
+    await this.#run(() => this.shell.slicers.resolveSession(row.session.launchId, 'discard'))
+  }
+
+  async onDiscardStale(): Promise<void> {
+    const launchIds = this.staleRows().map((row) => row.session.launchId)
+    await this.#run(() => this.shell.slicers.discardSessions(launchIds))
+  }
+
+  protected stateLabel(state: SlicerSessionDto['fileState']): string {
+    const strings = this.t.translations().slicerSessions
+    switch (state) {
+      case 'unchanged':
+        return strings.stateUnchanged
+      case 'changed':
+        return strings.stateChanged
+      case 'settling':
+        return strings.stateSettling
+      case 'unreadable':
+        return strings.stateUnreadable
+    }
+  }
+
+  protected stateColour(state: SlicerSessionDto['fileState']): 'primary' | 'secondary' | 'error' {
+    if (state === 'changed') return 'primary'
+    if (state === 'unreadable') return 'error'
+    return 'secondary'
+  }
+
+  /** The one sentence under a row: where it came from, and what it weighs now. */
+  protected describe(session: SlicerSessionDto): string {
+    const strings = this.t.translations().slicerSessions
+    const parts: string[] = []
+    if (session.isOrphan) parts.push(strings.orphanLead)
+    if (session.returnedAs !== undefined && session.returnedAs !== null) {
+      parts.push(
+        interpolate(strings.returnedAs, {
+          source: session.sourceSlicer ?? strings.unknownSlicer,
+          returned: session.returnedAs,
+        }),
+      )
+    }
+    if (session.sourceSizeBytes !== undefined && session.returnedSizeBytes !== undefined) {
+      parts.push(
+        interpolate(strings.sizes, {
+          before: formatBytes(session.sourceSizeBytes),
+          after: formatBytes(session.returnedSizeBytes),
+        }),
+      )
+    } else if (session.returnedSizeBytes !== undefined) {
+      parts.push(formatBytes(session.returnedSizeBytes))
+    }
+    return parts.join(' ')
+  }
+
+  async #loadProjects(): Promise<void> {
+    try {
+      const projects = await this.api.projects.list({})
+      this.#projects.set(projects.map((project) => ({ label: project.name, value: project.id })))
+    } catch (error) {
+      // Not a failure of the list itself: the sessions are still shown, and the only thing lost is
+      // the ability to adopt an orphan from this page.
+      console.error('slicer sessions: the project list could not be loaded', error)
+    }
+  }
+
+  /** One call, one reload, one message. Everything here changes what `sessions()` would answer. */
+  async #run(action: () => Promise<unknown>): Promise<void> {
+    if (this.#busy()) return
+    this.#busy.set(true)
+    this.#failed.set(false)
+    try {
+      await action()
+    } catch (error) {
+      this.#failed.set(true)
+      if (!isAppError(error)) console.error('slicer sessions: an unexpected failure', error)
+      else console.error(`slicer sessions: ${error.code}`, error.message)
+    } finally {
+      this.#busy.set(false)
+      await this.reload()
+    }
+  }
+}
