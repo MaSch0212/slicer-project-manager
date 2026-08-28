@@ -920,6 +920,44 @@ describe('ProjectDetailPage', () => {
       expect(shell.slicers.open).toHaveBeenCalledTimes(3)
     })
 
+    it('warns about Cura on the new-project path too, not only on as-is', async () => {
+      const { fixture, page, shell } = withSlicers()
+      await settle()
+      // Nothing about this path consults the file's own slicer, so the only way it reaches Cura is
+      // an explicit pick — and the warning is about what Cura does on save, which is the same
+      // whichever path handed it the file.
+      page.chosenSlicer.set('cura')
+
+      await page.onLaunch(file, 'new-project')
+      await settle()
+
+      expect(shell.slicers.open).not.toHaveBeenCalled()
+      expect(text(fixture)).toContain(en.projects.curaHazardTitle)
+
+      await page.onCuraContinue()
+
+      expect(shell.slicers.open).toHaveBeenCalledWith('f1', 'p1', {
+        mode: 'new-project',
+        slicerId: 'cura',
+      })
+    })
+
+    it('launches the product it warned about, even if the picker moved while the warning was up', async () => {
+      const { page, shell } = withSlicers()
+      await settle()
+      page.chosenSlicer.set('cura')
+      await page.onLaunch(file, 'new-project')
+
+      // The picker is live behind the warning. "Hand it to Cura anyway" has to mean Cura.
+      page.chosenSlicer.set('bambu')
+      await page.onCuraContinue()
+
+      expect(shell.slicers.open).toHaveBeenCalledWith('f1', 'p1', {
+        mode: 'new-project',
+        slicerId: 'cura',
+      })
+    })
+
     it('does not warn about Cura for a launch that would not use it', async () => {
       const { page, shell } = withSlicers()
       await settle()

@@ -139,8 +139,15 @@ export function resolveLaunchSlicer(
   return defaultSlicerId
 }
 
-/** A launch the page is holding back until the user has answered the Cura warning. */
-type PendingLaunch = { file: FileDto; mode: SlicerLaunchMode }
+/**
+ * A launch the page is holding back until the user has answered the Cura warning.
+ *
+ * It carries the picker's value **as it was when the warning was raised**, rather than letting the
+ * continue button re-read it. The two can differ: the picker is live while the warning is up, so a
+ * user who changes it and then presses "hand it to Cura anyway" would otherwise launch a product
+ * nobody warned them about — and, in the other direction, would reach Cura with no warning at all.
+ */
+type PendingLaunch = { file: FileDto; mode: SlicerLaunchMode; chosen: SlicerId | null }
 
 @Component({
   selector: 'spm-project-detail-page',
@@ -898,17 +905,13 @@ export class ProjectDetailPage {
    */
   async onLaunch(file: FileDto, mode: SlicerLaunchMode): Promise<void> {
     const config = this.slicerConfig.hasValue() ? this.slicerConfig.value() : null
-    const willUse = resolveLaunchSlicer(
-      mode,
-      file.slicer,
-      this.chosenSlicer(),
-      config?.defaultSlicerId ?? null,
-    )
+    const chosen = this.chosenSlicer()
+    const willUse = resolveLaunchSlicer(mode, file.slicer, chosen, config?.defaultSlicerId ?? null)
     if (willUse === 'cura' && !this.cura.acknowledged()) {
-      this.curaPending.set({ file, mode })
+      this.curaPending.set({ file, mode, chosen })
       return
     }
-    await this.launch(file, mode)
+    await this.launch(file, mode, chosen)
   }
 
   async onCuraContinue(): Promise<void> {
@@ -916,13 +919,17 @@ export class ProjectDetailPage {
     if (pending === null) return
     if (this.curaDontShowAgain()) this.cura.acknowledge()
     this.curaPending.set(null)
-    await this.launch(pending.file, pending.mode)
+    // `pending.chosen`, not `this.chosenSlicer()`: what is launched is what was warned about.
+    await this.launch(pending.file, pending.mode, pending.chosen)
   }
 
-  private async launch(file: FileDto, mode: SlicerLaunchMode): Promise<void> {
+  private async launch(
+    file: FileDto,
+    mode: SlicerLaunchMode,
+    chosen: SlicerId | null,
+  ): Promise<void> {
     this.errorMessage.set(null)
     this.launched.set(null)
-    const chosen = this.chosenSlicer()
     try {
       const launch = await this.shell.slicers.open(file.id, this.id(), {
         mode,

@@ -36,29 +36,23 @@ export const API_CLIENT = new InjectionToken<ApiClient>('API_CLIENT', {
 })
 
 /**
- * The shell's own client, which is the IPC one in the desktop build and a refusal in the browser.
+ * The shell's own client, which in this build is the IPC one in **both** modes.
  *
- * **Separate from `API_CLIENT`, because they answer different questions.** `API_CLIENT` is
- * whatever transport the *library* is on, and in remote mode that is `HttpApiClient`, which
- * refuses `library.pick`, `library.connect` and every `slicers` method. A page that is talking to
- * the shell about this *machine* — which library there should be, which slicers are installed on
- * it, which one to hand a file to — is not talking to the library, so it needs the one transport
- * that always reaches the main process whatever mode the window is in.
+ * **Separate from `API_CLIENT` above, because they answer different questions — and unlike it, this
+ * one does not branch.** `API_CLIENT` is whatever transport the *library* is on, and in remote mode
+ * that is `HttpApiClient`, which refuses `library.pick`, `library.connect` and every `slicers`
+ * method. A page talking to the shell about this *machine* — which library there should be, which
+ * slicers are installed on it, which one to hand a file to — is not talking to the library, so it
+ * needs the transport that always reaches the main process. The machine the slicers are installed
+ * on is this one whichever library is open, which is the whole reason the second token exists.
  *
- * It lives here, beside `API_CLIENT`, and not under `features/desktop/`, and the move is what
- * makes it usable at all from a page the web build also has. `features/desktop/*` is physically
- * absent from the web bundle by construction — CI greps for it — so a token defined there could
- * only be injected by desktop-only pages, and the launch controls belong on the ordinary project
- * page. The bundle separation is kept by the same `fileReplacements` swap that chooses
- * `API_CLIENT`: this file's factory builds an `HttpApiClient`, which pulls no IPC code into the
- * web bundle and refuses every shell method exactly as spec 2.4's capability flags say it should.
- */
-
-/**
- * In the desktop build it is `IpcApiClient` in **both** modes, unlike `API_CLIENT` above — that is
- * the whole point of the second token. The main process is on the other end of it in remote mode
- * as much as in local mode, because the machine the slicers are installed on is this one either
- * way.
+ * It lives here, beside `API_CLIENT`, and not under `features/desktop/`, and the move is what makes
+ * it usable from a page the web build also has. `features/desktop/*` is physically absent from the
+ * web bundle by construction — CI greps for it — so a token defined there could only be injected by
+ * desktop-only pages, and the launch controls belong on the ordinary project page. The bundle
+ * separation is kept by the same `fileReplacements` swap that chooses `API_CLIENT`: the twin of this
+ * file builds an `HttpApiClient`, which pulls no IPC code into the web bundle and refuses every
+ * shell method exactly as spec 2.4's capability flags say it should.
  */
 export const SHELL_CLIENT = new InjectionToken<ApiClient>('SHELL_CLIENT', {
   factory: () => new IpcApiClient(),
