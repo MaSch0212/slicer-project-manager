@@ -224,7 +224,8 @@ test('a replacement naming an entry the archive does not have is refused', () =>
     assert.throws(
       () =>
         rewriteZip(input, output, { replace: new Map([['Metadata/typo.xml', new Uint8Array()]]) }),
-      reason('unrepresentable'),
+      // Not `'unrepresentable'`: this is the call being incoherent, not the archive.
+      reason('invalid-request'),
     )
     assert.equal(existsSync(output), false)
   }))
@@ -314,4 +315,38 @@ test('a size that genuinely does not fit a non-zip64 record is refused', () =>
 
     assert.throws(() => rewriteZip(input, output), reason('unrepresentable'))
     assert.equal(existsSync(output), false)
+  }))
+
+test('an entry whose sizes really do live in a data descriptor round-trips', () =>
+  withDir((dir) => {
+    const input = join(dir, 'in.3mf')
+    const output = join(dir, 'out.3mf')
+    writeZip(input, SAMPLE)
+    const before = find(readZipEntries(input), '3D/3dmodel.model')
+    // The genuine article, not just the flag: bit 3 set *and* the local header's CRC and both
+    // sizes zeroed, which is what a streaming writer emits. A rewriter reading sizes from the
+    // local header would pass the flag test and produce a zero-length entry here.
+    patchZipHeaders(input, ({ file, centralAt, localAt }) => {
+      file.setUint16(centralAt + 8, FLAG_DATA_DESCRIPTOR, true)
+      file.setUint16(localAt + 6, FLAG_DATA_DESCRIPTOR, true)
+      file.setUint32(localAt + 14, 0, true)
+      file.setUint32(localAt + 18, 0, true)
+      file.setUint32(localAt + 22, 0, true)
+    })
+
+    rewriteZip(input, output)
+
+    const after = find(readZipEntries(output), '3D/3dmodel.model')
+    assert.equal(after.flags, 0)
+    assert.equal(after.crc, before.crc)
+    assert.equal(after.compressedSize, before.compressedSize)
+    assert.equal(after.uncompressedSize, before.uncompressedSize)
+    assert.deepEqual(localHeaderOf(output, after), {
+      flags: 0,
+      method: before.method,
+      crc: before.crc,
+      compressedSize: before.compressedSize,
+      uncompressedSize: before.uncompressedSize,
+    })
+    assert.equal(new TextDecoder().decode(readZipEntryBytes(output, after)), MODEL_XML)
   }))

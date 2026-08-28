@@ -209,15 +209,22 @@ export type ZipRewriteResult = {
  * directory from values it has already parsed can simply emit the plain form. An earlier draft of
  * the spec refused zip64 outright; that was wrong by a wide margin.
  *
- * **Refusals**, both `AppError('Validation', …)` with a `reason` in `details`:
+ * **Refusals**, all `AppError('Validation', …)` with a `reason` in `details`. The vocabulary is
+ * chosen so that `strip3mf` can pass the first three straight through to the user instead of
+ * flattening them into one message — `'encrypted'` and `'unreadable'` are two of its own three
+ * reasons by design, not by luck:
  *
  * - `'encrypted'` — an entry with general-purpose bit 0 set. Its bytes cannot be reproduced
  *   without the key, and a strong-encryption entry (bit 6) sets bit 0 too.
  * - `'unrepresentable'` — a value that genuinely does not fit the non-zip64 form: an entry or
  *   directory over 4 GiB - 1, an output offset past it, or 65,535 entries or more.
+ * - `'unreadable'` — the input is broken: a local header with no signature, or a short read.
+ * - `'invalid-request'` — a `replace` key naming an entry the archive does not have. The only one
+ *   about the *call* rather than the *file*, and unreachable from `strip3mf`.
  *
- * Nothing else is a reason to refuse. Every check runs before the output file is created, so a
- * refusal leaves nothing behind; a failure *during* the copy unlinks what it had written.
+ * No property of an archive other than the first three is a reason to refuse. Every check runs
+ * before the output file is created, so a refusal leaves nothing behind; a failure *during* the
+ * copy unlinks what it had written.
  */
 export function rewriteZip(
   inputPath: string,
@@ -237,8 +244,12 @@ export function rewriteZip(
   const known = new Set(entries.map((entry) => entry.name))
   for (const name of replace.keys()) {
     if (!known.has(name)) {
+      // `'invalid-request'`, not a property of the archive: this is the caller asking for
+      // something incoherent, and it is the one refusal here that is about the request rather
+      // than about the file. `strip3mf` cannot reach it — it only ever replaces entries it
+      // enumerated — so it never has to translate it into a user-facing reason.
       throw new AppError('Validation', 'replacement names an entry the archive does not have', {
-        reason: 'unrepresentable',
+        reason: 'invalid-request',
         entry: name,
       })
     }
@@ -395,8 +406,10 @@ function dataOffsetOf(fd: number, entry: ZipEntry): number {
   readExactly(fd, entry.localHeaderOffset, header, LOCAL_MIN)
   const view = new DataView(header.buffer)
   if (view.getUint32(0, true) !== LOCAL_SIG) {
+    // A local header that does not start with its own signature is a broken *file*, not a value
+    // this writer cannot express, so it reports the reason a user can act on.
     throw new AppError('Validation', 'corrupt zip local header', {
-      reason: 'unrepresentable',
+      reason: 'unreadable',
       entry: entry.name,
     })
   }
@@ -410,7 +423,9 @@ function readExactly(fd: number, position: number, into: Uint8Array, length: num
     if (n === 0) break
     read += n
   }
-  if (read !== length) throw new AppError('Validation', 'unexpected end of zip file')
+  if (read !== length) {
+    throw new AppError('Validation', 'unexpected end of zip file', { reason: 'unreadable' })
+  }
 }
 
 /** `writeSync` is allowed to write less than it was given; nothing in this file may assume it did not. */
