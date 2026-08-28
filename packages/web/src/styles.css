@@ -620,3 +620,44 @@ h2.spm-project-title {
   flex: 1;
   max-width: 20rem;
 }
+
+/* ------------------------------------------------------------- slicer settings */
+
+/* The group of install rows for one product.
+   Measured, not assumed: jig's radio-group root lays its children out in a *row*, so without this
+   the two Cura installs sat side by side and the second one's remove button hung outside the
+   card. `jig-radio-group.` rather than a bare class so it wins against the theme's own rule
+   whatever order the two stylesheets land in. */
+jig-radio-group.spm-slicer-installs {
+  display: flex;
+  flex-direction: column;
+  gap: var(--jig-size-padding-sm);
+  align-items: stretch;
+}
+
+/* One install: the radio and its label take the row, the state tag and the remove control sit at
+   the end of it. `align-items: flex-start` because the label is three stacked lines and a dot
+   centred against them reads as belonging to the middle one. */
+.spm-slicer-install {
+  align-items: flex-start;
+  flex-wrap: nowrap;
+  gap: var(--jig-size-padding-sm);
+}
+
+.spm-slicer-install + .spm-slicer-install {
+  border-top: 1px solid var(--jig-color-border);
+  padding-top: var(--jig-size-padding-sm);
+}
+
+/* Projected into jig-radio, whose own label part is inline: without this the version and the
+   path run on after the name instead of stacking under it. */
+.spm-slicer-install-text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+}
+
+/* The radio group is a plain block: its rows already carry their own separators. */
+.spm-slicer-install jig-radio {
+  align-items: flex-start;
+}
