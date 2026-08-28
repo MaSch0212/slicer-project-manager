@@ -355,3 +355,76 @@ function slice(bytes: Uint8Array, entry: ZipEntry): Uint8Array {
     view.getUint16(entry.localHeaderOffset + 28, true)
   return bytes.slice(at, at + entry.compressedSize)
 }
+
+/** A Bambu-lineage project whose `_rels/.rels` is exactly the given text. */
+function withRels(path: string, rels: string): void {
+  writeZip(path, [
+    { name: '3D/3dmodel.model', data: MODEL_XML, deflate: true },
+    { name: '_rels/.rels', data: rels },
+    { name: 'Metadata/slice_info.config', data: sliceInfo(['X-BBL-Client-Type']) },
+    { name: 'Metadata/custom_gcode_per_layer.xml', data: '<custom_gcodes/>' },
+  ])
+}
+
+const GONE = '/Metadata/custom_gcode_per_layer.xml'
+
+test('a relationship element is repaired whatever legal shape it is written in', () =>
+  withDir((dir) => {
+    const shapes: Record<string, string> = {
+      // Attribute order, quoting, the paired form, a comment in the way, a percent-encoded
+      // target, and a namespace prefix — all legal OPC, none of them what the measured files use.
+      reordered: `<Relationships><Relationship Type="t" Target="${GONE}" Id="a"/></Relationships>`,
+      singleQuoted: `<Relationships><Relationship Id='a' Target='${GONE}' Type='t'/></Relationships>`,
+      paired: `<Relationships><Relationship Id="a" Target="${GONE}" Type="t"></Relationship></Relationships>`,
+      commented: `<Relationships><!-- note --><Relationship Id="a" Target="${GONE}" Type="t"/></Relationships>`,
+      encoded: `<Relationships><Relationship Id="a" Target="/Metadata/custom_gcode_per_layer%2Exml" Type="t"/></Relationships>`,
+      prefixed: `<r:Relationships xmlns:r="u"><r:Relationship Id="a" Target="${GONE}" Type="t"/></r:Relationships>`,
+    }
+    for (const [label, rels] of Object.entries(shapes)) {
+      const input = join(dir, `${label}.3mf`)
+      const output = join(dir, `${label}-out.3mf`)
+      withRels(input, rels)
+
+      const result = strip3mf(input, output)
+
+      assert.deepEqual(result.rewritten, ['_rels/.rels'], label)
+      assert.equal(
+        readZipEntryText(output, find(output, '_rels/.rels')).includes('custom_gcode_per_layer'),
+        false,
+        label,
+      )
+    }
+  }))
+
+test('a reference the element patterns cannot match is refused, not shipped dangling', () =>
+  withDir((dir) => {
+    const input = join(dir, 'in.3mf')
+    const output = join(dir, 'out.3mf')
+    // `>` inside an attribute value defeats `[^>]*?`, so the element is never matched and the
+    // relationship survives. Before the outcome check this returned success with `rewritten: []`
+    // and an archive naming a part that was gone — no edit, and no signal either.
+    withRels(
+      input,
+      `<Relationships><Relationship Id="a>b" Target="${GONE}" Type="t"/></Relationships>`,
+    )
+
+    assert.throws(() => strip3mf(input, output), reason('configuration-left-behind'))
+    assert.equal(existsSync(output), false)
+  }))
+
+test('the outcome check does not fire on references to parts that survived', () =>
+  withDir((dir) => {
+    const input = join(dir, 'in.3mf')
+    const output = join(dir, 'out.3mf')
+    // The same unmatchable shape, but naming a part that is still there. A check that merely
+    // looked for "an attribute the patterns missed" would refuse this too.
+    withRels(
+      input,
+      `<Relationships><Relationship Id="a>b" Target="/3D/3dmodel.model" Type="t"/></Relationships>`,
+    )
+
+    const result = strip3mf(input, output)
+
+    assert.deepEqual(result.rewritten, [])
+    assert.ok(readZipEntryText(output, find(output, '_rels/.rels')).includes('/3D/3dmodel.model'))
+  }))

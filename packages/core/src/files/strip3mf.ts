@@ -167,8 +167,21 @@ function stripInto(
     const encoder = new TextEncoder()
     for (const entry of zip.entries) {
       if (drop.has(entry.name)) continue
-      const rewrite = repairReferences(entry.name, () => decode(zip.read(entry)), drop)
-      if (rewrite !== null) replace.set(entry.name, encoder.encode(rewrite))
+      if (!isReferencingPart(entry.name)) continue
+      const original = decode(zip.read(entry))
+      const repaired = repairReferences(entry.name, original, drop)
+      // Checked on the text that will actually be written, repaired or not. See
+      // `danglingReference`: this is what makes the guarantee hold for XML shapes the two element
+      // patterns do not match, rather than only for the shapes they were written against.
+      const dangling = danglingReference(entry.name, repaired ?? original, drop)
+      if (dangling !== null) {
+        throw refusal(
+          'configuration-left-behind',
+          'stripping left a reference to a part it removed',
+          { part: entry.name, target: dangling },
+        )
+      }
+      if (repaired !== null) replace.set(entry.name, encoder.encode(repaired))
     }
 
     zip.close()
@@ -199,10 +212,13 @@ function stripSetFor(classification: Classification, names: string[]): string[] 
   }
 }
 
+/** The only two kinds of part that can name another part by name. */
+function isReferencingPart(name: string): boolean {
+  return name === CONTENT_TYPES || isRelsPart(name)
+}
+
 /**
  * Returns the repaired text of one part, or `null` when the part needs no repair.
- *
- * Only two kinds of part can name another part by name, and both are handled:
  *
  * - **`_rels` parts.** Any `<Relationship>` whose `Target` resolves to a removed part is dropped.
  *   Measured: needed in exactly one probe, where `Metadata/thumbnail.png` was removed, and
@@ -213,22 +229,31 @@ function stripSetFor(classification: Classification, names: string[]): string[] 
  *   require it", so it is checked rather than assumed.
  *
  * Every other part is left alone; the strip never rewrites a payload.
+ *
+ * **What the element patterns below do and do not match, probed rather than assumed.** Eight XML
+ * shapes were run through this function. Six are repaired: attributes in any order, single or
+ * double quotes, the self-closing and the paired forms, an XML comment in the way, and a
+ * percent-encoded target. One more is repaired *because* the patterns allow a namespace prefix —
+ * `<r:Relationship>` is legal OPC and an earlier draft of these patterns dropped it on the floor.
+ * The eighth, a `>` inside an attribute value, is **not** matched and is not repaired: `[^>]*?`
+ * stops at it, and a real attribute grammar means an XML parser, which core's lint rules do not
+ * permit as a dependency.
+ *
+ * That last shape is why `danglingReference` exists and why this function is not the guarantee.
+ * A pattern that silently matches nothing produces an archive whose relationship names a part that
+ * is gone, reported as success — which is worse than a mis-edit, because there is no signal at
+ * all. The outcome check is what turns that into a refusal.
  */
-function repairReferences(
-  name: string,
-  text: () => string,
-  removed: ReadonlySet<string>,
-): string | null {
+function repairReferences(name: string, text: string, removed: ReadonlySet<string>): string | null {
   if (name === CONTENT_TYPES) {
-    return dropElements(text(), OVERRIDE_ELEMENT, (element) => {
+    return dropElements(text, OVERRIDE_ELEMENT, (element) => {
       const declared = attribute(element, 'PartName')
       if (declared === null) return false
       const part = resolvePartName(name, declared)
       return part !== null && removed.has(part)
     })
   }
-  if (!isRelsPart(name)) return null
-  return dropElements(text(), RELATIONSHIP_ELEMENT, (element) => {
+  return dropElements(text, RELATIONSHIP_ELEMENT, (element) => {
     // An external relationship names a URI, not a part, so it can never be one of the removed.
     if (attribute(element, 'TargetMode') === 'External') return false
     const target = attribute(element, 'Target')
@@ -236,6 +261,34 @@ function repairReferences(
     const part = resolvePartName(name, target)
     return part !== null && removed.has(part)
   })
+}
+
+/**
+ * The name of a removed part still referenced by `text`, or `null` when none is.
+ *
+ * A check on the **outcome**, not on the pattern, and that is the whole point: it scans for the
+ * two attributes that can name a part — wherever they appear, in whatever element, prefixed or
+ * not, with or without a `>` in some neighbouring value — resolves each, and asks whether the
+ * result is a part this strip removed. So it holds for XML shapes neither the patterns above nor
+ * their author anticipated, and a reference that survives becomes a refusal that names the part
+ * rather than a success that quietly ships a dangling one.
+ *
+ * A false positive is possible in principle — the same attribute text inside an XML comment would
+ * be counted — and is the right direction to err: constraint 9 refuses rather than degrades, and
+ * the alternative is the failure this replaced.
+ */
+function danglingReference(
+  name: string,
+  text: string,
+  removed: ReadonlySet<string>,
+): string | null {
+  for (const match of text.matchAll(PART_REFERENCE)) {
+    const reference = match[1] ?? match[2]
+    if (reference === undefined) continue
+    const part = resolvePartName(name, reference)
+    if (part !== null && removed.has(part)) return part
+  }
+  return null
 }
 
 const CONTENT_TYPES = '[Content_Types].xml'
@@ -250,13 +303,26 @@ function isRelsPart(name: string): boolean {
 }
 
 /**
- * `[^>]*` rather than a real attribute grammar. These are a few hundred bytes of generated XML
- * with no `>` inside an attribute value in any measured file, and a full parser in core would be a
- * dependency this package's lint rules do not allow. Both the self-closing and the paired forms
- * are matched because OPC permits either, even though every measured file uses the first.
+ * An optional namespace prefix: `<r:Relationship>` is legal OPC and no measured file uses one.
+ * The `\b` after the element name is what keeps `<Relationships>`, the plural root element, from
+ * matching — there is no word boundary between `p` and `s`.
  */
-const RELATIONSHIP_ELEMENT = /<Relationship\b[^>]*?(?:\/>|>[\s\S]*?<\/Relationship\s*>)/g
-const OVERRIDE_ELEMENT = /<Override\b[^>]*?(?:\/>|>[\s\S]*?<\/Override\s*>)/g
+const PREFIX = '(?:[A-Za-z_][\\w.-]*:)?'
+const RELATIONSHIP_ELEMENT = new RegExp(
+  `<${PREFIX}Relationship\\b[^>]*?(?:/>|>[\\s\\S]*?</${PREFIX}Relationship\\s*>)`,
+  'g',
+)
+const OVERRIDE_ELEMENT = new RegExp(
+  `<${PREFIX}Override\\b[^>]*?(?:/>|>[\\s\\S]*?</${PREFIX}Override\\s*>)`,
+  'g',
+)
+
+/**
+ * The two OPC attributes that can name a part, wherever they appear. Deliberately blind to the
+ * element around them: that is what lets `danglingReference` see a reference an element pattern
+ * missed.
+ */
+const PART_REFERENCE = /\b(?:Target|PartName)\s*=\s*(?:"([^"]*)"|'([^']*)')/g
 
 function attribute(element: string, name: string): string | null {
   const match = new RegExp(`\\b${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)')`).exec(element)
