@@ -125,8 +125,9 @@ export type ShellApi = {
     /** Opens a native file dialog; null when the user cancels. The renderer names no path. */
     addManual(slicerId: SlicerId): Promise<SlicerConfigDto | null>
     remove(installId: string): Promise<SlicerConfigDto>
-    bind(slicerId: SlicerId, installId: string): Promise<SlicerConfigDto>
-    setDefault(slicerId: SlicerId): Promise<SlicerConfigDto>
+    /** `null` unbinds; see the contract for why the arm exists. */
+    bind(slicerId: SlicerId, installId: string | null): Promise<SlicerConfigDto>
+    setDefault(slicerId: SlicerId | null): Promise<SlicerConfigDto>
     resetConfig(): Promise<SlicerConfigDto>
     /**
      * Hands a file to a slicer. **Ids, never a path** (constraint 4).
@@ -585,14 +586,17 @@ export const dispatch: DispatchTable = {
   'slicers.remove': shellCall('slicers.remove', z.tuple([installIdSchema]), (shell, installId) =>
     shell.slicers.remove(installId),
   ),
+  // `.nullable()` and not `.optional()` on both: the renderer says "nothing" by sending `null`,
+  // and an argument list that is simply short stays a `Validation` failure, because a client that
+  // forgot an argument and one that meant "none" must not be the same request.
   'slicers.bind': shellCall(
     'slicers.bind',
-    z.tuple([slicerIdSchema, installIdSchema]),
+    z.tuple([slicerIdSchema, installIdSchema.nullable()]),
     (shell, slicerId, installId) => shell.slicers.bind(slicerId, installId),
   ),
   'slicers.setDefault': shellCall(
     'slicers.setDefault',
-    z.tuple([slicerIdSchema]),
+    z.tuple([slicerIdSchema.nullable()]),
     (shell, slicerId) => shell.slicers.setDefault(slicerId),
   ),
   /**

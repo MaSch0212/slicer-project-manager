@@ -121,10 +121,24 @@ export interface ApiClient {
     addManual(slicerId: SlicerId): Promise<SlicerConfigDto | null>
     /** Forgets an install, and any binding to it. A detected one returns on the next scan. */
     remove(installId: string): Promise<SlicerConfigDto>
-    /** The one decision the app asks the user to make: which install a product launches. */
-    bind(slicerId: SlicerId, installId: string): Promise<SlicerConfigDto>
-    /** The product used for a file that names no slicer, which is most of a library. */
-    setDefault(slicerId: SlicerId): Promise<SlicerConfigDto>
+    /**
+     * The one decision the app asks the user to make: which install a product launches.
+     *
+     * `null` unbinds it, and that arm is not decoration. A product with exactly one install is
+     * bound automatically the moment it is detected, so without a way back the only route to
+     * "launch nothing for this product" was `remove` — which a scan undoes, because the install is
+     * still installed, and which then re-binds it for being the only one. Spec 8.3 typed this
+     * nullable; the first implementation of it did not, and nobody was asked.
+     */
+    bind(slicerId: SlicerId, installId: string | null): Promise<SlicerConfigDto>
+    /**
+     * The product used for a file that does not name a slicer, which is most of a library.
+     *
+     * `null` clears it, for the same reason `bind` takes one: a default that could be set and
+     * never unset is a setting with no way back, and the launch paths already handle its absence —
+     * they refuse and name the choice, which is what the whole default exists to avoid guessing at.
+     */
+    setDefault(slicerId: SlicerId | null): Promise<SlicerConfigDto>
     /**
      * Throws the stored configuration away.
      *

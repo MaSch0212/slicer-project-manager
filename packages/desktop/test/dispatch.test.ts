@@ -93,8 +93,12 @@ const shell: ShellApi = {
     scan: () => Promise.resolve(slicerCall('scan')),
     addManual: (slicerId) => Promise.resolve(slicerCall('addManual', slicerId)),
     remove: (installId) => Promise.resolve(slicerCall('remove', installId)),
-    bind: (slicerId, installId) => Promise.resolve(slicerCall('bind', slicerId, installId)),
-    setDefault: (slicerId) => Promise.resolve(slicerCall('setDefault', slicerId)),
+    // `?? 'none'` and not `?? ''`: `null` is a request the renderer can make now — unbind, and
+    // clear the default — and a recorder that rendered it as an empty string would make it
+    // indistinguishable from an argument that simply arrived blank.
+    bind: (slicerId, installId) =>
+      Promise.resolve(slicerCall('bind', slicerId, installId ?? 'none')),
+    setDefault: (slicerId) => Promise.resolve(slicerCall('setDefault', slicerId ?? 'none')),
     resetConfig: () => Promise.resolve(slicerCall('resetConfig')),
     open: (fileId, projectId, opts) => {
       slicerCalls.push(`open ${fileId} ${projectId} ${opts.mode} ${opts.slicerId ?? '-'}`.trimEnd())
@@ -1087,6 +1091,10 @@ test('the slicer routes reach the shell with their arguments in the right order'
   await call('slicers.remove', ['registry:HKCU:Thing'])
   await call('slicers.bind', ['cura', 'registry:HKLM\\WOW6432Node:UltiMaker Cura 5.13.0-5.13.0'])
   await call('slicers.setDefault', ['orca'])
+  // The arm spec 8.3 typed and the first implementation dropped: "launch nothing for this", and
+  // "no default". `null` has to reach the shell as `null`, not be swallowed on the way.
+  await call('slicers.bind', ['cura', null])
+  await call('slicers.setDefault', [null])
   await call('slicers.resetConfig')
   await call('slicers.open', ['file-1', 'project-1', { mode: 'new-project', slicerId: 'bambu' }])
   await call('slicers.sessions')
@@ -1101,6 +1109,8 @@ test('the slicer routes reach the shell with their arguments in the right order'
     'remove registry:HKCU:Thing',
     'bind cura registry:HKLM\\WOW6432Node:UltiMaker Cura 5.13.0-5.13.0',
     'setDefault orca',
+    'bind cura none',
+    'setDefault none',
     'resetConfig',
     // Two opaque ids of the same shape, in an order the compiler cannot see: a `fileId` and a
     // `projectId` swapped here would typecheck everywhere and answer `NotFound` at runtime.
