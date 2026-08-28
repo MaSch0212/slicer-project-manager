@@ -622,12 +622,22 @@ same path**, now with no record beside it.
 So "compare before deleting" is a snapshot test for a hazard that is not a snapshot. Two rules
 replace it, and the second is what actually makes the first safe:
 
-1. **Only the user's answer, or an observed-and-settled exit, removes a directory.** Sweep 2 runs
+1. **Only the user's answer, or an observed-and-settled exit, removes anything.** Sweep 2 runs
    when the spawned process exits (row 3 makes that observable on Windows) and may delete only a
-   directory that is _still_ byte-unchanged after a settle period. Row 4 is why even that is not a
+   file that is _still_ byte-unchanged after a settle period. Row 4 is why even that is not a
    proof of anything: with `single_instance` on, the spawned process hands the file over and exits
    while the slicer stays open. A sweep at next start **surfaces, and does not delete** — every
    `slicer-sessions/*` directory not belonging to the current process becomes a listed session.
+
+   **This paragraph said "a _directory_" until task 5 shipped, and what shipped is stricter.** The
+   exit sweep deletes the _file_ and leaves the directory and its `launch.json` standing, with a
+   `sweptAt` on the record. That is not a liberty taken with the rule; it is what makes the very
+   next paragraph work — a file recreated at that path by the next Ctrl+S lands beside a record
+   that still names its project, and a sweep that had taken the directory would have left an
+   orphan instead. Corrected here so a reader comparing the document to
+   `packages/desktop/src/slicers/sessions.ts` does not read the implementation as over-reaching
+   and "fix" it back.
+
 2. **A file with no record is an unfinished session, not litter.** This is the rule that makes the
    residual risk survivable rather than silent. Whatever the app deletes, row 20 can put back; a
    `.3mf` found in `slicer-sessions/` with nothing to explain it is therefore offered to the user
@@ -932,7 +942,15 @@ slicers: {
   addManual(slicerId: SlicerId): Promise<SlicerConfigDto | null>
 
   remove(installId: string): Promise<SlicerConfigDto>
+
+  /**
+   * `null` unbinds, and the arm is load-bearing: a product with exactly one install is bound
+   * automatically the moment it is detected, and `remove` is not a way back — the install is
+   * still installed, so the next scan finds it and binds it again.
+   */
   bind(slicerId: SlicerId, installId: string | null): Promise<SlicerConfigDto>
+
+  /** `null` clears it. The launch paths refuse and name the choice, which is the point of it. */
   setDefault(slicerId: SlicerId | null): Promise<SlicerConfigDto>
 
   /**
