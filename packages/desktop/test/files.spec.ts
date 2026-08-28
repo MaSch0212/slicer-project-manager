@@ -481,9 +481,15 @@ test('a library file that looks like a web page downloads instead of becoming a 
  * The measurement this exists for, taken with no policy in place: `location.href =
  * 'https://example.com/'` written from the renderer's own main world navigated the app's window
  * there, and the page that arrived reported `typeof window.spm === 'object'` with keys
- * `canStreamFromDisk,invoke`. `window.open` was worse — a second `BrowserWindow` at that origin,
- * also holding the bridge. A preload belongs to a webContents, not to a document, so it follows
+ * `canStreamFromDisk,invoke`. A preload belongs to a webContents, not to a document, so it follows
  * the webContents wherever it goes.
+ *
+ * **This docblock used to add that `window.open` was worse — "a second `BrowserWindow` at that
+ * origin, also holding the bridge" — and that was wrong**, the same wrong sentence `urls.ts` and
+ * `app.ts` carried. A popup has no bridge of its own; what a popup **same-origin with a
+ * bridge-holding opener** has is `window.opener.spm`. See `urls.ts` for the re-measurement. The
+ * consequence for this test is the `spm://app` arm below: the same-origin `window.open` is the one
+ * the deny-everything handler is load-bearing for, and it was the arm this test did not have.
  *
  * `example.com` and not a local stub, deliberately: a policy that only refuses unreachable hosts
  * refuses nothing. If the switch were removed and the runner had no network, the assertion below
@@ -548,9 +554,17 @@ test('the renderer cannot navigate the window off its own origin, or open a seco
     // reaches `setWindowOpenHandler` alone and `_self` reaches `will-navigate` alone. A policy
     // wired to only one of them would let the other through, and `_self` is the arm an earlier
     // version of the comment in `app.ts` said could not happen.
+    //
+    // The `spm://app` arm is the one the handler is load-bearing for, and the only one here whose
+    // refusal nothing else in the app would supply: `navigationPolicy` answers `allow` for it, and
+    // with the handler's "deny for `allow` too" removed it becomes a real second `BrowserWindow` on
+    // the app's own origin — same-origin with an opener that holds the bridge, so its script
+    // reaches `ipcMain` through `window.opener.spm`. The cross-origin arms are also refused by
+    // Chromium's own origin check; this one is not refused by anything else.
     await page.evaluate(() => {
       window.open('https://example.com/', '_blank')
       window.open('file:///C:/Windows/win.ini', '_blank')
+      window.open('spm://app/import', '_blank')
       window.open('https://example.com/self', '_self')
     })
     await page.waitForTimeout(1200)

@@ -74,9 +74,23 @@ export const ACTIVATION_URL_BASE = `${RENDERER_ORIGIN}/activate`
  * typed into the renderer's own main world navigated the app's window there, and the page that
  * arrived reported `typeof window.spm === 'object'` with keys `canStreamFromDisk,invoke` — the
  * whole IPC bridge, at a remote origin, because a preload is attached to the *webContents* and
- * follows it wherever it goes. `window.open('https://example.com/')` was worse: a second
- * `BrowserWindow` at that origin, with the same bridge. Both measured on Electron 44.0.0 before
- * this function existed.
+ * follows it wherever it goes. That half is re-verified, twice, against the real bundled preload.
+ *
+ * **The half that followed it was wrong and is withdrawn.** It said `window.open('https://example.com/')`
+ * was worse: "a second `BrowserWindow` at that origin, with the same bridge." The hazard is real;
+ * the mechanism named for it is not. A popup never inherits the opener's preload and so has no
+ * bridge of its own — `typeof window.spm === 'undefined'` in all twenty popups a 21-variant
+ * re-measurement created, and `did-create-window` hands over merged options carrying no `preload`
+ * key. What a popup **same-origin with a bridge-holding opener** has is `window.opener.spm`, the
+ * opener's *live* bridge, and an `invoke` through it returned a real `ipcMain` answer. The original
+ * popup was in exactly that position: the `location.href` test above had already taken its opener
+ * to `https://example.com/`, so the two were same-origin. (That ordering is inferred from commit
+ * `95d9e20`'s message — the probe script was not preserved — so it is an explanation, not a
+ * measurement; the correction does not rest on it.) Same-origin-ness at the moment of the open is
+ * the only variable that moves the answer: not the preload, not the handler's return shape, not the
+ * features string. `noopener` severs the reach, and a supplied `webPreferences.preload` gives a
+ * popup a full bridge at any origin. All of it on Electron 44.0.0, Windows 11; macOS and Linux
+ * untested.
  *
  * Three answers, and each one is a different hook's job — see `createMainWindow`:
  *

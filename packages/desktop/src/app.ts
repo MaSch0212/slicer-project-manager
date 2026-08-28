@@ -553,10 +553,17 @@ export function createMainWindow(mode: BridgeMode = 'local', path = '/'): Browse
  * wherever it navigates. Measured before this existed, on Electron 44.0.0: setting
  * `location.href = 'https://example.com/'` from the renderer's main world navigated the app's own
  * window there, and the remote page reported `typeof window.spm === 'object'` with keys
- * `canStreamFromDisk,invoke` — the whole IPC bridge, at someone else's origin.
- * `window.open('https://example.com/')` produced a *second* `BrowserWindow` at that origin, with
- * the same bridge. `navigationPolicy` in `urls.ts` carries the reasoning and the exhaustive unit
- * coverage; this is the wiring.
+ * `canStreamFromDisk,invoke` — the whole IPC bridge, at someone else's origin. That half stands,
+ * re-verified.
+ *
+ * **The sentence that followed it does not, and is withdrawn.** It said
+ * `window.open('https://example.com/')` produced a second `BrowserWindow` at that origin "with the
+ * same bridge". A popup has no bridge of its own — a preload is not inherited across `window.open`,
+ * measured across 21 variants — but a popup **same-origin with a bridge-holding opener** reaches
+ * `window.opener.spm` and can `invoke` through it, and that first popup was same-origin because the
+ * `location.href` test above had already moved its opener to `example.com`. Electron 44.0.0,
+ * Windows 11 only. `navigationPolicy` in `urls.ts` carries the full account, the reasoning and the
+ * exhaustive unit coverage; this is the wiring.
  *
  * **Both hooks, because neither one covers the whole surface** — which is not the same as saying
  * they never overlap, as an earlier version of this sentence did. It claimed `will-navigate`
@@ -583,9 +590,22 @@ export function applyNavigationPolicy(window: BrowserWindow): void {
     if (policy === 'external') void shell.openExternal(url)
   })
   window.webContents.setWindowOpenHandler(({ url }) => {
-    // Deny for `allow` too: nothing in this app opens a second window on its own origin, and a
-    // window that arrived unasked for would have the bridge and no CSP-bearing document to hold
-    // it. If a later task needs one, it opens it from the main process where it can say so.
+    // Deny for `allow` too, and that arm is the load-bearing one rather than tidiness. Nothing in
+    // this app opens a second window on its own origin, and with no handler installed a
+    // `window.open('spm://app/...')` from the renderer makes a real one whose script reaches
+    // `ipcMain` — measured on Electron 44.0.0. `navigationPolicy` answers `allow` for those URLs
+    // and `will-navigate` never sees a `_blank`, so nothing else in the app removes it.
+    //
+    // **An earlier version of this comment said such a window "would have the bridge and no
+    // CSP-bearing document to hold it". Both halves are wrong.** It has no bridge of its own — a
+    // preload is not inherited across `window.open` — it has `window.opener.spm`, the opener's live
+    // bridge, which is a stronger reason to deny a same-origin target and no reason at all for a
+    // cross-origin one. And CSP does not govern `window.opener`: the reach measured identically
+    // from a popup at a CSP-bearing `spm://app/` path and from one at the CSP-free
+    // `_spm/files/<id>/raw` shape. For `http(s)` the deny is belt-and-braces — Chromium's origin
+    // check already walls a cross-origin popup off from both bridges — and it is wanted there for
+    // the reason above the function: the link belongs in the user's own browser. Windows 11 only.
+    // If a later task needs a second window, it opens it from the main process where it can say so.
     if (navigationPolicy(url) === 'external') void shell.openExternal(url)
     return { action: 'deny' }
   })
