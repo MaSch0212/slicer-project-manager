@@ -6,6 +6,7 @@ import {
   readFileSync,
   readdirSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -220,6 +221,43 @@ function launchDirectory(
   return { directory, path, record }
 }
 
+/**
+ * A launch directory holding a record with **exactly the nine fields task 4 wrote** — no
+ * `sourceSlicer`, no `sourceSizeBytes`, no `launchedEntries`, no `sweptAt`.
+ *
+ * Deliberately not `launchDirectory` with overrides: overrides can only *add*, so a harness built
+ * that way can never produce the shape this asserts about, and the backward-compatibility claim
+ * would go on being true by inspection and untested. It is written out here so that `readRecord`
+ * starting to require one of the four turns something red.
+ */
+function taskFourRecord(
+  h: Harness,
+  launchId: string,
+  fileName: string,
+  projectId: string,
+  build: (path: string) => void,
+): { directory: string; path: string } {
+  const directory = join(h.sessionsDir, launchId)
+  mkdirSync(directory, { recursive: true })
+  const path = join(directory, fileName)
+  build(path)
+  writeFileSync(
+    join(directory, LAUNCH_RECORD_NAME),
+    JSON.stringify({
+      launchId,
+      mode: 'new-project',
+      projectId,
+      fileId: 'file-4',
+      slicerId: 'orca',
+      installId: 'msix:OrcaSlicer.OrcaSlicer_3qd7h69xpne0g',
+      fileName,
+      launchedHash: 'what-task-4-wrote',
+      startedAt: h.clock.now,
+    }),
+  )
+  return { directory, path }
+}
+
 function readRecordAt(directory: string): SlicerLaunchRecord {
   return JSON.parse(readFileSync(join(directory, LAUNCH_RECORD_NAME), 'utf8')) as SlicerLaunchRecord
 }
@@ -286,6 +324,10 @@ test('the sweep at next start leaves an unchanged directory on disk AND listed',
   assert.equal(session.launchId, 'launch-a')
   assert.equal(session.fileState, 'unchanged')
   assert.equal(session.isOrphan, false)
+  // The two sizes, as outputs rather than as fixture inputs: `sourceSizeBytes` is what the record
+  // kept because an in-place save destroys it, and `returnedSizeBytes` is the file as it is now.
+  assert.equal(session.sourceSizeBytes, 1234)
+  assert.equal(session.returnedSizeBytes, statSync(path).size)
   await Promise.resolve()
 })
 
@@ -298,9 +340,12 @@ test('a .3mf with no launch.json comes back as an orphan and is never swept', ()
   curaProject(join(inDirectory, 'came-back.3mf'))
   curaProject(join(h.sessionsDir, 'loose.3mf'))
 
-  h.sessions.sweepAtStart()
+  // The count the start-up log line is built from — counted by enumeration, without reading a
+  // byte of any of these files, so it has to agree with what `list()` would produce the hard way.
+  assert.equal(h.sessions.sweepAtStart(), 2)
 
   const listed = h.sessions.list().sort((a, b) => a.fileName.localeCompare(b.fileName))
+  assert.equal(listed.length, 2)
   assert.deepEqual(
     listed.map((session) => [session.launchId, session.isOrphan, session.fileState]),
     [
@@ -319,12 +364,17 @@ test('a .3mf with no launch.json comes back as an orphan and is never swept', ()
   assert.equal(existsSync(join(h.sessionsDir, 'loose.3mf')), true)
 })
 
-test('an orphan that names no slicer at all is still listed', () => {
+test('an orphan that names no slicer at all is still listed, and settles', () => {
   const h = harness()
   writeFileSync(join(h.sessionsDir, 'cube.stl'), 'solid cube\nendsolid cube\n')
 
   const session = only(h.sessions.list())
 
+  // The load-bearing half, and the one `slicerId === null` cannot carry: a mesh is not a ZIP and
+  // never will be, so a settle check that asked "does the central directory parse?" of *every*
+  // file would leave this settling until the window ran out and then call it unreadable — for
+  // ever, on a file that is perfectly readable. `null` is what both branches answer.
+  assert.equal(session.fileState, 'changed')
   assert.equal(session.isOrphan, true)
   // The one honest answer, and the reason the field is nullable: nothing about an `.stl` names a
   // product. Dropping it from the list instead is what sweep rule 2 forbids.
@@ -457,6 +507,47 @@ test('the start sweep never touches a directory that still holds a file, however
   assert.equal(only(h.sessions.list()).fileState, 'unchanged')
 })
 
+test('a record written before task 5 still lists, and shows less rather than something wrong', () => {
+  const h = harness()
+  taskFourRecord(h, 'launch-task4', 'bracket.3mf', 'project-4', curaProject)
+
+  const listed = only(h.sessions.list())
+
+  // The seven fields `readRecord` requires are all there, so this is a session and not an orphan,
+  // and everything that identifies it survives.
+  assert.equal(listed.isOrphan, false)
+  assert.equal(listed.projectId, 'project-4')
+  assert.equal(listed.fileId, 'file-4')
+  assert.equal(listed.slicerId, 'orca')
+  assert.equal(listed.fileState, 'changed')
+  // And the four fields task 5 added are simply absent — never a wrong value, never a throw.
+  assert.equal(listed.entryDiff, undefined)
+  assert.equal(listed.sourceSlicer, null)
+  assert.equal(listed.sourceSizeBytes, undefined)
+  // `returnedAs` against an unknown source is reached deliberately rather than by accident: the
+  // app does not know what went out and does know what is there, and saying so is more use than
+  // silence. The card renders the missing half as "unknown".
+  assert.equal(listed.returnedAs, 'cura')
+})
+
+test('a record written before task 5 can still be imported and swept', async () => {
+  const h = harness()
+  const projectId = project('Task four')
+  const { directory, path } = taskFourRecord(
+    h,
+    'launch-task4-import',
+    'bracket.3mf',
+    projectId,
+    curaProject,
+  )
+
+  const added = (await h.sessions.resolve('launch-task4-import', 'import', {})) as FileDto
+
+  assert.equal(added.name, 'bracket (cura).3mf')
+  assert.equal(existsSync(path), false)
+  assert.equal(readRecordAt(directory).sweptAt, h.clock.now)
+})
+
 /* -------------------------------------------------------------------------------------------
  * Change detection, end to end
  * ---------------------------------------------------------------------------------------- */
@@ -476,6 +567,11 @@ test('a changed entry is named, and nothing else is', () => {
     removed: [],
     changed: ['Metadata/project_settings.config'],
   })
+  // The pair of sizes is what a user compares at a glance, so it has to move with the file: the
+  // source is the record's, and the returned one is measured now.
+  assert.equal(session.sourceSizeBytes, 1234)
+  assert.equal(session.returnedSizeBytes, statSync(path).size)
+  assert.notEqual(session.returnedSizeBytes, session.sourceSizeBytes)
 })
 
 test('the same content with different ZIP timestamps is unchanged', () => {
@@ -795,33 +891,49 @@ test('an orphan needs a project, and takes the one it is given', async () => {
   assert.equal(existsSync(join(h.sessionsDir, 'stray.3mf')), false)
 })
 
-test('a discard removes the file and keeps the record, and a bulk discard counts what went', async () => {
+test('a discard removes the file and keeps the record', async () => {
   const h = harness()
   const first = launchDirectory(h, 'launch-q', 'a.3mf', curaProject)
-  const second = launchDirectory(h, 'launch-r', 'b.3mf', curaProject)
 
   assert.equal(await h.sessions.resolve('launch-q', 'discard', {}), null)
-  assert.equal(existsSync(first.path), false)
-  assert.equal(readRecordAt(first.directory).sweptAt, h.clock.now)
 
-  // A launch id that has already gone is not a failure; the count says what actually happened.
-  const bulk = await h.sessions.discardMany(['launch-r', 'launch-q', 'launch-nowhere'])
-  assert.deepEqual(bulk, { discarded: 1 })
+  assert.equal(existsSync(first.path), false)
+  assert.equal(existsSync(first.directory), true)
+  assert.equal(readRecordAt(first.directory).sweptAt, h.clock.now)
+})
+
+test('a bulk discard sweeps every one it was given, and counts only those', async () => {
+  const h = harness()
+  const first = launchDirectory(h, 'launch-r', 'a.3mf', curaProject)
+  const second = launchDirectory(h, 'launch-s', 'b.3mf', curaProject)
+  const spared = launchDirectory(h, 'launch-t', 'c.3mf', curaProject)
+
+  // Three ids, one of which has never existed: an id that has already gone is not a failure, and
+  // the count is what actually happened rather than what was asked for.
+  const bulk = await h.sessions.discardMany(['launch-r', 'launch-s', 'launch-nowhere'])
+
+  assert.deepEqual(bulk, { discarded: 2 })
+  // Both, and by name. One enumeration serves the whole list now, and a loop that swept only the
+  // first of them would still have counted two.
+  assert.equal(existsSync(first.path), false)
   assert.equal(existsSync(second.path), false)
-  assert.equal(existsSync(second.directory), true)
+  assert.equal(readRecordAt(first.directory).sweptAt, h.clock.now)
+  assert.equal(readRecordAt(second.directory).sweptAt, h.clock.now)
+  // And nothing it was not given.
+  assert.equal(existsSync(spared.path), true)
 })
 
 test('resolving a session that is not there is NotFound rather than a path join', async () => {
   const h = harness()
-  launchDirectory(h, 'launch-s', 'a.3mf', curaProject)
+  launchDirectory(h, 'launch-elsewhere', 'a.3mf', curaProject)
 
-  for (const launchId of ['..', '../../etc/passwd', '..\\..\\evil', 'launch-t']) {
+  for (const launchId of ['..', '../../etc/passwd', '..\\..\\evil', 'launch-nowhere']) {
     const error = await rejection(h.sessions.resolve(launchId, 'discard', {}))
     assert.equal(error.code, 'NotFound', launchId)
   }
   // Nothing outside the sessions directory was reachable, because nothing was joined: the id is
   // matched against what the enumerator found.
-  assert.deepEqual(readdirSync(h.sessionsDir), ['launch-s'])
+  assert.deepEqual(readdirSync(h.sessionsDir), ['launch-elsewhere'])
 })
 
 test('derivedName counts up, and keeps the extension it was given', () => {

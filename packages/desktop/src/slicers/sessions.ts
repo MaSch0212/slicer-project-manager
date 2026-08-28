@@ -321,6 +321,13 @@ export class SlicerSessions {
    * **It never touches a directory that holds a file.** That is the assertion
    * `test/slicers-sessions.test.ts` makes directly, because it is the rule the first draft of the
    * spec got wrong.
+   *
+   * **It counts by enumeration and deliberately does not call `list()`.** This runs before the
+   * window is created, and `list()` re-hashes every file under `slicer-sessions/` — decompressing
+   * every entry of every archive, and whole-file SHA-256 for anything that is not one. A remote
+   * `.stl` launch copies the mesh into a launch directory and the reference library reaches
+   * 674 MB, so the old version blocked start-up on hashing that, for one `console.info`. Nothing
+   * above needs the answer; the count is a readdir.
    */
   sweepAtStart(): number {
     if (!existsSync(this.#sessionsDir)) return 0
@@ -340,13 +347,34 @@ export class SlicerSessions {
         rmSync(directory, { recursive: true, force: true })
       }
     }
-    const listed = this.list()
-    if (listed.length > 0) {
+    const surfaced = this.#countSurfaced()
+    if (surfaced > 0) {
       console.info(
-        `desktop: ${listed.length} slicer session(s) are waiting to be answered; nothing was deleted`,
+        `desktop: ${surfaced} slicer session(s) are waiting to be answered; nothing was deleted`,
       )
     }
-    return listed.length
+    return surfaced
+  }
+
+  /**
+   * How many sessions `list()` would produce, without reading a byte of any of them.
+   *
+   * It walks the same two shapes `#scan` does and counts the same files, which is what makes the
+   * two agree — a session is one file that is not a `launch.json`, wherever it sits. What it
+   * cannot say is anything about *state*, which is exactly the part that costs a hash and exactly
+   * the part a start-up log line has no use for.
+   */
+  #countSurfaced(): number {
+    let count = 0
+    for (const entry of readdirSync(this.#sessionsDir, { withFileTypes: true })) {
+      if (entry.isFile()) count += 1
+      else if (entry.isDirectory()) {
+        count += readdirSync(join(this.#sessionsDir, entry.name), { withFileTypes: true }).filter(
+          (child) => child.isFile() && child.name !== LAUNCH_RECORD_NAME,
+        ).length
+      }
+    }
+    return count
   }
 
   /* -----------------------------------------------------------------------------------------
@@ -399,16 +427,20 @@ export class SlicerSessions {
     return added
   }
 
-  /** The bulk answer, over the stale ones. A session that has already gone is not a failure. */
+  /**
+   * The bulk answer, over the stale ones. A session that has already gone is not a failure.
+   *
+   * **One enumeration for the whole list, and not one per id.** `#scan()` hashes every file it
+   * finds, the channel permits 500 ids, and discarding fifty stale sessions was fifty full
+   * enumerations — quadratic in the thing a bulk action exists to make cheap. Scanning once is
+   * equivalent because a sweep only ever *removes* a session: nothing in the loop can make a
+   * later id resolve to a different file than it would have at the start.
+   */
   async discardMany(launchIds: readonly string[]): Promise<{ discarded: number }> {
-    let discarded = 0
-    for (const launchId of launchIds) {
-      const session = this.#scan().find((candidate) => candidate.dto.launchId === launchId)
-      if (!session) continue
-      this.#sweep(session)
-      discarded += 1
-    }
-    return await Promise.resolve({ discarded })
+    const wanted = new Set(launchIds)
+    const found = this.#scan().filter((session) => wanted.has(session.dto.launchId))
+    for (const session of found) this.#sweep(session)
+    return await Promise.resolve({ discarded: found.length })
   }
 
   /* -----------------------------------------------------------------------------------------
