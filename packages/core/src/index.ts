@@ -70,7 +70,7 @@ export {
   type ZipPlan,
 } from './projects/import-zip.ts'
 
-export { classifyFile, SLICER_HEADER_REGISTRY } from './files/classify.ts'
+export { classifyFile, SLICER_HEADER_REGISTRY, type Classification } from './files/classify.ts'
 export { entryDiff, entryHash, type EntryDiff } from './files/entry-hash.ts'
 export { safeJoin } from './files/paths.ts'
 // The rewriter behind this (`files/zip-write.ts`) is deliberately not exported: it is how the
