@@ -22,8 +22,23 @@ const coreSrc = join(repoRoot, 'packages/core/src')
 const serverDir = join(repoRoot, 'packages/server')
 
 const FORBIDDEN = ['files/zip-write.ts', 'files/strip3mf.ts', 'files/entry-hash.ts']
-/** The exports task 1 adds. None of them may be named anywhere under `packages/server`. */
-const FORBIDDEN_NAMES = ['strip3mf', 'stripRefusalReason', 'entryHash', 'entryDiff', 'rewriteZip']
+/**
+ * The exports subsystem D adds. None of them may be named anywhere under `packages/server`.
+ *
+ * The last three are task 5's, and `readsAsZip` is the one that needs a word: it lives in
+ * `files/zip.ts`, which the server reaches legitimately through the importer, so it cannot be
+ * caught by the module list above. The name check is what covers it.
+ */
+const FORBIDDEN_NAMES = [
+  'strip3mf',
+  'stripRefusalReason',
+  'entryHash',
+  'entryDiff',
+  'rewriteZip',
+  'entryDigests',
+  'diffDigests',
+  'readsAsZip',
+]
 
 function walkFiles(dir: string): string[] {
   const out: string[] = []
