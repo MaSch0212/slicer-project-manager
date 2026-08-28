@@ -708,7 +708,7 @@ export class SlicerSessions {
     const sessions: Session[] = []
     for (const entry of readdirSync(this.#sessionsDir, { withFileTypes: true })) {
       if (entry.isFile()) {
-        sessions.push(this.#orphan(entry.name, this.#sessionsDir, entry.name, null))
+        sessions.push(this.#orphan(entry.name, this.#sessionsDir, entry.name, null, library))
         continue
       }
       if (!entry.isDirectory()) continue
@@ -727,7 +727,7 @@ export class SlicerSessions {
                 'it is listed as a session of its own rather than adopted',
             )
           }
-          sessions.push(this.#orphan(`${entry.name}/${name}`, directory, name, record))
+          sessions.push(this.#orphan(`${entry.name}/${name}`, directory, name, record, library))
         }
       }
     }
@@ -778,6 +778,13 @@ export class SlicerSessions {
    * a worse kind of honesty. `isOrphan` stays true either way, because what makes it an orphan is
    * having no record *of its own*: nothing says this file is the one that was handed over.
    *
+   * **But only when that record belongs to the library that is open.** A `projectId` is
+   * per-library, and inheriting one from a *foreign* record is the exact bug the library key was
+   * added to remove, surviving one level down: the card renders no "which project?" prompt for a
+   * session that already names one, so Import was enabled, resolved another library's UUID against
+   * this one, and came back `NotFound` — with "Throw it away" as the only other button on the row.
+   * Blanked to `''` instead, which is what makes the row a question the user can actually answer.
+   *
    * `slicerId` is the file's own classification, and it is the one place in this DTO that can be
    * null. There is genuinely nothing else to put there — an `.stl` that came back names no slicer
    * at all — and the alternatives were to invent a product the app has no evidence for, or to drop
@@ -788,19 +795,24 @@ export class SlicerSessions {
     directory: string,
     name: string,
     record: SlicerLaunchRecord | null,
+    library: string | null,
   ): Session {
+    const inherits = record !== null && sameLibrary(record.library, library)
     const path = join(directory, name)
     const { state: fileState, sizeBytes: returnedSizeBytes } = this.#inspect(path, null)
-    let startedAt = record?.startedAt ?? 0
+    // On the same terms as `projectId` above: a foreign record's launch time would age this row
+    // against a clock belonging to another library, and could label a file that appeared this
+    // morning as a stale session.
+    let startedAt = inherits ? record.startedAt : 0
     try {
       // When it appeared, which is the only "started" an orphan has.
-      startedAt = record?.startedAt ?? Math.round(statSync(path).mtimeMs)
+      startedAt = inherits ? record.startedAt : Math.round(statSync(path).mtimeMs)
     } catch {
       // Removed between the readdir and here. It simply reports what it can.
     }
     const dto: SlicerSessionDto = {
       launchId,
-      projectId: record?.projectId ?? '',
+      projectId: inherits ? record.projectId : '',
       fileId: '',
       fileName: name,
       slicerId:
@@ -811,8 +823,11 @@ export class SlicerSessions {
       isOrphan: true,
       ...(returnedSizeBytes === undefined ? {} : { returnedSizeBytes }),
     }
-    // Never foreign. An orphan has no record and therefore no library, and a file with nothing to
-    // explain it is exactly what sweep rule 2 says must always be offered to somebody.
+    // Never foreign, and the comment that used to sit here said an orphan "has no library" — which
+    // was false two fields up, where it was reading one off the neighbouring record. It has no
+    // record *of its own*, which is a different thing: a file nothing can explain is exactly what
+    // sweep rule 2 says must always be offered to somebody, whosever directory it turned up in.
+    // What it must not do is arrive pre-answered with another library's project.
     return { dto, path, directory, record, foreign: false }
   }
 
@@ -1096,6 +1111,15 @@ function readRecord(path: string): SlicerLaunchRecord | null {
   ) {
     console.warn(`desktop: ${path} is not a launch record this build can read`)
     return null
+  }
+  // Every field task 5 added is passed through unvalidated, exactly as `launchedEntries` is: this
+  // file lives inside `userData` and the threat model is a person hand-editing it, not an attacker.
+  // `library` is the one where a wrong *type* would throw rather than merely read oddly —
+  // `sameLibrary` calls `toLowerCase` on it — so a non-string is dropped to "cannot tell", which is
+  // the same safe default a record written before the field existed gets.
+  if (record.library !== undefined && typeof record.library !== 'string') {
+    console.warn(`desktop: ignoring a non-string library in ${path}`)
+    return { ...record, library: undefined } as SlicerLaunchRecord
   }
   return record as SlicerLaunchRecord
 }

@@ -7,6 +7,7 @@ import {
   readdirSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -592,22 +593,47 @@ test('the same session lists again once its own library is open', () => {
   assert.equal(only(h.sessions.list()).launchId, 'launch-theirs')
 })
 
-test('an orphan beside a foreign record is still listed, because it is nobody else to lose', () => {
+test('an orphan beside a foreign record is listed, asks where it belongs, and can be answered', async () => {
   const h = harness()
+  const projectId = project('Adopted from elsewhere')
   const { directory } = launchDirectory(h, 'launch-foreign', 'bracket.3mf', curaProject, {
     library: `local:${join(root, 'not-this-one')}`,
+    projectId: 'a-project-in-the-other-library',
   })
   // What a Cura Save-As into somebody else's launch directory leaves behind. The launched file is
   // that library's business; this one has no record of its own, and the two rules meet here —
   // "only this library's sessions" must not quietly become "and none of the files it cannot
   // explain either", which is the one thing sweep rule 2 forbids outright.
-  curaProject(join(directory, 'came-back.3mf'))
+  const stray = join(directory, 'came-back.3mf')
+  curaProject(stray)
 
-  assert.deepEqual(
-    h.sessions.list().map((session) => [session.launchId, session.isOrphan]),
-    [['launch-foreign/came-back.3mf', true]],
+  const listed = only(h.sessions.list())
+  assert.equal(listed.launchId, 'launch-foreign/came-back.3mf')
+  assert.equal(listed.isOrphan, true)
+  // **The half that listing alone cannot see.** Inheriting the neighbouring record's `projectId`
+  // made the card render no "which project?" prompt and enable Import — which then resolved
+  // another library's UUID against this one and came back `NotFound`, flattened to "that did not
+  // work", with "Throw it away" as the only other button on the row.
+  assert.equal(listed.projectId, '')
+  assert.equal(
+    listed.startedAt,
+    Math.round(statSync(stray).mtimeMs),
+    'it aged against a foreign library clock',
   )
-  assert.equal(existsSync(join(directory, 'came-back.3mf')), true)
+
+  const added = (await h.sessions.resolve('launch-foreign/came-back.3mf', 'import', {
+    projectId,
+  })) as FileDto
+
+  assert.equal(added.name, 'came-back (cura).3mf')
+  assert.deepEqual(
+    getProject(lib, ctx, projectId).files.map((file) => file.name),
+    ['came-back (cura).3mf'],
+  )
+  assert.equal(existsSync(stray), false)
+  // And the foreign session it was sitting beside is untouched: not swept, not stamped, not listed.
+  assert.equal(existsSync(join(directory, 'bracket.3mf')), true)
+  assert.equal(readRecordAt(directory).sweptAt, undefined)
 })
 
 test('a remote session is told apart by its origin, not merely by being remote', () => {
@@ -624,6 +650,59 @@ test('a remote session is told apart by its origin, not merely by being remote',
     h.sessions.list().map((session) => session.launchId),
     ['launch-here'],
   )
+})
+
+test('the same folder reached by another name is the same library', () => {
+  // `Library.dir` is stored verbatim, and case is not the only way one folder gets two spellings:
+  // a device-path prefix, a UNC alias for a local disk, an 8.3 short name and a junction all name
+  // one directory and none of them compare equal as strings. A junction is the one of the five
+  // that can be built without privileges on Windows *and* exists on POSIX, so it is the one this
+  // asserts with; the failure they all produce is the same, and it is quiet — a user's own
+  // sessions vanishing from the list with only a `console.info` to say why.
+  const real = join(root, `linked-real-${(seq += 1)}`)
+  mkdirSync(real, { recursive: true })
+  const viaLink = join(root, `linked-alias-${seq}`)
+  symlinkSync(real, viaLink, 'junction')
+
+  // Launched with the folder named one way, listed with it named the other.
+  const h = harness({ libraryDir: viaLink })
+  launchDirectory(h, 'launch-linked', 'bracket.3mf', curaProject, {
+    library: `local:${real}`,
+  })
+
+  assert.equal(only(h.sessions.list()).launchId, 'launch-linked')
+})
+
+test('a hand-edited library that is not a string is ignored, not thrown on', () => {
+  const h = harness()
+  const directory = join(h.sessionsDir, 'launch-handedited')
+  mkdirSync(directory, { recursive: true })
+  curaProject(join(directory, 'bracket.3mf'))
+  // `launch.json` lives in `userData` and the threat model is a person editing it, not an
+  // attacker — but `sameLibrary` calls `toLowerCase`, so this is the one optional field where a
+  // wrong *type* throws rather than reading oddly, and a throw here loses every other session too.
+  writeFileSync(
+    join(directory, LAUNCH_RECORD_NAME),
+    JSON.stringify({
+      launchId: 'launch-handedited',
+      mode: 'new-project',
+      projectId: 'project-9',
+      fileId: 'file-9',
+      slicerId: 'orca',
+      installId: 'msix:x',
+      fileName: 'bracket.3mf',
+      launchedHash: 'whatever',
+      startedAt: h.clock.now,
+      library: 42,
+    }),
+  )
+
+  const listed = only(h.sessions.list())
+
+  // Dropped to "cannot tell", which is the same safe default a record written before the field
+  // existed gets — and everything else in the record is still read.
+  assert.equal(listed.projectId, 'project-9')
+  assert.equal(listed.isOrphan, false)
 })
 
 test('a record with no library at all is still listed, and an orphan always is', () => {
@@ -665,7 +744,13 @@ test('listing twice hashes once, and a write is still noticed', () => {
 
   // And the half that matters: `list()` is still the mechanism of record. It asks the disk every
   // time; what it skips is recomputing a hash for bytes whose mtime, size and inode all agree.
-  projectWithSetting(path, 'two')
+  //
+  // A **different-length** value, not `'one'` → `'two'`. Same length meant same archive size and,
+  // at the same path, the same inode — so the whole assertion rested on `mtimeMs` moving between
+  // two writes a few milliseconds apart. Windows last-write granularity is about 15.6 ms and CI is
+  // `ubuntu-latest` on every job, so a red here would only ever have appeared on a developer's
+  // machine, which is the worst place for it to appear first.
+  projectWithSetting(path, 'a considerably longer value than the one before it')
   assert.equal(only(h.sessions.list()).fileState, 'changed')
   assert.ok(h.sessions.hashCount() > afterFirst, 'a changed file was answered from the memo')
 })

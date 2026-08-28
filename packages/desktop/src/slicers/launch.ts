@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { copyFileSync, mkdirSync, renameSync, rmSync, statSync } from 'node:fs'
+import { copyFileSync, mkdirSync, realpathSync, renameSync, rmSync, statSync } from 'node:fs'
 import { basename, extname, join, resolve } from 'node:path'
 import type {
   SlicerId,
@@ -762,6 +762,19 @@ const DOWNLOAD_SUFFIX = '.spm-download'
  * same folder reached through the picker twice can be spelled two ways, and a session that
  * compared unequal to its own library would be hidden from the only page that can answer it.
  *
+ * **`realpathSync.native` first, `resolve` only when that fails**, because `Library.dir` is stored
+ * verbatim and case is not the only way one folder gets two spellings. Measured elsewhere in this
+ * shell — `dispatch.ts`'s `isInside` defeats the same five against the library's own `app.db`: a
+ * device-path prefix, two UNC aliases for a local disk, an 8.3 short name and a junction all name
+ * one directory and none of them compare equal as strings. The failure they produce here is quiet
+ * in the worst way, a user's own sessions vanishing from the list with only a `console.info` to
+ * say why, which is the shape subsystem C's `.spm` prefix matching had.
+ *
+ * What it still does **not** cover, said rather than left to be found: a library folder that has
+ * been *moved* since the launch. Its recorded path resolves to nothing, so the key cannot match and
+ * its sessions are listed nowhere. Nothing is deleted and moving the folder back recovers them —
+ * the same recovery, and the same silence, as a library that is simply not open.
+ *
  * `null` when nothing is open. Callers treat that as "cannot tell" rather than as "foreign":
  * refusing to list a session because the app has not finished starting would be the wrong kind of
  * caution on a list whose whole job is to surface things.
@@ -772,7 +785,7 @@ export function libraryKeyOf(
   remote: { readonly origin: string } | null,
 ): string | null {
   if (isRemote) return remote === null ? null : `remote:${remote.origin}`
-  return session === null ? null : `local:${resolve(session.lib.dir)}`
+  return session === null ? null : `local:${canonicalDir(session.lib.dir)}`
 }
 
 /**
@@ -783,6 +796,17 @@ export function libraryKeyOf(
  * session list would be this change deleting the user's memory of unfinished work to fix a
  * labelling problem.
  */
+/** The folder as the filesystem names it, or the plain resolution when it cannot be reached. */
+function canonicalDir(dir: string): string {
+  try {
+    return realpathSync.native(dir)
+  } catch {
+    // Gone, or unreachable right now. `resolve` is what this did unconditionally before, so the
+    // fallback is the previous behaviour rather than a new one.
+    return resolve(dir)
+  }
+}
+
 export function sameLibrary(a: string | null | undefined, b: string | null | undefined): boolean {
   if (a === null || a === undefined || b === null || b === undefined) return true
   return process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b
