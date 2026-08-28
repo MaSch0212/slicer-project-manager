@@ -11,6 +11,8 @@ import type {
   SettingsDto,
   SlicerConfigDto,
   SlicerId,
+  SlicerLaunchDto,
+  SlicerLaunchOptions,
   UserDto,
   ZipImportResultDto,
 } from '@spm/contract/dtos.ts'
@@ -238,6 +240,11 @@ export class IpcApiClient implements ApiClient {
     setDefault: (slicerId: SlicerId): Promise<SlicerConfigDto> =>
       this.invoke('slicers.setDefault', [slicerId]),
     resetConfig: (): Promise<SlicerConfigDto> => this.invoke('slicers.resetConfig'),
+    open: (
+      fileId: string,
+      projectId: string,
+      opts: SlicerLaunchOptions,
+    ): Promise<SlicerLaunchDto> => this.invoke('slicers.open', [fileId, projectId, opts]),
   }
 
   readonly account = {

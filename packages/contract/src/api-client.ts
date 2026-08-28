@@ -11,6 +11,8 @@ import type {
   SettingsDto,
   SlicerConfigDto,
   SlicerId,
+  SlicerLaunchDto,
+  SlicerLaunchOptions,
   UserDto,
 } from './dtos.ts'
 import type {
@@ -130,6 +132,30 @@ export interface ApiClient {
      * being unavailable until somebody says otherwise.
      */
     resetConfig(): Promise<SlicerConfigDto>
+
+    /**
+     * Hands a file in the library to a slicer (spec 6.1 and 6.2).
+     *
+     * **Ids, never a path.** The renderer is the untrusted side of this boundary and names no
+     * location on disk; the main process resolves the file through core's own ownership scoping,
+     * so a renderer naming a project it does not own gets `NotFound`. The `projectId` is here
+     * because the launch record and the later reconcile both need it and `FileDto` carries no
+     * project — it is the id the project page is already holding.
+     *
+     * Omitting `slicerId` means "decide for me": `as-is` then uses the slicer the file itself
+     * names, and both modes fall back to the configured default. The answer says which product
+     * was picked, and `notices` says why.
+     *
+     * **This spawns a process and resolves as soon as it has.** It does not wait for a window,
+     * cannot see the plate, and never claims the file opened.
+     *
+     * Refusals worth switching on: `NotFound` for a file, project or vanished install;
+     * `Conflict` for a product with no install bound (the message names the choice, because the
+     * app offers and does not guess); `Validation` for a strip that could not be done safely,
+     * whose `details.reason` is `encrypted`, `unreadable` or `configuration-left-behind` — the
+     * launch is refused outright and never falls back to the unstripped original.
+     */
+    open(fileId: string, projectId: string, opts: SlicerLaunchOptions): Promise<SlicerLaunchDto>
   }
 
   account: {

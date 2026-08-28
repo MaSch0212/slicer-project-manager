@@ -1,4 +1,5 @@
 import { app, BrowserWindow, dialog, Menu, protocol, shell } from 'electron'
+import { spawn } from 'node:child_process'
 import { existsSync, statSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { extname, join, relative, resolve, sep } from 'node:path'
@@ -26,6 +27,7 @@ import type { RemoteHost } from './remote.ts'
 import { ShellHost, type ShellRoute } from './shell.ts'
 import { SLICERS_FILE_NAME } from './slicers/config.ts'
 import { SlicersHost } from './slicers/host.ts'
+import { SlicerLauncher, SLICER_SESSIONS_DIR } from './slicers/launch.ts'
 import { STATE_FILE_NAME } from './state.ts'
 import { navigationPolicy, RENDERER_HOST, RENDERER_ORIGIN, RESERVED_PATH_SEGMENT } from './urls.ts'
 
@@ -983,6 +985,28 @@ export function main(): void {
     onLibraryChanged: reloadOpenWindows,
   })
 
+  // The one thing in this process that starts a subprocess the user asked for. `spawn` is
+  // injected rather than imported by the launcher (D decision 9), which is what lets both launch
+  // paths, the strip refusals and the launch record run under plain `node --test`.
+  //
+  // `detached` with `stdio: 'ignore'`, and then `unref`: a slicer is a GUI application the user
+  // will still be using long after this app is closed, and several of them hand the file to an
+  // already-running instance and exit immediately. Tying its lifetime to this process — or leaving
+  // an unread pipe attached to it — would make quitting the app kill the user's slicer, or wedge
+  // it on a full buffer. Nothing here reads its output; the only thing this process learns from
+  // the child is that it has a pid.
+  const launcher = new SlicerLauncher({
+    sessionsDir: join(app.getPath('userData'), SLICER_SESSIONS_DIR),
+    slicers,
+    session: () => shellHost.session(),
+    isRemote: () => shellHost.mode() === 'remote',
+    spawn: (command, args) => {
+      const child = spawn(command, [...args], { detached: true, stdio: 'ignore' })
+      child.unref()
+      return child
+    },
+  })
+
   // Before `whenReady`, and before any window: `ipcMain.handle` is not tied to a window, and
   // registering it first means the renderer cannot possibly load and call into a channel that
   // is not there yet. Every half is resolved per call rather than captured, because the library
@@ -1005,6 +1029,10 @@ export function main(): void {
         bind: (slicerId, installId) => Promise.resolve(slicers.bind(slicerId, installId)),
         setDefault: (slicerId) => Promise.resolve(slicers.setDefault(slicerId)),
         resetConfig: () => Promise.resolve(slicers.resetConfig()),
+        // On `SlicerLauncher` and not on `SlicersHost`: launching reads a library, and the host
+        // deliberately knows nothing about one. Both are reached per call, like everything else
+        // in this object.
+        open: (fileId, projectId, opts) => launcher.open(fileId, projectId, opts),
       },
     },
   }))

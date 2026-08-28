@@ -11,6 +11,8 @@ import type {
   RemoteLibraryDto,
   SlicerConfigDto,
   SlicerId,
+  SlicerLaunchDto,
+  SlicerLaunchOptions,
 } from '@spm/contract/dtos.ts'
 import { AppError } from '@spm/contract/errors.ts'
 import {
@@ -124,6 +126,16 @@ export type ShellApi = {
     bind(slicerId: SlicerId, installId: string): Promise<SlicerConfigDto>
     setDefault(slicerId: SlicerId): Promise<SlicerConfigDto>
     resetConfig(): Promise<SlicerConfigDto>
+    /**
+     * Hands a file to a slicer. **Ids, never a path** (constraint 4).
+     *
+     * On the shell rather than on a session for the same reason the rest of this block is: slicer
+     * configuration is a property of the machine, and in remote mode `deps.session` is null so a
+     * `libraryCall` entry could not run at all. The *file* still comes out of a library — the
+     * launcher resolves it through core's ownership scoping — and `app.ts` gives `SlicerLauncher`
+     * the same per-call session accessor the dispatch deps get.
+     */
+    open(fileId: string, projectId: string, opts: SlicerLaunchOptions): Promise<SlicerLaunchDto>
   }
 }
 
@@ -560,6 +572,26 @@ export const dispatch: DispatchTable = {
     'slicers.setDefault',
     z.tuple([slicerIdSchema]),
     (shell, slicerId) => shell.slicers.setDefault(slicerId),
+  ),
+  /**
+   * The one slicer route that names a file, and it names it by id twice over.
+   *
+   * `z.strictObject` rather than `z.object` for the options: zod strips unknown keys by default,
+   * which would silently accept — and drop — a renderer's attempt to add a field this validation
+   * has not been written for. A tuple of exactly three, so an argument list of any other length is
+   * a `Validation` failure before the main process does anything at all.
+   */
+  'slicers.open': shellCall(
+    'slicers.open',
+    z.tuple([
+      idSchema,
+      idSchema,
+      z.strictObject({
+        mode: z.enum(['as-is', 'new-project']),
+        slicerId: slicerIdSchema.optional(),
+      }),
+    ]),
+    (shell, fileId, projectId, opts) => shell.slicers.open(fileId, projectId, opts),
   ),
   'slicers.resetConfig': shellCall('slicers.resetConfig', z.tuple([]), (shell) =>
     shell.slicers.resetConfig(),

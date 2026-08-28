@@ -157,6 +157,54 @@ export type SlicerConfigDto = {
 }
 
 /**
+ * Which of the two launch paths a launch takes (spec 6.1 and 6.2). They are different intents and
+ * the difference is visible to the user, because it has to be.
+ *
+ * - `as-is` opens the user's own slicer project, unchanged, at its real place in the library. Four
+ *   of five slicers then save back over it, which is the point: the work lands in the project
+ *   folder and the next rescan indexes it.
+ * - `new-project` starts a *new* slicer project from a file of any kind, usually in a slicer other
+ *   than the one that wrote it. What the slicer is handed may be a stripped copy in a launch
+ *   directory rather than the library file.
+ */
+export type SlicerLaunchMode = 'as-is' | 'new-project'
+
+/**
+ * What the renderer may say about a launch.
+ *
+ * `slicerId` is the product that was **actually** launched, which is not always the one asked for:
+ * `slicerId` may be omitted and then the file's own slicer (for `as-is`) or the configured default
+ * is used, and `notices` says so.
+ */
+export type SlicerLaunchOptions = { mode: SlicerLaunchMode; slicerId?: SlicerId }
+
+/**
+ * The outcome of one launch — and deliberately *not* a claim that anything opened.
+ *
+ * **A successful spawn is not evidence the file opened** (spec 6.4). Three of five slicers never
+ * put a filename in a window title, and Anycubic's measured failure mode is a healthy process in
+ * front of an empty plate. So this carries a `pid` and nothing that could be read as "it opened":
+ * the UI says "Handed *file* to *slicer*", never "opened in your slicer".
+ *
+ * `notices` are sentences the app *knows* apply to this triple of (slicer launched, what the source
+ * was, whether the copy was stripped) — a wizard that may appear in front of the model, a modal
+ * that blocks loading, a file a slicer may silently discard. They are produced in the main process,
+ * which is where the measurements live.
+ */
+export type SlicerLaunchDto = {
+  /** Identifies this launch, and names its directory under `<userData>/slicer-sessions/`. */
+  launchId: string
+  slicerId: SlicerId
+  /** Which install of that product, in the words `/settings/slicers` shows. */
+  installLabel: string
+  /** Whether embedded slicer configuration was removed from the copy that was handed over. */
+  stripped: boolean
+  notices: string[]
+  /** Null when the platform gave the spawn no pid. Never a claim that the file loaded. */
+  pid: number | null
+}
+
+/**
  * What core returns: IDs, never URLs (spec 4.2). Only a transport knows its own scheme, so
  * it decorates these into the DTOs above — /api/files/:id/thumb over HTTP,
  * spm://file/:id/thumb in Electron.

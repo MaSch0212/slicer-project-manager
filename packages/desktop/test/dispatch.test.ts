@@ -15,7 +15,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, before, test } from 'node:test'
 import type { ApiClient } from '@spm/contract/api-client.ts'
-import type { SlicerConfigDto } from '@spm/contract/dtos.ts'
+import type { SlicerConfigDto, SlicerLaunchDto } from '@spm/contract/dtos.ts'
 import { AppError } from '@spm/contract/errors.ts'
 import { closeLibrary, ensureLocalUser, openLibrary, type Library } from '@spm/core'
 import { writeZip } from '../../core/test/fixtures/make-3mf.ts'
@@ -96,6 +96,17 @@ const shell: ShellApi = {
     bind: (slicerId, installId) => Promise.resolve(slicerCall('bind', slicerId, installId)),
     setDefault: (slicerId) => Promise.resolve(slicerCall('setDefault', slicerId)),
     resetConfig: () => Promise.resolve(slicerCall('resetConfig')),
+    open: (fileId, projectId, opts) => {
+      slicerCalls.push(`open ${fileId} ${projectId} ${opts.mode} ${opts.slicerId ?? '-'}`.trimEnd())
+      return Promise.resolve({
+        launchId: 'launch-1',
+        slicerId: opts.slicerId ?? 'orca',
+        installLabel: 'OrcaSlicer',
+        stripped: false,
+        notices: [],
+        pid: 4242,
+      })
+    },
   },
 }
 
@@ -184,6 +195,7 @@ function exerciseAll(client: ApiClient): Record<ApiPath, () => Promise<unknown>>
     'slicers.bind': () => client.slicers.bind('cura', 'manual:one'),
     'slicers.setDefault': () => client.slicers.setDefault('orca'),
     'slicers.resetConfig': () => client.slicers.resetConfig(),
+    'slicers.open': () => client.slicers.open('file', 'project', { mode: 'as-is' }),
   }
 }
 
@@ -485,7 +497,16 @@ test('every slicer route answers with no library open, because none of them need
     empty,
   )
   assert.deepEqual(await dispatch['slicers.setDefault']({ session: null, shell }, ['bambu']), empty)
-  assert.equal(slicerCalls.length, 7)
+  // `open` answers a launch rather than a configuration, and it is on this list for the same
+  // reason the other seven are: in remote mode `deps.session` is null and a `libraryCall` entry
+  // would be refused before the launcher could say anything about the mode it is actually in.
+  const launch = await dispatch['slicers.open']({ session: null, shell }, [
+    'file',
+    'project',
+    { mode: 'new-project', slicerId: 'cura' },
+  ])
+  assert.equal((launch as SlicerLaunchDto).slicerId, 'cura')
+  assert.equal(slicerCalls.length, 8)
 })
 
 test('every library-backed route refuses when no folder is open', async () => {
@@ -504,6 +525,7 @@ test('every library-backed route refuses when no folder is open', async () => {
     'slicers.bind',
     'slicers.setDefault',
     'slicers.resetConfig',
+    'slicers.open',
   ]
   for (const path of Object.keys(dispatch) as ApiPath[]) {
     if (fromShell.includes(path)) continue
@@ -1046,6 +1068,7 @@ test('the slicer routes reach the shell with their arguments in the right order'
   await call('slicers.bind', ['cura', 'registry:HKLM\\WOW6432Node:UltiMaker Cura 5.13.0-5.13.0'])
   await call('slicers.setDefault', ['orca'])
   await call('slicers.resetConfig')
+  await call('slicers.open', ['file-1', 'project-1', { mode: 'new-project', slicerId: 'bambu' }])
 
   // `bind` is the one with two arguments, and swapping them is invisible to the compiler.
   assert.deepEqual(slicerCalls, [
@@ -1056,6 +1079,9 @@ test('the slicer routes reach the shell with their arguments in the right order'
     'bind cura registry:HKLM\\WOW6432Node:UltiMaker Cura 5.13.0-5.13.0',
     'setDefault orca',
     'resetConfig',
+    // Two opaque ids of the same shape, in an order the compiler cannot see: a `fileId` and a
+    // `projectId` swapped here would typecheck everywhere and answer `NotFound` at runtime.
+    'open file-1 project-1 new-project bambu',
   ])
 })
 
@@ -1071,6 +1097,13 @@ test('a slicer route rejects a wrong argument tuple with Validation, and calls n
     ['slicers.bind', ['cura']],
     ['slicers.bind', ['cura', 'id', 'extra']],
     ['slicers.remove', []],
+    ['slicers.open', ['file', 'project']],
+    ['slicers.open', ['file', 'project', { mode: 'as-is' }, 'extra']],
+    // `z.strictObject`, so a key the validation was not written for is a refusal and not a
+    // silently dropped field.
+    ['slicers.open', ['file', 'project', { mode: 'as-is', path: 'C:\evil.exe' }]],
+    ['slicers.open', ['file', 'project', { mode: 'open' }]],
+    ['slicers.open', ['file', 'project', { mode: 'as-is', slicerId: 'CURA' }]],
     // Not a `SlicerId`: the renderer's whole vocabulary here is five product names.
     ['slicers.addManual', ['CURA']],
     ['slicers.addManual', ['superslicer']],

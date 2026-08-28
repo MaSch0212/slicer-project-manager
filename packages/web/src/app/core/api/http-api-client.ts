@@ -11,6 +11,8 @@ import type {
   SettingsDto,
   SlicerConfigDto,
   SlicerId,
+  SlicerLaunchDto,
+  SlicerLaunchOptions,
   UserDto,
   ZipImportResultDto,
 } from '@spm/contract/dtos.ts'
@@ -129,6 +131,11 @@ export class HttpApiClient implements ApiClient {
     bind: (_slicerId: SlicerId, _installId: string): Promise<SlicerConfigDto> => this.noSlicers(),
     setDefault: (_slicerId: SlicerId): Promise<SlicerConfigDto> => this.noSlicers(),
     resetConfig: (): Promise<SlicerConfigDto> => this.noSlicers(),
+    open: (
+      _fileId: string,
+      _projectId: string,
+      _opts: SlicerLaunchOptions,
+    ): Promise<SlicerLaunchDto> => this.noSlicers(),
   }
 
   private noSlicers(): Promise<never> {
