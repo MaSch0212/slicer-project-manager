@@ -17,9 +17,10 @@
   them: a spike row was observed happening, a code row was read. Two of this document's decisions —
   3.4 and 5.5 — rest on code rows that contradict or extend what the spike assumed, and they are
   called out where they land.
-- **Packages touched:** `packages/core` (classification, one parser, one handler arm, one migration),
-  `packages/desktop` (one registry field, one refusal, one `cwd`, the packaging list),
-  `packages/server` (one environment variable), `packages/web` (one comment and one gate — see 7.2).
+- **Packages touched:** `packages/core` (classification, one parser, one handler arm, one migration,
+  one `MeshLimits` field, four edits in `rescan`), `packages/desktop` (one registry field, one
+  refusal, one widened spawn seam and the `cwd` it carries, the packaging list), `packages/server`
+  (one environment variable), `packages/web` (one comment and one gate — see 7.2).
   Also the repository root: a `LICENSE` and a third-party notice (6).
 
 ---
@@ -31,6 +32,15 @@ be handed to a slicer**, and — "if possible with moderate effort" — that the
 preview**. The spike answers both, and the answers are not symmetrical. Handing a STEP file to a
 slicer is close to free and already half-built. Thumbnails are moderate effort in code and immoderate
 in memory, and the whole of section 5 is about that one number.
+
+**Half of the second ask ships and half does not, and that belongs here rather than only in the
+sections that argue it.** Thumbnails ship (5). **The interactive preview does not** (7): nobody has
+measured what a STEP parse costs a Chromium tab, and the viewer's budget model cannot price a cost
+that is 87 % intercept. So a STEP file gets a picture everywhere a picture appears, and clicking
+through to the viewer gets an honest "this viewer opens STL, OBJ, 3MF" (7.2). 1.2 records the
+deferral, 7 argues it and 10.4 says what would settle it — but the plain answer to what was asked for
+is **detection yes, thumbnails yes, preview no**, and the "no" is not because it is hard. It is
+because it is unmeasured.
 
 ### 1.1 What F adds
 
@@ -143,7 +153,7 @@ read out of this repository while writing this document rather than run.
 | 30  | Is `unsupported` terminal?                                              | **Yes.** `claimPendingPreviews` selects `state = 'pending'` only; the sole thing that re-pends is a content-hash change.                   | §7        |
 | 31  | Has this codebase shipped that defect before?                           | **Yes — 326 blank projects**, recorded in two docblocks.                                                                                   | §7        |
 | 32  | What licence is the parser?                                             | **LGPL-2.1**, no npm dependencies, one 7 604 031-byte WASM blob, three licence texts shipped in the package.                               | §5.6      |
-| 33  | Does the shipped OCCT licence carry a static-linking exception?         | **No.** `dist/license.occt.txt` is plain LGPL-2.1. Upstream OpenCascade publishes one; this package does not include it.                   | §5.6      |
+| 33  | What is `dist/license.occt.txt`?                                        | **LGPL-2.1**, 26 936 B, covering the OpenCascade code compiled into the blob. Whether it carries a static-linking exception was **not asked**; see 6.1. | §5.6      |
 | 34  | What would the viewer cost on the wire?                                 | **2 324 594 bytes brotli**, 3 091 489 gzip, 7.7 MB decompressed in the tab. Lazy-loadable; a factory, fetched at call time.                | §6.1, §6.2 |
 | 35  | Does STEP fit the viewer's budget model?                                | **No.** `peakCost` is a multiplier with no intercept; STEP's implied cost ranges **201 to 25 142** over the same sample.                   | §6.3      |
 | 36  | Are those viewer numbers usable as they stand?                          | **No.** They are Node/Deno RSS. The `FORMATS` docblock records three costs that were wrong for exactly that substitution.                  | §6.3      |
@@ -155,6 +165,13 @@ read out of this repository while writing this document rather than run.
 | 42  | Does this repository have a licence?                                    | **No.** `package-app.ts`: "There is no LICENSE file and no `author` field anywhere in this repo". **(code)**                                | 6.2       |
 | 43  | Where does the desktop preview queue run?                               | **In the Electron main process**, on its thread, at concurrency 1. **(code)** `packages/desktop/src/previews.ts`.                           | 5.5       |
 | 44  | What npm runtime dependencies does the workspace have?                  | **One: `zod`.** `packages/core` has zero. **(code)** `deno.json`, `packages/core/package.json`.                                             | 6.4       |
+| 45  | Does the `SpawnSlicer` seam take an options object?                     | **No.** `(command, args) => SpawnedSlicer`, `launch.ts:198`; `app.ts:1174` is a matching two-argument closure. **(code)**                   | 4.5       |
+| 46  | Is `sessionsDir` there when an in-place launch spawns?                  | **Not necessarily.** "Created lazily, only by a launch that needs a directory" — `launch.ts:201-202`; an in-place launch needs none. **(code)** | 4.5       |
+| 47  | Does anything sweep `userData` itself?                                  | **No.** `sweepAtStart` walks `#sessionsDir`'s subdirectories only, `sessions.ts:403-416`. `userData` holds `state.json`, `slicers.json`, `browse.json`, `model-downloads/`, `slicer-sessions/`. **(code)** | 4.5       |
+| 48  | What does a loose file in `sessionsDir` become?                         | **An orphan session the user has to answer**, `sessions.ts:709-711`. And a *subdirectory*'s contents are invisible: `:717-718` filters `isFile()`. **(code)** | 4.5, 4.4  |
+| 49  | Does `MeshLimits` already reach every parser?                           | **Yes, whole.** `makePreviewHandlers` → `makeMeshHandler` → `readMesh`, from `server/main.ts:64` and `desktop/previews.ts:124`. **(code)**  | 5.6       |
+| 50  | Does the packaging `REQUIRED` list name every migration?                | **No. `001_init.sql` alone** (`package-app.ts:241`); 002 has never been in it. **(code)**                                                   | 6.3       |
+| 51  | How does CI install dependencies?                                       | **`deno install --allow-scripts --frozen`, in eight jobs.** **(code)** `.github/workflows/ci.yml`.                                          | 10.16     |
 
 ### 2.1 What the spike could not settle
 
@@ -162,7 +179,10 @@ Named here because parts of this design lean on them.
 
 - **Ctrl+S in each GUI for a STEP input** (§3b, §11.1). The probe that would have answered it could
   not deliver a keystroke: `GetForegroundWindow()` returned `0` for the entire session, the cause is
-  undiagnosed, and the pid guard correctly aborted every attempt. This is the question 4.4 turns on.
+  undiagnosed, and the pid guard correctly aborted every attempt. This is the question 4.4 turns on —
+  and with it 10.13, because the same dialog would have shown the *directory* of the proposed path
+  and not only its name. **No slicer was observed saving a project from a STEP input at all**, which
+  is why 4.4's consequence is marked as an inference rather than stated.
 - **Whether the model reaches the plate after the import dialog's OK** in PrusaSlicer, Bambu and Orca
   (§11.2). Same cause. The dialogs' own facet counts are strong indirect evidence the file was read.
 - **Anything above 1.39 MB** (§11.5). The largest sample in a library of 2 946 files.
@@ -266,12 +286,54 @@ also means the fix below has to move `kind`, and the preview row follows.
 ### 3.5 The classifier version, and why not a one-shot migration
 
 > **Decision F-3: `files` gains a `classified_by` integer column and `classify.ts` gains a
-> `CLASSIFIER_VERSION` constant. `rescan`'s stat-match short-circuit becomes conditional on the row's
-> version matching; a stale row is reclassified, its `classified_by` is written, and its preview row
-> is re-pended if and only if the kind actually changed.**
+> `CLASSIFIER_VERSION` constant, starting at 1. Migration 003 is
+> `ALTER TABLE files ADD COLUMN classified_by INTEGER NOT NULL DEFAULT 0` — every existing row is
+> backfilled with the sentinel 0, which is strictly below every value the constant will ever take.
+> `rescan`'s stat-match short-circuit becomes conditional on the row's version matching; a stale row
+> is reclassified, its `classified_by` is written, and its preview row is re-pended if and only if
+> the kind actually changed. Every write in `rescan` that sets `kind` also writes
+> `CLASSIFIER_VERSION` — all three of them.**
 
 The spike considered two shapes for the sibling problem in §7b and preferred the general one. This
 applies the general one at the layer where the staleness actually is.
+
+**The migration's default is the whole mechanism, and the wrong one is a silent no-op.** If 003
+backfilled the shipping `CLASSIFIER_VERSION` instead of a sentinel below it, no row would be stale,
+nothing would reclassify, and the user's ten STEP files would stay `kind: 'other'` — the exact
+outcome 3.4 exists to prevent, reintroduced by the fix for it, and with no symptom to notice: the
+migration succeeds, the rescan succeeds, and the feature is simply absent. So the pair is stated
+here and not left to the plan: **`DEFAULT 0` in the migration, `CLASSIFIER_VERSION = 1` in
+`classify.ts`.** 0 is a value the constant can never take, which makes "this row predates the
+mechanism" expressible rather than inferred. `NOT NULL DEFAULT 0` is also what makes the column
+readable without a null branch, and SQLite's `ADD COLUMN` accepts it precisely because the default is
+a constant — the same shape as 002's `ALTER TABLE previews ADD COLUMN claimed_at INTEGER` **(code)**,
+which is the only precedent this repository has.
+
+**Three writes set `kind` today, and all three have to set the version.** Leave any of them alone and
+its rows are permanently stale — reclassified on every rescan for ever, which turns the 402 zip reads
+below from a cost per version bump into a cost per **tick**. **(code)**
+`packages/core/src/projects/rescan.ts`:
+
+| Site                                                              | Today                                                                  | What F-3 requires                                                    |
+| ----------------------------------------------------------------- | ---------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| `insertFile`'s `INSERT` (`:113-116`), run at `:175-185` for a file the index has never seen | eight columns, no `classified_by`                     | a ninth column and a ninth `?`, bound to `CLASSIFIER_VERSION`         |
+| the stat-mismatch `UPDATE` (`:198-201`), run at `:196-202`        | sets `kind`, `slicer`, `size_bytes`, `mtime_ms`, `content_hash`         | also sets `classified_by = ?`                                         |
+| the new version-mismatch branch                                   | does not exist                                                         | reclassifies and writes `classified_by`, per the decision above       |
+
+And a fourth line that is not a write but without which the branch cannot be written at all: the
+`existing` map is built from `SELECT id, rel_path, size_bytes, mtime_ms FROM files` (`:164-165`), so
+**the SELECT gains `classified_by`** — there is nothing to compare against otherwise.
+
+**The new branch needs `insertPreview` beside `resetPreview`, for the same reason the existing one
+does.** `resetPreview` (`:120-125`) is the only re-pend statement in the file, and the stat-mismatch
+path guards it: `if (preview) resetPreview.run(now, known.id) else insertPreview.run(known.id, now)`
+(`:211-215`). A bare `UPDATE previews … WHERE file_id = ?` against a row that is not there updates
+nothing and reports nothing, so a file whose preview row is missing — a database restored without it,
+a row deleted by hand, any future path that inserts a file without one — would reclassify to `model`
+and then never render. The version-mismatch branch takes the same two-armed form, and increments
+`result.previewsQueued` where it re-pends, as that path does. **`RescanResultDto` gains no field in
+F:** a `reclassified` count would be a contract change in three packages for a number nothing
+displays, and the re-pends are already counted where the existing re-pend counts them.
 
 **Against the alternative, which is a one-shot migration.** A migration that sets
 `kind = 'model', state = 'pending'` for rows whose `rel_path` ends `.step` or `.stp` is four lines of
@@ -289,7 +351,8 @@ SQL and it would work. Three reasons it is not what ships:
   whatever change made it necessary.
 
 **Cost, and the honest version of it.** A numbered migration file (003 — there are two today and
-`runMigrations` reads a frozen list **(code)**), a column, a constant, and a branch in `rescan`. The
+`runMigrations` reads a frozen list **(code)**, so 003 is an entry in `MIGRATIONS` as well as a
+file), a column, a constant, and the four edits in `rescan` tabulated above. The
 reclassification pass is **not** free: it re-runs `classifyFile` over every indexed file once per
 version bump, and for the reference library's **402 `.3mf` files** that is 402 zip reads. It does
 **not** re-hash — the content hash is untouched, because nothing about the bytes changed — so it is a
@@ -392,6 +455,13 @@ boolean because exactly one measurement distinguishes exactly one product. A `fo
 per slicer would be four rows of speculation and one row of evidence, and the four would be
 unfalsifiable until somebody added a format nobody had measured.
 
+**And the `behaviour` docblock itself changes, which is the part a field addition is most likely to
+skip.** `registry.ts:63-66` **(code)** says these flags are "Read by the launch paths to decide what
+the app may honestly claim" — true of all four flags today, because all four feed `notices()`.
+`opensStep` is read to *refuse* a launch, and a refusal is not a claim about a launch that is going
+ahead; 4.2 makes exactly that distinction against `notices()` and it applies to this sentence too. It
+is in 5.7's table with the rest.
+
 **Not on the DTO in F.** `SlicerInstallDto` does not grow a capability field, because nothing in the
 UI would read it: there is no per-launch slicer picker. When there is one, that is the change that
 adds it, and it should add it then rather than F shipping a field with no consumer.
@@ -432,11 +502,22 @@ propose something whose name is not the source's, STEP joins the no-copy branch 
 one-line change in `#prepare`. The probe is the same one D-spike §13 ran for `.stl`; it failed today
 for a machine reason (`GetForegroundWindow()` returning 0, undiagnosed) and not a design one.
 
-**One consequence to state rather than discover.** Through a launch directory, the new project the
-slicer saves lands beside the copy and comes back through D's session and reconcile machinery, not
-through a rescan of the project folder. That is a different user flow from `.stl` — one extra
-answer — and it is the price of the caution above. It is also the flow every remote-mode launch
-already takes **(code)**, so nothing new is being built for it.
+**One consequence to expect rather than discover — and it is an inference, not a statement about the
+code.** Through a launch directory, a new project the slicer saves *beside the copy* comes back
+through D's session and reconcile machinery rather than through a rescan of the project folder. That
+is a different user flow from `.stl` — one extra answer — and it is the price of the caution above.
+It is also the flow every remote-mode launch already takes **(code)**, so nothing new is built for it.
+
+**What is measured and what is not, because an earlier draft asserted this flatly.** The machinery is
+real and was read: `#scan` reports a file in a launch directory that is neither `launch.json` nor the
+launched file as a session of its own **(code)** `sessions.ts:697-702`, `:720-731`. But it reads **one
+level and files only** — `readdirSync(...).filter(child => child.isFile())` (`:717-718`) — and **no
+slicer was observed saving a project from a STEP input at all.** The Ctrl+S probe is precisely what
+failed (§3b, §11.1), which is the same missing measurement that decides 4.4 itself. So the honest
+form is: *if* a slicer saves a file into the launch directory, the machinery sees it; whether any of
+the four does, and whether it puts the file where the machinery looks, is **unmeasured**. That second
+half is not idle — the one cwd-relative write anyone has measured in this project is Anycubic's
+`stl/obj_1_….stl`, into a **subdirectory**, which `:717-718` cannot see. It is 10.13.
 
 ### 4.5 The explicit `cwd` — a live defect in shipped code
 
@@ -456,26 +537,90 @@ No `cwd`. An Electron main process inherits its working directory from whatever 
 directory a shortcut points at, the directory a terminal was in, or on some launch paths the
 application directory itself.
 
-> **Decision F-7: the spawn sets an explicit `cwd`, and it is scoped as a subsystem-D fix that F
-> carries rather than as a STEP feature.**
+> **Decision F-7: the spawn sets an explicit `cwd` — the launch directory when there is one, and a
+> dedicated scratch directory `<userData>/slicer-cwd/`, created before every spawn that has no
+> launch directory, when there is not. The `SpawnSlicer` seam type widens to carry it. Scoped as a
+> subsystem-D fix that F carries rather than as a STEP feature.**
 
 **Scope.** This is **not** about STEP. The measured behaviour is Anycubic resolving an export path
 against its process cwd, and Anycubic is spawned for `.stl` and `.obj` and `.3mf` today. The defect
 is shipped, it is in D's code, and F fixes it because F is the document that found it.
 
-**Which directory.** The launch directory when there is one; the app's own `userData` when there is
-not (the two in-place paths). Both are directories this app already owns and already sweeps. What it
-must **not** be is the library, the project folder, or an inherited unknown: the first two would be
-the app causing a write into the library as a side effect of launching, which is D's constraint 8,
-and the third is the measured incident.
+**The seam changes, and the spec has to say so or this is not implementable.** **(code)**
+`launch.ts:198`: `export type SpawnSlicer = (command: string, args: readonly string[]) =>
+SpawnedSlicer` — **there is no options parameter**, and `app.ts:1174` supplies a matching
+two-argument closure. So three things move together, and none of them is optional:
 
-**What is not claimed.** That this prevents every stray write. It bounds one measured mechanism —
-cwd-relative resolution — and says nothing about a slicer that resolves against an absolute
+- **`SpawnSlicer` gains a third parameter**, `options: { cwd: string }` — a required object with one
+  required field, not an optional bag, because a `cwd` that can be omitted is a `cwd` that will be.
+  Narrow on purpose: `detached` and `stdio` are the real spawn's business and no test asserts them
+  through this seam.
+- **`app.ts:1174`'s closure takes it** and spreads it:
+  `spawn(command, [...args], { cwd, detached: true, stdio: 'ignore' })`.
+- **`#spawnOrClean` threads it** (`launch.ts:711-713`). It already receives the whole `LaunchPlan`,
+  which already carries `directory: string | null` (`:401-408`), so the call becomes
+  `this.#spawn(executable, SLICERS[slicerId].argv(plan.path), { cwd: plan.directory ?? scratchDir })`
+  and no signature above it changes. `SlicerLauncherOptions` gains the scratch directory beside
+  `sessionsDir`, resolved by `app.ts` from `userData` the way `sessionsDir` is (`app.ts:1156`).
+
+**Which directory, and why not either of the two obvious answers.** An earlier draft of this section
+said "the app's own `userData`" and claimed both candidates are "directories this app already owns
+and already sweeps". **Both halves of that were wrong, and the second was wrong in a way that would
+have broken every in-place launch.**
+
+- **Not `userData` itself.** It holds `state.json`, `slicers.json` and `browse.json` — all three
+  written through `json-store.ts` — plus `model-downloads/` and `slicer-sessions/` **(code)**
+  (`app.ts:982`, `:986`, `:1084`, `:1135`, `:1156`). The library database is *not* there: it is
+  `<libraryDir>/.spm/app.db` **(code)** (`db/open.ts:17`, `:47`), which is worth stating because the
+  opposite is an easy thing to assume and it would change what is at risk. What is at risk is enough:
+  pointing a slicer's cwd at the directory holding the app's own configuration is a smaller version
+  of the defect being fixed.
+- **Not `sessionsDir`, and this is the load-bearing correction.** `launch.ts` does not hold
+  `userData` at all — it holds `sessionsDir` (`:201-202`), documented as "**Created lazily**, only by
+  a launch that needs a directory". An in-place launch is by definition one that does not need a
+  directory, so on a fresh profile the path does not exist, `spawn` throws `ENOENT`, and
+  `#spawnOrClean` converts it into `AppError('Internal', 'could not start <slicer>')` — **every
+  in-place launch fails, for every slicer, until some other launch happens to create the
+  directory.** And it is not swept: `sweepAtStart` walks `#sessionsDir`'s *subdirectories* only
+  (`sessions.ts:403-416`). Worse, a cwd-relative export landing loose in `sessionsDir` is surfaced to
+  the user as an **orphan session** (`sessions.ts:709-711` treats any loose file there as one),
+  which is a launch they never made appearing in a list they have to answer.
+- **`<userData>/slicer-cwd/`, created with `mkdirSync(dir, { recursive: true })` immediately before
+  every spawn that needs it** — not once at construction, so a profile where the user deleted it
+  between launches still works, and not lazily-on-first-use, because "created lazily" is exactly the
+  property that makes `sessionsDir` unusable here. It is empty by construction: nothing this app
+  writes goes there, so anything in it arrived from a slicer. The name is a constant beside
+  `SLICER_SESSIONS_DIR` (`launch.ts:90`) and `app.ts` joins it to `userData` at `:1156` alongside the
+  sessions directory, so there is one spelling of it and `app.ts` remains the only file that knows
+  where `userData` is.
+
+**What this fixes, what it does not, and the asymmetry between the two cwds.** It bounds one measured
+mechanism — cwd-relative resolution — and says nothing about a slicer resolving against an absolute
 configured path. Anycubic's `--export-stl` with `--outputdir` set is **unmeasured** (§11.10), and the
-app does not pass either flag; it passes `[file]` for all five products **(code)**.
+app passes neither flag; it passes `[file]` for all five products **(code)**. Beyond that:
 
-**How it is pinned.** `test/slicers-launch.test.ts` already asserts the exact path spawned; the spawn
-recorder gains the options object, and the assertion gains the `cwd`. No slicer required.
+- **A launch-directory cwd makes a loose stray visible.** `#scan` reports a file inside a launch
+  directory that is neither `launch.json` nor the launched file as a session of its own, with a
+  `console.warn` (`sessions.ts:697-702`, `:720-731`) — the docblock names "a Cura Save-As aimed at
+  the launch directory" as the case it is for, and a cwd-relative export is the same shape.
+- **A stray in a *subdirectory* stays invisible in both cwds.** `#scan` filters `child.isFile()`
+  (`sessions.ts:717-718`), so a subdirectory's contents are not seen at all — and the one measured
+  cwd-relative write in this whole document is `stl/obj_1_….stl`, **a subdirectory**. So for the
+  Anycubic shape specifically, the `cwd` moves the file from an inherited unknown to a directory the
+  app owns and does not move it into anything that surfaces it. That is an improvement and not a
+  solution, and it is 10.13.
+- **Nothing sweeps `slicer-cwd`, and F does not claim otherwise.** It is not under `sessionsDir` so
+  `sweepAtStart` never sees it, and F deliberately does not add a sweeper: deleting a file a slicer
+  wrote is D's constraint 10 territory, and the directory grows only by the strays it is there to
+  catch — which, on the evidence, is one product on one flag. What it must never become is a
+  directory this document *says* is swept when it is not.
+
+**How it is pinned.** `test/slicers-launch.test.ts` already asserts the exact path spawned. The
+recorder's signature widens with the seam, so it captures the options object, and the assertion gains
+the `cwd` for **both** paths — the launch-directory case and the in-place case, where the expected
+value is the scratch directory. The in-place assertion is the one that matters: it is the case an
+implementer is most likely to leave defaulting to `undefined`, and `spawn` with no `cwd` is silently
+the shipped defect again. No slicer required.
 
 ---
 
@@ -582,12 +727,27 @@ there are. The mesh cost *does* multiply — each job holds its own `positions` 
 existing 400 → 620 MB measurement shows. The STEP floor is a per-process constant sitting underneath
 that, not a per-worker term.
 
-So the arithmetic changes shape rather than magnitude:
+So the arithmetic changes shape rather than magnitude — **but only at concurrency 1, and the
+qualification has to travel with the formula.** `SPM_PREVIEW_CONCURRENCY` is an operator's setting
+(`queue.ts:61` **(code)**), so "concurrency 1" is a default and not a property of the system:
 
 - **Before:** `concurrency × (mesh + ~80 MB) + ~120 MB`.
-- **After, for a process that has parsed at least one STEP file:**
-  `concurrency × (mesh + ~80 MB) + ~120 MB`, **or** ~244 MB during a STEP parse — whichever is
-  larger, **not** the sum, because at concurrency 1 the two jobs cannot be in flight together.
+- **After, at concurrency 1**, for a process that has parsed at least one STEP file:
+  `mesh + ~80 MB + ~120 MB`, **or** ~244 MB during a STEP parse — whichever is larger, **not** the
+  sum. At one worker the two jobs cannot be in flight together, so only one of the two terms is ever
+  the peak.
+- **After, at concurrency ≥ 2: they add.** The STEP parse is synchronous, so no other worker executes
+  JavaScript while it runs — but a worker can be *holding* an allocated `positions` array across an
+  `await` when it starts, and the reference library's worst is 208.8 MB of it. The worst case is
+  therefore `(concurrency − 1) × (mesh + ~80 MB) + ~120 MB + ~244 MB`, and the "whichever is larger"
+  reading is wrong there by up to a whole mesh.
+
+**That second line is arithmetic on two separately measured processes, not a measurement**, which is
+the same substitution 10.3 exists to close — it is stated as the shape an operator raising the
+concurrency should expect, and the number is not claimed. **This qualification goes into the
+`DEFAULT_CONCURRENCY` docblock with the formula** (5.7): the docblock outlives this paragraph, and a
+formula that is only true at the default is worse there than no formula, because the docblock is what
+an operator reads *before* raising the default.
 
 **And the honest gap: nobody measured a process that does both.** The 400–410 MB backfill figure is
 the mesh path alone; the 244 MB figure is the STEP path alone in a process that does nothing else.
@@ -627,6 +787,14 @@ of the file at all" — both sentences stop being true for this arm (5.7).
 library has ten. On the Deno server it is a stall in a request-serving process that is doing nothing
 else at the time.
 
+**Two sharper questions hide behind "perceptible", and neither is asked by that word.** What a
+`spm://` thumbnail request does when it arrives on the thread OCCT is holding is **unmeasured**
+(10.15) — the likely answer is that it waits, and "likely" is not a measurement. And what happens
+when the user quits mid-parse is **unmeasured** (10.14): `will-quit` cannot even be dispatched until
+the parse returns, so the window stays up for the remainder of the block. Both are named here rather
+than folded into "perceptible", because a stall a user waits through and a window that will not close
+are different reports.
+
 > **Decision F-10: F ships the synchronous parse on the queue's own thread, and does not build a
 > worker.**
 
@@ -641,8 +809,52 @@ that is recorded in 10.6 rather than pre-decided here.
 ### 5.6 The size ceiling: what it is, and what it is not
 
 > **Decision F-11: `parseStepFile` refuses a file larger than `DEFAULT_MAX_STEP_BYTES = 10_000_000`
-> with `AppError('Validation', …)` naming both sizes, before it reads the file. The server exposes it
-> as `SPM_MAX_STEP_MB`, default 10.**
+> with `AppError('Validation', …)` naming both sizes, before it reads the file. It reads the ceiling
+> from `MeshLimits`, which gains a second optional field `maxStepBytes`. The server exposes it as
+> `SPM_MAX_STEP_MB`, default 10.**
+
+**The threading is decided here rather than left to the plan, because the shape of that omission is
+what made subsystem E's plan §6.4 unimplementable.** **(code)** today:
+`MeshLimits = { maxMeshBytes?: number }` (`limits.ts:34-38`), docblocked "**Options every mesh parser
+takes**, so the ceiling is the caller's to raise"; `makeMeshHandler(limits?: MeshLimits)`
+(`mesh-handler.ts:91`) hands it to `readMesh`; `makePreviewHandlers(limits?: MeshLimits)`
+(`handlers.ts:54-55`) forwards it; `server/main.ts:64` calls
+`makePreviewHandlers({ maxMeshBytes })` and `desktop/previews.ts:124` calls
+`makePreviewHandlers({ maxMeshBytes: opts.maxMeshBytes ?? PREVIEW_MAX_MESH_BYTES })`.
+
+**So the field rides the parameter that already exists, and no signature changes at all.** That is
+the argument for putting it on `MeshLimits` rather than beside it: `parseStepFile(absPath, limits)`
+is a mesh parser by F-8 and takes the type its three siblings take, and a second options object
+threaded in parallel would be a second spelling of one seam through four call sites. Precisely:
+
+| Where **(code)**                     | Change                                                                                                   |
+| ------------------------------------ | -------------------------------------------------------------------------------------------------------- |
+| `previews/mesh/limits.ts:34-38`      | `MeshLimits` gains `maxStepBytes?: number`, defaulting to `DEFAULT_MAX_STEP_BYTES`; the new constant lands beside `DEFAULT_MAX_MESH_BYTES` |
+| `previews/mesh/step.ts`              | `parseStepFile` reads `limits?.maxStepBytes ?? DEFAULT_MAX_STEP_BYTES` and refuses on the `statSync` size, before the read |
+| `previews/mesh-handler.ts:91`, `previews/handlers.ts:54` | **nothing** — both already take and forward `MeshLimits` whole                              |
+| `server/src/env.ts`                  | `MAX_STEP_MB`, `DEFAULT_MAX_STEP_MB`, and `resolveMaxStepBytes(raw)` in `resolveMaxMeshBytes`'s exact shape (`:183-192`): megabytes of 1 000 000, `requireWholeNumber`, a ceiling. `ServerEnv` gains `maxStepBytes` (`:207-217`) and `readServerEnv` gains `maxStepBytes: resolveMaxStepBytes(get('SPM_MAX_STEP_MB'))` (`:226-233`) |
+| `server/main.ts:64`                  | `makePreviewHandlers({ maxMeshBytes, maxStepBytes })`                                                     |
+| `desktop/src/previews.ts`            | `PREVIEW_MAX_STEP_BYTES = DEFAULT_MAX_STEP_BYTES` beside `PREVIEW_MAX_MESH_BYTES`; `PreviewTickerOptions` gains `maxStepBytes?: number` (`:101-113`); `:124` passes it the same way it passes the mesh ceiling |
+
+**Two things about it that are not tidy, said rather than smoothed over:**
+
+- **`maxStepBytes` bounds a *file*; every other member of `MeshLimits` bounds a *mesh*.** The type's
+  name becomes slightly wrong. It is not renamed: a rename touches every parser signature in the
+  package for a naming improvement, and F is already amending four docblocks in that module (5.7).
+  The docblock is what carries the distinction instead — and it has to, because
+  `DEFAULT_MAX_MESH_BYTES`'s own docblock currently says "Every read in this package is streamed, so
+  the document is no longer part of the peak", which is the sentence 5.7 already requires be excepted.
+- **`assertMeshFits` does not read it.** It takes `MeshLimits` and uses `maxMeshBytes` alone
+  (`limits.ts:52-57`); `maxStepBytes` has exactly one reader, `parseStepFile`. A ceiling with one
+  reader in a shared options type is worth naming so nobody adds a second reader by analogy.
+
+**`MAX_STEP_MB` is 2 048, matching `MAX_MESH_MB`, and for a weaker reason than that one has.**
+`MAX_MESH_MB`'s 2 048 is structural — `positions` is one `Float32Array` and 2 GB is 512 million
+elements, inside V8's element limit **(code)**. Nothing equivalent constrains a STEP input; 2 048 here
+is a typo guard, matched to the neighbouring constant so an operator reading `env.ts` does not have to
+learn two ceilings. It is **not** a promise that a 2 GB STEP file parses — 10.2 says nothing above
+1.39 MB has been measured at all, and an operator who sets it anywhere near the ceiling is past the
+edge of every measurement in this document.
 
 **Where 10 MB comes from, and it is arithmetic on an admittedly weak slope.** The fitted model is
 ~243 MB of intercept plus ~25 bytes of peak per input byte (§5.3). At a 10 MB input that predicts
@@ -677,6 +889,25 @@ has comes near it.
   version mechanism applied to the preview layer, which the spike also names (§7b) and which F does
   not build.
 
+**The two halves above have to be joined, because a wrong ceiling is not self-correcting.** 10 MB is
+a judgement on a barely-constrained slope, and `failed` is terminal. Put together: **the rows the
+guess condemns stay condemned after 10.2 lands and the constant moves.** An operator who raises
+`SPM_MAX_STEP_MB` from 10 to 40 because the measurement said 10 was too low gets the new ceiling for
+files the queue has not yet seen, and nothing at all for the ones already refused — the same shape as
+the 326 blank projects, arriving through a configuration change rather than a release.
+
+**What the operator actually does about it, stated so it is not discovered:** touch the file's bytes.
+A rescan that sees the content hash change resets the preview row to `pending` and zeroes `attempts`
+**(code)** — a rewrite in place, or a copy-and-replace, is enough, and it is the only mechanism the
+shipped code offers. The alternative is to wait for 3.5's version mechanism to be applied at the
+preview layer, which would re-pend on a *limits* change the way F re-pends on a *classifier* change,
+and which **F does not build**: the classifier version is one integer keyed to one pure function,
+where a preview version would have to be keyed to a chain of handlers and to two operator-settable
+ceilings, and F has no measurement that says which of those a row should be re-pended for. So the
+honest statement is that a raised ceiling is forward-only in F, that the remedy is manual and
+one-file-at-a-time, and that this is a reason to prefer erring high on the constant rather than a
+reason to trust the constant.
+
 The desktop has no environment-variable surface for preview limits **(code)** — `PREVIEW_MAX_MESH_BYTES`
 is a constant — so the desktop gets the default and F does not invent a configuration file for it.
 
@@ -684,14 +915,16 @@ is a constant — so the desktop gets the default and F does not invent a config
 
 This project's signature defect is a sentence asserting a mechanism the code does not have. Adding a
 non-streaming, WASM-backed parser to a package whose docblocks say — accurately, today — that nothing
-streams anything else, falsifies six of them at once. **Each is part of the change, not a follow-up.**
+streams anything else falsifies six of them at once, and F's two non-STEP changes falsify a seventh.
+**Each is part of the change, not a follow-up.**
 
 | File **(code)**                       | The sentence, and what it becomes                                                                                                                                                                          |
 | ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `previews/mesh-handler.ts`, `readMesh` | "none of them ever holds the file … the peak of a preview job is therefore its `positions` array plus a fixed window, **and not a function of the file at all**". True of three arms, false of the fourth. Must name the exception and say the STEP arm holds the whole file twice (§5.5) and costs ~244 MB regardless. |
 | `previews/mesh/limits.ts`, `assertMeshFits` | "The counts come from a counting pass that allocates nothing … **which is the only order in which a limit is worth having.**" For STEP the counts arrive *after* OCCT has tessellated, so this call bounds only the adapter's own `positions` allocation. The sentence must say which arms it describes. |
 | `previews/mesh/limits.ts`, `DEFAULT_MAX_MESH_BYTES` | "**Every read in this package is streamed**, so the document is no longer part of the peak". Must except STEP, and must say that this constant does **not** bound STEP's cost — which is the single most misleading available inference. |
-| `previews/queue.ts`, `DEFAULT_CONCURRENCY` | "a worker is worth about 290 MB at the worst". Still true for meshes; needs the per-process STEP floor beside it, with 5.4's arithmetic and its explicit non-multiplication.                                 |
+| `previews/queue.ts`, `DEFAULT_CONCURRENCY` | "a worker is worth about 290 MB at the worst". Still true for meshes; needs the per-process STEP floor beside it, with 5.4's arithmetic — **including the concurrency ≥ 2 line**, because this docblock is what an operator reads before raising `SPM_PREVIEW_CONCURRENCY` and a formula that holds only at the default is worse here than none. |
+| `desktop/src/slicers/registry.ts`, `behaviour` (`:63-66`) | "Read by the launch paths to decide **what the app may honestly claim**; never a strip set". `opensStep` is read to *refuse a launch* (4.2), which is not a claim about a launch that is going ahead — the sentence describes four flags accurately and stops being the whole truth at the fifth. Must say the flags drive two things: what `notices()` says, and whether a launch happens at all. The "never a strip set" half is untouched and 4.3 is the argument for why. |
 | `desktop/src/previews.ts`, `PREVIEW_CONCURRENCY` | "each worker may hold one mesh, so the two numbers are one budget". Needs the floor, and needs 5.5's blocking note, because this is the docblock for the queue that runs **in the main process**.            |
 | `desktop/package-app.ts`              | "**There is no LICENSE file and no `author` field anywhere in this repo**", which is the stated reason `appCopyright` is omitted. False the moment 6.2 lands.                                                |
 
@@ -709,9 +942,21 @@ decided to meet. No legal advice is offered and none is implied.**
 - `occt-import-js@0.0.23` declares `"license": "LGPL-2.1"` and has **no npm dependencies**.
 - It ships the full LGPL-2.1 text as `LICENSE.md`, and two more inside `dist/`:
   `license.occt-import-js.txt` (27 030 B) and `license.occt.txt` (26 936 B).
-- **`dist/license.occt.txt` is plain LGPL-2.1 with no static-linking exception.** Upstream
-  OpenCascade publishes one; this package does not include it. Measured by reading the file, not
-  recalled.
+- `dist/license.occt.txt` is **LGPL-2.1**, 26 936 B, covering the OpenCascade code compiled into the
+  blob. **Whether it carries a static-linking exception is unmeasured, and this document withdraws
+  the claim that it does not.** An earlier draft of row 33 said so and attributed it to §5.6; the
+  word "exception" appears nowhere in the 1 163-line spike, which asked what the licence *is* and
+  never what it *excepts*. The second half of that claim — that upstream OpenCascade publishes such
+  an exception — was recalled world knowledge in a table whose preamble says nothing in it is, and it
+  is withdrawn too. It could not be re-measured while writing this fix: `occt-import-js` is not
+  installed in this tree yet, so there is no `dist/license.occt.txt` to read. _To settle:_ read the
+  file after `deno install`, and record what §6 of the shipped text says.
+
+  **F-12's obligations do not move either way, and that is the point of stating this rather than
+  guessing.** An exception can only *loosen* the relink condition, and 6.2's three artifacts already
+  meet the stricter reading — the notice, the licence texts, and a replaceable `.wasm`. So the
+  design stands on the measured licence and not on the unmeasured absence of an exception, which is
+  the only arrangement in which being wrong about the exception costs nothing.
 - The compiled artifact is one file: `dist/occt-import-js.wasm`, 7 604 031 bytes.
 - The wrapper's C++ sources are in the package; OpenCascade's are not (a `.gitmodules` reference).
 
@@ -758,11 +1003,32 @@ quietly. `REQUIRED` already checks ten files exist and are non-empty **(code)**,
 entries are added to it: the `.wasm`, the notice, and the LGPL text. The check is on the built output,
 which is the verification the obligation asked for.
 
+**And two more, which is a consistency fix F carries rather than a defect it found.** `REQUIRED`
+names `dist/migrations/001_init.sql` alone **(code)** (`package-app.ts:241`); `002_preview_claim.sql`
+has never been in it, and 3.5 adds a third. **Decision: 002 and 003 are both added.** The list's own
+docblock says the failure it exists to prevent is "one that opens and cannot open a library", and a
+missing migration file is exactly that: `runMigrations` reads a frozen list and `readFileSync` throws
+on the first file that is not there **(code)**, so a staging that dropped 002 produces an app that
+starts and fails the moment a folder is picked. `001` alone is a spot-check that `copyMigrations` ran
+at all, not that it finished — and the fact that 002 slipped through for a whole subsystem is the
+evidence that a hand-maintained list drifts.
+
+The cost of that decision, named because it is the reason someone might not take it: **the list now
+has to be edited with every migration for ever**, and the next one to be forgotten will be forgotten
+the same way 002 was. The durable fix is to derive the check from core's `MIGRATIONS` rather than
+respell the filenames — the same "read rather than copied" rule 3.5 applies to the classification
+rule — but that changes `REQUIRED` from a list of paths into something that imports from `core`, and
+F is not the change that should do it. It is recorded as what to do if a fourth is ever missed.
+
 ### 6.4 Getting the parser into three build targets
 
 **(code)** the workspace has exactly **one** npm runtime dependency, `zod`; `packages/core` has none.
 `occt-import-js` is the second, and the first with a non-JavaScript artifact. `deno.json` also sets
-`minimumDependencyAge: P1D`, and whether `occt-import-js@0.0.23` satisfies it on the day of the change is **unmeasured** — it gates on publication age, and `deno install` is what reports it.
+`minimumDependencyAge: P1D`, and whether `occt-import-js@0.0.23` satisfies it on the day of the
+change is **unmeasured** — it gates on publication age, and `deno install` is what reports it. That
+is the developer's machine; **the pipeline is a separate question and is 10.16**, because CI runs
+`deno install --allow-scripts --frozen` in eight jobs **(code)** and whether `--frozen` consults the
+age gate at all has not been established.
 
 | Target                     | How it loads                                                    | Status                                                                              |
 | -------------------------- | ---------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
@@ -807,8 +1073,10 @@ not get made inside an implementation task.
   is ~87 % intercept. Both defensible readings give wrong answers in opposite directions (§6.3): take
   **201** (the worst multiplier from a file near its own line) and `limitOf` is 1.27 MB — which
   prompts on the four largest library files *and* is still wrong, because that file's real peak of
-  278 MB already exceeds the whole budget; take **4 567** and `limitOf` is 56 KB, which prompts on
-  every STEP file in the library including ones that parse in 217 ms.
+  278 MB already exceeds the whole budget; take **25 142** — the other end of the same range, from
+  the 8 KB twelve-triangle cube — and `limitOf` is **10.2 KB**, which prompts on every STEP file in
+  the library including ones that parse in 217 ms, and sets a threshold below the smallest STEP file
+  anyone has measured.
 - **The numbers that would go in the table are the wrong engine's.** Everything in §5.3 is Node/Deno
   peak RSS. The `FORMATS` docblock is emphatic that this exact substitution produced **three wrong
   costs** — "Arithmetic misses what the loaders actually allocate" — and that `.3mf` could not be
@@ -872,12 +1140,17 @@ Within that constraint the natural order is:
 
 1. `parseStepFile` + `mesh-handler.ts` arm + the docblock corrections in 5.7 + tests. Inert: nothing
    classifies as a model yet, so nothing reaches it.
-2. `SPM_MAX_STEP_MB` and the desktop constant.
-3. `classifyFile` + `CLASSIFIER_VERSION` + migration 003 + the `rescan` branch. This is the commit
-   that makes the feature visible, and after it the existing ten files reclassify and render.
-4. The registry field, the Cura refusal and the `cwd` (4.5 is independent of all of the above and
-   could equally go first — it is a fix, not a feature).
-5. LICENSE, the notice, and the `REQUIRED` entries.
+2. `MeshLimits.maxStepBytes`, `DEFAULT_MAX_STEP_BYTES`, `SPM_MAX_STEP_MB` and the desktop constant
+   (5.6).
+3. `classifyFile` + `CLASSIFIER_VERSION = 1` + migration 003 (`DEFAULT 0`) + **all four** `rescan`
+   edits (3.5). This is the commit that makes the feature visible, and after it the existing ten
+   files reclassify and render. **It is one commit and not four:** the migration without the write
+   sites leaves every row permanently stale, and the write sites without the migration have no column
+   to write into.
+4. The registry field and its docblock, the Cura refusal, and the widened spawn seam with its `cwd`
+   (4.5 is independent of all of the above and could equally go first — it is a fix, not a feature).
+5. LICENSE, the notice, and the `REQUIRED` entries — the three new ones and the two missing
+   migrations (6.3).
 6. The `packages/web` comment corrections (7.2).
 
 ---
@@ -903,10 +1176,42 @@ found.
   rescanned **with its size and mtime untouched**, comes back `model` with a re-pended preview row.
   The "untouched" is the whole test — a fixture that rewrites the file passes against the broken
   behaviour.
+- **The version mechanism itself** (3.5), which C1 and C2 say is where this feature is silently
+  defeated. Five assertions, and each of them fails against a specific plausible implementation:
+  - **The migration's default.** A database opened at `user_version = 2` with `files` rows in it,
+    migrated, has `classified_by = 0` on every row, and `0 < CLASSIFIER_VERSION`. **The second half
+    is the assertion**, not the first: a migration that backfilled the shipping constant would leave
+    the first half true, nothing stale, and the feature absent with no other symptom.
+  - **All three write sites** (the table in 3.5). After a first-sight insert, after a stat-mismatch
+    update, and after a version-mismatch reclassify, the row's `classified_by` equals
+    `CLASSIFIER_VERSION`. Three assertions rather than one, because leaving any single site alone is
+    invisible until the next rescan.
+  - **Idempotence, which is what makes the missed site visible.** Rescan twice with nothing touched
+    on disk; the second pass reclassifies nothing and queues no previews. This is the assertion that
+    would catch a row permanently stale — reclassified every tick for ever, 402 zip reads a tick
+    rather than a version bump — and it is the one a "does it reclassify?" test suite would omit.
+  - **Same kind, no re-pend.** A file whose reclassification returns the kind it already had gets its
+    `classified_by` written and its `ready` preview row left untouched, PNG and all.
+  - **The `insertPreview` fallback.** A version-stale file whose preview row has been deleted,
+    reclassified to a new kind, ends with a `pending` preview row — not with nothing, which is what a
+    bare `resetPreview` produces.
+- **A forgotten `CLASSIFIER_VERSION` bump after a `classify.ts` edit**, which is the maintenance
+  failure the whole mechanism depends on nobody committing. A frozen snapshot test in the classifier's
+  own suite: one table pairing `CLASSIFIER_VERSION` with `classifyFile`'s answer for every extension
+  the module branches on, asserted whole. Changing what any extension classifies as breaks it, and
+  the only edit that repairs it is one that touches the constant in the same commit. **What it cannot
+  catch, said so nobody trusts it further than it goes:** a change inside `classify3mf` that produces
+  the same answers on the fixture set — the snapshot pins the function's answers, not its reasoning,
+  and F has no measurement that says which internal changes warrant a bump.
 - **The Cura refusal** (4.2): `AppError('Validation')` with `slicerId: 'cura'`, no spawn recorded.
   The existing spawn recorder makes this a no-slicer test.
-- **The `cwd`** (4.5): the recorder captures the options object and the assertion names the expected
-  directory for both the launch-directory and in-place paths.
+- **The `cwd`** (4.5): the recorder's signature widens with `SpawnSlicer` itself, so it captures the
+  options object, and the assertion names the expected directory for **both** paths — the launch
+  directory, and the scratch directory for the two in-place paths. The in-place assertion is the one
+  that matters: a `cwd` left `undefined` there is the shipped defect with a type annotation over it,
+  and it is also the case that would have shipped had the fallback stayed `sessionsDir`, where the
+  directory does not exist on a fresh profile. A test that asserts the scratch directory **exists at
+  spawn time** is the half that catches that.
 - **The launch path for a `.step`** (4.4): the exact path spawned is inside the launch directory —
   asserted the way D's `.3mf` case is, "rather than trusting this paragraph", because it is the
   assertion that would notice somebody moving STEP onto the in-place branch without the measurement
@@ -994,4 +1299,52 @@ Answered where the evidence allows; marked unmeasured with the cost of settling 
     labelled as one. It is 7.2x the largest file in the reference library and the point at which the
     fitted model exhausts the server's whole budget. Real CAD exports reach tens of megabytes, so the
     first user with a 30 MB assembly is the measurement. _To settle:_ folded into 10.2; the constant
-    is in one place and moves with the evidence.
+    is in one place and moves with the evidence. Note that raising it is **forward-only** (5.6): the
+    rows the current number condemns are `failed` and terminal, and only a change to a file's bytes
+    brings one back.
+13. **Does a slicer saving from a STEP input write into a subdirectory?** **Unmeasured, and it
+    decides whether 4.4's launch-directory flow actually closes** (4.4, 4.5). `#scan` reads one level
+    and files only **(code)** (`sessions.ts:717-718`), so a project saved into `<launch dir>/foo/` is
+    invisible to the session list — the user is never asked about it and reconcile never sees it. The
+    one data point in this project is Anycubic's measured `stl/obj_1_….stl`, which is exactly that
+    shape, and it was produced by an export flag rather than by a save. _To settle:_ the same probe as
+    10.1 — a `.step` loaded in each of the four STEP-capable slicers, Ctrl+S, and the *directory* of
+    the proposed path read as well as its name. The two questions are one probe and should be run
+    together. If any slicer nests, the fix is a decision about `#scan`'s depth and belongs to D, not
+    to a `.step` special case.
+14. **What happens if the user quits while the main process is mid-STEP-parse?** **Unmeasured**
+    (5.5). The parse is synchronous on the Electron main thread, so `will-quit` cannot be dispatched
+    while it runs: the window stays up for the remainder of a measured 217–1 307 ms, and whether
+    Windows paints "not responding" in that window is exactly what nobody has watched. What happens
+    *after* it returns is read rather than guessed **(code)**: `will-quit` calls
+    `shellHost.shutdown()`, which does `void current.ticker.stop()` — **not awaited** — and closes the
+    library immediately (`library.ts:690-698`), and the docblock above it already measures the
+    consequence for a kill mid-render: the row stays `pending` with a live lease, one attempt charged,
+    invisible for `PREVIEW_LEASE_MS`, and three of those retire it until the file's bytes change. So
+    the failure mode is understood and shared with every other handler; what is new is only that STEP
+    holds the thread through it. _To settle:_ quit the built app during a STEP parse and watch the
+    window. It is the same "only the built app can answer this" shape as 10.6 and moves with it.
+15. **What does a `spm://` thumbnail request do during the 1.3 s block?** **Unmeasured** (5.5). 5.5
+    names the block and asks only whether it is *perceptible*; the sharper question is what the
+    protocol handler does when it is asked for a PNG on the thread OCCT is holding. The handler runs
+    in the same process on the same thread as the queue **(code)** — `previews.ts`'s own
+    `PREVIEW_CONCURRENCY` docblock says so, in the sentence about "Electron's browser process, the IPC
+    dispatch table and the `spm://` handler that serves the very thumbnails this produces, all on the
+    same thread". The likely answer is that the request simply waits, since it is a queued task and
+    not a timed one, and **likely is not measured**: whether Chromium's own request path has a timeout
+    shorter than a worst-case parse, and therefore whether a grid of tiles goes blank rather than
+    slow, is unknown. It is also the shape most affected by 10.6 — a worker thread fixes this one
+    outright. _To settle:_ scroll a grid of thumbnails in the built app while a STEP file is parsing,
+    and read the console for failed `spm://` responses.
+16. **Does `minimumDependencyAge` interact with CI as well as with the developer's machine?**
+    **Unmeasured** (6.4). 6.4 flags the `P1D` window for the install that adds the dependency; the
+    unasked half is the pipeline. **(code)** `.github/workflows/ci.yml` runs
+    `deno install --allow-scripts --frozen` in **eight** jobs, and `--frozen` is the interesting word:
+    whether Deno evaluates the age gate at all when the lockfile is authoritative, or whether a
+    dependency added on its publication day fails every job simultaneously, is not something this
+    repository has been in a position to find out. `occt-import-js@0.0.23` is long-published, so the
+    likely answer is that nothing happens — which is why this is a question and not a risk. What makes
+    it worth recording is that the failure, if it exists, is eight red jobs with one cause and no
+    obvious relation to the change. _To settle:_ observe the first CI run after the dependency lands.
+    Free, and it happens anyway. The `exclude` list in `deno.json` takes package names and not
+    versions **(code)**, so the remedy if it does bite is known and is a one-line entry.
