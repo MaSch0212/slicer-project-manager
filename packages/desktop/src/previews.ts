@@ -1,5 +1,6 @@
 import {
   DEFAULT_MAX_MESH_BYTES,
+  DEFAULT_MAX_STEP_BYTES,
   makePreviewHandlers,
   runPreviewQueue,
   type Library,
@@ -81,8 +82,33 @@ export const PREVIEW_INTERVAL_MS = 5_000
  */
 export const PREVIEW_CONCURRENCY = 1
 
-/** The mesh ceiling, and with `PREVIEW_CONCURRENCY` the whole memory budget: 1 x 256 MB. */
+/**
+ * The mesh ceiling. With `PREVIEW_CONCURRENCY` that is 1 x 256 MB of mesh — which stopped being
+ * the whole memory budget on the line below.
+ *
+ * `PREVIEW_MAX_STEP_BYTES` sits beside it and differs in both halves of what a ceiling is. It
+ * bounds a **file** rather than a mesh, because a STEP parse's cost is not knowable before the
+ * parse. And the ~244 MB floor it stands in for is paid **per process rather than per worker**, so
+ * it is **not** multiplied by `PREVIEW_CONCURRENCY` the way this number is.
+ *
+ * **Nothing about this constant bounds a STEP parse**, which is the most misleading thing to infer
+ * from a mesh ceiling in a file that now renders STEP: on that arm it is consulted after OCCT has
+ * already tessellated, and it bounds only the adapter's own `positions` allocation.
+ * `DEFAULT_CONCURRENCY` in `@spm/core` carries the arithmetic for the terms together, in the one
+ * place it lives.
+ */
 export const PREVIEW_MAX_MESH_BYTES = DEFAULT_MAX_MESH_BYTES
+
+/**
+ * The STEP file ceiling: the server's default, and **no environment variable at all.**
+ *
+ * The desktop shell has no environment-variable surface for preview limits, and F does not invent
+ * a configuration file to give it one. On the server an operator can raise `SPM_MAX_STEP_MB`; here
+ * the number is the shipped default or nothing, and `PreviewTickerOptions` below is the only way
+ * past it — which in practice means the tests. `DEFAULT_MAX_STEP_BYTES` in `@spm/core` carries
+ * where 10 MB comes from, and why it is a guard against the unmeasured rather than a memory model.
+ */
+export const PREVIEW_MAX_STEP_BYTES = DEFAULT_MAX_STEP_BYTES
 
 /**
  * How many rows one tick claims. The server's number.
@@ -113,8 +139,9 @@ export type PreviewTickerOptions = {
   concurrency?: number
   limit?: number
   maxMeshBytes?: number
+  maxStepBytes?: number
   /**
-   * The chain to run, defaulting to core's full one at the ceiling above. `runPreviewQueue` takes
+   * The chain to run, defaulting to core's full one at the ceilings above. `runPreviewQueue` takes
    * the same option for the same reason: the order belongs to core, the decision to spend CPU on
    * rasterizing belongs to whoever runs the library. `test/previews.test.ts` passes a handler it
    * can block, which is how the in-flight guard and `stop()` are observed at all.
@@ -127,11 +154,14 @@ export function startPreviewTicker(lib: Library, opts: PreviewTickerOptions = {}
   const limit = opts.limit ?? PREVIEW_BATCH_LIMIT
   const concurrency = opts.concurrency ?? PREVIEW_CONCURRENCY
   // Once, not per tick: the chain is stateless and the only thing this shell contributes to it
-  // is the mesh ceiling. Its *order* is core's and is not respelled here — see
+  // is the two ceilings. Its *order* is core's and is not respelled here — see
   // `makePreviewHandlers`, which is the one place it exists.
   const handlers =
     opts.handlers ??
-    makePreviewHandlers({ maxMeshBytes: opts.maxMeshBytes ?? PREVIEW_MAX_MESH_BYTES })
+    makePreviewHandlers({
+      maxMeshBytes: opts.maxMeshBytes ?? PREVIEW_MAX_MESH_BYTES,
+      maxStepBytes: opts.maxStepBytes ?? PREVIEW_MAX_STEP_BYTES,
+    })
 
   let inFlight: Promise<void> | null = null
   let stopped = false
