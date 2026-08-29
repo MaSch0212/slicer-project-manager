@@ -729,8 +729,8 @@ export const dispatch: DispatchTable = {
   ),
 
   /*
-   * The model browser: eleven `shellCall`s, and — as with the slicer block — not one `libraryCall`
-   * among them. In remote mode `deps.session` is null, and `libraryCall` refuses a null session by
+   * The model browser: every route a `shellCall`, and — as with the slicer block — not one
+   * `libraryCall` among them. In remote mode `deps.session` is null, and `libraryCall` refuses a null session by
    * design, so a `libraryCall` browse entry could not run in the mode where the desktop shell is
    * the only thing that has a `WebContentsView` at all.
    *
@@ -779,7 +779,7 @@ export const dispatch: DispatchTable = {
     shell.browse.clearLastPage(),
   ),
   /*
-   * The downloads instalment: four more `shellCall`s, for the same reason the eleven above are.
+   * The downloads instalment: four more `shellCall`s, for the same reason the view routes above are.
    *
    * **`downloadIdSchema` is a bound and not a path check.** The renderer names a `downloadId` and
    * never a location on disk (constraint 4), and the main process matches the id against

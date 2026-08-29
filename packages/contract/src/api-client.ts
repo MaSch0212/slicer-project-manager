@@ -236,8 +236,10 @@ export interface ApiClient {
    * **This block grows in three instalments**, one per task that implements it, because
    * `DispatchTable` is a mapped type over this interface: a method declared here without a dispatch
    * entry fails `deno task typecheck`, which is the guarantee wanted and which means each addition
-   * has to be atomic with its implementation. The first eleven are the view; these four are the
-   * downloads it produces; the landing comes with the task that writes it.
+   * has to be atomic with its implementation. The methods down to `clearLastPage` are the view;
+   * the four after them are the downloads it produces; the landing comes with the task that writes
+   * it. **No count is written out here on purpose** — the block below is the list, a number in
+   * prose beside it is a second copy that nothing checks, and the last one said eleven of twelve.
    *
    * **The security seam, stated where a caller reads it.** The renderer never names a filesystem
    * location and never hands a URL to Chromium in the privileged document. `navigate` runs its

@@ -1183,7 +1183,7 @@ export function main(): void {
        * is: a `WebContentsView` is a property of this process, and in remote mode `deps.session` is
        * null so a `libraryCall` entry could not run at all.
        *
-       * Every one of the eleven is a one-line forward to `BrowseHost`, and the ones that look like
+       * Every view route is a one-line forward to `BrowseHost`, and the ones that look like
        * they should do more here deliberately do not. `navigate` does not check its URL — the
        * policy lives in the host beside the four hooks that enforce it, and a second check here
        * would be a second copy of it. `attach` does not resolve a default URL — the remembered page

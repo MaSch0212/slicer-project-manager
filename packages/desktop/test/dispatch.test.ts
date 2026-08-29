@@ -205,7 +205,7 @@ const shell: ShellApi = {
   },
 }
 
-/** What the shell's browse half was asked, so the fifteen are exercised on their arguments. */
+/** What the shell's browse half was asked, so every route is exercised on its arguments. */
 const browseCalls: string[] = []
 
 const browseState: BrowseStateDto = {
@@ -685,7 +685,7 @@ test('every library-backed route refuses when no folder is open', async () => {
     'slicers.sessions',
     'slicers.resolveSession',
     'slicers.discardSessions',
-    // All fifteen browse routes, for the third instance of the same reason: the model browser is a
+    // Every browse route, for the third instance of the same reason: the model browser is a
     // native view in *this process*, and in remote mode `deps.session` is null. The four download
     // routes are on this list for a second reason as well — the staging directory is under
     // `userData` and belongs to the machine, not to whichever library happens to be open, so
@@ -1280,7 +1280,7 @@ test('the slicer routes reach the shell with their arguments in the right order'
 })
 
 /**
- * The eleven browse routes, on their arguments and with no library open.
+ * Every browse route, on its arguments and with no library open.
  *
  * Both halves in one test because they are the same claim: every one of them is a `shellCall`, so
  * none touches a library, and rewriting any of them as a `libraryCall` turns this red twice over —
