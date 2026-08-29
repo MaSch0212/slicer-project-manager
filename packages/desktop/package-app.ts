@@ -20,8 +20,11 @@ import { APP_NAME, APP_SLUG, packagedExecutableName } from './packaging.ts'
  * `packages/desktop/out/slicer-project-manager-<platform>-<arch>/` holds the Electron runtime with
  * this app's own files inside it — the layout Electron looks for by default, `resources/app` with
  * a `package.json` naming the entry point. **It needs no Node, no Deno, no `node_modules` and no
- * Electron on the machine that runs it**, because `build.ts` bundles `@spm/core`, `@spm/contract`
- * and zod into the main bundle and everything else here is Electron's own distribution.
+ * Electron on the machine that runs it**, because `build.ts` bundles every dependency the main
+ * process imports — `@spm/core`, `@spm/contract`, zod and the `occt-import-js` glue — into the
+ * main bundle, and stages the loose files that bundle then reads beside it: the OCCT `.wasm`, the
+ * SQL migrations and the window icons. Those are this app's own files, not Electron's; the rest
+ * of the directory is Electron's own distribution.
  *
  * What it does still assume is the platform's own C/C++ runtime and desktop libraries, which is
  * Electron's requirement rather than this app's: on Linux, the shared libraries the CI job
@@ -141,7 +144,10 @@ const stagingDir = join(outRoot, '.staging')
 await rm(stagingDir, { recursive: true, force: true })
 await mkdir(stagingDir, { recursive: true })
 
-// The main bundle, its preload, its sourcemaps and the SQL migrations `openLibrary` reads.
+// `dist/` whole, and it is copied whole rather than file by file so that a new output of
+// `build.ts` arrives here without an edit: the main bundle, its preload, their sourcemaps, and
+// every loose file the bundle reads at run time — the SQL migrations `openLibrary` reads, the
+// window icons `windowIconPath()` resolves, and the OCCT `.wasm` the glue fetches.
 await cp(distDir, join(stagingDir, 'dist'), { recursive: true })
 // The renderer, where `defaultRendererDir()` looks for it in a packaged app.
 await cp(rendererSrc, join(stagingDir, 'dist', 'renderer'), { recursive: true })
