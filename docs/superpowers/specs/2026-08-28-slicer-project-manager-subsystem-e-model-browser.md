@@ -1165,6 +1165,15 @@ browse: {
   downloads(): Promise<BrowseDownloadDto[]>
 
   /**
+   * The out-of-band record, oldest first, and the dismissal of one entry (E plan decision 7).
+   * A refusal appends one and raises a native notification; so does a download that completed
+   * while no view was attached. **Not in the first draft of this block** — 9.15 said a surface
+   * must exist and deliberately did not design one, and the plan's decision 7 is where it was.
+   */
+  notices(): Promise<BrowseNoticeDto[]>
+  dismissNotice(id: string): Promise<void>
+
+  /**
    * Lands a staged download into a project as a new file (5.4). Local mode calls core's
    * `uploadFile`; remote mode streams it through the proxy. The bytes never cross IPC.
    * `name` defaults to the download's own `getFilename()`.
@@ -1216,6 +1225,22 @@ BrowseDownloadDto {
   startedAt: number
   /** True for a download staged by a previous run of the app (5.3). */
   isOrphan: boolean
+  /**
+   * The sweep could vouch for the bytes (5.3). **`land` refuses a `false`, and `discard` is the
+   * only way out of one.** Not in the first draft of this block: 5.3 already required the sweep
+   * to make this judgement, and without a field for it the judgement reached nothing.
+   */
+  isVerifiable: boolean
+}
+
+BrowseNoticeDto {
+  id: string
+  kind: 'refused' | 'completed'
+  /** A remote server's `getFilename()`. Rendered as text only, and arrives truncated. */
+  fileName: string
+  /** One sentence: for a refusal, which cap it hit. Written by the main process. */
+  detail: string
+  at: number
 }
 ```
 
