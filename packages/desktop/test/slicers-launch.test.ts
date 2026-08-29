@@ -49,6 +49,8 @@ import {
   LAUNCH_RECORD_NAME,
   notices,
   SlicerLauncher,
+  SLICER_CWD_DIR,
+  SLICER_SESSIONS_DIR,
   type SlicerLaunchRecord,
   type SpawnSlicer,
 } from '../src/slicers/launch.ts'
@@ -878,6 +880,55 @@ test('the scratch directory is remade for the next launch after the user deletes
   assert.equal(h.spawns.length, 2)
   assert.equal(h.spawns[1]?.options.cwd, h.scratchCwdDir)
   assert.equal(h.spawns[1]?.cwdExisted, true)
+})
+
+/**
+ * **The one `SpawnSlicer` this app ever runs is the one nothing above can call.**
+ *
+ * `new SlicerLauncher` has three call sites: `app.ts` and the two test harnesses. Every assertion
+ * in this file is therefore about a recorder, and the closure that starts a real process is
+ * reached only by launching a slicer — which no test here may do.
+ *
+ * And the type does not hold it. A closure that declares two parameters is assignable to a
+ * three-parameter function type, so reverting `spawn: (command, args, { cwd }) => …` to
+ * `spawn: (command, args) => …` and dropping `cwd` from the spawn options **typechecks, leaves
+ * both suites green, and restores the defect that wrote 2 456 984 bytes into this repository**.
+ *
+ * So this is a source walk — the instrument `browse-source.test.ts` added for exactly this class,
+ * the leg of a containment no runtime assertion can reach — and it carries that file's positive
+ * control for that file's reason: a reader that came back with nothing would otherwise pass by
+ * finding no offending call either.
+ */
+test('the spawn in app.ts passes the cwd, and joins the two directories side by side', () => {
+  const source = readFileSync(join(import.meta.dirname, '..', 'src', 'app.ts'), 'utf8')
+
+  // The positive control, in the same read as the assertions: the launcher really is constructed
+  // in this file, so a reader that returned an empty string dies here rather than passing
+  // everything below it vacuously.
+  assert.ok(source.includes('new SlicerLauncher({'), 'app.ts does not construct the launcher')
+
+  // The options object of the one `spawn` call, matched rather than searched for the word `cwd`
+  // anywhere in the file — the comment above that call says `cwd` three times, and a comment is
+  // exactly what survives deleting the argument.
+  const call = source.match(/spawn\(command, \[\.\.\.args\], \{([^}]*)\}\)/)
+  assert.ok(call, 'no spawn call of the expected shape was found in app.ts')
+  const options = (call[1] ?? '').split(',').map((part) => part.trim())
+  assert.ok(options.includes('cwd'), `the child is spawned without a cwd: {${call[1]}}`)
+
+  // The other half of "not `sessionsDir`". The harness pins that the launcher was handed two
+  // different directories; this pins that the two *the app* hands it are these two constants,
+  // each joined onto `userData` — the same parent, side by side, neither inside the other.
+  assert.ok(source.includes("join(app.getPath('userData'), SLICER_SESSIONS_DIR)"))
+  assert.ok(source.includes("join(app.getPath('userData'), SLICER_CWD_DIR)"))
+  assert.notEqual(SLICER_CWD_DIR, SLICER_SESSIONS_DIR)
+  for (const name of [SLICER_CWD_DIR, SLICER_SESSIONS_DIR]) {
+    // Single segments, so "same parent" really does make them siblings: a constant that grew a
+    // separator could put the scratch directory under `slicer-sessions` with both lines above
+    // still reading exactly as they do now.
+    assert.doesNotMatch(name, /[\\/]/, `${name} is a path, not a directory name`)
+  }
+  const userData = join(root, 'userData-for-this-assertion-only')
+  assert.notEqual(join(userData, SLICER_CWD_DIR), join(userData, SLICER_SESSIONS_DIR))
 })
 
 /* -------------------------------------------------------------------------------------------
