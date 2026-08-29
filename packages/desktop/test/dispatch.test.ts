@@ -1333,6 +1333,12 @@ test('the browse routes reach the shell with their arguments, and need no librar
   await dispatch['browse.dismissNotice'](deps, ['notice-1'])
   await dispatch['browse.land'](deps, ['dl-1', 'p-1'])
   await dispatch['browse.land'](deps, ['dl-2', 'p-2', { name: 'benchy.zip' }])
+  // A download id longer than `idSchema`'s 64, which is the bound this route used to carry. A
+  // download id is also a directory name under `model-downloads` and the sweep surfaces the ones
+  // this app did not mint, so `land` faces the same input set as `discard` — one that lists and
+  // discards a directory it cannot land would be the same object landable by one route and not the
+  // other.
+  await dispatch['browse.land'](deps, ['d'.repeat(200), 'p-3'])
   await dispatch['browse.detach'](deps, [])
 
   assert.deepEqual(browseCalls, [
@@ -1362,6 +1368,7 @@ test('the browse routes reach the shell with their arguments, and need no librar
     // would answer `NotFound` about the wrong one of the two.
     'land dl-1 p-1 -',
     'land dl-2 p-2 benchy.zip',
+    `land ${'d'.repeat(200)} p-3 -`,
     'detach',
   ])
 })
@@ -1415,20 +1422,32 @@ test('a browse route rejects a wrong argument tuple with Validation, and calls n
     ['browse.land', ['dl-1', 'p-1', { name: 'benchy.zip' }, 'extra']],
     ['browse.land', ['', 'p-1']],
     ['browse.land', ['dl-1', '']],
-    ['browse.land', ['x'.repeat(65), 'p-1']],
+    // The two ids are bounded differently, and deliberately: a `downloadId` is `downloadIdSchema`'s
+    // 512 because the sweep can hand `land` a directory name this app did not mint, and a
+    // `projectId` is `idSchema`'s 64 because it is core's own id and has no second origin.
+    ['browse.land', ['x'.repeat(513), 'p-1']],
     ['browse.land', ['dl-1', 'x'.repeat(65)]],
     // A path-shaped first argument, in the two shapes the schema can actually see: an object,
-    // which is what a renderer forwarding a `{ localPath }` would send, and a string too long to
-    // be an id. A *short* path-shaped string is not refused here and is not meant to be — nothing
-    // joins it onto anything, and what answers it is the map lookup in `BrowseDownloads.find`,
-    // asserted in `browse-land.test.ts` against a real staging directory.
+    // which is what a renderer forwarding a `{ localPath }` would send, and a string past the
+    // 512-character bound. A path-shaped string *within* the bound is not refused here and is not
+    // meant to be — nothing joins it onto anything, and what answers it is the map lookup in
+    // `BrowseDownloads.find`, asserted in `browse-land.test.ts` against a real staging directory.
     ['browse.land', [{ localPath: '/home/someone/.ssh/id_rsa' }, 'p-1']],
-    ['browse.land', [`/home/someone/${'x'.repeat(80)}.zip`, 'p-1']],
+    ['browse.land', [`/home/someone/${'x'.repeat(520)}.zip`, 'p-1']],
     // The name is `fileNameSchema`'s, the same object `files.upload` accepts names under.
     ['browse.land', ['dl-1', 'p-1', { name: '../escaped.zip' }]],
     ['browse.land', ['dl-1', 'p-1', { name: 'CON.zip' }]],
     ['browse.land', ['dl-1', 'p-1', { name: '' }]],
     ['browse.land', ['dl-1', 'p-1', 'benchy.zip']],
+    // `z.strictObject`, the same choice `browseBoundsSchema` documents: a key this validation was
+    // not written for is a refusal, not a silently dropped field. This is the exact shape a
+    // renderer that thought it could name a location on disk would send (constraint 4), and with
+    // `z.object` it would be accepted with the second key quietly removed.
+    [
+      'browse.land',
+      ['dl-1', 'p-1', { name: 'benchy.zip', localPath: 'C:\\Users\\someone\\a.zip' }],
+    ],
+    ['browse.land', ['dl-1', 'p-1', { localPath: 'C:\\Users\\someone\\a.zip' }]],
   ]
   for (const [path, args] of wrong) {
     const error = await rejection(dispatch[path]({ session: null, shell }, args))
