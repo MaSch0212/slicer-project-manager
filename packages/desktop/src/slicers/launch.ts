@@ -22,7 +22,7 @@ import {
 import { writeJsonFile } from '../json-store.ts'
 import type { DesktopSession } from '../library.ts'
 import type { SlicersHost } from './host.ts'
-import { SLICERS } from './registry.ts'
+import { SLICERS, SLICER_IDS } from './registry.ts'
 import { remoteDownload, remoteProject, requireRemote, type RemoteProxy } from './remote-files.ts'
 
 /**
@@ -88,6 +88,50 @@ import { remoteDownload, remoteProject, requireRemote, type RemoteProxy } from '
 
 /** The directory under `app.getPath('userData')` that holds one subdirectory per launch. */
 export const SLICER_SESSIONS_DIR = 'slicer-sessions'
+
+/**
+ * The directory under `app.getPath('userData')` a slicer is given as its **working directory**
+ * when the launch built no directory of its own — `<userData>/slicer-cwd`.
+ *
+ * **This exists because a slicer resolved an export path against its process working directory and
+ * wrote into this repository.** `AnycubicSlicerNext.exe --export-stl <file>` exited 0, left the
+ * source byte-identical, wrote nothing into the input's directory, and created
+ * `stl/obj_1_….stl` — 2 456 984 bytes — relative to the *calling process's* cwd, which was the
+ * repository root. An Electron main process inherits its working directory from whatever launched
+ * it: the directory a shortcut points at, the directory a terminal was in, or on some launch paths
+ * the application directory itself. So the fallback is not a formality — without it the child's cwd
+ * is whatever the user's desktop happened to hand this process.
+ *
+ * **Which directory, and why not either of the two obvious answers.**
+ *
+ * - **Not `userData` itself.** It holds `state.json`, `slicers.json` and `browse.json`, plus
+ *   `model-downloads/` and `slicer-sessions/`. Pointing a slicer's cwd at the directory holding the
+ *   app's own configuration is a smaller version of the defect being fixed. (The library database
+ *   is *not* there — it is `<libraryDir>/.spm/app.db` — which is worth saying because the opposite
+ *   is an easy thing to assume, and it would change what is at risk.)
+ * - **Not `sessionsDir`.** It is created lazily, only by a launch that needs a directory, and an
+ *   in-place launch by definition needs none — so on a fresh profile the path does not exist,
+ *   `spawn` throws `ENOENT`, and **every in-place launch fails for every slicer** until some other
+ *   launch happens to create it. And a cwd-relative export landing loose there is surfaced to the
+ *   user as an *orphan session*: `#scan` reads any loose file directly under `sessionsDir` as a
+ *   session of its own, so the user would be answering for a launch they never made.
+ *
+ * **What the `cwd` fixes and what it does not.** It bounds one measured mechanism — cwd-relative
+ * resolution — and says nothing about a slicer resolving against an absolute configured path;
+ * Anycubic's `--export-stl` with `--outputdir` set is unmeasured, and this app passes neither flag.
+ * A launch-directory cwd makes a *loose* stray visible, because `#scan` reports a file in a launch
+ * directory that is neither `launch.json` nor the launched file as a session of its own. A stray in
+ * a **subdirectory** stays invisible under either cwd, because that scan filters `isFile()` — and
+ * the one cwd-relative write anyone has measured here is `stl/obj_1_….stl`, a subdirectory. So for
+ * that shape this moves the file from an inherited unknown into a directory the app owns, and does
+ * not move it into anything that surfaces it. **An improvement, not a solution.**
+ *
+ * **Nothing sweeps this directory.** It is not under `sessionsDir`, so `sweepAtStart` never sees
+ * it, and no sweeper is added: deleting a file a slicer wrote is D constraint 10 territory, and the
+ * directory grows only by the strays it exists to catch — which, on the evidence, is one product on
+ * one flag. What it must never become is a directory this project *says* is swept when it is not.
+ */
+export const SLICER_CWD_DIR = 'slicer-cwd'
 
 /** The record beside the launched copy. Task 5 reads these back. */
 export const LAUNCH_RECORD_NAME = 'launch.json'
@@ -194,12 +238,30 @@ export type SpawnedSlicer = {
   once?(event: 'exit', listener: () => void): unknown
 }
 
-/** Injected (D decision 9). The real one lives in `app.ts`; every test passes a recorder. */
-export type SpawnSlicer = (command: string, args: readonly string[]) => SpawnedSlicer
+/**
+ * Injected (D decision 9). The real one lives in `app.ts`; every test passes a recorder.
+ *
+ * **`options` is required, and it carries exactly one field.** A `cwd` that can be omitted is a
+ * `cwd` that will be — see `SLICER_CWD_DIR` for what that cost the last time. Narrow on purpose:
+ * `detached` and `stdio` are the real spawn's business and nothing asserts them through this seam.
+ */
+export type SpawnSlicer = (
+  command: string,
+  args: readonly string[],
+  options: { cwd: string },
+) => SpawnedSlicer
 
 export type SlicerLauncherOptions = {
   /** `<userData>/slicer-sessions`. Created lazily, only by a launch that needs a directory. */
   sessionsDir: string
+  /**
+   * `<userData>/slicer-cwd`, the working directory for a launch that builds no directory of its
+   * own. See `SLICER_CWD_DIR` for which directory this must be and which two it must not.
+   *
+   * Required and with no default, for the reason the field it feeds is required: a directory that
+   * can be omitted is one that will be, and the failure is silent.
+   */
+  scratchCwdDir: string
   /** Task 2's host, for `resolveInstall` and the configuration a launch reads. */
   slicers: SlicersHost
   /**
@@ -409,6 +471,7 @@ type LaunchPlan = {
 
 export class SlicerLauncher {
   readonly #sessionsDir: string
+  readonly #scratchCwdDir: string
   readonly #slicers: SlicersHost
   readonly #session: () => DesktopSession | null
   readonly #isRemote: () => boolean
@@ -420,6 +483,7 @@ export class SlicerLauncher {
 
   constructor(options: SlicerLauncherOptions) {
     this.#sessionsDir = options.sessionsDir
+    this.#scratchCwdDir = options.scratchCwdDir
     this.#slicers = options.slicers
     this.#session = options.session
     this.#isRemote = options.isRemote
@@ -435,7 +499,8 @@ export class SlicerLauncher {
    *
    * The order of the steps is load-bearing, and it is the same order in both modes. Everything
    * that can refuse cheaply — the library or the server, the project, the file, the choice of
-   * product, the install's path — runs **before** anything is written or downloaded, so a launch
+   * product, whether that product can read this format at all, the install's path — runs
+   * **before** anything is written or downloaded, so a launch
    * that was never going to work leaves no directory behind and costs no bytes over the wire. The
    * copy or the download is next, then the strip, then the record, then the spawn; the record is
    * written before the spawn so a crash in between still leaves a directory that says what it is.
@@ -452,6 +517,13 @@ export class SlicerLauncher {
 
     const config = this.#slicers.get()
     const { slicerId, why } = chooseSlicer(opts, source.indexed.slicer, config.defaultSlicerId)
+    // Before the install lookup, and so before anything is written or downloaded: launching a
+    // product that cannot read the format is the silent failure this refusal exists to replace.
+    // Lowercased because the user's own library holds `Nozzle Wiper Guard.STEP`.
+    const extension = extname(source.name).toLowerCase()
+    if ((extension === '.step' || extension === '.stp') && !SLICERS[slicerId].behaviour.opensStep) {
+      refuseStepFormat(slicerId, extension)
+    }
     const installId = config.bindings[slicerId]
     if (installId === undefined) throw unboundInstall(slicerId, config.installs)
     const { install, path: executable } = await this.#slicers.resolveInstall(installId)
@@ -707,10 +779,24 @@ export class SlicerLauncher {
     }
   }
 
-  /** The one call that starts a process. A failed spawn takes its launch directory with it. */
+  /**
+   * The one call that starts a process. A failed spawn takes its launch directory with it.
+   *
+   * **The child's working directory is set here and never inherited** (see `SLICER_CWD_DIR`): the
+   * launch directory when the plan built one, so a cwd-relative write lands beside the copy where
+   * the session scan can see it, and the scratch directory when it did not.
+   *
+   * The `mkdirSync` is inside the `try` and immediately before the spawn that needs it — not once
+   * at construction, so a profile where the user deleted the directory between launches still
+   * works, and not lazily-on-first-use, because "created lazily" is exactly the property that makes
+   * `sessionsDir` unusable for this. Inside the `try` so a failure to create it becomes the same
+   * `AppError('Internal', …)` rather than escaping raw.
+   */
   #spawnOrClean(executable: string, slicerId: SlicerId, plan: LaunchPlan): SpawnedSlicer {
     try {
-      return this.#spawn(executable, SLICERS[slicerId].argv(plan.path))
+      const cwd = plan.directory ?? this.#scratchCwdDir
+      if (plan.directory === null) mkdirSync(cwd, { recursive: true })
+      return this.#spawn(executable, SLICERS[slicerId].argv(plan.path), { cwd })
     } catch (error) {
       if (plan.directory !== null) rmSync(plan.directory, { recursive: true, force: true })
       throw new AppError('Internal', `could not start ${SLICERS[slicerId].displayName}`, {
@@ -818,6 +904,36 @@ function refuseNotAProject(source: { indexed: Classification }): never {
     'Validation',
     'only a slicer project can be opened as it is; start a new slicer project from this file instead',
     { kind: source.indexed.kind },
+  )
+}
+
+/**
+ * A STEP file handed to a product that cannot read one (F-4).
+ *
+ * **An error, not a `notices()` sentence.** `notices()` says what will happen during a launch that
+ * is going ahead; this launch does not go ahead. Warning and launching anyway is the silent-discard
+ * case with extra words, and D already settled the analogous question for Anycubic's strip refusal:
+ * the tempting fallback — launch it anyway — *is* the silent-discard case. Here it is measured:
+ * Cura handed a STEP shows one window titled `Untitled`, no dialog, and a `WARNING` in a log file
+ * the user will never open.
+ *
+ * The alternatives are **read from the registry, not spelled here**, the way `SLICER_IDS`,
+ * `makePreviewHandlers` and `DEFAULT_CONCURRENCY` are read rather than copied — a sixth product
+ * that reads STEP joins the sentence by being measured, and a row that flips changes it.
+ *
+ * It offers no conversion advice: this app has no converter and nothing measured one. And it has to
+ * read correctly as the shape it will almost always be, because the UI has no per-launch picker —
+ * "your default slicer is Cura, and this file is a STEP".
+ */
+function refuseStepFormat(slicerId: SlicerId, extension: string): never {
+  const capable = SLICER_IDS.filter((id) => SLICERS[id].behaviour.opensStep).map(
+    (id) => SLICERS[id].displayName,
+  )
+  throw new AppError(
+    'Validation',
+    `${SLICERS[slicerId].displayName} cannot open STEP files. ` +
+      `Choose one of ${capable.join(', ')} instead.`,
+    { slicerId, extension },
   )
 }
 

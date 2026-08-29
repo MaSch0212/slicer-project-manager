@@ -50,7 +50,9 @@ import {
   notices,
   SlicerLauncher,
   type SlicerLaunchRecord,
+  type SpawnSlicer,
 } from '../src/slicers/launch.ts'
+import { SLICERS, SLICER_IDS } from '../src/slicers/registry.ts'
 
 /**
  * Both local launch paths, end to end against a real library and a real `slicers.json`, with the
@@ -61,6 +63,10 @@ import {
  * data-loss defect in the first draft of the spec and one that would have gone green through it:
  * a `model`-kind `.3mf` launched at its library path spawns exactly as successfully as one
  * launched from a copy.
+ *
+ * **And about the working directory it was spawned in**, for the same reason: a slicer was measured
+ * resolving an export path against its process cwd and writing into this repository, and a launch
+ * with no `cwd` at all spawns exactly as successfully as one with the right one.
  *
  * Nothing here needs Electron, a slicer, or Windows.
  */
@@ -140,12 +146,34 @@ function machine(overrides: Partial<SlicersConfig> = {}): SlicersConfig {
   }
 }
 
-type Spawned = { command: string; args: readonly string[] }
+/**
+ * One recorded spawn, **including the working directory the child was given**.
+ *
+ * `options` is captured because nothing forces it to be: a two-parameter recorder stays assignable
+ * to the three-parameter `SpawnSlicer`, so this file would typecheck with the `cwd` unrecorded and
+ * unasserted — which is the shipped defect with a type annotation over it.
+ *
+ * `cwdExisted` is `existsSync(options.cwd)` evaluated **inside the recorder, at the moment of the
+ * spawn**, because that is the only moment at which the answer is interesting: a `mkdirSync` moved
+ * to the launcher's constructor, or to the end of `open`, passes an after-the-fact check in the
+ * test body and fails this one. It is recorded rather than asserted in place because an assertion
+ * thrown inside the spawn is caught by `#spawnOrClean` and re-thrown as
+ * `AppError('Internal', 'could not start …')`, which would report every such failure as the wrong
+ * defect.
+ */
+type Spawned = {
+  command: string
+  args: readonly string[]
+  options: { cwd: string }
+  cwdExisted: boolean
+}
 
 type Harness = {
   launcher: SlicerLauncher
   spawns: Spawned[]
   sessionsDir: string
+  /** `<userData>/slicer-cwd`, deliberately not created here — the launcher must make it. */
+  scratchCwdDir: string
   /** Every directory under `slicer-sessions`, or `[]` when nothing ever created it. */
   sessions(): string[]
 }
@@ -158,13 +186,16 @@ type HarnessOptions = {
   hasLibrary?: boolean
   now?: number
   launchId?: string
-  spawn?: (command: string, args: readonly string[]) => { pid?: number }
+  spawn?: SpawnSlicer
 }
 
 function harness(options: HarnessOptions = {}): Harness {
   seq += 1
   const home = join(root, `case-${seq}`)
   const sessionsDir = join(home, 'slicer-sessions')
+  // Never created by the harness. Every `cwdExisted` assertion below is a claim about the
+  // launcher's own `mkdirSync`, and a directory this function made would answer for it.
+  const scratchCwdDir = join(home, 'slicer-cwd')
   const configFile = join(home, SLICERS_FILE_NAME)
   writeConfig(configFile, options.config ?? machine())
 
@@ -172,6 +203,7 @@ function harness(options: HarnessOptions = {}): Harness {
   const spawns: Spawned[] = []
   const launcher = new SlicerLauncher({
     sessionsDir,
+    scratchCwdDir,
     slicers: new SlicersHost({
       configFile,
       platform: 'win32',
@@ -190,8 +222,13 @@ function harness(options: HarnessOptions = {}): Harness {
     remote: () => null,
     spawn:
       options.spawn ??
-      ((command, args) => {
-        spawns.push({ command, args })
+      ((command, args, spawnOptions) => {
+        spawns.push({
+          command,
+          args,
+          options: spawnOptions,
+          cwdExisted: existsSync(spawnOptions.cwd),
+        })
         return { pid: 4242 }
       }),
     now: () => options.now ?? 1_756_382_400_000,
@@ -202,6 +239,7 @@ function harness(options: HarnessOptions = {}): Harness {
     launcher,
     spawns,
     sessionsDir,
+    scratchCwdDir,
     sessions: () => (existsSync(sessionsDir) ? readdirSync(sessionsDir).sort() : []),
   }
 }
@@ -323,7 +361,15 @@ test('a slicer project opened as-is is spawned at the library path, with no copy
 
   const result = await h.launcher.open(file.id, projectId, { mode: 'as-is' })
 
-  assert.deepEqual(h.spawns, [{ command: CURA_13_EXE, args: [file.absPath] }])
+  assert.deepEqual(h.spawns, [
+    {
+      command: CURA_13_EXE,
+      args: [file.absPath],
+      // No launch directory on this path, so the scratch directory is the whole of the answer.
+      options: { cwd: h.scratchCwdDir },
+      cwdExisted: true,
+    },
+  ])
   assert.deepEqual(h.sessions(), [])
   assert.equal(result.stripped, false)
   // The file's own slicer, not the configured default (`orca`).
@@ -384,7 +430,14 @@ test('a slicer project handed to another slicer is stripped into a launch direct
   })
 
   const copy = join(h.sessionsDir, 'strip-me', 'bracket.3mf')
-  assert.deepEqual(h.spawns, [{ command: ANYCUBIC_EXE, args: [copy] }])
+  assert.deepEqual(h.spawns, [
+    {
+      command: ANYCUBIC_EXE,
+      args: [copy],
+      options: { cwd: join(h.sessionsDir, 'strip-me') },
+      cwdExisted: true,
+    },
+  ])
   assert.equal(result.stripped, true)
   // The copy keeps the source's basename, because that is what four of five slicers propose on
   // the first save and what Cura carries into its Save-As dialog.
@@ -759,7 +812,202 @@ test('argv is exactly the registry row, which is one bare positional argument', 
 
   await h.launcher.open(file.id, projectId, { mode: 'new-project', slicerId: 'prusaslicer' })
 
-  assert.deepEqual(h.spawns, [{ command: PRUSA_EXE, args: [file.absPath] }])
+  assert.deepEqual(h.spawns, [
+    {
+      command: PRUSA_EXE,
+      args: [file.absPath],
+      options: { cwd: h.scratchCwdDir },
+      cwdExisted: true,
+    },
+  ])
+})
+
+/* -------------------------------------------------------------------------------------------
+ * The working directory the child inherits (F-7)
+ * ---------------------------------------------------------------------------------------- */
+
+test('a launch that builds a directory hands the slicer that directory as its cwd', async () => {
+  const h = harness({ launchId: 'cwd-directory' })
+  const projectId = project('CwdDirectory')
+  const file = await addFile(projectId, 'plate.3mf', curaProject)
+
+  await h.launcher.open(file.id, projectId, { mode: 'new-project', slicerId: 'orca' })
+
+  const directory = join(h.sessionsDir, 'cwd-directory')
+  assert.equal(h.spawns[0]?.options.cwd, directory)
+  assert.equal(h.spawns[0]?.cwdExisted, true)
+  // The whole point of preferring the launch directory: a cwd-relative write lands beside the
+  // copy, where `#scan` can see it, rather than anywhere else on the machine.
+  assert.equal(dirname(h.spawns[0]!.args[0]!), directory)
+})
+
+test('a launch that builds no directory hands the slicer the scratch directory, created first', async () => {
+  const h = harness()
+  const projectId = project('CwdScratch')
+  const file = await addFile(projectId, 'cube.stl', stlBytes)
+
+  // Nothing has created it yet. This is the fresh-profile shape, and it is the one the earlier
+  // draft of the design would have failed on.
+  assert.equal(existsSync(h.scratchCwdDir), false)
+
+  await h.launcher.open(file.id, projectId, { mode: 'new-project', slicerId: 'anycubic' })
+
+  assert.equal(h.spawns[0]?.options.cwd, h.scratchCwdDir)
+  // Existed *at the moment of the spawn*, not merely by the time this line runs.
+  assert.equal(h.spawns[0]?.cwdExisted, true)
+  // Not the two answers the spec rejected. `sessionsDir` is created lazily, so a `spawn` pointed
+  // at it on a fresh profile throws `ENOENT` and every in-place launch fails; and a stray landing
+  // loose in it is surfaced to the user as an orphan session they never made.
+  assert.notEqual(h.spawns[0]?.options.cwd, h.sessionsDir)
+  assert.deepEqual(h.sessions(), [], 'the scratch directory must not be under slicer-sessions')
+})
+
+test('the scratch directory is remade for the next launch after the user deletes it', async () => {
+  const h = harness()
+  const projectId = project('CwdRemade')
+  const file = await addFile(projectId, 'cube.stl', stlBytes)
+
+  await h.launcher.open(file.id, projectId, { mode: 'new-project', slicerId: 'anycubic' })
+  // A profile the user has cleaned out between two launches. Creating the directory once, at
+  // construction, survives the test above and dies here.
+  rmSync(h.scratchCwdDir, { recursive: true, force: true })
+  assert.equal(existsSync(h.scratchCwdDir), false)
+
+  await h.launcher.open(file.id, projectId, { mode: 'new-project', slicerId: 'anycubic' })
+
+  assert.equal(h.spawns.length, 2)
+  assert.equal(h.spawns[1]?.options.cwd, h.scratchCwdDir)
+  assert.equal(h.spawns[1]?.cwdExisted, true)
+})
+
+/* -------------------------------------------------------------------------------------------
+ * STEP, and the one product that cannot read it (F-4, F-5)
+ * ---------------------------------------------------------------------------------------- */
+
+/**
+ * Bytes, not a model, and no fixture.
+ *
+ * Nothing on this path parses a STEP file: the launcher copies it and spawns a recorder. The
+ * ISO-10303 magic is the whole of the input, the same way this suite already makes its `.stl`.
+ */
+function stepBytes(path: string): void {
+  writeFileSync(path, 'ISO-10303-21;')
+}
+
+test('a .step handed to Cura is refused, and nothing is spawned', async () => {
+  const h = harness()
+  const projectId = project('StepCura')
+  const file = await addFile(projectId, 'part.step', stepBytes)
+
+  const error = await rejection(
+    h.launcher.open(file.id, projectId, { mode: 'new-project', slicerId: 'cura' }),
+  )
+
+  assert.equal(error.code, 'Validation')
+  assert.deepEqual(error.details, { slicerId: 'cura', extension: '.step' })
+  // The sentence the user actually sees, spelled out rather than rebuilt from the registry the
+  // code reads — a message derived here would agree with a table that had every row wrong.
+  assert.equal(
+    error.message,
+    'UltiMaker Cura cannot open STEP files. ' +
+      'Choose one of PrusaSlicer, Anycubic Slicer Next, Bambu Studio, OrcaSlicer instead.',
+  )
+  // The assertion, not the throw: launching Cura at a STEP file is the measured failure — a
+  // healthy process, an empty plate and a warning in a log nobody opens.
+  assert.equal(h.spawns.length, 0)
+  assert.deepEqual(h.sessions(), [], 'the refusal must come before anything is written')
+})
+
+test('a .stp is the same refusal, and says which extension it was', async () => {
+  const h = harness()
+  const projectId = project('StpCura')
+  const file = await addFile(projectId, 'part.stp', stepBytes)
+
+  const error = await rejection(
+    h.launcher.open(file.id, projectId, { mode: 'new-project', slicerId: 'cura' }),
+  )
+
+  assert.equal(error.code, 'Validation')
+  assert.deepEqual(error.details, { slicerId: 'cura', extension: '.stp' })
+  assert.equal(h.spawns.length, 0)
+})
+
+test('an uppercase .STEP is refused too, which is the spelling in the user library', async () => {
+  const h = harness()
+  const projectId = project('UpperStepCura')
+  // `Nozzle Wiper Guard.STEP`, the real file Cura's own log shows silently dropped nine minutes
+  // before the spike opened anything.
+  const file = await addFile(projectId, 'Wiper Guard.STEP', stepBytes)
+
+  const error = await rejection(
+    h.launcher.open(file.id, projectId, { mode: 'new-project', slicerId: 'cura' }),
+  )
+
+  assert.equal(error.code, 'Validation')
+  assert.deepEqual(error.details, { slicerId: 'cura', extension: '.step' })
+  assert.equal(h.spawns.length, 0)
+})
+
+test('the common shape: Cura is the default and nothing was chosen', async () => {
+  // No `slicerId` on the call, because the UI has no per-launch picker. This is how a user
+  // actually reaches the refusal.
+  const h = harness({ config: machine({ defaultSlicerId: 'cura' }) })
+  const projectId = project('StepDefault')
+  const file = await addFile(projectId, 'part.step', stepBytes)
+
+  const error = await rejection(h.launcher.open(file.id, projectId, { mode: 'new-project' }))
+
+  assert.equal(error.code, 'Validation')
+  assert.deepEqual(error.details, { slicerId: 'cura', extension: '.step' })
+  assert.equal(h.spawns.length, 0)
+})
+
+// Four, one per product, and named individually: a refusal keyed on the wrong side of the boolean
+// passes a suite that only ever asks about Cura, and an assertion satisfied by refusing everything
+// is not an assertion.
+for (const slicerId of ['prusaslicer', 'anycubic', 'bambu', 'orca'] as const) {
+  test(`a .step opens in ${slicerId}, which was measured reading both extensions`, async () => {
+    const h = harness({ launchId: `step-${slicerId}` })
+    const projectId = project(`Step-${slicerId}`)
+    const file = await addFile(projectId, 'part.step', stepBytes)
+
+    const result = await h.launcher.open(file.id, projectId, { mode: 'new-project', slicerId })
+
+    assert.equal(h.spawns.length, 1)
+    assert.equal(result.slicerId, slicerId)
+  })
+}
+
+test('a .step goes through a launch directory, keeping its own basename', async () => {
+  const h = harness({ launchId: 'step-copied' })
+  const projectId = project('StepCopied')
+  const file = await addFile(projectId, 'bracket.step', stepBytes)
+
+  await h.launcher.open(file.id, projectId, { mode: 'new-project', slicerId: 'prusaslicer' })
+
+  // Asserted as a path rather than trusted as a paragraph: a STEP moved onto the in-place branch
+  // would spawn exactly as successfully from the library path, and nothing has measured what the
+  // four capable slicers propose on the first save from a STEP input.
+  const copy = join(h.sessionsDir, 'step-copied', 'bracket.step')
+  assert.equal(h.spawns[0]?.args[0], copy)
+  assert.notEqual(h.spawns[0]?.args[0], file.absPath)
+  assert.equal(basename(copy), basename(file.absPath))
+  assert.equal(h.spawns[0]?.options.cwd, join(h.sessionsDir, 'step-copied'))
+  assert.deepEqual(readFileSync(copy), readFileSync(file.absPath))
+})
+
+test('the registry says which products open STEP, one row at a time', () => {
+  // Individually, not as a filter over the table, so a row that flips is named in the failure.
+  assert.equal(SLICERS.cura.behaviour.opensStep, false, 'cura ships no STEP reader (spike §1d)')
+  assert.equal(SLICERS.prusaslicer.behaviour.opensStep, true, 'prusaslicer opens .step and .stp')
+  assert.equal(SLICERS.anycubic.behaviour.opensStep, true, 'anycubic opens .step and .stp')
+  assert.equal(SLICERS.bambu.behaviour.opensStep, true, 'bambu opens .step and .stp')
+  assert.equal(SLICERS.orca.behaviour.opensStep, true, 'orca opens .step and .stp')
+  // And the refusal's list of alternatives is every capable row, in registry order.
+  assert.deepEqual(
+    SLICER_IDS.filter((id) => SLICERS[id].behaviour.opensStep).map((id) => SLICERS[id].displayName),
+    ['PrusaSlicer', 'Anycubic Slicer Next', 'Bambu Studio', 'OrcaSlicer'],
+  )
 })
 
 /* -------------------------------------------------------------------------------------------

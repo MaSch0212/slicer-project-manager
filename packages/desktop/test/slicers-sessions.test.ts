@@ -1606,6 +1606,9 @@ function remoteLauncher(remote: RemoteHost): {
   const spawns: { args: readonly string[] }[] = []
   const launcher = new SlicerLauncher({
     sessionsDir,
+    // Every remote launch builds a launch directory, so this is the fallback that is never taken
+    // here; `test/slicers-launch.test.ts` owns the `cwd` assertions for both branches.
+    scratchCwdDir: join(home, 'slicer-cwd'),
     slicers: new SlicersHost({
       configFile,
       platform: 'win32',

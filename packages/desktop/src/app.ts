@@ -43,7 +43,7 @@ import type { RemoteHost } from './remote.ts'
 import { ShellHost, type ShellRoute } from './shell.ts'
 import { SLICERS_FILE_NAME } from './slicers/config.ts'
 import { SlicersHost } from './slicers/host.ts'
-import { SlicerLauncher, SLICER_SESSIONS_DIR } from './slicers/launch.ts'
+import { SlicerLauncher, SLICER_CWD_DIR, SLICER_SESSIONS_DIR } from './slicers/launch.ts'
 import { SlicerSessions } from './slicers/sessions.ts'
 import { STATE_FILE_NAME } from './state.ts'
 import { navigationPolicy, RENDERER_HOST, RENDERER_ORIGIN, RESERVED_PATH_SEGMENT } from './urls.ts'
@@ -1153,7 +1153,12 @@ export function main(): void {
   // an unread pipe attached to it — would make quitting the app kill the user's slicer, or wedge
   // it on a full buffer. Nothing here reads its output; the only thing this process learns from
   // the child is that it has a pid.
+  //
+  // The `cwd` is the launcher's, and it is never left to inherit: one slicer was measured resolving
+  // an export path against its process working directory, and this process's own is whatever
+  // launched it. See `SLICER_CWD_DIR`.
   const sessionsDir = join(app.getPath('userData'), SLICER_SESSIONS_DIR)
+  const scratchCwdDir = join(app.getPath('userData'), SLICER_CWD_DIR)
   // What became of everything the launcher has ever handed over — the watch, the comparison, the
   // sweeps and the reconcile. Built before the launcher because the launcher reports every launch
   // it makes to it, and reached per call for the library and the server for the same reason
@@ -1167,12 +1172,13 @@ export function main(): void {
 
   const launcher = new SlicerLauncher({
     sessionsDir,
+    scratchCwdDir,
     slicers,
     session: () => shellHost.session(),
     isRemote: () => shellHost.mode() === 'remote',
     remote: () => shellHost.remote(),
-    spawn: (command, args) => {
-      const child = spawn(command, [...args], { detached: true, stdio: 'ignore' })
+    spawn: (command, args, { cwd }) => {
+      const child = spawn(command, [...args], { cwd, detached: true, stdio: 'ignore' })
       child.unref()
       return child
     },
