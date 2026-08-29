@@ -894,6 +894,49 @@ test('a record that cannot be written refuses the download rather than staging b
   assert.equal(existsSync(rigged.stagingDir) && readdirSync(rigged.stagingDir).length > 0, false)
 })
 
+test('a setSavePath that throws holds neither cap, and leaves the directory for the sweep', () => {
+  // Electron throws `DownloadItem used after being destroyed` on an item whose view went away
+  // between `will-download` and this call, and that is the whole of the reachable case. The defect
+  // it produces is not the failed download — it is the **entry that can never be removed**: staged
+  // as `progressing`, with no `done` listener ever registered, and `discard` refuses a non-orphan
+  // `progressing` entry. It would hold one of the four slots and its declared bytes against the
+  // 4 GiB ceiling until the app restarted, which is the "discard some to make room" way out being
+  // consumed by the failure it exists for.
+  const rigged = rig()
+  const item = new FakeItem({
+    filename: 'benchy.zip',
+    url: 'https://cdn.invalid/benchy.zip',
+    mimeType: 'application/zip',
+    totalBytes: 2 * GIB,
+    userGesture: true,
+  })
+  item.setSavePath = (): void => {
+    throw new Error('DownloadItem used after being destroyed')
+  }
+  const trigger = new FakeTrigger()
+
+  rigged.downloads.handleWillDownload(trigger, item as unknown as BrowseDownloadItem, {
+    getURL: () => 'https://www.thingiverse.com/thing:1234',
+  })
+
+  // Nothing staged, so nothing to discard and nothing holding either cap. The four slots and the
+  // 4 GiB are proved free by using them: four more downloads of 1 GiB each is both caps at once,
+  // and a module that kept the failed entry refuses the fourth on concurrency and the third on
+  // bytes.
+  assert.deepEqual(rigged.downloads.list(), [])
+  assert.equal(trigger.prevented, 1)
+  assert.equal(lastNotice(rigged).kind, 'refused')
+  for (let index = 0; index < MAX_CONCURRENT_DOWNLOADS; index += 1) {
+    assert.equal(start(rigged, { totalBytes: GIB }).item.savePaths.length, 1, `slot ${index}`)
+  }
+
+  // And the record written a moment earlier is still on disk (constraint 15): this process no
+  // longer knows what became of the bytes, so the next run surfaces the directory as unverifiable
+  // and the user decides. Deleting it here would be a deletion justified by timing.
+  const id = rigged.ids[0] as string
+  assert.equal(recordOf(rigged.stagingDir, id).state, 'progressing')
+})
+
 test('the cleanup after a failed record write removes only an empty directory', () => {
   // The other half of the sentence above, and the mutation it exists for: a cleanup that removed
   // the directory unconditionally would be a deletion justified by timing rather than by what is

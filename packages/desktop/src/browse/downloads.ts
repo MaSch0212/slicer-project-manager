@@ -430,8 +430,32 @@ export class BrowseDownloads {
       return
     }
 
+    // **`setSavePath` first, and the entry only if it returns.** Electron throws on a
+    // `DownloadItem` that has already been destroyed, and an entry set before the call would then
+    // be a `progressing` download no `done` ever reaches: `discard` refuses a non-orphan
+    // `progressing` entry, so it would hold one of the four concurrency slots *and* its declared
+    // bytes against the 4 GiB ceiling until the app restarted — which defeats "discard some to make
+    // room" for exactly the situation that produced it. Nothing else in this class can clear one.
+    try {
+      item.setSavePath(savePath)
+    } catch (error) {
+      // The directory and its `progressing` record stay where they are (constraint 15): this
+      // process no longer knows what Chromium did with the bytes, and a directory it cannot vouch
+      // for is one the next sweep surfaces as unverifiable and the user discards. What is *not*
+      // kept is the claim on the two caps, because nothing here will ever release it.
+      console.warn('desktop: a download could not be given its staged path', error)
+      // The same refusal the failed record write makes, for the same reason: a download this
+      // process cannot place is one it must not let Chromium finish somewhere else — the user's
+      // own Downloads folder is where an item with no save path goes.
+      event.preventDefault()
+      this.#notices.add(
+        'refused',
+        item.getFilename(),
+        'this download could not be started, and nothing was staged for it',
+      )
+      return
+    }
     this.#staged.set(downloadId, { record, isOrphan: false, isVerifiable: false, bytesOnDisk: 0 })
-    item.setSavePath(savePath)
 
     // In memory only. `updated` fires repeatedly with `getReceivedBytes()` populated, and the
     // `/browse` page polls `browse.downloads()` — a record rewrite per tick is five fsyncs on a
