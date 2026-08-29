@@ -424,6 +424,19 @@ idiom that carries the result back. The reach it severs is a reach that does not
 partition anyway. It stays recorded as the mechanism to use if E ever needs to allow a popup whose
 opener _does_ hold a bridge — which, by 3.4, is a configuration this design does not have.
 
+**The popup that _is_ allowed gets no hooks of its own.** The three navigation listeners and the
+window-open handler are attached to the browse view's `webContents` and to nothing else, so a popup
+approved above is a new `webContents` with neither: it may navigate wherever it likes and open
+further windows without E seeing either. That is written down rather than left to be discovered.
+Containment does not rest on it — the popup is created on the opener's session and is therefore in
+the browse partition (row 13), `spm://` is not served there (row 8), it has no preload of its own
+(row 14), and Chromium refuses a renderer-initiated navigation to an unregistered custom scheme
+without help from this app. What is missing is the refusal _record_: a scheme blocked inside a popup
+produces no `lastError` for the user. Attaching the listeners through `did-create-window` would not
+be a copy of the view's — the `navigate` arm loads into the _browse view_, which for a popup would
+destroy the sign-in the popup exists to carry — so it needs its own decision table and its own
+measurement. 9.19 carries it.
+
 **None of this has been run against a real login.** No account was created anywhere (§11.3), so the
 popup arm above is designed from the measured `window.open` table plus knowledge of the idiom, not
 from watching a sign-in complete. 9.12 records it and says the settling cost is one hand-driven login
@@ -454,6 +467,20 @@ _request_ handler alone, `navigator.permissions.query({ name: 'geolocation' })` 
 outright. So without the check handler a site reads a granted permission out of an API that never
 raises a request, and whatever it draws from that answer is a decision nobody refused. 9.5 is closed
 by this; Windows 11 only, as with everything else here.
+
+**Nothing installs a permission handler on `defaultSession`, and the measurement above applies to it
+too.** `grep -rn setPermissionRequestHandler packages/desktop/src` returns exactly one hit — the
+browse session, above. So the app's own session is the "neither handler" column of that table: a
+document on it that asks for geolocation or notifications is **granted, with no prompt**. This is
+recorded rather than fixed, and the reason is not that it does not matter. The exposure is bounded by
+what is on that session: the main window only ever loads `spm://app`, which is the app's own bundle,
+and every remote document E introduces is on the browse partition — so nothing a site controls is in
+a position to ask. And the one-line refusal is not free. `packages/web` calls
+`navigator.clipboard.writeText` (`users.page.ts:460`), and **whether this Electron raises
+`clipboard-sanitized-write` for it is unmeasured** — a blanket deny on `defaultSession` could
+therefore remove a working feature, with no Electron-level test in the suite that would notice.
+Refusing on the strength of an inference is the mistake this section exists to avoid. 9.20 carries it
+with the cost of settling it, and it is the shell's decision to take, not E's.
 
 ### 3.8 What the browse view does not inherit, and why that is fine
 
@@ -1463,3 +1490,19 @@ not.
     that an honest backlog is nowhere near them. Nothing measured bears on them. _To settle:_ they are
     constants in one place; if a real library pushes against them that is the measurement, and the
     constants move with it.
+19. **Should the popup the window-open handler allows be policed too?** **Open, and named in 3.6
+    rather than left silent.** An allowed popup is a `webContents` with no navigation policy and no
+    window-open handler of its own; containment holds without them (browse partition, no `spm://`,
+    no preload, and Chromium's own refusal of unregistered schemes), and what is missing is the
+    refusal record and a second line behind Chromium's. _To settle:_ it is not a copy of the view's
+    hooks — the `navigate` arm loads into the browse view, which for a popup would destroy the
+    sign-in it exists to carry — so it needs its own decision table, and the measurement that
+    motivates one is a real login (9.12) showing what a popup actually navigates to.
+20. **Should `defaultSession` have a permission handler?** **Open. The exposure is measured and
+    written down (3.7); the fix is not taken here.** The app installs none, so its own session is
+    the "neither handler" case: geolocation and notifications are granted with no prompt. Bounded by
+    the main window only ever loading `spm://app`. _To settle:_ one run with a _recording_ handler on
+    `defaultSession` while the app is exercised, to learn which permissions the app's own renderer
+    raises — `navigator.clipboard.writeText` in `users.page.ts:460` is the only known candidate and
+    it is **unmeasured** whether it raises `clipboard-sanitized-write` at all. A blanket deny written
+    without that reading is a change that can remove a working feature with nothing to catch it.
