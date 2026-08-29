@@ -1,7 +1,6 @@
 import { expect, test, type ElectronApplication, type Page } from '@playwright/test'
 import { rmSync } from 'node:fs'
 import { join } from 'node:path'
-import { DatabaseSync } from 'node:sqlite'
 import { binaryStl, cubeMesh } from '../../core/test/fixtures/make-mesh.ts'
 import {
   firstWindowOf,
@@ -10,7 +9,8 @@ import {
   SOFTWARE_WEBGL_ARGS,
   type SeedProject,
 } from './fixtures.ts'
-import { markPreviewReady, PREVIEW_HEIGHT, PREVIEW_RGB, PREVIEW_WIDTH } from './preview-fixture.ts'
+import { DEFAULT_SIZE } from '../../core/src/previews/raster.ts'
+import { PREVIEW_HEIGHT, PREVIEW_RGB, PREVIEW_WIDTH, seedReadyPreview } from './preview-fixture.ts'
 
 /**
  * File bytes over `spm://`, observed from inside the running app.
@@ -36,6 +36,24 @@ type Detail = {
   files: { id: string; name: string; rawUrl: string; thumbUrl?: string }[]
 }
 
+/**
+ * What Chromium makes of the bytes at `url`, as one number: the decoded width, or 0 for anything
+ * it could not turn into an image at all. Loaded into a detached `Image` rather than read off the
+ * page, so it asks about the URL and not about whichever element happens to be showing it.
+ */
+async function decodedWidth(page: Page, url: string): Promise<number> {
+  return await page.evaluate(async (target: string) => {
+    const image = new Image()
+    image.src = target
+    try {
+      await image.decode()
+    } catch {
+      return 0
+    }
+    return image.naturalWidth
+  }, url)
+}
+
 async function readDetail(page: Page): Promise<Detail> {
   const listed = (await page.evaluate(() => globalThis.spm.invoke('projects.list', [{}]))) as {
     value: { id: string }[]
@@ -54,25 +72,34 @@ test.describe('file bytes over spm://', () => {
   let detail: Detail
 
   test.beforeAll(async () => {
-    // The viewer tests at the bottom need a WebGL context, and the CI runner has no GPU.
-    ;({ app, libraryDir } = await launchApp(SEED, SOFTWARE_WEBGL_ARGS))
+    // The thumbnail the first two tests read, written **before the shell is started at all** —
+    // a real PNG at the real path with the real `ready` row, so nothing about
+    // `resolvePreviewPath` is stubbed.
+    //
+    // **Not after launch, and the reason is a regression rather than a preference.** This used to
+    // seed the row from the test, over a second connection, once the window was up; the comment
+    // beside it said the shell had no preview queue of its own because "task 4 owns the queue
+    // that would normally produce one". Task 4 shipped it. `LibraryHost.open()` now starts
+    // `startPreviewTicker` and fires its first tick before the adoption rescan, and core's chain
+    // rasterizes any `model` — so within a tick or two of launch `cube.stl` has a 256x256
+    // isometric render of its own, in this row and at this path. Whether the fixture or the queue
+    // wrote last then depended on how quickly the window became drivable, and on CI, where
+    // `firstWindowOf` spent fifteen seconds unsticking a window Playwright had not attached to,
+    // it was the queue: run 33247538991 painted 256 where these six pixels belong.
+    //
+    // Seeding here settles it by ordering rather than by speed — `claimPendingPreviews` takes
+    // `state = 'pending'` alone, so a row that is already `ready` before the process exists is
+    // invisible to every tick — and it settles the *cache* with it, which the database alone
+    // could not: a thumb is served `private, max-age=60` behind a URL that does not change with
+    // its bytes, and a renderer that once painted the queue's picture goes on painting it.
+    // Measured, when this was tried the other way round: neither `session.clearCache()` nor a
+    // reload got the new bytes back on screen.
+    ;({ app, libraryDir } = await launchApp(SEED, SOFTWARE_WEBGL_ARGS, undefined, (dir) =>
+      seedReadyPreview(dir, 'cube.stl'),
+    ))
     page = await firstWindowOf(app)
     await page.waitForLoadState('domcontentloaded')
     await page.evaluate(() => globalThis.spm.invoke('projects.rescan', []))
-    detail = await readDetail(page)
-
-    // The thumbnail this task serves. Task 4 owns the queue that would normally produce one, so
-    // the fixture writes a real PNG to the real path and sets the real `ready` row — nothing
-    // about `resolvePreviewPath` is stubbed. Written with a second connection while the app
-    // holds the library open, which is what the library's busy_timeout exists for.
-    const cube = detail.files.find((file) => file.name === 'cube.stl')!
-    const db = new DatabaseSync(join(libraryDir, '.spm', 'app.db'))
-    try {
-      markPreviewReady(db, libraryDir, cube.id)
-    } finally {
-      db.close()
-    }
-    await page.reload()
     await expect.poll(() => page.url()).toBe('spm://app/projects')
     detail = await readDetail(page)
   })
@@ -122,6 +149,33 @@ test.describe('file bytes over spm://', () => {
     const notes = page.locator('.spm-file', { hasText: 'notes.txt' })
     await expect(notes.locator('img')).toHaveCount(0)
     await expect(notes.locator('.spm-file-thumb')).toHaveText('Preview pending')
+  })
+
+  test('and the queue that would have overwritten it really is running in there', async () => {
+    // The control for the test above, and the reason it is a test rather than a comment: if the
+    // shell ever stopped rendering previews, `seedReadyPreview` would be getting in front of
+    // nothing and the assertion on those six pixels would be proving far less than it reads as.
+    //
+    // `ghost.stl` is the same bytes as `cube.stl`, seeded the same way, and *not* pre-seeded — so
+    // the only thing that can put a thumbnail behind it is `PREVIEW_HANDLERS`' rasterizer running
+    // inside this Electron process. Polled on the DTO rather than on the clock: the ticker's
+    // interval is five seconds and the first tick does not wait for it.
+    //
+    // Both files are read in one go, because the pair is the point. Measured with the seeding put
+    // back after launch and the CI ordering forced: `cube.stl` read 256 here too.
+    const thumbs = async (): Promise<Record<string, number | undefined>> => {
+      const files = (await readDetail(page)).files
+      const widths: Record<string, number | undefined> = {}
+      for (const name of ['cube.stl', 'ghost.stl']) {
+        const url = files.find((file) => file.name === name)?.thumbUrl
+        widths[name] = url === undefined ? undefined : await decodedWidth(page, url)
+      }
+      return widths
+    }
+    await expect.poll(thumbs, { timeout: 30_000 }).toEqual({
+      'cube.stl': PREVIEW_WIDTH,
+      'ghost.stl': DEFAULT_SIZE,
+    })
   })
 
   test('the project card shows the same thumbnail through coverThumbUrl', async () => {

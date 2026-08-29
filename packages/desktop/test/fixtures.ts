@@ -127,13 +127,26 @@ export function seedLibrary(libraryDir: string, seed: SeedProject[]): void {
   }
 }
 
+/**
+ * `prepare` is the folder's last moment alone.
+ *
+ * It runs after the seed is on disk and before Electron is started, which is the only window in
+ * which a test can put something into the library that the shell will then find rather than
+ * race. The shell starts its preview ticker inside `LibraryHost.open()` — before the adoption
+ * rescan, and with the first tick fired immediately — so a `previews` row written *after* launch
+ * is contested by the app's own queue, and one written here is not: `claimPendingPreviews` takes
+ * `state = 'pending'` alone, and only a rescan that sees the file's bytes change re-pends a row.
+ * `files.spec.ts` is the caller, and carries the rest of that reasoning.
+ */
 export async function launchApp(
   seed: SeedProject[] = [],
   chromiumArgs: string[] = [],
   userDataDir: string = newUserDataDir(),
+  prepare?: (libraryDir: string) => Promise<void> | void,
 ): Promise<LaunchedApp> {
   const libraryDir = mkdtempSync(join(tmpdir(), 'spm-desktop-'))
   seedLibrary(libraryDir, seed)
+  await prepare?.(libraryDir)
   const app = await electron.launch({
     args: [
       MAIN_BUNDLE,
