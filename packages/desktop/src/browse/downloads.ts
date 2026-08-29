@@ -254,6 +254,26 @@ export type StagedDownload = {
    * have.
    */
   hasRecord: boolean
+  /**
+   * The bytes on disk **as `isVerifiable` above was computed from them**, and never a fresh
+   * measurement.
+   *
+   * This is `Entry.bytesOnDisk`, which is the exact number handed to {@link vouchesForTheBytes} at
+   * both of the two sites that call it: `sizeOf(savePath)` in the `done` handler, and
+   * `sizeOf(join(directory, record.fileName))` in `#sweepOne`. It is here so that `land` can
+   * compare the `statSync` it already takes for the upload's declared size against the number the
+   * verdict was reached on — which is how a file truncated *after* the verdict and before the user
+   * clicks Land is refused (constraint 14), given that for a swept download the verdict is
+   * app-start time and `land` may run days later.
+   *
+   * **Not a second verdict, for the reason `hasRecord` is not one either.** An equality against
+   * `vouchesForTheBytes`'s own input is not a re-derivation of it: it needs no `observedTerminal`,
+   * it has no opinion about `state` or `totalBytes`, and it therefore refuses no `totalBytes: 0`
+   * download that the sweep's relaxation admits. A second copy of the *policy* in `land.ts` is the
+   * thing that would be one edit away from disagreeing with this one; a comparison of two numbers
+   * is not.
+   */
+  bytesOnDisk: number
 }
 
 /* -------------------------------------------------------------------------------------------
@@ -600,7 +620,9 @@ export class BrowseDownloads {
    * refuses any record whose `isVerifiable` is false *before* it opens a project — because a `false`
    * there means the bytes are byte-for-byte indistinguishable from a truncated download, and the
    * upload is the step after which nothing can be undone. `hasRecord` is there so that the refusal
-   * can say which of constraint 14's cases it was without branching on a stand-in field.
+   * can say which of constraint 14's cases it was without branching on a stand-in field, and
+   * `bytesOnDisk` so that it can tell that the file has changed since the verdict without
+   * re-deriving the verdict.
    */
   find(downloadId: string): StagedDownload | null {
     const entry = this.#staged.get(downloadId)
@@ -618,6 +640,7 @@ export class BrowseDownloads {
       isOrphan: entry.isOrphan,
       isVerifiable: entry.isVerifiable,
       hasRecord: entry.hasRecord,
+      bytesOnDisk: entry.bytesOnDisk,
     }
   }
 
@@ -784,10 +807,11 @@ export class BrowseDownloads {
  *   handler writes to — across a module boundary, to buy a shorter file. Widening the surface of
  *   the one type that carries the constraint-14 verdict is a bad trade for a line count.
  * - **Nothing else reads a staging directory.** A file earns its own module when a second caller
- *   needs half of it, and `browse/land.ts` reaches all of this through `find()`. If `land` turns out to
- *   need to re-read a record from disk at landing time — to re-verify after the user has had the
- *   app open for a week, say — that is a second caller and the measurement that justifies the
- *   split. Do it then, and not for the line count.
+ *   needs half of it, and `browse/land.ts` reaches all of this through `find()` — including the
+ *   land-time check that the bytes have not changed, which is an equality against
+ *   `StagedDownload.bytesOnDisk` and reads no directory. If `land` ever has to re-read a *record*
+ *   from disk, that is a second caller and the measurement that justifies the split. Do it then,
+ *   and not for the line count.
  * ---------------------------------------------------------------------------------------- */
 
 /**

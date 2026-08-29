@@ -33,6 +33,10 @@ import type { StagedDownload } from './downloads.ts'
  * of any kind — measured at 26 214 400 of 41 943 040 bytes. The verdict is `StagedDownload`'s, made
  * where the bytes were counted; this file reads it and never recomputes it, because a second copy of
  * `vouchesForTheBytes` here would be a second copy of the policy one edit away from disagreeing.
+ * What this file *does* add is that the verdict is still about the file on disk: the `stat` it takes
+ * for the upload's declared size is compared to `StagedDownload.bytesOnDisk`, the number the verdict
+ * was computed from, so a file edited between the two is refused. That is an equality against the
+ * policy's own input and not a second copy of the policy — see `land` below.
  *
  * ## What this file deliberately does not do
  *
@@ -42,13 +46,15 @@ import type { StagedDownload } from './downloads.ts'
  * This is the opposite of D's returning-file rule, and the difference is whose name it is: there the
  * app produced the file, here the user chose it.
  *
- * **It does not re-verify the bytes at landing time**, and that is a judgement with a cost. The
- * verdict was reached when the download finished, or at the sweep that found it; a file truncated on
- * disk *after* that and before the user clicks Land would be uploaded at its new size. The cost of
- * closing it is a second implementation of the verdict — `vouchesForTheBytes` needs the
- * `observedTerminal` bit, which is the sweep's to know and not this file's — and the exposure is a
- * staging directory edited under a running app. `discard` is the way out, and `browse/downloads.ts`
- * records where that re-verification would go if a measurement ever justifies it.
+ * **It does not re-run the verdict at landing time**, and that is a judgement with a cost. It
+ * checks that the bytes have not *changed* since the verdict — one equality, above — but it does
+ * not re-read `download.json` and does not call `vouchesForTheBytes` again, so a record edited on
+ * disk after the sweep read it is still landed on the reading the sweep took. Closing that would be
+ * a second implementation of the policy here: `vouchesForTheBytes` needs the `observedTerminal`
+ * bit, which is the sweep's to know and not this file's, and a copy of it that guessed would refuse
+ * every `totalBytes: 0` download the relaxation exists to admit. The exposure is a staging
+ * directory edited under a running app, `discard` is the way out, and `browse/downloads.ts` records
+ * where a record re-read would go if a measurement ever justifies it.
  *
  * ## What is injected, and why
  *
@@ -97,11 +103,17 @@ export class BrowseLanding {
   /**
    * Adds a staged download to a project as a new file, and removes the staging directory after.
    *
-   * **In this order, and the order is the whole of the data-loss rule.** The refusal comes before
-   * the name, the name before the `stat`, the `stat` before the upload, and the removal only once
-   * the upload has *returned*. A failed upload leaves the directory exactly where it was, so the
-   * user tries again rather than losing the download to an error — the same reasoning that makes
+   * **In this order, and the order is the whole of the data-loss rule.** Both halves of the
+   * refusal come first — the verdict, then the `stat` that checks the bytes are still the ones it
+   * was reached on — then the name, then the upload, and the removal only once the upload has
+   * *returned*. A failed upload leaves the directory exactly where it was, so the user tries again
+   * rather than losing the download to an error — the same reasoning that makes
    * `SlicerSessions.resolve` sweep after the import and not before it.
+   *
+   * The name is resolved *after* the size check and not before, for the reason the verdict comes
+   * before both: a name the user got wrong is a step that fails for a different reason, and a
+   * `Validation` about it would hide the fact that the archive on disk is no longer the archive
+   * that was vouched for.
    *
    * The id is never joined onto a path here. `find` looks it up in a map whose keys are directories
    * the main process enumerated or ids it minted, and answers `null` for anything else — so a
@@ -123,8 +135,21 @@ export class BrowseLanding {
     if (!staged.isVerifiable) {
       throw new AppError('Conflict', whyUnlandable(staged), { downloadId })
     }
-    const name = nameFor(staged, opts.name)
+    // **The second half of the same refusal, and it is one comparison.** The verdict above was
+    // reached against `staged.bytesOnDisk` — at `done`, or at a `sweep()` that ran when the app
+    // started, which may have been days ago. A staging file edited in that window is exactly the
+    // indistinguishable-from-truncated file constraint 14 is about, so the `stat` this line takes
+    // for the upload's declared size is compared to the number the verdict was computed from
+    // rather than being taken and thrown away. See `sizeOnDisk`.
     const sizeBytes = sizeOnDisk(staged.filePath)
+    if (sizeBytes !== staged.bytesOnDisk) {
+      throw new AppError(
+        'Conflict',
+        `that download is ${sizeBytes} bytes now and was ${staged.bytesOnDisk} when this app last checked it, so nothing can vouch for it`,
+        { downloadId },
+      )
+    }
+    const name = nameFor(staged, opts.name)
     const landed = await this.#upload(projectId, name, staged.filePath, sizeBytes)
     // Only now, and only for an upload that returned. See the docblock above.
     this.#downloads.remove(downloadId)
@@ -228,7 +253,8 @@ function nameFor(staged: StagedDownload, requested: string | undefined): string 
 }
 
 /**
- * The size to declare, **read off the file and never off the record**.
+ * The size to declare, **read off the file and never off the record** — and the same number
+ * constraint 14's second half is checked against.
  *
  * `totalBytes` is `0` for every server that sent no `content-length`, and a download with one of
  * those is landable — task 3's relaxation admits it after comparing the bytes Chromium counted
@@ -238,7 +264,9 @@ function nameFor(staged: StagedDownload, requested: string | undefined): string 
  *
  * A file that is no longer there is a `NotFound` rather than an `ENOENT` normalised to `Internal`:
  * the verdict was reached at the sweep or at `done`, and a user who deleted the staging directory
- * by hand since then has done something ordinary that the UI can say a sentence about.
+ * by hand since then has done something ordinary that the UI can say a sentence about. A file that
+ * is still there but is a *different size* than the verdict was reached on is the caller's
+ * `Conflict`, for the same reason and one step further along.
  */
 function sizeOnDisk(path: string): number {
   try {
