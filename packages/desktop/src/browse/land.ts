@@ -176,10 +176,12 @@ export class BrowseLanding {
  * wrong and can never make an unlandable download land.
  *
  * The four are the four `vouchesForTheBytes` and the sweep produce, in the order they are reached:
- * no record beside the bytes at all (which is also the unparseable one — same verdict, same
- * sentence, because a record that cannot be read is a record that is not there); a record that never
- * reached `completed`; a `completed` record whose server declared no size, which a sweep has nothing
- * to check against; and a `completed` record whose bytes are not the size it declared.
+ * **no record that could be read** — which is one sentence for two directories, one with no
+ * `download.json` beside the bytes at all and one whose `download.json` is unparseable or not the
+ * shape it claims, and it is phrased about the *reading* because that is the only one of the two
+ * this side can tell, and it is true of both; a record that never reached `completed`; a
+ * `completed` record whose server declared no size, which a sweep has nothing to check against; and
+ * a `completed` record whose bytes are not the size it declared.
  *
  * `hasRecord` is read rather than `state`, and that is the reason it exists: `unrecordedDownload`
  * fills in `state: 'interrupted'` as a stand-in and says in as many words that nothing may branch on
@@ -195,7 +197,7 @@ export class BrowseLanding {
  */
 function whyUnlandable(staged: StagedDownload): string {
   if (!staged.hasRecord) {
-    return 'there is nothing beside these bytes to say what they are or whether they are complete'
+    return 'no record of this download could be read, so nothing can say whether these bytes are complete'
   }
   if (staged.record.state !== 'completed') {
     return `that download ended as ${staged.record.state}, so its bytes are not the whole file`

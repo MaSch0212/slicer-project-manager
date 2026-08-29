@@ -256,8 +256,9 @@ test('land refuses all five unverifiable records without reading a byte, and lan
   const rigged = rig({ isRemote: true })
   // 1. Bytes with no record at all.
   stage(rigged.stagingDir, 'no-record', { fileName: 'benchy.zip', bytes: archive(2048) })
-  // 2. A record that cannot be parsed — the same verdict and the same sentence, because a record
-  //    that cannot be read is a record that is not there.
+  // 2. A record that cannot be parsed — the same verdict and the same sentence, which is phrased
+  //    about what could be *read* precisely so that it is true of this one as well as of the one
+  //    above it.
   stage(rigged.stagingDir, 'unparseable', {
     fileName: 'benchy.zip',
     bytes: archive(2048),
@@ -292,8 +293,8 @@ test('land refuses all five unverifiable records without reading a byte, and lan
   rigged.downloads.sweep()
 
   const expected: [string, RegExp][] = [
-    ['no-record', /nothing beside these bytes/],
-    ['unparseable', /nothing beside these bytes/],
+    ['no-record', /no record of this download could be read/],
+    ['unparseable', /no record of this download could be read/],
     ['progressing', /ended as progressing/],
     ['truncated', /not the 4096 bytes it declared/],
     ['no-length', /declared no size/],
