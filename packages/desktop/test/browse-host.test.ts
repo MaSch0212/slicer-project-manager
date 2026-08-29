@@ -694,6 +694,39 @@ test('navigate refuses a blocked URL in the main process, and loads nothing', ()
   )
 })
 
+/*
+ * **The refusal says so, and this is the path where it used to say nothing at all.**
+ *
+ * A navigation refused by one of the four hooks writes `describeRefusal` into `lastError`, so the
+ * chrome shows a sentence. A navigation refused *here* — the address control, the only way a user
+ * types a URL — threw before `#load`, and `#load` is the only other thing that touches
+ * `lastError`: typing `file:///C:/x` and pressing Go produced no visible change of any kind, which
+ * is the silence `notices.ts` exists to argue against, reached through the one path notices do not
+ * cover.
+ *
+ * The successful navigate at the end is not decoration: `#load` clears `lastError`, so this also
+ * says a refusal does not outlive the next page the user goes to.
+ */
+test('a navigation the policy refuses leaves the sentence the chrome renders', () => {
+  const { host } = rig()
+  host.attach(FULL)
+
+  assert.equal(rejects(() => host.navigate('bambustudio://open?model=1')).code, 'Validation')
+  assert.equal(host.state().lastError, 'the model browser does not open bambustudio: URLs')
+  // The scheme and never the URL: `lastError` is rendered in the privileged document and the URL
+  // is a stranger's, which is the rule `describeRefusal` carries for the hooks.
+  assert.equal(host.state().lastError?.includes('open?model=1'), false)
+
+  assert.equal(rejects(() => host.navigate('nope')).code, 'Validation')
+  assert.equal(
+    host.state().lastError,
+    'the model browser refused a navigation to a URL it could not parse',
+  )
+
+  host.navigate('https://cults3d.com/en/3d-model/various/hyper-hopper')
+  assert.equal(host.state().lastError, null)
+})
+
 test('the last page is remembered on a navigation that committed, and only for http(s)', () => {
   const { host, lastPageFile } = rig()
   host.attach(FULL)

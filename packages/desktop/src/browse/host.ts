@@ -460,10 +460,27 @@ export class BrowseHost {
    *
    * Constraint 13: the renderer never hands a URL to Chromium in the privileged document. A `url`
    * shown in the browse chrome is site-authored text, and the way to act on it is this call.
+   *
+   * **The refusal is recorded before it is thrown, and that is not belt-and-braces.** The four
+   * hooks below all set `#lastError` from `describeRefusal` and the renderer renders it, so a
+   * refusal reached through a *page* has a sentence. A refusal reached through the address control
+   * had none: this method throws **before** `#load`, which is the only other thing that touches
+   * `#lastError`, so typing `file:///C:/x` or `bambustudio://x` and pressing Go produced no visible
+   * change of any kind — the `Validation` was caught into a `console.error` in the renderer and the
+   * `lastError` line stayed empty. That is the silence `notices.ts` argues is unacceptable ("silence
+   * trains a user to believe the feature is broken"), reached through the one path the notices do
+   * not cover.
+   *
+   * Recording it here rather than translating the `Validation` in the renderer, because
+   * `describeRefusal` already writes this sentence for the four hooks and a second one in the
+   * renderer would be a second copy of the same explanation — with a scheme the renderer would have
+   * to re-parse out of a URL to say anything specific. The throw stays: `navigate` still fails, and
+   * a caller that awaits it still learns so.
    */
   navigate(url: string): BrowseStateDto {
     const view = this.#requireView()
     if (browseNavigationPolicy(url) === 'block') {
+      this.#lastError = describeRefusal(url)
       throw new AppError('Validation', 'that URL cannot be opened in the model browser')
     }
     this.#load(view, url)
