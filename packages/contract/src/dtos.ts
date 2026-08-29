@@ -391,7 +391,16 @@ export type BrowseDownloadDto = {
   /** Recorded and shown, never acted on. */
   hadUserGesture: boolean
   startedAt: number
-  /** True for a download staged by a previous run of the app. */
+  /**
+   * True for a download staged by a previous run of the app.
+   *
+   * **`state` alone does not say whether a row is running, and this field is the other half.** A
+   * kill mid-download leaves `isOrphan: true` with `state: 'progressing'`, because the record is
+   * rewritten only on `done` and no `done` ever came — so nothing is writing to it and its
+   * `receivedBytes` is frozen at whatever the last update said. A UI that reads `state` on its own
+   * shows such a row as running for ever and withholds the one control that removes it. See
+   * `discard`.
+   */
   isOrphan: boolean
   /** The record vouches for the bytes (5.3). `land` refuses a `false`; `discard` is the way out. */
   isVerifiable: boolean

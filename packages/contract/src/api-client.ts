@@ -323,6 +323,12 @@ export interface ApiClient {
      * nothing sweeps them, nothing expires them, and the start-up sweep enumerates rather than
      * tidies. Refuses `Conflict` for a download that is still running — removing the directory
      * would not stop Chromium writing to the path it was already given.
+     *
+     * **"Still running" is `!isOrphan && state === 'progressing'`, both halves.** An orphan whose
+     * record still says `progressing` is what a kill mid-download leaves and is *not* running:
+     * nothing in this process is writing to it, it can never reach a terminal state, and this call
+     * is the only thing that can ever remove it. A caller that gates on `state` alone offers no
+     * control for the one row that has no other way out — see `BrowseDownloadDto.isOrphan`.
      */
     discard(downloadId: string): Promise<void>
 
