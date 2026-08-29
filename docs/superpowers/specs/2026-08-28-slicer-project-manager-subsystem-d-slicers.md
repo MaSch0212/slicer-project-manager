@@ -906,13 +906,21 @@ one test), `:67` (a second `LOCAL_` deep-equal in the local-mode test), and `:78
 union, which now carries the two flags through). The `:110` test — "a backend cannot veto a
 capability the shell has" — keeps passing without edit, because it builds its own column with the
 three flags set; but its fixture stops distinguishing anything for the two rows D flips, and
-whoever touches that file should either re-point it at `canBrowseModelSites` (still false until E)
-or say in the test why it is now partly redundant.
+whoever touches that file ~~should either re-point it at `canBrowseModelSites` (still false until E)
+or say in the test why it is now partly redundant~~. **The first half was overtaken during E task 5,
+which flipped `canBrowseModelSites` true in both shell columns**
+(`packages/desktop/src/capabilities.ts`): there is no shell-owned flag left to re-point the veto
+test at, so the imperative is unfollowable rather than merely unfollowed. What was done instead is
+the second half: the test was rebuilt from literals — a shell column and a backend column written
+out in the test itself, rather than derived from the real columns — so that it keeps distinguishing
+the union from the backend's answer no matter which rows the shell later flips.
 
 ### 8.2 The seam: `SHELL_CLIENT`, not `API_CLIENT`
 
 Slicer operations reach the main process through `SHELL_CLIENT`
-(`packages/web/src/app/features/desktop/shell-client.token.ts`), not `API_CLIENT` (D-9).
+(~~`packages/web/src/app/features/desktop/shell-client.token.ts`~~ — that file no longer exists; the
+token moved and is now declared beside `API_CLIENT` in
+`packages/web/src/app/core/api/api-client.token.ts`), not `API_CLIENT` (D-9).
 
 Its docblock already explains why, and the reason applies here unchanged: `API_CLIENT` is whatever
 transport the _library_ is on, and in remote mode that is `HttpApiClient`. Slicer launching is a
