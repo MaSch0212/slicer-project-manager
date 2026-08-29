@@ -65,10 +65,10 @@ bounds what may reach it, and it bounds the _file_ rather than the cost — the 
 until the kernel has already done the expensive part.
 
 Two variables set the mesh ceiling, and they multiply: **`SPM_PREVIEW_CONCURRENCY` × one mesh**.
-The ~244 MB does not multiply with them. The
-defaults are sized for a 2 GB NAS with a 500 MB budget for the whole queue. Measured on Deno,
-backfilling a reference library of 1 725 models (402 3MF, 1 311 STL, 12 OBJ; largest mesh 209 MB,
-largest file a 164 MB STL, largest inflated model part 674 MB):
+The ~244 MB does not multiply with them. The defaults are sized for a 2 GB NAS with a 500 MB
+budget for the whole queue. Measured on Deno, backfilling a reference library of 1 725 models
+(402 3MF, 1 311 STL, 12 OBJ; largest mesh 209 MB, largest file a 164 MB STL, largest inflated
+model part 674 MB):
 
 | `SPM_PREVIEW_CONCURRENCY` | peak RSS   | wall time for the whole library |
 | ------------------------- | ---------- | ------------------------------- |
@@ -109,15 +109,15 @@ nobody has measured a process that does both. The direction is up and the shape 
 the number is not claimed.
 
 **Moving to a bigger machine.** Say a Mac mini where you are happy to give the preview queue 2 GB.
-Solving `2000 = c × (m + 80) + 120` leaves you a choice, and the table above says which way to
-spend it (if the library holds STEP files and you are going past one worker, take the ~244 MB off
-the budget before solving): extra workers buy almost nothing, extra ceiling buys headroom for models you do not have
-yet. So `SPM_MAX_MESH_MB=1024` on its own comes to 1 224 MB and lets through a 28-million-triangle
-STL, or a 14-million-triangle 3MF whose vertex table doubles the cost per triangle — either way
-several times anything in a normal library — while `SPM_PREVIEW_CONCURRENCY=3` with
-`SPM_MAX_MESH_MB=512` comes to 1 896 MB for a backfill that finishes at about the same time.
-Prefer the first. Nothing goes wrong if you change neither: the defaults are safe everywhere, they
-are merely cautious off the NAS.
+Solving `2000 = c × (m + 80) + 120` leaves you a choice — and if the library holds STEP files and
+you are going past one worker, take the ~244 MB off the budget before solving. The table above
+says which way to spend it: extra workers buy almost nothing, extra ceiling buys headroom for
+models you do not have yet. So `SPM_MAX_MESH_MB=1024` on its own comes to 1 224 MB and lets
+through a 28-million-triangle STL, or a 14-million-triangle 3MF whose vertex table doubles the
+cost per triangle — either way several times anything in a normal library — while
+`SPM_PREVIEW_CONCURRENCY=3` with `SPM_MAX_MESH_MB=512` comes to 1 896 MB for a backfill that
+finishes at about the same time. Prefer the first. Nothing goes wrong if you change neither: the
+defaults are safe everywhere, they are merely cautious off the NAS.
 
 `SPM_MAX_MESH_MB` is a backstop rather than a tuning knob: it exists so that a corrupt or hostile
 file declaring a billion triangles is refused instead of allocating 36 GB. Leave it alone unless a
