@@ -117,7 +117,7 @@ Every row was run and observed on one Windows 11 machine against the repo's own
 | 22  | Is the download URL always re-requestable?                         | **No.** Thingiverse's was a `blob:` — `getURL()` = `blob:https://www.thingiverse.com/ae5e…`, the whole chain. A "capture the URL now, fetch it later" design fails there.                                               | §8      |
 | 23  | Where does the filename come from?                                 | **`getFilename()`.** `getContentDisposition()` was an **empty string** on the real download; `getETag()` and `getLastModifiedTime()` were empty on every download measured. `getFilename()` was populated and sane.     | §6, §8  |
 | 24  | Is progress observable?                                            | **Yes.** `updated` fired 5 times on both a 300 KB local file and the 21 MB real one, `getReceivedBytes()`/`getPercentComplete()` advancing 0 → 100; `done` once with `completed`.                                       | §6      |
-| 25  | Is a scripted download distinguishable from a user click?          | **Partly.** `hasUserGesture()` is `false` for `webContents.downloadURL()` and `true` for a real click — but also `false` for a click driven by `executeJavaScript`.                                                     | §6, §12 |
+| 25  | Is a scripted download distinguishable from a user click?          | **No.** `hasUserGesture()` is `false` for `webContents.downloadURL()` and `true` for a real click — but a scripted click reports whichever `executeJavaScript(source, userGesture)` asked for. See 5.2.                 | §6, §12 |
 | 26  | Do the four sites load as top-level `WebContentsView`s?            | **Yes, all four**, with real titles — the same four URLs that were refused as iframes. See 1.3.                                                                                                                         | §7      |
 | 27  | Is there an interstitial, and does it clear?                       | **Printables and Cults3D answer 403 with Cloudflare's "Just a moment…"**, clearing to the real page in **5 573 ms** and **6 374 ms** under a 2 s poll. **No CAPTCHA was presented and none was solved.**                | §10     |
 | 28  | Does the user agent matter?                                        | **Not shown to.** A spoofed plain-Chrome UA still saw the interstitial; the default Electron UA cleared it. The difference between the runs was the polling wait. **Do not claim the UA must be spoofed.**              | §10     |
@@ -766,9 +766,12 @@ failure mode with a plausible innocent explanation, which is the worst kind.
 
 **Not refused: `hasUserGesture() === false`.** It is recorded on the download record and shown, never
 acted on. Row 25 is why: the flag distinguishes `webContents.downloadURL()` from a real click, but a
-click driven by `executeJavaScript` also reports `false` — so it is evidence about how a download
-started and not a verdict, and refusing on it would silently break sites whose download button is a
-scripted `blob:` construction. Which is Thingiverse's, the one download that was actually measured.
+scripted click reports ~~`false` as well~~ **whichever the driver asked for** — withdrawn and
+corrected in task 3, which measured that `executeJavaScript(source, userGesture)` is what decides it
+(`packages/desktop/test/browse.spec.ts:665-672`). The rule is unchanged and better justified: the
+flag is evidence about how a download started, it can be made to say either thing, and it is never a
+verdict. Refusing on it would also silently break sites whose download button is a scripted `blob:`
+construction. Which is Thingiverse's, the one download that was actually measured.
 
 ### 5.3 Where the bytes go, and the record beside them
 

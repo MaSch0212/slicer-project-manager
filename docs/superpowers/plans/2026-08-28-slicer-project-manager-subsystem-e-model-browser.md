@@ -568,9 +568,12 @@ plain `node --test` against a temporary directory, with the `DownloadItem` surfa
 | Single download                     | 2 GiB | Above any observed model archive, below a staging directory becoming a problem |
 
 - [ ] **Not refused: `hasUserGesture() === false`.** It is recorded on the record and shown, never
-      acted on. The flag distinguishes `webContents.downloadURL()` from a real click, but a click driven
-      by `executeJavaScript` also reports `false` — so it is evidence about how a download started and
-      not a verdict, and refusing on it would break sites whose download button is a scripted `blob:`
+      acted on. The flag distinguishes `webContents.downloadURL()` from a real click, but a scripted
+      click reports ~~`false` as well~~ **whichever the driver asked for** — withdrawn during task 3,
+      which measured that `executeJavaScript(source, userGesture)` is what decides it
+      (`packages/desktop/test/browse.spec.ts:665-672`). The rule stands and is better justified: it is
+      evidence about how a download started, it can be made to say either thing, and it is never a
+      verdict. Refusing on it would also break sites whose download button is a scripted `blob:`
       construction. Which is Thingiverse's, the one download that was actually measured.
 - [ ] The filename is **`item.getFilename()`**, sanitised through the same rules `files.upload` applies
       (core's `safeJoin` refuses separators and traversal), because the name comes from a remote server.
