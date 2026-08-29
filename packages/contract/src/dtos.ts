@@ -373,7 +373,14 @@ export type BrowseDownloadDto = {
   fileName: string
   /** `getURL()` — which may be a `blob:`. For display and attribution only. */
   sourceUrl: string
-  /** The page the view was on when it started. This is what matching uses, never `sourceUrl`. */
+  /**
+   * The page the view was on when it started. This is what matching uses, never `sourceUrl`.
+   *
+   * **`null` for a download a popup started**, measured: such a download is staged, verifiable and
+   * landable with *no attribution at all* — `siteId` is null too — so matching has no input and the
+   * user names the project. The UI renders this as its own case and never as a blank field or an
+   * empty link (spec 6.3).
+   */
   pageUrl: string | null
   siteId: string | null
   mimeType: string
@@ -386,7 +393,7 @@ export type BrowseDownloadDto = {
   startedAt: number
   /** True for a download staged by a previous run of the app. */
   isOrphan: boolean
-  /** The sweep could not vouch for the bytes. `land` refuses it; `discard` is the way out. */
+  /** The record vouches for the bytes (5.3). `land` refuses a `false`; `discard` is the way out. */
   isVerifiable: boolean
 }
 

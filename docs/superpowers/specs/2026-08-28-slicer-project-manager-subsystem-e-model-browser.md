@@ -1030,6 +1030,22 @@ Two or more projects sharing a `matchKey` is possible — nothing in the schema 
 with the same `website`. All of them are offered, ordered by name. This is not an error condition and
 is not reported as one.
 
+**`pageUrl` can be `null`, and matching then has no input at all.** Measured in task 3 and not
+predicted here: a download a **popup** started carries the _popup's_ `webContents`, and a popup whose
+navigation became a download never committed a document, so its `getURL()` is the empty string —
+recorded as `null`, with `siteId: null` beside it. `window.open(blobUrl)` produces exactly this, and
+the resulting download is staged, **verifiable and landable with zero attribution**
+(`packages/desktop/test/browse.spec.ts`, the popup idiom). Reaching the opener's URL instead is open
+question 9.19's territory (an allowed popup gets none of this subsystem's hooks) and no route to it
+has been measured.
+
+So this is not a rare edge for the landing UI to fall through into. **A `pageUrl` of `null` must be
+handled as its own case**, distinct from a `pageUrl` that matched nothing: the "choose a project"
+control above is the whole of the answer, there is no canonical URL to set as a new project's
+`website`, and nothing may render a blank field, an empty link or the word "null" where a page would
+otherwise be named. The rule every other string out of the browse view carries — render as text —
+does not cover a string that is absent.
+
 ### 6.4 Where matching runs
 
 **In the renderer, over `projects.list`, and nowhere else.**
@@ -1229,9 +1245,12 @@ BrowseDownloadDto {
   /** True for a download staged by a previous run of the app (5.3). */
   isOrphan: boolean
   /**
-   * The sweep could vouch for the bytes (5.3). **`land` refuses a `false`, and `discard` is the
-   * only way out of one.** Not in the first draft of this block: 5.3 already required the sweep
-   * to make this judgement, and without a field for it the judgement reached nothing.
+   * The record vouches for the bytes (5.3). `land` refuses a `false`; `discard` is the way out.
+   *
+   * One sentence, and it is the same one `dtos.ts` carries — the brief asked for this block
+   * verbatim and the two were written in opposite polarity, which is the beginning of two rules.
+   * Not in the first draft of this block: 5.3 already required the sweep to make this judgement,
+   * and without a field for it the judgement reached nothing.
    */
   isVerifiable: boolean
 }
@@ -1253,6 +1272,9 @@ nothing. What 6.2 matches on is **the page the browse view was on when the downl
 off the view's own `webContents` inside the `will-download` handler. Conflating the two is the defect
 this pair of fields exists to prevent, and it would have shipped: the obvious field to match on is
 the one the `DownloadItem` hands you.
+
+**And `pageUrl` is nullable for a reason the UI has to render**, not merely for tidiness: a
+popup-initiated download has none, and is landable anyway. See 6.3.
 
 ### 7.4 `/browse` and the routes
 
