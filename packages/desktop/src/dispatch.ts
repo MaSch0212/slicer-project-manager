@@ -826,22 +826,29 @@ export const dispatch: DispatchTable = {
    * it would be over HTTP. It is optional because the name the download arrived under is the
    * default, and that one is validated where the record is read.
    *
-   * **Two things about this schema differ from the two entries above**, and both came from the
-   * task brief verbatim rather than being chosen here, so they are written down rather than left
-   * for a reader to wonder about:
+   * **`downloadIdSchema` in the first position and `idSchema` in the second**, because they are
+   * two different kinds of id. The task brief specified `idSchema` for both; that was wrong, and
+   * the reason is in `downloadIdSchema`'s own docblock: a download id is also a directory name
+   * under `model-downloads`, **which is where the sweep gets the ones it did not mint**, so the
+   * value can arrive from the filesystem rather than from a `randomUUID`. `land` reads the same
+   * `#staged` map `discard` does, so bounding it at 64 here would make a swept directory with a
+   * 65-to-512-character name one that `downloads()` lists, `discard()` accepts and `land()`
+   * answers `Validation` about — the same object landable by one route and not the other. A
+   * `projectId` has no such second origin: it is core's own id and `idSchema` is its bound.
    *
-   * - `idSchema` bounds the download id at 64 characters where `browse.discard` uses
-   *   `downloadIdSchema`'s 512. Every id this app mints is a `randomUUID` — 36 characters — so the
-   *   only directory this can reach is one somebody put under `model-downloads` by hand, or one a
-   *   future build named differently; such a directory is listable and discardable but answers
-   *   `Validation` here instead of the `Conflict` or `NotFound` it would otherwise get.
-   * - `z.object` strips a key this validation was not written for, where `slicers.open`'s
-   *   `z.strictObject` refuses one. Nothing reads the stripped key, and the object has exactly one
-   *   field, so what it costs is the refusal — not a field reaching anything.
+   * `z.strictObject` for the options, for the reason `browseBoundsSchema` gives: a key this
+   * validation was not written for is a refusal rather than a silently dropped field. With
+   * `z.object` a renderer sending `{ name: 'a.zip', localPath: 'C:\\…' }` would be accepted and the
+   * second key dropped without a word — which reads, to whoever wrote it, as though the path had
+   * been honoured.
    */
   'browse.land': shellCall<'browse.land', [string, string, { name?: string }?]>(
     'browse.land',
-    z.tuple([idSchema, idSchema, z.object({ name: fileNameSchema.optional() }).optional()]),
+    z.tuple([
+      downloadIdSchema,
+      idSchema,
+      z.strictObject({ name: fileNameSchema.optional() }).optional(),
+    ]),
     (shell, downloadId, projectId, opts) => shell.browse.land(downloadId, projectId, opts),
   ),
 
