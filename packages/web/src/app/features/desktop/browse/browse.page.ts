@@ -4,6 +4,7 @@ import {
   Component,
   computed,
   DestroyRef,
+  effect,
   inject,
   signal,
   viewChild,
@@ -438,14 +439,26 @@ function classifyLandFailure(error: unknown): LandFailure {
 
         @if (landing(); as item) {
           <!--
-            The landing panel. It is a modal in the only sense that matters here: the native view is
-            hidden while it is up ("onOpenLanding"), and put back when it closes. Its shape is
-            "choose a project" with "create a new project" beside it, never a fallback reached after
-            a failure — a first-time download matches nothing by definition, because the project
-            does not exist yet, which is why the user was on the site.
+            The landing panel. Its shape is "choose a project" with "create a new project" beside
+            it, never a fallback reached after a failure — a first-time download matches nothing by
+            definition, because the project does not exist yet, which is why the user was on the
+            site.
+
+            **A labelled section, and deliberately not a dialog with aria-modal.** It is a modal in
+            exactly one sense — the native view is hidden while it is up ("onOpenLanding") and put
+            back when it closes — and that sense is about the *view*, not about the page.
+            Everything outside this section stays rendered, focusable and operable: the toolbar
+            really does drive the hidden view, every notice keeps its dismiss and make-room
+            controls, every download row keeps its discard. There is no focus trap, no inert
+            subtree, no Escape handling and no focus move into the panel, so an aria-modal of true
+            would tell assistive technology that all of that is inert — a claim this code does not
+            back, which is a lying docblock expressed in ARIA. Making it true is not a cheap
+            attribute: it needs focus management plus the surrounding chrome disabled, and then a
+            toolbar that drives a hidden view has to go too. The honest version is a region named
+            by its own heading.
           -->
-          <section class="spm-card spm-stack" role="dialog" aria-modal="true">
-            <h2 class="spm-code">{{ truncate(item.fileName) }}</h2>
+          <section #panel class="spm-card spm-stack" aria-labelledby="browse-landing-title">
+            <h2 id="browse-landing-title" class="spm-code">{{ truncate(item.fileName) }}</h2>
             @if (item.pageUrl; as page) {
               <p class="spm-muted">
                 {{ t.translations().browse.fromPage | interpolate: { url: truncate(page) } }}
@@ -547,11 +560,23 @@ function classifyLandFailure(error: unknown): LandFailure {
         }
 
         @if (landed(); as result) {
-          <section class="spm-card spm-stack" role="dialog" aria-modal="true">
-            <p>
+          <!--
+            Labelled by its own sentence, and not a dialog: see the landing panel above for why
+            "aria-modal" would be a claim nothing on this page backs.
+
+            "projectName" is truncated too, and it is the one string here that constraint 13 does
+            not reach: it is the library's, not a site's. It is bounded anyway because it is still
+            *someone's typing* of arbitrary length, and this sentence sits beside a truncated file
+            name — an unbounded half would re-lay-out the panel that the other half was bounded to
+            protect. Nothing is lost: the sentence's job is to name the project, and 160 characters
+            names it.
+          -->
+          <section #panel class="spm-card spm-stack" aria-labelledby="browse-landed-title">
+            <p id="browse-landed-title">
               {{
                 t.translations().browse.landed
-                  | interpolate: { name: truncate(result.file.name), project: result.projectName }
+                  | interpolate
+                    : { name: truncate(result.file.name), project: truncate(result.projectName) }
               }}
             </p>
             @if (isArchive(result.file.name)) {
@@ -604,6 +629,12 @@ export class DesktopBrowsePage {
   }
 
   private readonly viewport = viewChild<ElementRef<HTMLElement>>('viewport')
+
+  /**
+   * Whichever of the two panels is up, or `undefined`. One ref name for both because they are
+   * mutually exclusive: `#land` clears `#landing` before it sets `#landed`.
+   */
+  private readonly panel = viewChild<ElementRef<HTMLElement>>('panel')
 
   // Writable in here, readable everywhere else — `CapabilitiesStore`'s convention.
   readonly #state = signal<BrowseStateDto | null>(null)
@@ -690,6 +721,20 @@ export class DesktopBrowsePage {
     // line no test could ever reach.
     afterNextRender(() => void this.#open().then(settle))
     inject(DestroyRef).onDestroy(() => this.#close())
+    // A panel that opened is a panel that has to be visible. The placeholder above it is
+    // `min-height: 60vh` and stays in flow while the view is hidden, so on a short window a panel
+    // opens below a screenful of empty dashed box and the click reads as having done nothing. The
+    // view is hidden whenever a panel is up, so nothing is scrolled out from under it.
+    //
+    // `block: 'nearest'` scrolls the least that works, and is a no-op when the panel is already on
+    // screen. Guarded because jsdom does not implement `scrollIntoView` at all, the same shape as
+    // the `ResizeObserver` guard in `#open`.
+    effect(() => {
+      const element = this.panel()?.nativeElement
+      if (element && typeof element.scrollIntoView === 'function') {
+        element.scrollIntoView({ block: 'nearest' })
+      }
+    })
   }
 
   protected readonly displayUrl = computed(() => {

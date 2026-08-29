@@ -560,6 +560,56 @@ describe('DesktopBrowsePage', () => {
     })
 
     /*
+     * The placeholder above the panels is `min-height: 60vh` and stays in flow while the view is
+     * hidden, so on a short window a panel opens below a screenful of empty dashed box and the
+     * click reads as having done nothing at all.
+     *
+     * jsdom implements no scrolling and does not define `scrollIntoView`, which is why the page
+     * guards the call — so the assertion is that the call is made, on the panel, with the argument
+     * that scrolls the least.
+     */
+    it('scrolls an opened panel into view, past the screenful of placeholder above it', async () => {
+      const scrolled = vi.fn()
+      Element.prototype.scrollIntoView = function (this: Element, ...args: unknown[]): void {
+        scrolled(this, ...args)
+      } as never
+      onTestFinished(() => {
+        delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView
+      })
+      const { fixture, page } = await setup({ downloads: [download()] })
+
+      await page.onOpenLanding(download())
+
+      const panel = host(fixture).querySelector('[aria-labelledby="browse-landing-title"]')
+      expect(panel).not.toBeNull()
+      expect(scrolled).toHaveBeenCalledWith(panel, { block: 'nearest' })
+    })
+
+    /*
+     * **The panels claim no modality, because nothing here implements any.**
+     *
+     * Both are inline sections in the page flow. While either is up everything outside stays
+     * rendered, focusable and operable — the toolbar really does drive the hidden view — and there
+     * is no focus trap, no inert subtree, no Escape handling and no focus move into the panel. An
+     * `aria-modal="true"` would tell assistive technology that all of that is inert, which is a
+     * lying docblock expressed in ARIA rather than in a comment. Asserted as **no `role="dialog"`
+     * and no `aria-modal` attribute anywhere**, plus the fact the claim would deny: a control
+     * outside the panel that is still enabled.
+     */
+    it('labels the landing panel as a region and claims no modality it does not implement', async () => {
+      const { fixture, page, translate } = await setup({ downloads: [download()] })
+
+      await page.onOpenLanding(download())
+
+      const root = host(fixture)
+      expect([...root.querySelectorAll('[role="dialog"]')]).toEqual([])
+      expect([...root.querySelectorAll('[aria-modal]')]).toEqual([])
+      expect(root.querySelector('[aria-labelledby="browse-landing-title"]')).not.toBeNull()
+      // The claim aria-modal would make, measured: the chrome outside is still operable.
+      expect(buttonNamed(fixture, translate.translations().browse.reload)?.disabled).toBe(false)
+    })
+
+    /*
      * Spec 6.4: matching runs in the renderer, over the project list the picker needs anyway, and
      * `includeArchived` is not incidental — a project the user archived is still the project this
      * model belongs to, and landing into it beats a duplicate beside it.

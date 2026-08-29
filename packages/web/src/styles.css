@@ -673,6 +673,13 @@ h2.spm-project-title {
  * The dashed border is what the user sees before the first paint and while the view is hidden for
  * a modal, so an empty box reads as a place a page will be rather than as a rendering failure.
  */
+/* The rectangle the native browse view is given, and the only thing this page knows about where
+   that view goes. It stays in flow while the view is hidden for a panel, which is why the page
+   scrolls a panel into view when it opens.
+
+   `60vh` crosses `BROWSE_MIN_AREA`'s 200 px (`packages/desktop/src/browse/host.ts`) at a window
+   about 333 px tall, below which the shell hides the view rather than shrinking it. That is
+   designed behaviour, not a bound this value has to respect, and nothing exercises it. */
 .spm-browse-viewport {
   min-height: 60vh;
   border: 1px dashed var(--jig-color-border);
