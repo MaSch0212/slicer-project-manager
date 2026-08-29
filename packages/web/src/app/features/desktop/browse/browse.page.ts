@@ -41,9 +41,20 @@ import { TranslateService } from '../../../core/i18n/translate.service'
 /**
  * How often the page asks the shell what the view is doing.
  *
- * A poll rather than a push, because there is no IPC channel back and `slicer-sessions.card.ts`
- * already answers the same question the same way. Spec 4.5's rule is that the app waits on a
- * **navigation** and not on a timer, and this number is only how promptly the answer is noticed.
+ * A poll rather than a push, because the view's state changes without the renderer having done
+ * anything — a site navigates itself, a load finishes, a download starts — and there is no IPC
+ * channel back from the main process to say so.
+ *
+ * **This is the app's first background timer, and there is no idiom here to inherit.** Outside a
+ * spec, `setInterval` appears in exactly one file under `packages/web/src/app`, and it is this one.
+ * `slicer-sessions.card.ts` is the other page that re-asks the shell for something that moves
+ * underneath it, and it does *not* answer the question this way: it re-asks when the user presses
+ * its refresh control. So nothing about this timer is unremarkable — one that outlives its
+ * component keeps making three IPC calls a tick for the life of the window, which is why the page's
+ * `#open` checks its `#destroyed` flag after every await before it schedules this.
+ *
+ * Spec 4.5's rule is that the app waits on a **navigation** and not on a timer, and this number is
+ * only how promptly the answer is noticed.
  */
 export const BROWSE_POLL_MS = 500
 
@@ -85,7 +96,10 @@ export const BROWSE_TEXT_MAX = 160
  * process, which spec 6.4 rejects for a list the page is fetching anyway.
  *
  * **What it costs, exactly.** With no rows, every key is `matchKey`'s fallback: lowercased
- * `host + pathname`, with the query and the fragment already dropped. That is *narrower*, never
+ * `hostname + pathname`, with any port joined on as `_<port>` and the query and the fragment
+ * already dropped. `hostname` and not `host`, which is the distinction `match-key.ts`'s port note
+ * turns on: a port rendered `hostname:port` would let a crafted `website` synthesise a registry
+ * key. That is *narrower*, never
  * wider — `matchKey` is total and errs towards not matching — so this cannot produce a wrong
  * match, only fewer right ones. It matches a stored `website` against a browsed URL for
  * Thingiverse's `thing:<id>` shape, for a trailing slash either way, and across `?lang=`,

@@ -505,7 +505,8 @@ describe('DesktopBrowsePage', () => {
      * `matchKey` matches on `ModelSiteIdentity`, whose `identity` is a function; `browse.sites()`
      * answers `ModelSiteDto`, which deliberately carries no `hosts` and no `identity`, because a
      * function cannot cross IPC. So the renderer has no registry rows and every key it computes is
-     * `matchKey`'s fallback — lowercased `host + pathname`.
+     * `matchKey`'s fallback — lowercased `hostname + pathname`, with any port joined on as
+     * `_<port>` rather than `:<port>`.
      *
      * The fallback spans a query and a fragment (asserted above, with the measured
      * `?from=recommend`) and does **not** span MakerWorld's locale *path* segment, which is a
