@@ -81,6 +81,13 @@ function signOutButtons(fixture: { nativeElement: unknown }): NodeListOf<Element
   return (fixture.nativeElement as HTMLElement).querySelectorAll('[aria-label="Sign out"]')
 }
 
+/** The model-browser link, found by where it goes rather than by what it says. */
+function browseLinks(fixture: { nativeElement: unknown }): HTMLAnchorElement[] {
+  return [...(fixture.nativeElement as HTMLElement).querySelectorAll('a')].filter(
+    (anchor) => anchor.getAttribute('href') === '/browse',
+  )
+}
+
 function changeFolderButtons(fixture: { nativeElement: unknown }): NodeListOf<Element> {
   return (fixture.nativeElement as HTMLElement).querySelectorAll(
     '[aria-label="Change library folder"]',
@@ -174,6 +181,33 @@ describe('App', () => {
     expect(app.changeFolderFailed()).toBe(true)
     fixture.detectChanges()
     expect((fixture.nativeElement as HTMLElement).querySelector('[role="alert"]')).not.toBeNull()
+  })
+
+  /**
+   * Spec E 7.4's link, and the whole of how a desktop-only route reaches shared code: a
+   * `routerLink` string gated on a capability, and nothing imported from `features/desktop/`.
+   *
+   * Asserted on the rendered anchor and its `href` rather than on the signal, because the signal
+   * being true proves nothing about whether the template reads it — and the route does not exist
+   * in the web build at all, so a link rendered there would fall through to the `**` redirect.
+   * Both directions, so the pair pins the expression rather than today's value of the flag.
+   */
+  it('offers no model-browser link where the shell cannot embed one', async () => {
+    const { fixture } = await setup()
+    fixture.detectChanges()
+    expect(browseLinks(fixture)).toHaveLength(0)
+  })
+
+  it('offers the model-browser link where the shell can embed one', async () => {
+    const { fixture } = await setup(undefined, {
+      ...WEB_CAPABILITIES,
+      canBrowseModelSites: true,
+    })
+    fixture.detectChanges()
+
+    const links = browseLinks(fixture)
+    expect(links).toHaveLength(1)
+    expect(links[0]?.getAttribute('href')).toBe('/browse')
   })
 
   it('surfaces a failed sign-out in a role="alert" instead of rejecting', async () => {

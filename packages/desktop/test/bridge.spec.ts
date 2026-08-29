@@ -61,9 +61,70 @@ test.describe('the IPC bridge', () => {
         canPickLocalFolder: true,
         canLaunchSlicer: true,
         canConfigureSlicers: true,
-        canBrowseModelSites: false,
+        canBrowseModelSites: true,
       },
     })
+  })
+
+  /*
+   * Spec E 7.4's link, in the running shell rather than in a TestBed.
+   *
+   * The unit pair in `packages/web/src/app/app.spec.ts` pins the expression; this pins that the
+   * route it names exists in the build the shell actually loads, which is the half a renderer
+   * spec cannot see — `routes.electron.ts` is swapped in by `fileReplacements`, and a link to a
+   * route that had not been added would fall through to the `**` redirect with nothing red.
+   */
+  test('the model browser is offered, and its route is one the electron build has', async () => {
+    const link = page.getByRole('link', { name: 'Find models' })
+    await expect(link).toHaveCount(1)
+
+    await link.click()
+
+    await expect.poll(() => page.url()).toBe('spm://app/browse')
+    // The page itself, rather than the `**` redirect back to /projects.
+    await expect(page.locator('app-desktop-browse-page')).toHaveCount(1)
+
+    /*
+     * **The view really attached**, which the page mounting does not say: `attach` failing leaves
+     * the component on screen under its own banner. Read from the shell rather than from the DOM,
+     * because `attached` is the main process's answer and the renderer only mirrors it.
+     */
+    await expect
+      .poll(async () =>
+        page.evaluate(async () => {
+          const answer = (await globalThis.spm.invoke('browse.state', [])) as {
+            ok: boolean
+            value?: { attached: boolean }
+          }
+          return answer.ok && answer.value?.attached === true
+        }),
+      )
+      .toBe(true)
+
+    // **Put the window back where this test found it.** The `page` is shared across this
+    // describe's tests by `beforeAll`, so leaving it on /browse left the next test looking for a
+    // project list on a page that has none — measured, by leaving it. Returning here is ordering
+    // this test controls, which is the alternative to giving every test its own shell launch.
+    await page.getByRole('link', { name: 'Projects' }).click()
+    await expect.poll(() => page.url()).toBe('spm://app/projects')
+
+    /*
+     * **And the view is gone**, which is spec 4.3's whole point and the one property no renderer
+     * spec can reach: Angular unmounting the component does nothing at all to a native sibling
+     * view, so a `detach` that never ran would leave a third-party page painted over the project
+     * list above. Asserted here, after the route change, against the main process's own answer.
+     */
+    await expect
+      .poll(async () =>
+        page.evaluate(async () => {
+          const answer = (await globalThis.spm.invoke('browse.state', [])) as {
+            ok: boolean
+            value?: { attached: boolean }
+          }
+          return answer.ok && answer.value?.attached === false
+        }),
+      )
+      .toBe(true)
   })
 
   test('the project list renders the library that was on disk before the app started', async () => {

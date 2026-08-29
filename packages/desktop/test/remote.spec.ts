@@ -208,10 +208,11 @@ test('the capability set in remote mode is the union, and the UI keys off it', a
     requiresAuth: true,
     canManageUsers: true,
     canPickLocalFolder: false,
-    // …and, since spec D, keeps these two true over a server that reports both false.
+    // …and, since spec D and spec E, keeps these three true over a server that reports all
+    // three false: the slicers and the browse view belong to this machine, not to the library.
     canLaunchSlicer: true,
     canConfigureSlicers: true,
-    canBrowseModelSites: false,
+    canBrowseModelSites: true,
   })
 
   await signIn(page)
@@ -225,6 +226,11 @@ test('the capability set in remote mode is the union, and the UI keys off it', a
   // And the one the server contributes *is* there, which is the other half of the union: a
   // browser talking to this server would show it too, and a local-folder desktop app would not.
   await expect(page.getByRole('link', { name: 'Users' })).toHaveCount(1)
+  // The third case, and the row spec 2.4 wrote the union for, asserted as an affordance rather
+  // than as a flag: the server answers `canBrowseModelSites: false` and the link is there anyway,
+  // because the browse view is a `WebContentsView` in this process and the server has no say in
+  // whether this machine has one. A browser talking to this server would not show it.
+  await expect(page.getByRole('link', { name: 'Find models' })).toHaveCount(1)
 })
 
 /**

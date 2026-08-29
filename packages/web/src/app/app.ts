@@ -8,6 +8,7 @@ import { JigToolbar } from '@awdlab/jig/toolbar'
 import { JigTooltip } from '@awdlab/jig/tooltip'
 import tablerFolder from '@iconify/icons-tabler/folder'
 import tablerLogout from '@iconify/icons-tabler/logout'
+import tablerSearch from '@iconify/icons-tabler/search'
 import tablerSettings from '@iconify/icons-tabler/settings'
 import tablerStack2 from '@iconify/icons-tabler/stack-2'
 import tablerUpload from '@iconify/icons-tabler/upload'
@@ -87,6 +88,18 @@ import { SettingsStore } from './core/settings.store'
                   <jig-icon [icon]="icons.import" />
                   {{ t.translations().import.title }}
                 </a>
+                <!-- Spec E 7.4's canBrowseModelSites. A routerLink string and nothing more:
+                     this file is shared code and must not import from features/desktop/, so the
+                     route it names does not exist in the web build at all. It is never rendered
+                     there either, because the capability that gates it is false in the browser
+                     column -- the capability model doing its job in place of a build-time
+                     condition, exactly as the folder picker below does. -->
+                @if (capabilities.capabilities().canBrowseModelSites) {
+                  <a jigButton kind="text" routerLink="/browse" routerLinkActive="spm-nav-active">
+                    <jig-icon [icon]="icons.browse" />
+                    {{ t.translations().browse.title }}
+                  </a>
+                }
                 <a jigButton kind="text" routerLink="/settings" routerLinkActive="spm-nav-active">
                   <jig-icon [icon]="icons.settings" />
                   {{ t.translations().settings.title }}
@@ -172,6 +185,7 @@ export class App {
   protected readonly icons = {
     projects: tablerStack2,
     import: tablerUpload,
+    browse: tablerSearch,
     settings: tablerSettings,
     users: tablerUsers,
     folder: tablerFolder,

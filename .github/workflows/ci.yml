@@ -119,6 +119,24 @@ jobs:
           grep -rl DesktopSlicersPage packages/web/dist/electron/browser \
             || { echo "::error::routes.electron.ts no longer reaches the slicer settings page"; exit 1; }
 
+      # Spec E's /browse. The strongest case for this rule so far: this page hosts a native
+      # WebContentsView loading a third-party site, so its leak into the web bundle would ship a
+      # UI expecting a containment a browser tab cannot provide -- a security-shaped failure
+      # rather than a dead link. The nav link in app.ts is a routerLink string gated on
+      # canBrowseModelSites, and that link is what would drag it in if the rule were ever broken.
+      #
+      # The exported class name, not the module path: paths become hashed chunk names during
+      # bundling, so a path grep can never fail.
+      - name: web bundle carries no desktop browse page
+        run: |
+          if grep -rl DesktopBrowsePage packages/web/dist/web/browser; then
+            echo "::error::the model browser page leaked into the web bundle"; exit 1
+          fi
+      - name: electron bundle carries the desktop browse page
+        run: |
+          grep -rl DesktopBrowsePage packages/web/dist/electron/browser \
+            || { echo "::error::routes.electron.ts no longer reaches the model browser page"; exit 1; }
+
       # Same shape, for the second fileReplacement: API_CLIENT resolves to IpcApiClient in the
       # electron build and to HttpApiClient in the web one. The marker is a string literal from
       # ipc-api-client.ts (BRIDGE_MISSING) and not the class name, because the minifier renames
