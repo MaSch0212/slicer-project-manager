@@ -37,6 +37,7 @@ import {
   type PickerLanguage,
   type RemoteConfirmer,
 } from './library.ts'
+import { applyAppSessionPermissions } from './permissions.ts'
 import { API_PATH_PREFIX, MODE_SWITCH, type BridgeMode } from './protocol.ts'
 import type { RemoteHost } from './remote.ts'
 import { ShellHost, type ShellRoute } from './shell.ts'
@@ -1261,6 +1262,12 @@ export function main(): void {
           () => shellHost.remote(),
         ),
       )
+
+      // The other thing that registers on `defaultSession`, and here for that reason: this is the
+      // session `protocol.handle` above just gave `spm://` to, and until now it was the one session
+      // in the app with no permission handler at all. See `permissions.ts` for what was measured,
+      // and `browse/host.ts` for the partition's own pair.
+      applyAppSessionPermissions(session.defaultSession)
 
       // The sweep at next start: it lists what previous runs left unfinished and **deletes
       // nothing** (constraint 10). Before the window, so the first `slicers.sessions()` the

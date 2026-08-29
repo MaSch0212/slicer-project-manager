@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import { DOWNLOAD_RECORD_NAME, MODEL_DOWNLOADS_DIR } from '../src/browse/downloads.ts'
 import { BROWSE_PARTITION } from '../src/browse/host.ts'
 import { BROWSE_FILE_NAME, LAST_URL_KEY } from '../src/browse/last-page.ts'
+import { APP_SESSION_PERMISSIONS } from '../src/permissions.ts'
 import { firstWindowOf, launchApp } from './fixtures.ts'
 
 /**
@@ -460,18 +461,29 @@ test.describe('the model browser', () => {
       )
       expect(fired).toEqual([])
     } finally {
-      // **Put `defaultSession` back, and `null` is what "back" means here.** The recorder above
+      // **Put `defaultSession` back, and "back" means the app's own pair.** The recorder above
       // grants everything, and a handler installed on the app's own session outlives the test that
       // installed it — every test after this one in the file would otherwise run under
-      // grant-everything, which is a trap for an assertion nobody has written yet. `null` restores
-      // the app's *shipped* configuration and not a safer one: `src/` installs no permission
-      // handler on `defaultSession` at all (spec 3.7), and this task measured what Electron then
-      // does — geolocation and notifications are granted with no prompt. Installing a denying
-      // handler here would leave the rest of the file running in a configuration the app does not
-      // have, which is the more expensive mistake.
-      await app.evaluate(({ session }) => {
-        session.defaultSession.setPermissionRequestHandler(null)
-      })
+      // grant-everything, which is a trap for an assertion nobody has written yet.
+      //
+      // This used to restore `null`, on the grounds that `src/` installed no handler on
+      // `defaultSession` at all. **That is no longer true** (open question 9.20 is closed):
+      // `applyAppSessionPermissions` installs a refusal with one measured exception, so `null`
+      // would now leave the rest of the file running under Electron's silent-grant defaults —
+      // a configuration the app does not have, which is the mistake the old comment named and the
+      // old code would now make. The list is imported rather than spelled again here, so a change
+      // to it cannot leave this restoring the previous rule.
+      await app.evaluate(
+        ({ session }, allowed) => {
+          session.defaultSession.setPermissionRequestHandler((_contents, permission, callback) => {
+            callback(allowed.includes(permission))
+          })
+          session.defaultSession.setPermissionCheckHandler((_contents, permission) =>
+            allowed.includes(permission),
+          )
+        },
+        [...APP_SESSION_PERMISSIONS],
+      )
     }
   })
 

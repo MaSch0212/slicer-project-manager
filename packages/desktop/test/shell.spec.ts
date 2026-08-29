@@ -543,6 +543,68 @@ test('the renderer boots without a console error or warning', async () => {
   await app.close()
 })
 
+test('the app own session refuses what nothing asks for, and grants the one thing that does', async () => {
+  /*
+   * Open question 9.20, closed. Spec 3.7 recorded that `defaultSession` had **no** permission
+   * handler of either kind, which is Electron's "neither handler" column: geolocation and
+   * notifications granted with no prompt. It was recorded rather than fixed because a blanket deny
+   * could have removed `users.page.ts`'s copy control and nothing in the suite would have noticed.
+   *
+   * That is now measured rather than reasoned about, and this is the assertion that keeps it
+   * measured. Both halves are one test on purpose: a handler that denied everything would pass the
+   * geolocation half and silently break the copy, and a session with no handler at all would pass
+   * the copy half and grant geolocation to anything.
+   *
+   * **The clipboard write is driven by a real click**, because `writeText` needs transient user
+   * activation on a focused document and `page.evaluate` supplies neither — an unactivated call
+   * rejects for a reason that has nothing to do with the permission handler, which is a green test
+   * that proves nothing. Its own launch, because it appends a node to the document.
+   */
+  const { app } = await launchApp()
+  const page = await firstWindowOf(app)
+  await page.waitForLoadState('domcontentloaded')
+  await page.evaluate(() => {
+    const button = document.createElement('button')
+    button.id = 'spm-clipboard-probe'
+    button.addEventListener('click', () => {
+      const store = window as unknown as { copied?: string }
+      navigator.clipboard.writeText('spm').then(
+        () => {
+          store.copied = 'ok'
+        },
+        (error: unknown) => {
+          store.copied = `rejected: ${String(error)}`
+        },
+      )
+    })
+    document.body.append(button)
+  })
+  await page.click('#spm-clipboard-probe')
+  // `clipboard-sanitized-write` is the permission Chromium raises for `writeText`, measured — a
+  // handler written against the web API's own spelling, `clipboard-write`, denies this.
+  await expect
+    .poll(() => page.evaluate(() => (window as unknown as { copied?: string }).copied))
+    .toBe('ok')
+
+  // And the check handler, which is the half that answers `navigator.permissions.query` without
+  // ever raising a request: with the request handler alone this reads `granted`, measured on the
+  // browse partition and again here.
+  const states = await page.evaluate(async () => {
+    const names = ['geolocation', 'notifications', 'clipboard-write']
+    const out: Record<string, string> = {}
+    for (const name of names) {
+      out[name] = (await navigator.permissions.query({ name } as never)).state
+    }
+    return out
+  })
+  expect(states).toEqual({
+    geolocation: 'denied',
+    notifications: 'denied',
+    'clipboard-write': 'granted',
+  })
+  await app.close()
+})
+
 test('the process exits 0 when the last window closes', async () => {
   const { app } = await launchApp()
   await firstWindowOf(app)
