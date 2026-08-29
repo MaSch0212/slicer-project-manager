@@ -702,6 +702,36 @@ test('a download this process watched to completion is landable, even with no co
   assert.equal(found.state, 'completed')
 })
 
+test('with no content-length, a watched download whose bytes are not there is still refused', () => {
+  // **The other side of the test above, and the pair is the point.** The relaxation exists so that
+  // a server sending no `content-length` is not a server nothing can ever land — it is not a
+  // licence to skip looking at the bytes. `completed` alone is weakest evidence in exactly this
+  // case: a truncated chunked stream, and any HTTP/2 or HTTP/3 body, arrives as `interrupted`, so
+  // the residue `completed` has to carry here is HTTP/1.1 framed by connection close, where a
+  // mid-stream FIN is indistinguishable from a clean end. What is checked instead is that the
+  // bytes Chromium counted are the bytes at the staged path.
+  for (const arm of [
+    { name: 'nothing was written at all', bytes: null },
+    { name: 'the file is short', bytes: 1024 },
+  ]) {
+    const rigged = rig()
+    const { item } = start(rigged, { totalBytes: 0 })
+    const id = rigged.ids[0] as string
+    item.received = 4096
+    if (arm.bytes !== null) {
+      writeFileSync(join(rigged.stagingDir, id, 'benchy.zip'), Buffer.alloc(arm.bytes, 7))
+    }
+
+    item.fire('done', 'completed')
+
+    const found = only(rigged.downloads.list())
+    assert.equal(found.state, 'completed', arm.name)
+    // Handing this to `land` is the one outcome constraint 14 exists to prevent: a file that is
+    // absent or short, under its final name, with nothing on it that says so.
+    assert.equal(found.isVerifiable, false, arm.name)
+  }
+})
+
 test('a download that ends anywhere but completed is not landable', () => {
   for (const ending of ['cancelled', 'interrupted'] as const) {
     const rigged = rig()

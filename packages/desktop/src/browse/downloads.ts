@@ -60,8 +60,11 @@ import { siteForUrl } from './registry.ts'
  * ## Nothing here may use `getETag()` or `getLastModifiedTime()`
  *
  * Both came back **empty on every download measured**. No caching, no "have I downloaded this
- * before", and in particular no integrity check. `totalBytes` is the only integrity signal there is,
- * which is why {@link vouchesForTheBytes} leans on it and why a `0` there is treated as ignorance.
+ * before", and in particular no integrity check. `totalBytes` is the only integrity signal a *swept*
+ * directory has, which is why {@link vouchesForTheBytes} leans on it and why a `0` there is
+ * ignorance a sweep cannot get past. A download this process watched has one more thing to compare —
+ * the bytes Chromium counted off the socket against the bytes at the staged path — and that
+ * comparison, not the `completed` state on its own, is what the `totalBytes: 0` relaxation rests on.
  *
  * ## The sweep surfaces and never deletes
  *
@@ -249,11 +252,22 @@ export function stagedFileName(raw: string): string {
  *   that died mid-download; `cancelled` and `interrupted` say so themselves.
  * - With a `totalBytes` to check against, the bytes on disk must equal it. This is the assertion
  *   the 26 214 400-of-41 943 040 measurement exists for.
- * - **With `totalBytes: 0` there is nothing to check**, so a swept record does not pass — an
- *   unknown is not a pass, and nothing else can stand in: `getETag()` and `getLastModifiedTime()`
- *   were empty on every download measured. A download this process *saw complete* passes anyway,
- *   because watching the terminal transition is the vouching a sweep cannot manufacture. A server
- *   that sends no `content-length` is otherwise a server nothing from this app can ever land.
+ * - **With `totalBytes: 0` there is nothing to compare against**, so a swept record does not pass —
+ *   an unknown is not a pass, and nothing else can stand in: `getETag()` and
+ *   `getLastModifiedTime()` were empty on every download measured. A download this process
+ *   *watched* is held to a weaker but real check instead: the bytes at the staged path must be
+ *   present and must equal the count Chromium said it received.
+ *
+ * **Why that comparison and not `completed` on its own.** Chromium marks a transfer `COMPLETE` when
+ * the network stack reports the body ended normally, and for most framings a truncation is not that:
+ * a cut chunked stream is `ERR_INCOMPLETE_CHUNKED_ENCODING`, and HTTP/2 and HTTP/3 both frame the
+ * body, so all of those arrive here as `interrupted` and are already refused by the rule above. The
+ * residue is **HTTP/1.1 with neither `Content-Length` nor chunked encoding**, where the body is
+ * framed by the connection closing and a mid-stream FIN is indistinguishable from a clean end — and
+ * that is precisely the no-`content-length` shape this relaxation exists to admit. So `completed` is
+ * weakest evidence in exactly the case it is being asked to carry, which is why the bytes are
+ * compared as well: `receivedBytes` is what Chromium counted off the socket, `bytesOnDisk` is what
+ * is at the staged path, and a missing or short file fails here rather than being handed to `land`.
  */
 export function vouchesForTheBytes(
   record: BrowseDownloadRecord,
@@ -261,7 +275,9 @@ export function vouchesForTheBytes(
   observedTerminal: boolean,
 ): boolean {
   if (record.state !== 'completed') return false
-  if (record.totalBytes === 0) return observedTerminal
+  if (record.totalBytes === 0) {
+    return observedTerminal && bytesOnDisk > 0 && bytesOnDisk === record.receivedBytes
+  }
   return bytesOnDisk === record.totalBytes
 }
 
@@ -431,7 +447,9 @@ export class BrowseDownloads {
       if (entry) {
         entry.bytesOnDisk = sizeOf(savePath)
         // `true`: this process watched the terminal transition, which is the one thing a sweep
-        // cannot do. See `vouchesForTheBytes`.
+        // cannot do. Both numbers handed in are freshly measured — `receivedBytes` off the item on
+        // the line above, `bytesOnDisk` off the staged path — because with `totalBytes: 0` they are
+        // the whole of the check. See `vouchesForTheBytes`.
         entry.isVerifiable = vouchesForTheBytes(record, entry.bytesOnDisk, true)
       }
       // The rewrite, exactly once.
