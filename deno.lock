@@ -25,6 +25,7 @@
     "npm:esbuild@0.28": "0.28.2",
     "npm:eslint@^9.34.0": "9.39.5",
     "npm:jsdom@28": "28.1.0",
+    "npm:occt-import-js@0.0.23": "0.0.23",
     "npm:prettier@^3.6.0": "3.9.6",
     "npm:rxjs@7.8": "7.8.2",
     "npm:three@~0.185.1": "0.185.1",
@@ -3124,6 +3125,9 @@
     "obug@2.1.4": {
       "integrity": "sha512-4a+OsYv9UktOJKE+l1A4OufDgdRF9PifWj+tJnHURo/P+WOxpG4GzUFL9qCalmWauao6ogiG+QvnCovwPoyAWA=="
     },
+    "occt-import-js@0.0.23": {
+      "integrity": "sha512-RFfYQXYFX5C1mB1Aywm0ShcUKzXOr/VzTnlzhBSDJOR6YCAPt1HYCzeXWg1vwwjn/cUxwqRNhhtf1dlewoZYCQ=="
+    },
     "on-finished@2.4.1": {
       "integrity": "sha512-oVlzkg3ENAhCk2zdv7IJwd/QUD4z2RxRwpkcGY8psCVcCYZNq4wYnVWALHM+brtuJjePWiYF/ClmuDr8Ch5+kg==",
       "dependencies": [
@@ -3924,6 +3928,7 @@
   },
   "workspace": {
     "dependencies": [
+      "npm:occt-import-js@0.0.23",
       "npm:zod@4"
     ],
     "packageJson": {
@@ -3941,6 +3946,13 @@
         "packageJson": {
           "dependencies": [
             "npm:zod@4"
+          ]
+        }
+      },
+      "packages/core": {
+        "packageJson": {
+          "dependencies": [
+            "npm:occt-import-js@0.0.23"
           ]
         }
       },

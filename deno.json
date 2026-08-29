@@ -15,6 +15,7 @@
     "@spm/contract/schemas.ts": "./packages/contract/src/schemas.ts",
     "@spm/contract/api-client.ts": "./packages/contract/src/api-client.ts",
     "@spm/core": "./packages/core/src/index.ts",
+    "occt-import-js": "npm:occt-import-js@0.0.23",
     "zod": "npm:zod@^4.0.0"
   },
   "nodeModulesDir": "auto",
