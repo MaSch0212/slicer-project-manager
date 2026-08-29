@@ -93,6 +93,9 @@ export const MODEL_DOWNLOADS_DIR = 'model-downloads'
 /** The record, beside the bytes it describes. D's per-launch shape, both halves of it. */
 export const DOWNLOAD_RECORD_NAME = 'download.json'
 
+/** `json-store.ts`'s temp file for the record: `<file>.<pid>.tmp`. See {@link bytesBeside}. */
+const RECORD_TEMP_NAME = new RegExp(`^${DOWNLOAD_RECORD_NAME.replace('.', '\\.')}\\.\\d+\\.tmp$`)
+
 /*
  * **The three caps are judgements, and are labelled as such rather than presented as measured.**
  *
@@ -581,11 +584,16 @@ export class BrowseDownloads {
   find(downloadId: string): StagedDownload | null {
     const entry = this.#staged.get(downloadId)
     if (!entry) return null
-    const directory = join(this.#stagingDir, entry.record.downloadId)
+    // `safeJoin` on both halves, as `remove` does on the same path and for a stronger reason: the
+    // `fileName` of a **record-less** directory is whatever `readdirSync` answered, and it is the
+    // one string on a record that has not been through `stagedFileName` — `readRecord` re-validates
+    // the recorded ones, `unrecordedDownload` reports what it found. This is the value task 4 opens
+    // a file with, so the join it is built by is the one that refuses to leave the directory.
+    const directory = safeJoin(this.#stagingDir, entry.record.downloadId)
     return {
       record: { ...entry.record },
       directory,
-      filePath: entry.record.fileName === '' ? '' : join(directory, entry.record.fileName),
+      filePath: entry.record.fileName === '' ? '' : safeJoin(directory, entry.record.fileName),
       isOrphan: entry.isOrphan,
       isVerifiable: entry.isVerifiable,
     }
@@ -658,10 +666,13 @@ export class BrowseDownloads {
       return `${MAX_CONCURRENT_DOWNLOADS} downloads are already running; wait for one to finish`
     }
     if (totalBytes > MAX_DOWNLOAD_BYTES) {
-      return `this download is larger than the 2 GiB limit for a single file (${totalBytes} bytes)`
+      // Interpolated, like the concurrency sentence above and unlike the numeral that used to be
+      // written out here: a constant edited on its own would otherwise leave the notice stating
+      // the old limit, and the tests pin this text through the same regexes, so nothing would say.
+      return `this download is larger than the ${asGiB(MAX_DOWNLOAD_BYTES)} limit for a single file (${totalBytes} bytes)`
     }
     if (this.#stagedBytes() + totalBytes > MAX_STAGED_BYTES) {
-      return 'staged downloads would go past the 4 GiB limit; discard some to make room'
+      return `staged downloads would go past the ${asGiB(MAX_STAGED_BYTES)} limit; discard some to make room`
     }
     return null
   }
@@ -737,7 +748,34 @@ export class BrowseDownloads {
 
 /* -------------------------------------------------------------------------------------------
  * Reading a directory back
+ *
+ * **Deliberately still in this file, and that is a judgement.** These four — `readRecord`,
+ * `bytesBeside`, `unrecordedDownload` and the `#sweepOne` that drives them — are a self-contained
+ * concern and would move to a module of their own cleanly. They have not, for three reasons, and
+ * the third is the one that would change:
+ *
+ * - The plan mandates one module for this task, and a split that the plan did not ask for is a
+ *   decision taken where nobody is looking for one.
+ * - A split would have to export `Entry` — a mutable, in-run shape whose `isVerifiable` the `done`
+ *   handler writes to — across a module boundary, to buy a shorter file. Widening the surface of
+ *   the one type that carries the constraint-14 verdict is a bad trade for a line count.
+ * - **Nothing else reads a staging directory.** A file earns its own module when a second caller
+ *   needs half of it; task 4's `land` reaches all of this through `find()`. If `land` turns out to
+ *   need to re-read a record from disk at landing time — to re-verify after the user has had the
+ *   app open for a week, say — that is a second caller and the measurement that justifies the
+ *   split. Do it then, and not for the line count.
  * ---------------------------------------------------------------------------------------- */
+
+/**
+ * One of the two byte ceilings, as a sentence says it.
+ *
+ * Both constants are whole GiB and are meant to stay that way; a value that is not produces a
+ * fraction rather than a rounded lie, because a notice that says "2 GiB" about 2.5 GiB is worse
+ * than one that says "2.5 GiB".
+ */
+function asGiB(bytes: number): string {
+  return `${bytes / (1024 * 1024 * 1024)} GiB`
+}
 
 function isDownloadState(value: string): value is BrowseDownloadState {
   return (
@@ -813,7 +851,19 @@ function numberOr(value: unknown, fallback: number): number {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : fallback
 }
 
-/** The largest file in the directory that is not the record, for a directory that has no record. */
+/**
+ * The largest file in the directory that is not the record, for a directory that has no record.
+ *
+ * **`download.json.<pid>.tmp` is the record too**, and skipping only the final name was wrong: it is
+ * what `json-store.ts` writes into before the rename, it says in as many words that a kill or a
+ * failed rename leaves one behind and that nothing sweeps them, and this file's own "stubborn io"
+ * test produces one. Left in, it becomes the `fileName` the user is shown for a directory with no
+ * record — harmless to the verdict, which is `false` either way, and wrong to the person reading it.
+ *
+ * The pattern is `json-store.ts`'s own — `<file>.<pid>.tmp` — and not a `download.json.` prefix,
+ * because `stagedFileName` would let a *server* name a file `download.json.zip` and that is a real
+ * download with the user's bytes in it.
+ */
 function bytesBeside(directory: string): { name: string; size: number } {
   let best = { name: '', size: 0 }
   let entries: string[]
@@ -823,7 +873,7 @@ function bytesBeside(directory: string): { name: string; size: number } {
     return best
   }
   for (const name of entries.sort()) {
-    if (name === DOWNLOAD_RECORD_NAME) continue
+    if (name === DOWNLOAD_RECORD_NAME || RECORD_TEMP_NAME.test(name)) continue
     const size = sizeOf(join(directory, name))
     if (best.name === '' || size > best.size) best = { name, size }
   }

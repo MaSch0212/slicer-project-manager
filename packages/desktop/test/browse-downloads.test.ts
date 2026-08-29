@@ -287,6 +287,28 @@ test('a staged directory with bytes and no download.json cannot be vouched for',
   assert.equal(found.downloadId, 'orphan-a')
 })
 
+test('a leftover record temp file is not the download the user is shown', () => {
+  const { downloads, stagingDir } = rig()
+  // `json-store.ts` writes `download.json.<pid>.tmp` and renames it, and says in as many words
+  // that a kill or a failed rename leaves one behind and that nothing sweeps them — the "stubborn
+  // io" test in this file produces one. It is bigger than the download here on purpose: skipping
+  // only the final name makes the *temp file* the name shown for a record-less directory.
+  stage(stagingDir, 'orphan-tmp', { fileName: 'benchy.zip', bytes: 2048 })
+  writeFileSync(
+    join(stagingDir, 'orphan-tmp', `${DOWNLOAD_RECORD_NAME}.4242.tmp`),
+    Buffer.alloc(8192, 7),
+  )
+
+  downloads.sweep()
+
+  const found = only(downloads.list())
+  assert.equal(found.fileName, 'benchy.zip')
+  assert.equal(found.receivedBytes, 2048)
+  // The verdict was never in doubt — a directory with no record cannot be vouched for either way.
+  // This is about the sentence the user reads before deciding.
+  assert.equal(found.isVerifiable, false)
+})
+
 test('an unparseable download.json cannot be vouched for', () => {
   const { downloads, stagingDir } = rig()
   stage(stagingDir, 'orphan-b', {
