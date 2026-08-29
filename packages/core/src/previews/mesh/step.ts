@@ -194,7 +194,7 @@ function occtToMesh(result: OcctResult, limits: MeshLimits | undefined): Mesh {
  * constructing a `Buffer`. `Uint8Array` is also what this module actually needs, since it is what
  * `ReadStepFile` is handed.
  */
-export type StepIo = {
+type StepIo = {
   size: (path: string) => number
   read: (path: string) => Uint8Array
 }
