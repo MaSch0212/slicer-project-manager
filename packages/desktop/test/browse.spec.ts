@@ -1,8 +1,9 @@
 import { expect, test, type ElectronApplication, type Page } from '@playwright/test'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, statSync } from 'node:fs'
 import { createServer, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { join } from 'node:path'
+import { DOWNLOAD_RECORD_NAME, MODEL_DOWNLOADS_DIR } from '../src/browse/downloads.ts'
 import { BROWSE_PARTITION } from '../src/browse/host.ts'
 import { BROWSE_FILE_NAME, LAST_URL_KEY } from '../src/browse/last-page.ts'
 import { firstWindowOf, launchApp } from './fixtures.ts'
@@ -142,15 +143,15 @@ test.describe('the model browser', () => {
    * there is no other way in: a `WebContentsView` is a native sibling of the renderer, not a DOM
    * element, so Playwright has no page object for it.
    */
-  async function inBrowseView<T>(script: string): Promise<T> {
+  async function inBrowseView<T>(script: string, userGesture = true): Promise<T> {
     const id = await browseContentsId()
     return (await app.evaluate(
-      async ({ webContents }, [contentsId, source]) => {
+      async ({ webContents }, [contentsId, source, gesture]) => {
         const contents = webContents.fromId(contentsId as number)
         if (!contents) throw new Error('the browse view has gone')
-        return await contents.executeJavaScript(source as string, true)
+        return await contents.executeJavaScript(source as string, gesture as boolean)
       },
-      [id, script] as const,
+      [id, script, userGesture] as const,
     )) as T
   }
 
@@ -559,6 +560,189 @@ test.describe('the model browser', () => {
       .toBe(true)
     expect((await state()).url).toBe(`${base}/second`)
     await invoke('browse.detach')
+  })
+
+  /* -----------------------------------------------------------------------------------------
+   * Downloads
+   *
+   * **The three idioms, against a real `will-download` on a real session, with the policy on.**
+   *
+   * This is the assertion an `http(s)`-only navigation policy would have failed, and the unit test
+   * on `browseNavigationPolicy('blob:...')` does **not** substitute for it — because the defect was
+   * never in what the policy answers, it was in *which hook sees what*. Measured on Electron 44,
+   * with `blob:` blocked: `<a download href="blob:...">` plus `.click()` reached **no hook at all**
+   * and downloaded anyway; `location.href = blobUrl` reached `will-frame-navigate` and
+   * `will-navigate`; `window.open(blobUrl)` reached the window-open handler. So whether the model
+   * browser could download from a site turned on which of three interchangeable DOM idioms that
+   * site's JavaScript happened to use — and Thingiverse's, the one download ever measured end to
+   * end, is a scripted `blob:` construction.
+   *
+   * The blob is built by the page itself, so nothing here depends on a network, a CDN, or a
+   * `content-disposition` header. Every one of the three must produce a **staged** download.
+   * -------------------------------------------------------------------------------------- */
+
+  type Download = {
+    downloadId: string
+    fileName: string
+    sourceUrl: string
+    pageUrl: string | null
+    siteId: string | null
+    mimeType: string
+    state: string
+    receivedBytes: number
+    totalBytes: number
+    hadUserGesture: boolean
+    startedAt: number
+    isOrphan: boolean
+    isVerifiable: boolean
+  }
+
+  const downloads = async (): Promise<Download[]> =>
+    (await invoke('browse.downloads')) as Download[]
+
+  /** The staging directory empty, so each idiom's test asserts on exactly what it produced. */
+  async function discardEverything(): Promise<void> {
+    for (const download of await downloads()) {
+      await invoke('browse.discard', [download.downloadId])
+    }
+    expect(await downloads()).toEqual([])
+  }
+
+  /** How many bytes the page puts in the blob, and what the staged file must therefore be. */
+  const BLOB_BYTES = 4096
+
+  /** Builds a blob in the embedded document and hands it to one of the three idioms. */
+  function triggerBlobDownload(
+    idiom: 'anchor' | 'location' | 'window-open',
+    userGesture = true,
+  ): Promise<string> {
+    return inBrowseView<string>(
+      `
+      (() => {
+        const blob = new Blob([new Uint8Array(${BLOB_BYTES}).fill(65)], {
+          type: 'application/octet-stream',
+        })
+        const url = URL.createObjectURL(blob)
+        if (${JSON.stringify(idiom)} === 'anchor') {
+          const a = document.createElement('a')
+          a.href = url
+          a.download = 'blob-anchor.bin'
+          document.body.appendChild(a)
+          a.click()
+        } else if (${JSON.stringify(idiom)} === 'location') {
+          location.href = url
+        } else {
+          window.open(url)
+        }
+        return url
+      })()
+    `,
+      userGesture,
+    )
+  }
+
+  /** Polls until exactly one download has reached a terminal state, and answers it. */
+  async function oneStagedDownload(): Promise<Download> {
+    await expect
+      .poll(async () => (await downloads()).filter((one) => one.state !== 'progressing').length, {
+        timeout: 15_000,
+      })
+      .toBe(1)
+    const found = (await downloads())[0]
+    if (!found) throw new Error('there is no staged download')
+    return found
+  }
+
+  /** The staged directory, by the path task 4 was promised. */
+  function stagedDir(download: Download): string {
+    return join(userDataDir, MODEL_DOWNLOADS_DIR, download.downloadId)
+  }
+
+  test('an <a download> pointed at a blob: URL is staged, and reaches no navigation hook', async () => {
+    await attachAt(`${base}/first`)
+    await discardEverything()
+
+    // **Driven with no user gesture**, which is the point of this one. Measured while writing it:
+    // `executeJavaScript(source, userGesture)` is what decides the flag — the same `a.click()` run
+    // through this helper's default reports `hasUserGesture() === true`, and run with `false`
+    // reports `false`. So the flag is a property of how the script was invoked and not of what the
+    // page did, which is exactly why it is evidence and never a verdict: a real click reports
+    // `true`, `webContents.downloadURL()` reports `false`, and a scripted click reports whichever
+    // the driver said. Thingiverse's download button is a scripted `blob:` construction, so
+    // refusing on `false` would silently break the one site a download was ever measured on.
+    await triggerBlobDownload('anchor', false)
+    const staged = await oneStagedDownload()
+
+    expect(staged.state).toBe('completed')
+    expect(staged.fileName).toBe('blob-anchor.bin')
+    // Recorded, and **not acted on**: this download is staged with the flag false.
+    expect(staged.hadUserGesture).toBe(false)
+    // `sourceUrl` is the `blob:` that identifies nothing; `pageUrl` is the page the view was on,
+    // and it is what matching runs on. Two fields, because on the one site ever measured they are
+    // not the same thing and the obvious one to match on is the wrong one.
+    expect(staged.sourceUrl.startsWith('blob:')).toBe(true)
+    expect(staged.pageUrl).toBe(`${base}/first`)
+    expect(staged.isOrphan).toBe(false)
+    expect(staged.isVerifiable).toBe(true)
+
+    // The bytes, at the path, in the app's own `userData` and **not** in the user's Downloads
+    // folder — which is what `setSavePath()` buys, and the reason this design is the only one that
+    // works for a `blob:` at all.
+    expect(existsSync(join(stagedDir(staged), staged.fileName))).toBe(true)
+    expect(statSync(join(stagedDir(staged), staged.fileName)).size).toBe(BLOB_BYTES)
+    expect(existsSync(join(stagedDir(staged), DOWNLOAD_RECORD_NAME))).toBe(true)
+
+    await discardEverything()
+    // `discard` is the only thing that removes one, and it removes the whole directory.
+    expect(existsSync(stagedDir(staged))).toBe(false)
+  })
+
+  test('location.href = blobUrl is staged, and the navigation policy lets it through', async () => {
+    await attachAt(`${base}/first`)
+    await discardEverything()
+
+    await triggerBlobDownload('location')
+    const staged = await oneStagedDownload()
+
+    expect(staged.state).toBe('completed')
+    expect(staged.isVerifiable).toBe(true)
+    expect(staged.sourceUrl.startsWith('blob:')).toBe(true)
+    expect(statSync(join(stagedDir(staged), staged.fileName)).size).toBe(BLOB_BYTES)
+    // The `blob:` arm of `browseNavigationPolicy`, seen from where it matters: this idiom goes
+    // through `will-frame-navigate` and `will-navigate`, and a `block` there stops the download
+    // before `will-download` ever fires. The null below is the absence of a refusal record, which
+    // is what a blocked scheme would have written.
+    expect((await state()).lastError).toBe(null)
+
+    await discardEverything()
+  })
+
+  test('window.open(blobUrl) is staged, through the popup arm of the window-open handler', async () => {
+    await attachAt(`${base}/first`)
+    await discardEverything()
+    const before = await windowUrls(app)
+
+    await triggerBlobDownload('window-open')
+    const staged = await oneStagedDownload()
+
+    // A `blob:` target is not `http(s)`, so `browseOpenDecision` answers `popup` rather than
+    // `navigate` — and the download that popup starts is on `BROWSE_PARTITION`, which is the
+    // session the interceptor is registered on. **That is the property this test is for**: the
+    // listener is on the session and not on the view, so a download started by a window this file
+    // never gets a handle on is still staged and still recorded.
+    expect(staged.state).toBe('completed')
+    expect(staged.isVerifiable).toBe(true)
+    expect(statSync(join(stagedDir(staged), staged.fileName)).size).toBe(BLOB_BYTES)
+
+    // Any window the popup arm left behind goes, so the tests after this one see the window count
+    // they started with.
+    await app.evaluate(({ BrowserWindow }, kept) => {
+      for (const window of BrowserWindow.getAllWindows()) {
+        if (!(kept as string[]).includes(window.webContents.getURL())) window.destroy()
+      }
+    }, before)
+    await expect.poll(() => windowUrls(app)).toEqual(before)
+    await discardEverything()
   })
 
   /* -----------------------------------------------------------------------------------------
