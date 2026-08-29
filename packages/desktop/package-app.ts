@@ -1,6 +1,8 @@
-import { cp, mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
+import { packager } from '@electron/packager'
+import { cp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { APP_NAME, APP_SLUG, packagedExecutableName } from './packaging.ts'
 
 /**
  * An unpacked, runnable application directory — the plan's Definition of Done, and not an
@@ -29,31 +31,65 @@ import { fileURLToPath } from 'node:url'
  *
  * ## What ships inside it
  *
- * `dist/` is copied whole, **sourcemaps included**, so the unpacked application carries the full
+ * `dist/` is staged whole, **sourcemaps included**, so the unpacked application carries the full
  * main-process source. That is a decision and not an inheritance: this artifact exists so a
  * person can run the subsystem and report what happened, and a stack trace that names
  * `remote.ts:329` is worth more here than the modest secrecy of a bundle nobody is shipping to
  * customers. There is nothing in this source a reader of the public repository does not have.
  *
- * An installer would want the opposite, and that is one of the things deferred with it: when
- * packaging becomes real, dropping `*.map` is a line in this file.
+ * `asar: false` is the same decision one layer down. An asar archive would fold `resources/app`
+ * into one opaque file, which is the opposite of what the paragraph above wants.
  *
- * ## The renderer, and why it is copied rather than referenced
+ * An installer would want both of those inverted, and that is one of the things deferred with it:
+ * when packaging becomes real, dropping `*.map` and turning asar on are two lines in this file.
+ *
+ * ## The renderer, and why it is staged rather than referenced
  *
  * `defaultRendererDir()` looks for `renderer/index.html` beside the main bundle before falling
  * back to the repo layout. Copying the Angular build in is what makes the directory movable: with
  * the repo-relative path, the packaged app would serve `spm://app/` out of the source tree it was
  * built in and show a blank window anywhere else.
+ *
+ * ## Why `@electron/packager`, and the one option that makes it usable here
+ *
+ * This script used to copy `node_modules/electron/dist` itself and leave the executable exactly as
+ * Electron shipped it — called `electron.exe`, wearing Electron's logo and version strings in
+ * every place that reads a file rather than a running window: Explorer, a pinned taskbar entry,
+ * Alt-Tab, Task Manager. `app.setName` and `BrowserWindow`'s `icon` option do not reach any of
+ * those; they are resources inside the PE, and renaming the file is the other half.
+ *
+ * `@electron/packager` is the Electron organisation's own tool for exactly that, and it is what
+ * this script now calls. `executableName` gives the binary its name on every platform, `icon`
+ * replaces the `RT_GROUP_ICON` resource from an `.ico`, and `win32metadata` writes the version
+ * strings — the same work by the people who maintain the format, instead of a hand-rolled rename
+ * plus a resource editor here.
+ *
+ * The one thing it does not do by default is stay off the network, and that mattered enough to
+ * measure rather than assume. Packager obtains Electron through `@electron/get` as a zip; it
+ * passes no `checksums`, so `@electron/get` fetches `SHASUMS256.txt` fresh on **every** run — even
+ * when the zip is already cached. Measured: with no `download` option, the call below under
+ * `deno run -A --deny-net` fails with `Requires net access to "github.com:443"`.
+ *
+ * `download: { checksums }` is what fixes it, and the checksums come from a file this repo already
+ * has on disk: `node_modules/electron/checksums.json`, which the `electron` package ships and its
+ * own installer uses for the same purpose. With it, the identical call under `--deny-net` packages
+ * successfully — measured. Nothing is traded away for that: the zip is still verified, against the
+ * digests the installed Electron vouches for.
+ *
+ * What remains is narrower and worth stating rather than hiding: packager unpacks the **zip** from
+ * `@electron/get`'s cache, not the already-extracted `node_modules/electron/dist`, and there is no
+ * option to point it at the latter. `deno install --allow-scripts` puts that zip in the cache as a
+ * side effect of installing `electron`, so a machine that has installed this repo's dependencies
+ * has it. A machine whose `node_modules` was restored from a CI cache without the matching
+ * `@electron/get` cache would download it once. `electronZipDir` is the escape hatch if that ever
+ * needs closing.
  */
 
 const here = dirname(fileURLToPath(import.meta.url))
 const repoRoot = resolve(here, '../..')
 const distDir = join(here, 'dist')
 const rendererSrc = resolve(repoRoot, 'packages/web/dist/electron/browser')
-const electronDist = resolve(repoRoot, 'node_modules/electron/dist')
-
-/** `app.setName` decides the userData directory; this only names the folder and the executable. */
-const APP_SLUG = 'slicer-project-manager'
+const electronPkg = resolve(repoRoot, 'node_modules/electron')
 
 async function assertDirectory(path: string, why: string): Promise<void> {
   const info = await stat(path).catch(() => null)
@@ -62,29 +98,53 @@ async function assertDirectory(path: string, why: string): Promise<void> {
 
 const outRoot = join(here, 'out')
 const outDir = join(outRoot, `${APP_SLUG}-${process.platform}-${process.arch}`)
-const appDir = join(outDir, 'resources', 'app')
+
+/**
+ * Computed here, above everything, because on macOS this throws.
+ *
+ * That placement is the point: the refusal has to happen before anything is written, not part-way
+ * through. `packaging.ts` carries the message and the reasons; this is only where it fires.
+ */
+const executable = packagedExecutableName(process.platform)
+
+/** The same `version` the manifest records and the PE's version resource gets on Windows. */
+const version = JSON.parse(await readFile(join(here, 'package.json'), 'utf8')).version as string
 
 await assertDirectory(distDir, 'run `deno task build:desktop` first')
 await assertDirectory(rendererSrc, 'run `deno task build:ui:electron` first')
-await assertDirectory(
-  electronDist,
-  'the Electron binary has not been downloaded; run `node node_modules/electron/install.js`',
-)
+await assertDirectory(electronPkg, 'run `deno task install`')
 
-// Removed rather than merged: a stale main.js from a previous shape of this script is exactly the
-// artefact `build.ts` refuses to leave behind, and the reason is the same — a directory that
-// half-updates is one nobody can reason about.
-await rm(outDir, { recursive: true, force: true })
-await mkdir(appDir, { recursive: true })
+/**
+ * The Electron version and its checksums, both read from the `electron` package rather than named
+ * here.
+ *
+ * Packager can infer a version from the app directory's own `devDependencies`, but the directory
+ * it is given below is a staging tree with no dependencies at all — so this passes it explicitly,
+ * and reads it from the one place that cannot disagree with what `deno install` actually put on
+ * disk. A literal here would be a second spelling of `^44.0.0` free to drift from `package.json`.
+ */
+const electronVersion = JSON.parse(await readFile(join(electronPkg, 'package.json'), 'utf8'))
+  .version as string
+const checksums = JSON.parse(await readFile(join(electronPkg, 'checksums.json'), 'utf8'))
 
-// Electron's own distribution, whole. `dereference` because npm may have linked rather than
-// copied parts of it, and a packaged app full of symlinks into node_modules is not movable.
-await cp(electronDist, outDir, { recursive: true, dereference: true })
+/**
+ * The staging tree packager copies into `resources/app`.
+ *
+ * Packager's `dir` is "the application directory", and it copies it wholesale. This repo has no
+ * such directory — the main bundle is in `dist/`, the renderer is built into `packages/web`, and
+ * `packages/desktop/package.json` is a workspace manifest with `devDependencies` that must not
+ * ship. So one is assembled here, holding exactly what the packaged app needs and nothing else.
+ *
+ * Kept out of `outDir`, because packager's `overwrite` deletes that.
+ */
+const stagingDir = join(outRoot, '.staging')
+await rm(stagingDir, { recursive: true, force: true })
+await mkdir(stagingDir, { recursive: true })
 
 // The main bundle, its preload, its sourcemaps and the SQL migrations `openLibrary` reads.
-await cp(distDir, join(appDir, 'dist'), { recursive: true })
+await cp(distDir, join(stagingDir, 'dist'), { recursive: true })
 // The renderer, where `defaultRendererDir()` looks for it in a packaged app.
-await cp(rendererSrc, join(appDir, 'dist', 'renderer'), { recursive: true })
+await cp(rendererSrc, join(stagingDir, 'dist', 'renderer'), { recursive: true })
 
 /**
  * The manifest Electron reads to find the entry point.
@@ -92,15 +152,17 @@ await cp(rendererSrc, join(appDir, 'dist', 'renderer'), { recursive: true })
  * `"type": "module"` is not cosmetic and it is the same fact `build.ts` records: the main bundle
  * is ESM because `migrate.ts` resolves its SQL through `import.meta.url`, and Electron decides how
  * to load `main.js` from the nearest package.json exactly as Node does. Without it the first
- * `import` in the bundle is a syntax error and the app never opens a window.
+ * `import` in the bundle is a syntax error and the app never opens a window. Measured that it
+ * survives: packager rewrites this file through its own `sanitize-package-json` step, and `type`
+ * is still `module` in the packaged copy.
  */
 await writeFile(
-  join(appDir, 'package.json'),
+  join(stagingDir, 'package.json'),
   `${JSON.stringify(
     {
       name: APP_SLUG,
-      productName: 'Slicer Project Manager',
-      version: JSON.parse(await readFile(join(here, 'package.json'), 'utf8')).version as string,
+      productName: APP_NAME,
+      version,
       main: 'dist/main.js',
       type: 'module',
     },
@@ -110,25 +172,82 @@ await writeFile(
 )
 
 /**
+ * `name` and `executableName` are separate on purpose, and this is the only place that shows why.
+ *
+ * `name` decides the **output directory**, which stays `slicer-project-manager-<platform>-<arch>`:
+ * a path that other tooling and this repo's own docs already spell, and one nobody wants to quote
+ * in a shell. `executableName` decides the **binary**, which is the user-facing string on Windows
+ * — `packaging.ts` argues that split, and packager appends the `.exe` itself.
+ *
+ * `win32metadata` is spelled out rather than left to default because packager derives those
+ * strings from `name`, which is the slug here; without them the executable would say
+ * "slicer-project-manager" everywhere Explorer shows a product. `CompanyName` is set because
+ * Electron ships it as `GitHub, Inc.` and leaving that under this `ProductName` tells Explorer
+ * GitHub published the app; `MaSch0212` is the owner in `git remote -v`, the only publisher
+ * identity this repository states.
+ *
+ * `appCopyright` is deliberately **not** passed, so `LegalCopyright` stays Electron's. There is no
+ * LICENSE file and no `author` field anywhere in this repo, so any copyright line here would be
+ * invented, and the compiled code in this binary genuinely *is* Electron's — their notice is a
+ * true statement about the file. Packager leaves it alone when `appCopyright` is absent.
+ */
+const [packagedDir] = await packager({
+  dir: stagingDir,
+  out: outRoot,
+  name: APP_SLUG,
+  executableName: process.platform === 'win32' ? APP_NAME : APP_SLUG,
+  appVersion: version,
+  electronVersion,
+  download: { checksums },
+  icon: join(here, 'icons', 'icon.ico'),
+  win32metadata: {
+    CompanyName: 'MaSch0212',
+    FileDescription: APP_NAME,
+    InternalName: APP_NAME,
+    ProductName: APP_NAME,
+  },
+  asar: false,
+  prune: false,
+  overwrite: true,
+  quiet: true,
+})
+
+await rm(stagingDir, { recursive: true, force: true })
+
+if (packagedDir !== outDir) {
+  throw new Error(`packager wrote ${packagedDir}, expected ${outDir}`)
+}
+
+const appDir = join(outDir, 'resources', 'app')
+
+/**
  * What must be there afterwards, checked rather than assumed.
  *
  * A packaging script that exits 0 having written half a directory is worse than one that fails:
  * the failure it produces is a window that opens and is blank, or one that opens and cannot open
- * a library, both a long way from the step that caused them.
+ * a library, both a long way from the step that caused them. Handing the copying to packager does
+ * not retire this list — it widens what it is for, because the copy is now done by a tool whose
+ * `ignore` and prune rules this repo does not control.
  */
 const REQUIRED = [
+  // The executable, under the name `packaging.ts` chose. Packager's own rename is what produces
+  // it, so this is the assertion that `executableName` still means what it means — a packager
+  // release that changed how it sanitises that string would otherwise ship a differently-named
+  // binary and say nothing.
+  join(outDir, executable),
   join(appDir, 'package.json'),
   join(appDir, 'dist', 'main.js'),
   join(appDir, 'dist', 'preload.js'),
   join(appDir, 'dist', 'migrations', '001_init.sql'),
   join(appDir, 'dist', 'renderer', 'index.html'),
-  // The window icon. `cp(distDir, …)` above already brings these across — they are inside `dist/`
-  // — so this is not what puts them here; it is what notices when they stop arriving. The failure
-  // it replaces is silent by construction: `BrowserWindow`'s `icon` option does not throw on a
-  // path that does not exist, it just shows Electron's default, and the developer who packaged it
-  // sees the right icon because `windowIconPath()` also resolves in the repo layout. Both
-  // spellings, because `windowIconPath()` picks between them by platform and this script runs on
-  // one platform at a time.
+  // The window icon, which is a different thing from the executable's own icon resource above:
+  // this is the file `BrowserWindow` reads at runtime. Staging brings these across — they are
+  // inside `dist/` — so this is not what puts them here; it is what notices when they stop
+  // arriving. The failure it replaces is silent by construction: `BrowserWindow`'s `icon` option
+  // does not throw on a path that does not exist, it just shows Electron's default, and the
+  // developer who packaged it sees the right icon because `windowIconPath()` also resolves in the
+  // repo layout. Both spellings, because `windowIconPath()` picks between them by platform and
+  // this script runs on one platform at a time.
   join(appDir, 'dist', 'icons', 'icon.ico'),
   join(appDir, 'dist', 'icons', 'icon.png'),
   // Copied in with the renderer, and named here for the same reason: the home-screen icon and
@@ -141,11 +260,6 @@ for (const file of REQUIRED) {
   const info = await stat(file).catch(() => null)
   if (!info?.isFile() || info.size === 0) throw new Error(`package:desktop did not write ${file}`)
 }
-
-const executable = (await readdir(outDir)).find((name) =>
-  process.platform === 'win32' ? name === 'electron.exe' : name === 'electron',
-)
-if (!executable) throw new Error(`no Electron executable in ${outDir}`)
 
 console.log(`desktop: packaged to ${outDir}`)
 console.log(`desktop: run it with ${join(outDir, executable)}`)
