@@ -317,6 +317,61 @@ test('land refuses all five unverifiable records without reading a byte, and lan
   assert.equal(rigged.uploads(), 1)
 })
 
+/**
+ * **The window the verdict does not cover, closed.** `isVerifiable` was computed against the bytes
+ * as they were at `done` or at `sweep()` — and for a swept download that is app-start time, while
+ * `land` may run days later. A file edited in that window is byte-for-byte indistinguishable from a
+ * truncated download at its final name, which is the whole of constraint 14.
+ *
+ * The comparison is `statSync().size` against `StagedDownload.bytesOnDisk`, the number the verdict
+ * was reached on. Deleting either half of it — the field from `find()`, or the `if` from `land` —
+ * turns the two refusals below red **with the upload count at zero as the assertion**, because "it
+ * threw" is satisfied by a landing that streamed the archive first and failed afterwards.
+ *
+ * **Grown as well as truncated, and a control that is neither.** A check that refused every landing
+ * would pass the first two rows and fail the third; a check that only looked for *shorter* would
+ * pass three of the four cases and miss a staging directory somebody appended to. And the
+ * `totalBytes: 0` relaxation is untouched by this — the remote test below lands a watched download
+ * whose record declares no size at all, which is the case a re-derivation of the verdict would have
+ * had to refuse.
+ */
+test('a staged file edited since the verdict is refused, and nothing reaches the upload', async () => {
+  const rigged = rig({ isRemote: true })
+  const bytes = archive(4096, 13)
+  for (const id of ['shrunk', 'grown', 'untouched']) {
+    stage(rigged.stagingDir, id, {
+      fileName: 'benchy.zip',
+      bytes,
+      record: completedRecord({ totalBytes: bytes.byteLength, receivedBytes: bytes.byteLength }),
+    })
+  }
+  rigged.downloads.sweep()
+  // All three were landable at the moment the sweep judged them. Without this the test would pass
+  // for a rig that staged three unverifiable directories and refused them for the earlier reason.
+  for (const id of ['shrunk', 'grown', 'untouched']) {
+    assert.equal(rigged.downloads.find(id)?.isVerifiable, true, id)
+    assert.equal(rigged.downloads.find(id)?.bytesOnDisk, bytes.byteLength, id)
+  }
+
+  // The measured shape, after the fact: the file keeps its name and gains no marker of any kind.
+  writeFileSync(join(rigged.stagingDir, 'shrunk', 'benchy.zip'), bytes.slice(0, 2560))
+  writeFileSync(join(rigged.stagingDir, 'grown', 'benchy.zip'), archive(8192, 13))
+
+  for (const id of ['shrunk', 'grown']) {
+    const error = await rejection(rigged.landing.land(id, 'p-1'))
+    assert.equal(error.code, 'Conflict', id)
+    assert.match(error.message, /when this app last checked it/, id)
+    // Constraint 15 again: a refusal removes nothing, and `discard` is the way out.
+    assert.equal(existsSync(join(rigged.stagingDir, id)), true, id)
+  }
+  assert.equal(rigged.uploads(), 0, 'a file edited since the verdict reached the upload')
+
+  // The control, and it is what makes the two above an assertion about discrimination rather than
+  // about refusal: the same rig, the same record, a file nobody touched.
+  assert.equal((await rigged.landing.land('untouched', 'p-1')).name, 'benchy.zip')
+  assert.equal(rigged.uploads(), 1)
+})
+
 test('land answers NotFound for an id it never staged, and joins it onto nothing', async () => {
   const rigged = rig()
   stage(rigged.stagingDir, 'real-one', {
