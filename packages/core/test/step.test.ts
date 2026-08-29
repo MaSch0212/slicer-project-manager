@@ -4,6 +4,7 @@ import { AppError } from '@spm/contract/errors.ts'
 import type { Ctx } from '../src/ctx.ts'
 import { newId } from '../src/db/ids.ts'
 import type { Library } from '../src/db/open.ts'
+import { CLASSIFIER_VERSION } from '../src/files/classify.ts'
 import { makePreviewHandlers, PREVIEW_HANDLERS } from '../src/previews/handlers.ts'
 import { makeMeshHandler } from '../src/previews/mesh-handler.ts'
 import {
@@ -47,27 +48,6 @@ function previewRows(lib: Library): PreviewRow[] {
        FROM previews pv JOIN files f ON f.id = pv.file_id ORDER BY f.rel_path`,
     )
     .all() as PreviewRow[]
-}
-
-/**
- * Makes this library's STEP files reachable by the queue, which `classifyFile` does not yet do.
- *
- * This task lands inert on purpose: `.step` and `.stp` still classify as `other`, so `rescan`
- * writes a `files` row of that kind and `claimPendingPreviews` — which offers a job only to a
- * handler claiming its kind — never hands it to anybody. The `previews` row itself already exists
- * and is `pending`, because `rescan` queues one for every file it sees whatever the kind.
- *
- * So the single column task 4 will change is the single column this changes, and it changes it
- * *after* `rescan` rather than by hand-building a `files` row: the id, the relative path, the size
- * and the content hash all stay the production writer's. Task 4's end-to-end bullet is what closes
- * the remaining gap, and it is the reason the assertions below are not sufficient on their own.
- */
-function promoteStepFilesToModels(lib: Library): void {
-  lib.db
-    .prepare(
-      "UPDATE files SET kind = 'model' WHERE rel_path LIKE '%.step' OR rel_path LIKE '%.stp'",
-    )
-    .run()
 }
 
 function job(absPath: string): PreviewJob {
@@ -202,8 +182,9 @@ test('the mesh handler throws for a broken .stp where it still returns null for 
 
     // The contrast is the assertion. `null` is a terminal, message-less `unsupported` row, and a
     // later tidy-up that turned the throw above into one would blank every unreadable STEP file in
-    // a library for good — the queue re-claims only `pending`, and only a content-hash change
-    // re-queues. Pinning both outcomes in one test is what makes that change go red.
+    // a library for good — the queue re-claims only `pending`, and the only things that re-queue
+    // are a content-hash change and a `CLASSIFIER_VERSION` bump that moves the file's kind, which
+    // for a `.step` already indexed as a model is neither. Pinning both outcomes in one test is what makes that change go red.
     const notAMesh = join(dir, 'notes.txt')
     writeFileSync(notAMesh, 'nothing to render here')
     assert.equal(await handler.run(job(notAMesh)), null)
@@ -215,7 +196,6 @@ test('a not-really-STEP .stp leaves a failed row carrying the reason', async () 
     const { ctx, dir } = seedProjectDir(lib)
     writeFileSync(join(dir, 'not-really.stp'), NOT_STEP)
     await rescan(lib, ctx)
-    promoteStepFilesToModels(lib)
 
     assert.deepEqual(await runPreviewQueue(lib, { handlers: PREVIEW_HANDLERS }), {
       ready: 0,
@@ -237,7 +217,6 @@ test('a .step file through the real handler chain ends ready, not unsupported', 
     const { ctx, dir } = seedProjectDir(lib)
     writeStepFixture(dir, 'cube.step')
     await rescan(lib, ctx)
-    promoteStepFilesToModels(lib)
 
     // Through `PREVIEW_HANDLERS`, not a local array spelling out the same two handlers.
     // `EMBEDDED_HANDLER_WITH_MODELS` is first and claims `model`, so it sees this job before the
@@ -409,7 +388,6 @@ test('a STEP file over the ceiling leaves a failed row naming both sizes', async
     // ceiling below it both render `0.0 MB` and "both sizes" collapses into one size twice.
     writeFileSync(join(dir, 'over.step'), new Uint8Array(2_000_000))
     await rescan(lib, ctx)
-    promoteStepFilesToModels(lib)
 
     assert.deepEqual(
       await runPreviewQueue(lib, { handlers: makePreviewHandlers({ maxStepBytes: 1_000_000 }) }),
@@ -425,5 +403,82 @@ test('a STEP file over the ceiling leaves a failed row naming both sizes', async
       over?.error,
       'this STEP file is 2.0 MB, more than the 1.0 MB permitted for one STEP file',
     )
+  })
+})
+
+/**
+ * **The whole subsystem, end to end, on the shape the user's library is actually in.**
+ *
+ * Every other test here starts from a build that already classifies `.step` as a model. This one
+ * starts from the build before it: the file is indexed, its `files` row says `kind: 'other'`, and
+ * its `classified_by` is the sentinel migration 003 backfills. That is precisely the state of the
+ * ten STEP files in the reference library, and the state F exists to get them out of.
+ *
+ * The three assertions are one story. Before the upgrade the queue does nothing at all — no
+ * handler claims `other`, so the `pending` row is never offered to one, and the file stays blank
+ * for ever however many ticks run. After it, with **nothing on disk touched** — same bytes, same
+ * size, same mtime — `rescan` re-asks the question, gets `model`, re-pends the row, and the very
+ * next queue run renders a PNG from it.
+ *
+ * This is the only test in the repository that observes the ordering constraint being satisfied
+ * rather than reasoning about it: the parser arm, the classifier, the migration and all four
+ * `rescan` edits have to be present together for it to pass, and it runs inside `deno task verify`
+ * through both `test:core:node` and `test:core:deno`.
+ */
+test('a .step indexed as other by an older build reclassifies and renders', async () => {
+  await withLibrary(async (lib) => {
+    const { ctx, dir } = seedProjectDir(lib)
+    writeStepFixture(dir, 'cube.step')
+    await rescan(lib, ctx)
+
+    // The library as the build before F left it. Written over the production writer's row rather
+    // than hand-built, so the id, the relative path, the size and the content hash all stay real.
+    lib.db.prepare("UPDATE files SET kind = 'other', slicer = NULL, classified_by = 0").run()
+    assert.deepEqual(await runPreviewQueue(lib, { handlers: PREVIEW_HANDLERS }), {
+      ready: 0,
+      failed: 0,
+      unsupported: 0,
+    })
+    assert.equal(previewRows(lib)[0]?.state, 'pending')
+
+    // The upgrade, and nothing on disk moved.
+    const before = statSync(join(dir, 'cube.step'))
+    assert.equal((await rescan(lib, ctx)).previewsQueued, 1)
+    const after = statSync(join(dir, 'cube.step'))
+    assert.deepEqual(
+      { size: after.size, mtimeMs: Math.round(after.mtimeMs) },
+      { size: before.size, mtimeMs: Math.round(before.mtimeMs) },
+    )
+
+    assert.deepEqual(await runPreviewQueue(lib, { handlers: PREVIEW_HANDLERS }), {
+      ready: 1,
+      failed: 0,
+      unsupported: 0,
+    })
+    const row = lib.db
+      .prepare(
+        'SELECT f.kind, f.classified_by, pv.state, pv.source, pv.png_path FROM files f JOIN previews pv ON pv.file_id = f.id',
+      )
+      .get() as {
+      kind: string
+      classified_by: number
+      state: string
+      source: string | null
+      png_path: string | null
+    }
+    assert.deepEqual(
+      {
+        kind: row.kind,
+        classifiedBy: Number(row.classified_by),
+        state: row.state,
+        source: row.source,
+      },
+      { kind: 'model', classifiedBy: CLASSIFIER_VERSION, state: 'ready', source: 'rasterized' },
+    )
+    // The PNG, not merely the column that names it: the row is the promise and the file is what
+    // the user's browser actually fetches.
+    // `png_path` is library-relative with forward slashes, whatever the platform.
+    const png = readFileSync(join(lib.dir, ...row.png_path!.split('/')))
+    assert.deepEqual([...png.subarray(0, 4)], [0x89, 0x50, 0x4e, 0x47])
   })
 })

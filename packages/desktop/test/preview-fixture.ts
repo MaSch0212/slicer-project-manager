@@ -75,7 +75,9 @@ export function markPreviewReady(db: DatabaseSync, libraryDir: string, fileId: s
  * first tick before it rescans, and `claimPendingPreviews` selects `state = 'pending'` and
  * nothing else; a row that is already `ready` when the process starts is therefore invisible to
  * every tick it will ever run. The adoption rescan does not undo that either: it re-pends a row
- * only where `size_bytes` or `mtime_ms` moved, and the rescan below has already recorded both.
+ * only where `size_bytes` or `mtime_ms` moved, or where a `CLASSIFIER_VERSION` bump gives the file
+ * a different kind — and the rescan below has already recorded the first two and stamped the
+ * third, so the shell's rescan finds nothing to re-ask.
  *
  * So the app never renders a competing picture for this file, never paints one, and never caches
  * one — which matters as much as the database does, because a thumb is served with

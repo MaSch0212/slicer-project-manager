@@ -544,8 +544,9 @@ test('a rescan mid-render wins: the stale result is dropped, not written over th
 
     // Measured before the guard existed: this row read `state: 'ready'` with the *old* render's
     // 300x300 and the old `source_hash`, and it stayed that way for good — the rescan above had
-    // already written the new size and mtime, so the next rescan takes the stat-match `continue`
-    // and re-queues nothing. The user's edited model kept its pre-edit thumbnail.
+    // already written the new size and mtime, so the next rescan takes the stat-match path — and
+    // its `classified_by` is current, so it returns early there — and re-queues nothing. The
+    // user's edited model kept its pre-edit thumbnail.
     assert.deepEqual(previewRow(lib), { state: 'pending', attempts: 0, claimedAt: null })
     assert.equal((await rescan(lib, ctx)).previewsQueued, 0)
 

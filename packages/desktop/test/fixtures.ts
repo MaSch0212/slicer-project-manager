@@ -135,7 +135,9 @@ export function seedLibrary(libraryDir: string, seed: SeedProject[]): void {
  * race. The shell starts its preview ticker inside `LibraryHost.open()` — before the adoption
  * rescan, and with the first tick fired immediately — so a `previews` row written *after* launch
  * is contested by the app's own queue, and one written here is not: `claimPendingPreviews` takes
- * `state = 'pending'` alone, and only a rescan that sees the file's bytes change re-pends a row.
+ * `state = 'pending'` alone, and a rescan re-pends a row only where the file's bytes changed or a
+ * `CLASSIFIER_VERSION` bump gave it a different kind — and the seed here is written by the same
+ * build that will rescan it, so its rows are already stamped with the current version.
  * `files.spec.ts` is the caller, and carries the rest of that reasoning.
  */
 export async function launchApp(

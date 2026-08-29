@@ -9,7 +9,7 @@ import { RELATIVE_PATH_SEPARATOR } from '../projects/rescan.ts'
 import { requireProjectRow, toCoreFileDto } from '../projects/queries.ts'
 import { requireUserRow } from '../users/repo.ts'
 import { diskUsageBytes } from '../users/usage.ts'
-import { classifyFile } from './classify.ts'
+import { classifyFile, CLASSIFIER_VERSION } from './classify.ts'
 import { fileContentHash } from './hash.ts'
 import { previewPath, projectDir, safeJoin } from './paths.ts'
 
@@ -136,8 +136,12 @@ export async function uploadFile(
   const classification = classifyFile(absPath)
   lib.db
     .prepare(
-      `INSERT INTO files (id, project_id, rel_path, kind, slicer, size_bytes, mtime_ms, content_hash)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      // `classified_by` because this row's `kind` was just decided by the running classifier, and
+      // the column's `DEFAULT 0` means "predates the mechanism". Left to the default, every
+      // uploaded file would be re-asked a question already answered on the next rescan — once per
+      // file, and a zip read each for an uploaded `.3mf`.
+      `INSERT INTO files (id, project_id, rel_path, kind, slicer, size_bytes, mtime_ms, content_hash, classified_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       id,
@@ -148,6 +152,7 @@ export async function uploadFile(
       stat.size,
       Math.round(stat.mtimeMs),
       await fileContentHash(absPath),
+      CLASSIFIER_VERSION,
     )
   lib.db
     .prepare("INSERT INTO previews (file_id, state, updated_at) VALUES (?, 'pending', ?)")

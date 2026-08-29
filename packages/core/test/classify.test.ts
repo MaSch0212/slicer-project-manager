@@ -1,7 +1,13 @@
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { classify3mf, classifyFile, slicerFromSliceInfo } from '../src/files/classify.ts'
+import {
+  classify3mf,
+  classifyFile,
+  CLASSIFIER_VERSION,
+  MODEL_EXTENSIONS,
+  slicerFromSliceInfo,
+} from '../src/files/classify.ts'
 import { fileContentHash } from '../src/files/hash.ts'
 import { findZipEntry, readZipEntries, readZipEntryText } from '../src/files/zip.ts'
 import { assert, test } from './harness.ts'
@@ -139,5 +145,90 @@ test('fileContentHash is a stable 32-byte digest that follows content', async ()
 
     writeFileSync(path, 'solid two')
     assert.notDeepEqual([...(await fileContentHash(path))], [...first])
+  })
+})
+
+/**
+ * `classifyFile`'s complete answer set, paired with the version that produced it.
+ *
+ * **What breaks this test.** Changing what any extension classifies as, or adding one to
+ * `MODEL_EXTENSIONS`, makes the computed table below differ from this literal. The only edit that
+ * repairs it is one that touches `CLASSIFIER_VERSION` **in the same commit**, because `version`
+ * sits inside the literal being edited — which is the whole mechanism. A forgotten bump ships a
+ * classifier that answers differently with every existing row still marked as classified by it, so
+ * `rescan` never re-asks the question and the change is invisible in the field.
+ *
+ * **`version: 1` here and `0 < CLASSIFIER_VERSION` in `db.test.ts` are not in conflict.** They are
+ * opposite tests of the same constant, and both land in this commit. The migration test must
+ * survive a bump — a backfill assertion pinned to today's value would go red for the wrong reason
+ * and teach whoever bumped the constant to edit the test. This one exists to be broken by a bump:
+ * going red *is* how the edit that changes an answer is forced to touch the version beside it.
+ *
+ * **What it cannot catch**, so nobody trusts it further than it goes:
+ * - A change inside `classify3mf` that produces the same answers on the eight fixtures below.
+ * - A branch added **outside** `MODEL_EXTENSIONS` — a new `.gcode`-shaped arm returning some other
+ *   kind — which the enumeration does not reach and which therefore forces no row here.
+ *
+ * The snapshot pins the function's answers, not its reasoning, and nothing in this repository
+ * measures which internal changes warrant a bump.
+ */
+const CLASSIFIER_SNAPSHOT = {
+  version: 1,
+  answers: {
+    '.stl': 'model',
+    '.obj': 'model',
+    '.step': 'model',
+    '.stp': 'model',
+    '.3mf/cura': 'slicer_project',
+    '.3mf/prusaslicer': 'slicer_project',
+    '.3mf/orca': 'slicer_project',
+    '.3mf/bambu': 'slicer_project',
+    '.3mf/anycubic': 'slicer_project',
+    '.3mf/unsliced': 'slicer_project',
+    '.3mf/mesh': 'model',
+    '.3mf/unreadable': 'other',
+    '.gcode': 'other',
+    '.txt': 'other',
+  },
+}
+
+test('the classifier version and every answer it gives are frozen together', async () => {
+  await withDir((dir) => {
+    const answers: Record<string, string> = {}
+
+    // Computed from MODEL_EXTENSIONS rather than hand-listed, and that is the point (decision 15).
+    // A hand-written key set catches a *changed* answer and misses an *added* extension: `.ply`
+    // added to MODEL_EXTENSIONS would change nothing already listed, force no new row, and leave
+    // the version unbumped with the suite green. Iterating puts the new key into `answers`, where
+    // the whole-object comparison below is what notices it.
+    for (const ext of MODEL_EXTENSIONS) {
+      const path = join(dir, `part${ext}`)
+      writeFileSync(path, 'not read by classifyFile, which looks only at the name')
+      answers[ext] = classifyFile(path).kind
+    }
+
+    const threeMf: [string, (path: string) => void][] = [
+      ['cura', (path) => curaProject(path)],
+      ['prusaslicer', (path) => prusaProject(path)],
+      ['orca', (path) => bambuLineageProject(path, ['X-BBL-Client-Type', 'OrcaSlicer-Version'])],
+      ['bambu', (path) => bambuLineageProject(path, ['X-BBL-Client-Type'])],
+      ['anycubic', (path) => bambuLineageProject(path, ['X-ACNext-Client-Type'])],
+      ['unsliced', (path) => unslicedBambuProject(path)],
+      ['mesh', (path) => plainMesh3mf(path)],
+      ['unreadable', (path) => writeFileSync(path, 'PK not really')],
+    ]
+    for (const [label, write] of threeMf) {
+      const path = join(dir, `${label}.3mf`)
+      write(path)
+      answers[`.3mf/${label}`] = classifyFile(path).kind
+    }
+
+    for (const ext of ['.gcode', '.txt']) {
+      const path = join(dir, `f${ext}`)
+      writeFileSync(path, 'x')
+      answers[ext] = classifyFile(path).kind
+    }
+
+    assert.deepEqual({ version: CLASSIFIER_VERSION, answers }, CLASSIFIER_SNAPSHOT)
   })
 })

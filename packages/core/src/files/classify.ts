@@ -58,9 +58,43 @@ export function classify3mf(absPath: string): Classification {
   return { kind: 'model', slicer: null }
 }
 
+/**
+ * The extensions that classify as `model` on their name alone. Enumerated by the frozen
+ * snapshot in `test/classify.test.ts`, so an addition here with no row there fails.
+ *
+ * A list rather than the chain of `endsWith` it replaces, and that is the only reason it exists:
+ * a chain is a set no test can read, so adding `.ply` to it would change nothing already asserted
+ * and force no new row into the snapshot — the commonest future bump, going unnoticed. `.3mf` is
+ * deliberately not here; it is a name two entirely different things share, and only `classify3mf`
+ * can tell them apart.
+ */
+export const MODEL_EXTENSIONS = ['.stl', '.obj', '.step', '.stp'] as const
+
+/**
+ * What `classifyFile`'s answers are worth, and the only thing `rescan` compares to decide whether
+ * to ask again.
+ *
+ * **Bump this in the same commit as any change to what `classifyFile` returns.** A row records the
+ * version that classified it (`files.classified_by`), and `rescan`'s stat-match path re-runs
+ * `classifyFile` exactly when that number is not this one. Without a bump the change is invisible
+ * in the field: every existing row still claims to have been classified by the current version, so
+ * nothing is re-asked and the new answer reaches only files the library has never seen. The frozen
+ * snapshot in `test/classify.test.ts` is what makes forgetting it fail rather than ship.
+ *
+ * **What a bump costs, so the decision is priced.** One extra `classifyFile` call per indexed file
+ * on the next rescan, once. For the reference library that is 2 946 calls of which 402 are `.3mf`
+ * and therefore a zip read each; everything else is a string comparison. It does **not** re-hash —
+ * the content hash is untouched, because nothing about the bytes changed — so it costs a normal
+ * rescan's classification work and not a backfill's. Previews are re-pended only for the files
+ * whose kind actually moved, so a bump made for `.step` does not re-render 1 311 STLs.
+ *
+ * Never 0: that value means "this row predates the mechanism" and is what migration 003 backfills.
+ */
+export const CLASSIFIER_VERSION = 1
+
 export function classifyFile(absPath: string): Classification {
   const lower = absPath.toLowerCase()
-  if (lower.endsWith('.stl') || lower.endsWith('.obj')) return { kind: 'model', slicer: null }
+  if (MODEL_EXTENSIONS.some((ext) => lower.endsWith(ext))) return { kind: 'model', slicer: null }
   if (lower.endsWith('.3mf')) return classify3mf(absPath)
   return { kind: 'other', slicer: null }
 }

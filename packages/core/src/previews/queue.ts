@@ -43,8 +43,9 @@ export type PreviewHandler = {
  * killed mid-run, leaves `pending` with a lease that later expires and is re-claimed. Without a
  * ceiling that file is picked up again on every restart, forever.
  *
- * A rescan that sees the file's content hash change resets `attempts` to 0 along with the state,
- * so the budget is per unchanged-bytes, not per file for all time.
+ * A rescan resets `attempts` to 0 along with the state whenever it re-pends the row — when the
+ * file's content hash changed, or when a `CLASSIFIER_VERSION` bump gave the file a different kind
+ * — so the budget is per unchanged-bytes-and-kind, not per file for all time.
  */
 export const MAX_PREVIEW_ATTEMPTS = 3
 
@@ -103,9 +104,11 @@ export const PREVIEW_LEASE_MS = 15 * 60 * 1000
  * A plain `model` 3MF can carry a thumbnail too, and one should be used when it is there — but
  * covering `model` here would be wrong, because coverage is a claim and a claim that comes back
  * `null` is recorded as `unsupported`, which is terminal. Alone in the default list this handler
- * has nothing behind it, so every `.stl` and `.obj` — not a zip, no thumbnail, nothing this can
- * ever answer — would go permanently blank instead of staying `pending` for an operator who
- * enables the rasterizer later. Nothing re-queues a row whose bytes have not changed.
+ * has nothing behind it, so every `.stl`, `.obj`, `.step` and `.stp` — not a zip, no thumbnail,
+ * nothing this can ever answer — would go permanently blank instead of staying `pending` for an
+ * operator who enables the rasterizer later. What re-queues such a row is narrow: `rescan` re-pends
+ * it when the file's content hash changes, or when a `CLASSIFIER_VERSION` bump gives the file a
+ * *different* kind — and a bump that leaves the kind alone re-pends nothing.
  *
  * `model` coverage therefore lives in `handlers.ts`, which spreads this handler and adds the kind
  * on the chain that has a rasterizer behind it and can afford the fall-through.
@@ -216,7 +219,8 @@ export function claimPendingPreviews(
  * `state = 'ready'` over the fresh `pending` row with the picture it had rendered from the *old*
  * bytes, and `source_hash` set to the old hash. Nothing recovered from it: the same rescan had
  * already written the new `size_bytes` and `mtime_ms`, so the next rescan takes the cheap
- * stat-match `continue` and never looks at `source_hash` again. The user's edited model kept its
+ * stat-match path — which since `classified_by` exists still returns early for a row whose
+ * classifier version is current — and never looks at `source_hash` again. The user's edited model kept its
  * pre-edit thumbnail for as long as the file stayed untouched. Guarded, the stale result is
  * dropped and the row is left `pending` for the next tick, which renders the bytes that are
  * actually there.
@@ -235,7 +239,8 @@ function finish(lib: Library, job: PreviewJob, sql: string, params: unknown[]): 
     .run(...(params as never[]), job.claimedAt).changes
   if (Number(changes) === 1) return true
   // debug, not warn: the only way here is a row somebody else moved on purpose — today that is
-  // `rescan` re-pending an edited file — and the queue picking it up again is the right answer,
+  // `rescan`, re-pending either an edited file or one a classifier bump gave a new kind — and the
+  // queue picking it up again is the right answer,
   // not an incident.
   lib.log.debug('preview result dropped, the row was no longer the one claimed', {
     fileId: job.fileId,
@@ -280,8 +285,10 @@ async function runOne(
       // Deterministic absence. Like `failed`, this leaves the queue for good: claimPendingPreviews
       // selects `state = 'pending'` only, so neither is ever re-claimed on its own. What does
       // bring a row back is `rescan`, which re-pends it — from any state, attempts reset — when
-      // the file's content hash changes. So this is "nothing to render from these bytes", not
-      // "nothing to render, ever".
+      // the file's content hash changes, or when a `CLASSIFIER_VERSION` bump reclassifies it to a
+      // *different* kind. So this is "nothing to render from these bytes", not "nothing to render,
+      // ever" — and the second door is narrow: a bump that leaves the kind where it was opens
+      // nothing at all.
       if (
         !finish(
           lib,

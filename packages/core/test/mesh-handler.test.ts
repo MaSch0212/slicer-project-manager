@@ -182,10 +182,14 @@ test('a malformed stl fails and stops after MAX_PREVIEW_ATTEMPTS', async () => {
   })
 })
 
-test('a .step file classified as other is never claimed', async () => {
+test('a file classified as other is never claimed', async () => {
   await withLibrary(async (lib) => {
     const { ctx, dir } = seedProjectDir(lib)
-    writeFileSync(join(dir, 'part.step'), 'ISO-10303-21;')
+    // **`notes.txt` and not `part.step`, and subsystem F is why.** What this pins is the claim
+    // filter — a job is offered only to a handler that claims its kind — and `.step` was the
+    // vehicle for it while `classifyFile` still answered `other` for one. It answers `model` now,
+    // so a `.step` here would assert the opposite of what ships.
+    writeFileSync(join(dir, 'notes.txt'), 'PETG, 0.2mm')
     writeFileSync(join(dir, 'cube.stl'), binaryStl(cubeMesh()))
     await rescan(lib, ctx)
 
@@ -208,8 +212,8 @@ test('a model the handler cannot read is unsupported, not failed', async () => {
     writeFileSync(join(dir, 'part.ply'), 'ply\nformat ascii 1.0\nend_header\n')
     await rescan(lib, ctx)
 
-    // classifyFile only ever calls .stl/.obj/.3mf a model, so this is forced: the point is the
-    // handler's contract for a `model` job in a format it has no parser for. `null` (→
+    // `.ply` is not one of the extensions classifyFile calls a model, so this is forced: the
+    // point is the handler's contract for a `model` job in a format it has no parser for. `null` (→
     // `unsupported`, never retried) is right and a throw (→ `failed`, against the retry
     // budget) is wrong, because re-reading the file will never make it readable.
     lib.db.prepare("UPDATE files SET kind = 'model' WHERE rel_path = 'part.ply'").run()

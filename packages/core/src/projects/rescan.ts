@@ -4,7 +4,7 @@ import type { RescanResultDto } from '@spm/contract/dtos.ts'
 import type { Ctx } from '../ctx.ts'
 import { newId } from '../db/ids.ts'
 import type { Library } from '../db/open.ts'
-import { classifyFile } from '../files/classify.ts'
+import { classifyFile, CLASSIFIER_VERSION } from '../files/classify.ts'
 import { fileContentHash } from '../files/hash.ts'
 import { userRoot } from '../files/paths.ts'
 import { requireUserRow } from '../users/repo.ts'
@@ -111,9 +111,13 @@ export async function rescan(
   }
 
   const insertFile = lib.db.prepare(
-    `INSERT INTO files (id, project_id, rel_path, kind, slicer, size_bytes, mtime_ms, content_hash)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO files (id, project_id, rel_path, kind, slicer, size_bytes, mtime_ms, content_hash, classified_by)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   )
+  const reclassifyFile = lib.db.prepare(
+    'UPDATE files SET kind = ?, slicer = ?, classified_by = ? WHERE id = ?',
+  )
+  const previewExists = lib.db.prepare('SELECT file_id FROM previews WHERE file_id = ?')
   const insertPreview = lib.db.prepare(
     "INSERT INTO previews (file_id, state, updated_at) VALUES (?, 'pending', ?)",
   )
@@ -161,8 +165,17 @@ export async function rescan(
     const existing = new Map(
       (
         lib.db
-          .prepare('SELECT id, rel_path, size_bytes, mtime_ms FROM files WHERE project_id = ?')
-          .all(row.id) as { id: string; rel_path: string; size_bytes: number; mtime_ms: number }[]
+          .prepare(
+            'SELECT id, rel_path, size_bytes, mtime_ms, kind, classified_by FROM files WHERE project_id = ?',
+          )
+          .all(row.id) as {
+          id: string
+          rel_path: string
+          size_bytes: number
+          mtime_ms: number
+          kind: string
+          classified_by: number
+        }[]
       ).map((f) => [f.rel_path, f]),
     )
 
@@ -182,6 +195,7 @@ export async function rescan(
           file.size,
           file.mtimeMs,
           await fileContentHash(file.absPath),
+          CLASSIFIER_VERSION,
         )
         insertPreview.run(id, now)
         result.filesAdded++
@@ -189,17 +203,48 @@ export async function rescan(
         continue
       }
 
-      if (Number(known.size_bytes) === file.size && Number(known.mtime_ms) === file.mtimeMs)
+      if (Number(known.size_bytes) === file.size && Number(known.mtime_ms) === file.mtimeMs) {
+        // The bytes have not moved, so there is nothing to re-hash — but the *classifier* may
+        // have changed its mind since this row was written, and a file whose bytes never move
+        // would otherwise never be asked again. That is what left ten STEP files indexed as
+        // `other` with nothing to notice it by. `classifyFile` is a string comparison for
+        // everything but `.3mf`, and this runs once per version bump rather than once per tick.
+        if (Number(known.classified_by) === CLASSIFIER_VERSION) continue
+        const classification = classifyFile(file.absPath)
+        reclassifyFile.run(classification.kind, classification.slicer, CLASSIFIER_VERSION, known.id)
+        // Only a kind that actually moved re-pends: a bump made for `.step` must not re-render
+        // every STL in the library. The two arms are the same guard the stat-mismatch path below
+        // carries — a bare UPDATE against a preview row that is not there updates nothing and
+        // reports nothing, so the file would reclassify to `model` and then never render.
+        //
+        // The open consequence, written down rather than hidden: this is right for
+        // `other -> model`. The reverse, `model -> other`, which nothing in F causes but a future
+        // change could, would leave a `ready` row holding a PNG for a file the viewer no longer
+        // offers. Harmless today, and worth deciding when something actually causes it.
+        if (classification.kind !== known.kind) {
+          if (previewExists.get(known.id)) resetPreview.run(now, known.id)
+          else insertPreview.run(known.id, now)
+          result.previewsQueued++
+        }
         continue
+      }
 
       // Cheap stat mismatch, so pay for the hash and reclassify: a saved 3MF can change slicer.
       const hash = await fileContentHash(file.absPath)
       const classification = classifyFile(file.absPath)
       lib.db
         .prepare(
-          'UPDATE files SET kind = ?, slicer = ?, size_bytes = ?, mtime_ms = ?, content_hash = ? WHERE id = ?',
+          'UPDATE files SET kind = ?, slicer = ?, size_bytes = ?, mtime_ms = ?, content_hash = ?, classified_by = ? WHERE id = ?',
         )
-        .run(classification.kind, classification.slicer, file.size, file.mtimeMs, hash, known.id)
+        .run(
+          classification.kind,
+          classification.slicer,
+          file.size,
+          file.mtimeMs,
+          hash,
+          CLASSIFIER_VERSION,
+          known.id,
+        )
 
       const preview = lib.db
         .prepare('SELECT source_hash FROM previews WHERE file_id = ?')

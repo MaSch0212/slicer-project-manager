@@ -438,10 +438,20 @@ type PendingLaunch = { file: FileDto; mode: SlicerLaunchMode; chosen: SlicerId |
                         the app names the viewer route -- so without this the whole viewer is
                         reachable only by typing a URL.
 
-                        Offered for model files alone, which is exactly the set the viewer's
-                        three loaders cover: classifyFile in packages/core assigns that kind
-                        to .stl, .obj and a .3mf that is a mesh rather than a slicer project,
-                        matching the formats the rasterizer thumbnails.
+                        Offered for model files alone -- classifyFile in packages/core assigns
+                        that kind to .stl, .obj, .step, .stp and a .3mf that is a mesh rather
+                        than a slicer project, which is exactly the set the rasterizer
+                        thumbnails.
+
+                        It is NO LONGER exactly the set the viewer's loaders cover, and the
+                        gate is deliberately left alone anyway. Since subsystem F a .step is a
+                        model that the rasterizer draws a thumbnail for and the viewer has no
+                        loader for, so this link leads to the viewer's own honest message --
+                        "this viewer opens STL, OBJ, 3MF", built from SUPPORTED_FORMATS.
+                        Hiding the link instead would suppress that message and put the
+                        viewer's format list in a second place, which is the one thing
+                        SUPPORTED_FORMATS exists to prevent. A link that explains itself beats
+                        a control that silently is not there.
                       -->
                       @if (file.kind === 'model') {
                         <a

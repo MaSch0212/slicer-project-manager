@@ -511,7 +511,7 @@ test.describe('the desktop shell', () => {
       .toEqual({
         // The migrations were bundled next to main.js and read through import.meta.url; a CJS
         // bundle or a missing dist/migrations leaves this at 0.
-        user_version: 2,
+        user_version: 3,
         // ensureLocalUser's single flat-library user (spec 2.6), not reimplemented here.
         users: [{ username: 'local', library_dir: '.' }],
       })

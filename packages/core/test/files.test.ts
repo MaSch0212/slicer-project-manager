@@ -4,6 +4,7 @@ import type { AppError, QuotaExceededDetails } from '@spm/contract/errors.ts'
 import type { Ctx } from '../src/ctx.ts'
 import { newId } from '../src/db/ids.ts'
 import type { Library } from '../src/db/open.ts'
+import { CLASSIFIER_VERSION } from '../src/files/classify.ts'
 import {
   assertWithinQuota,
   contentTypeFor,
@@ -105,6 +106,15 @@ test('upload writes the file, indexes it and queues a preview', async () => {
     const onDisk = join(lib.dir, 'marc', 'Benchy', 'benchy.stl')
     assert.equal(readFileSync(onDisk, 'utf8'), 'solid benchy')
     assert.equal(getProject(lib, ctx, project.id).files.length, 1)
+
+    // The fourth write site that sets `kind`, and the only one outside `rescan`. Left at the
+    // column's `DEFAULT 0` this row would claim to predate a classifier that had just run on it,
+    // and the next rescan would re-ask a question already answered — once per uploaded file, and
+    // for an uploaded `.3mf` that is a zip read.
+    const row = lib.db.prepare('SELECT classified_by FROM files').get() as {
+      classified_by: number
+    }
+    assert.equal(Number(row.classified_by), CLASSIFIER_VERSION)
   })
 })
 

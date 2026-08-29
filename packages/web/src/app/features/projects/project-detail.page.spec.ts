@@ -734,6 +734,13 @@ describe('ProjectDetailPage', () => {
       // The control that makes the test above falsifiable in the other direction: a .gcode or
       // a slicer project has nothing the viewer's three loaders can open, and an entry point
       // that led to "this viewer cannot show that" would be worse than none.
+      //
+      // Which is not the argument the page's own comment makes for `.step`, and the difference
+      // is the kind rather than the wording. These files are not `model`, so the viewer answers
+      // them with a message about what they *are* — "this is a slicer project" — which the row
+      // already says, so a link adds nothing. A `.step` is a `model` the rasterizer thumbnails
+      // and the viewer has no loader for, and there the viewer's message names the formats it
+      // does open. The gate is on `kind` in both cases; only one of them has anything to say.
       expect(fixture.nativeElement.querySelector('a[href^="/projects/p1/view/"]')).toBeNull()
       // And the row is on the page, so the assertion above is about the link and not about an
       // empty file list.
