@@ -468,19 +468,36 @@ outright. So without the check handler a site reads a granted permission out of 
 raises a request, and whatever it draws from that answer is a decision nobody refused. 9.5 is closed
 by this; Windows 11 only, as with everything else here.
 
-**Nothing installs a permission handler on `defaultSession`, and the measurement above applies to it
-too.** `grep -rn setPermissionRequestHandler packages/desktop/src` returns exactly one hit — the
-browse session, above. So the app's own session is the "neither handler" column of that table: a
-document on it that asks for geolocation or notifications is **granted, with no prompt**. This is
-recorded rather than fixed, and the reason is not that it does not matter. The exposure is bounded by
-what is on that session: the main window only ever loads `spm://app`, which is the app's own bundle,
-and every remote document E introduces is on the browse partition — so nothing a site controls is in
-a position to ask. And the one-line refusal is not free. `packages/web` calls
-`navigator.clipboard.writeText` (`users.page.ts:460`), and **whether this Electron raises
-`clipboard-sanitized-write` for it is unmeasured** — a blanket deny on `defaultSession` could
-therefore remove a working feature, with no Electron-level test in the suite that would notice.
-Refusing on the strength of an inference is the mistake this section exists to avoid. 9.20 carries it
-with the cost of settling it, and it is the shell's decision to take, not E's.
+**`defaultSession` now has the same pair, with one measured exception.** It used to have neither — so
+the app's own session was the "neither handler" column of the table above, and a document on it that
+asked for geolocation or notifications was **granted, with no prompt**. That was recorded rather than
+fixed because the one-line refusal was not free: `packages/web` calls
+`navigator.clipboard.writeText` (`users.page.ts`'s `onCopy`), and whether this Electron raised
+`clipboard-sanitized-write` for it was unmeasured, so a blanket deny could have removed a working
+feature with nothing in the suite to notice.
+
+**It is measured now** — three launches of the real shell, Electron 44.0.0 on Windows 11, one
+variable each, the run 9.20 named as the cost of settling it:
+
+| `defaultSession` handlers                  | `writeText` from a real click                            | `permissions.query`                                             |
+| ------------------------------------------ | -------------------------------------------------------- | --------------------------------------------------------------- |
+| none (a recorder that grants)              | resolves; raises `clipboard-sanitized-write`             | `geolocation`, `notifications`, `clipboard-write` all `granted` |
+| blanket deny                               | **rejects** `NotAllowedError … Write permission denied.` | all three `denied`                                              |
+| deny, allowing `clipboard-sanitized-write` | resolves                                                 | `clipboard-write` `granted`, the other two `denied`             |
+
+So the inference that stopped the earlier round was right: **a blanket deny would have removed the
+admin users page's copy control.** The recorder also shows that the permission Chromium raises for
+`navigator.clipboard.writeText` is `clipboard-sanitized-write` and not the web API's own spelling —
+a handler written against `clipboard-write` denies exactly the thing it was trying to allow — and
+that the request handler saw the write once with `requestingUrl: spm://app/projects`, while the check
+handler saw `media` (video and audio), `web-app-installation`, `geolocation` and `notifications`
+during startup alone.
+
+`APP_SESSION_PERMISSIONS` in `app.ts` is therefore a deny with a one-entry allow-list, installed
+beside `protocol.handle` — the other thing that registers on `defaultSession` — and `shell.spec.ts`
+asserts all three facts against the running app. `clipboard-read` is deliberately not on the list:
+nothing in `packages/web` reads the clipboard, and the check handler saw it only because
+`permissions.query` asked. 9.20 is closed by this.
 
 ### 3.8 What the browse view does not inherit, and why that is fine
 
@@ -1031,6 +1048,21 @@ one, and **create a new project** as a first-class option beside it — not a fa
 failure message. When a new project is created this way, its `website` is set to the **canonical URL
 of the page the download came from**, which is what makes the _second_ download from that model match.
 
+**`http(s)` only, and the key is left off entirely otherwise** — the same omission a popup download
+already gets (6.3's `pageUrl: null` case), rather than a second mechanism. This is 7.3's rule for
+`browse.json` applied to the other thing this subsystem persists from a site's choosing:
+`isRememberableUrl` narrows deliberately more tightly than `browseNavigationPolicy` because "a
+`data:` URL is a whole document inlined into a string", and `pageUrl` is `getURL()` of a view running
+under exactly that policy — so a site doing `location.href = 'data:text/html,…'` makes its own
+document the page a download came from. What that reaches is not hypothetical:
+`createProjectSchema.website` is `z.url()`, which accepts `data:`, `blob:`, `file:` and `javascript:`
+alike, and the stored value is rendered by `project-detail.page.ts` as
+`<a [href]="detail.website" target="_blank">` — a stranger's string in an `[href]` in the privileged
+`spm://app` document. The click is caught today by `setWindowOpenHandler`, whose `navigationPolicy`
+answers `block` for `data:`; that is another subsystem's hook written for another reason, E states no
+dependency on it, and E is what would have created the path. **Whether the schema should narrow too
+is a contract question and is deliberately not answered here.**
+
 The match, when there is one, is presented as a suggestion the user confirms. It is never applied
 silently: `matchKey` is derived rather than measured (6.2), and a wrong silent match puts someone's
 file in someone else's project.
@@ -1208,7 +1240,15 @@ browse: {
    */
   land(downloadId: string, projectId: string, opts?: { name?: string }): Promise<FileDto>
 
-  /** Deletes a staged download and its directory. The only thing that removes one. */
+  /**
+   * Deletes a staged download and its directory. The only thing that removes one.
+   *
+   * Refuses `Conflict` for one that is **still running**, which is `!isOrphan && state ===
+   * 'progressing'` — both halves. An orphan whose record still says `progressing` is what a kill
+   * mid-download leaves and is not running: nothing is writing to it, no terminal rewrite is ever
+   * coming, and this call is its only exit. A UI that gates on `state` alone leaves that row with
+   * no control at all, which is the shape constraint 15 exists to forbid.
+   */
   discard(downloadId: string): Promise<void>
 }
 ```
@@ -1557,11 +1597,14 @@ not.
     hooks — the `navigate` arm loads into the browse view, which for a popup would destroy the
     sign-in it exists to carry — so it needs its own decision table, and the measurement that
     motivates one is a real login (9.12) showing what a popup actually navigates to.
-20. **Should `defaultSession` have a permission handler?** **Open. The exposure is measured and
-    written down (3.7); the fix is not taken here.** The app installs none, so its own session is
-    the "neither handler" case: geolocation and notifications are granted with no prompt. Bounded by
-    the main window only ever loading `spm://app`. _To settle:_ one run with a _recording_ handler on
-    `defaultSession` while the app is exercised, to learn which permissions the app's own renderer
-    raises — `navigator.clipboard.writeText` in `users.page.ts:460` is the only known candidate and
-    it is **unmeasured** whether it raises `clipboard-sanitized-write` at all. A blanket deny written
-    without that reading is a change that can remove a working feature with nothing to catch it.
+20. **Should `defaultSession` have a permission handler?** **Answered: yes, and it has one — a deny
+    with exactly one measured exception** (3.7). The run this question asked for was made: a
+    recording handler on `defaultSession` while the app was exercised showed
+    `navigator.clipboard.writeText` raising `clipboard-sanitized-write` and nothing else raising
+    anything the app asked for, a blanket deny **rejecting that write** — so the caution here was
+    warranted, not theoretical — and a deny allowing `clipboard-sanitized-write` alone leaving the
+    copy control working while geolocation and notifications answer `denied`.
+    `APP_SESSION_PERMISSIONS` in `app.ts` is the list, and `shell.spec.ts` pins all three facts
+    against the running shell. What stays open is only the general shape: the list is an allow-list
+    of one, so the next feature that needs a permission has to add itself to it deliberately, which
+    is the intended cost.
