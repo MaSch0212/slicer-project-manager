@@ -126,6 +126,30 @@ export const MAX_DOWNLOAD_BYTES = 2 * 1024 * 1024 * 1024
  */
 export const FALLBACK_DOWNLOAD_NAME = 'download'
 
+/**
+ * The bound every string **a stranger chose** arrives under on the record: `sourceUrl`, `pageUrl`
+ * and `mimeType` — plus `siteId` when a record is read back, because on that path it comes from a
+ * file rather than from the registry.
+ *
+ * **These were the unbounded three.** `fileName` goes through `fileNameSchema`, which stops at 255;
+ * every string on a `BrowseNotice` is cut at `MAX_NOTICE_TEXT`; `getURL()` and `getMimeType()` went
+ * straight onto the record. A `data:` URL download makes the URL *the whole payload* — written into
+ * `download.json` twice and fsynced, held in memory for the life of the staging directory, and
+ * copied into every `browse.downloads()` poll response after that. That is not a security boundary
+ * (nothing opens these), it is a size one, and it is the same rule the notices already keep.
+ *
+ * `2048` because `dispatch.ts` already spells that number as what a URL crossing this app's own
+ * boundary may be — `browse.navigate` is `z.string().min(1).max(2048)` — so a second and different
+ * answer here would be this file inventing one. For `mimeType` the number is a ceiling and not a
+ * claim about MIME types: nothing here parses one, and a header that long is a page misbehaving.
+ *
+ * **Truncating costs these three fields nothing they are used for.** All three are display and
+ * attribution only; `siteId` is a registry match on `pageUrl`'s *hostname*, which no truncation at
+ * this length can reach; and the one string this file turns into a path — `fileName` — is bounded
+ * somewhere else and validated twice.
+ */
+export const MAX_RECORDED_TEXT = 2048
+
 /* -------------------------------------------------------------------------------------------
  * The record, and the Electron surfaces this file will touch
  * ---------------------------------------------------------------------------------------- */
@@ -139,11 +163,15 @@ export type BrowseDownloadRecord = {
   startedAt: number
   /** The sanitised basename beside this file. See {@link stagedFileName}. */
   fileName: string
-  /** `item.getURL()` — may be a `blob:`. For display and attribution only. */
+  /**
+   * `item.getURL()` — may be a `blob:`, and on a `data:` download is the payload itself. For
+   * display and attribution only, and bounded at {@link MAX_RECORDED_TEXT}.
+   */
   sourceUrl: string
   /**
-   * The page the view was on when it started. **This is what matching runs on**, never `sourceUrl`,
-   * which on the one site ever measured is a `blob:` that identifies nothing.
+   * The page the view was on when it started, bounded at {@link MAX_RECORDED_TEXT}. **This is what
+   * matching runs on**, never `sourceUrl`, which on the one site ever measured is a `blob:` that
+   * identifies nothing.
    *
    * **Null for a download a popup started**, measured: `will-download` carries the *popup's*
    * `webContents`, and a popup whose navigation became a download never committed a document, so
@@ -155,6 +183,7 @@ export type BrowseDownloadRecord = {
   pageUrl: string | null
   /** The registry row for `pageUrl`, or null. */
   siteId: string | null
+  /** `item.getMimeType()`, bounded at {@link MAX_RECORDED_TEXT}. Shown; nothing branches on it. */
   mimeType: string
   /** Recorded, never acted on. */
   hadUserGesture: boolean
@@ -392,20 +421,27 @@ export class BrowseDownloads {
     const savePath = safeJoin(directory, fileName)
     // The empty string is what `getURL()` answers for a `webContents` that has not committed a
     // document. It is not a URL and must not be recorded as one.
-    const pageUrl = source === null || source.getURL() === '' ? null : source.getURL()
+    const pageUrl = source === null || source.getURL() === '' ? null : bounded(source.getURL())
     const record: BrowseDownloadRecord = {
       downloadId,
       startedAt: this.#now(),
       fileName,
-      sourceUrl: item.getURL(),
+      // Bounded at the one moment a stranger's string enters this process — see
+      // {@link MAX_RECORDED_TEXT}. `siteId` is matched on the bounded `pageUrl`, which changes
+      // nothing: the registry matches a hostname, and 2048 characters do not end mid-host.
+      sourceUrl: bounded(item.getURL()),
       pageUrl,
       siteId: siteForUrl(pageUrl ?? '')?.id ?? null,
-      mimeType: item.getMimeType(),
+      mimeType: bounded(item.getMimeType()),
       // Recorded and shown, never acted on. The flag distinguishes `webContents.downloadURL()`
-      // from a real click, but a click driven by `executeJavaScript` also reports `false` — so it
-      // is evidence about how a download started and not a verdict, and refusing on it would break
-      // sites whose download button is a scripted `blob:` construction. Which is Thingiverse's,
-      // the one download that was actually measured.
+      // (`false`) from a real click (`true`) — and a click driven by `executeJavaScript` reports
+      // **whichever the driver asked for**: `executeJavaScript(source, userGesture)` decides it,
+      // measured in `test/browse.spec.ts:665-672` on Electron 44, where the same `a.click()` gives
+      // `true` and `false` on demand. So the flag is a property of how the script was invoked and
+      // not of what the page did — which is a *stronger* reason never to act on it than the one
+      // this comment used to give. It is evidence about how a download started and not a verdict.
+      // Refusing on it would also break sites whose download button is a scripted `blob:`
+      // construction, which is Thingiverse's, the one download that was actually measured.
       hadUserGesture: item.hasUserGesture(),
       totalBytes,
       state: 'progressing',
@@ -750,16 +786,23 @@ function readRecord(directory: string, downloadId: string): BrowseDownloadRecord
     downloadId,
     startedAt: numberOr(value['startedAt'], 0),
     fileName,
-    sourceUrl: stringOr(value['sourceUrl'], ''),
-    pageUrl: typeof value['pageUrl'] === 'string' ? value['pageUrl'] : null,
-    siteId: typeof value['siteId'] === 'string' ? value['siteId'] : null,
-    mimeType: stringOr(value['mimeType'], ''),
+    // Bounded on the way *in* as well as at mint: `userData` is a directory a person can edit, and
+    // a record this app wrote before {@link MAX_RECORDED_TEXT} existed is the ordinary case.
+    sourceUrl: bounded(stringOr(value['sourceUrl'], '')),
+    pageUrl: typeof value['pageUrl'] === 'string' ? bounded(value['pageUrl']) : null,
+    siteId: typeof value['siteId'] === 'string' ? bounded(value['siteId']) : null,
+    mimeType: bounded(stringOr(value['mimeType'], '')),
     hadUserGesture: value['hadUserGesture'] === true,
     totalBytes: numberOr(value['totalBytes'], 0),
     state,
     receivedBytes: numberOr(value['receivedBytes'], 0),
     library: typeof value['library'] === 'string' ? value['library'] : null,
   }
+}
+
+/** Every stranger-chosen string on the record goes through this. See {@link MAX_RECORDED_TEXT}. */
+function bounded(value: string): string {
+  return value.slice(0, MAX_RECORDED_TEXT)
 }
 
 function stringOr(value: unknown, fallback: string): string {

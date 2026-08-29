@@ -21,6 +21,7 @@ import {
   FALLBACK_DOWNLOAD_NAME,
   MAX_CONCURRENT_DOWNLOADS,
   MAX_DOWNLOAD_BYTES,
+  MAX_RECORDED_TEXT,
   MAX_STAGED_BYTES,
   stagedFileName,
   type BrowseDownloadItem,
@@ -580,6 +581,54 @@ test('pageUrl is the view URL and not item.getURL() when the two differ', () => 
   assert.equal(record.siteId, 'printables')
 })
 
+test('the strings a stranger chose are bounded on the way onto the record', () => {
+  const rigged = rig()
+  // A `data:` URL download, which is the case that makes this matter: `getURL()` *is* the payload,
+  // so an unbounded `sourceUrl` puts the whole file into `download.json` — written twice and
+  // fsynced — and into every `browse.downloads()` poll response for as long as it is staged.
+  const huge = `data:application/zip;base64,${'A'.repeat(50_000)}`
+  start(rigged, { url: huge, mimeType: `application/zip;${'x'.repeat(50_000)}` }, huge)
+  const record = recordOf(rigged.stagingDir, rigged.ids[0] as string)
+
+  assert.equal(record.sourceUrl.length, MAX_RECORDED_TEXT)
+  assert.equal(record.pageUrl?.length, MAX_RECORDED_TEXT)
+  assert.equal(record.mimeType.length, MAX_RECORDED_TEXT)
+  // The prefix, not only the length: a bound that replaced the value would also be shorter.
+  assert.ok(record.sourceUrl.startsWith('data:application/zip;base64,AAA'))
+  // And the DTO the renderer polls carries the same bounded strings, because it is a copy of them.
+  const listed = only(rigged.downloads.list())
+  assert.equal(listed.sourceUrl.length, MAX_RECORDED_TEXT)
+  assert.equal(listed.pageUrl?.length, MAX_RECORDED_TEXT)
+})
+
+test('a record read back from disk is bounded too, because userData is editable', () => {
+  const { downloads, stagingDir } = rig()
+  // Not paranoia about a file this app wrote: a record written before the bound existed is the
+  // ordinary case, and `userData` is a directory a person can edit.
+  stage(stagingDir, 'orphan-url', {
+    fileName: 'benchy.zip',
+    bytes: 2048,
+    record: completedRecord({
+      totalBytes: 2048,
+      receivedBytes: 2048,
+      sourceUrl: `data:application/zip;base64,${'A'.repeat(50_000)}`,
+      pageUrl: `https://www.thingiverse.com/thing:1234?${'q'.repeat(50_000)}`,
+      mimeType: 'x'.repeat(50_000),
+    }),
+  })
+
+  downloads.sweep()
+
+  const found = only(downloads.list())
+  assert.equal(found.sourceUrl.length, MAX_RECORDED_TEXT)
+  assert.equal(found.pageUrl?.length, MAX_RECORDED_TEXT)
+  assert.equal(found.mimeType.length, MAX_RECORDED_TEXT)
+  // Truncation is not a refusal: the download is still the one the user has to decide about, and
+  // `siteId` was matched on the hostname, which no bound at this length can reach.
+  assert.equal(found.isVerifiable, true)
+  assert.equal(found.siteId, 'thingiverse')
+})
+
 test('a webContents that has not committed a document yet is no page at all', () => {
   const rigged = rig()
   start(rigged, {}, '')
@@ -596,8 +645,10 @@ test('hadUserGesture is recorded and never acted on', () => {
   const { item, trigger } = start(rigged, { userGesture: false })
 
   // Thingiverse's own download button is a scripted `blob:` construction, and a click driven by
-  // `executeJavaScript` reports `false` as well — so the flag is evidence about how a download
-  // started and not a verdict.
+  // `executeJavaScript` reports **whichever the driver asked for** — `executeJavaScript(source,
+  // userGesture)` is what decides the flag, measured in `browse.spec.ts:665-672`. So it is
+  // evidence about how a download started, it can be made to say either thing, and it is never a
+  // verdict.
   assert.equal(trigger.prevented, 0)
   assert.equal(item.savePaths.length, 1)
   assert.equal(recordOf(rigged.stagingDir, rigged.ids[0] as string).hadUserGesture, false)
