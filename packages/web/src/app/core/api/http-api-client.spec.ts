@@ -104,6 +104,9 @@ describe('HttpApiClient', () => {
    * four methods were refusing on nothing but the compiler's word for a round. There is no
    * `will-download` on this transport to intercept, no staging directory under a `userData` this
    * shell does not have, and no notice surface; a browser's own download manager owns all three.
+   * `land` is on the list for the same reason and not a weaker one: there is no staged download
+   * here for it to name, and the `files.upload` it would otherwise be a synonym for needs a body
+   * the renderer has, which is exactly what a landing does not have.
    *
    * The model browser is a `WebContentsView` the main process owns; over HTTP there is no such
    * thing and no route that would make one. The `expect(fetchMock)` half is the interesting one for
@@ -140,6 +143,11 @@ describe('HttpApiClient', () => {
       client.browse.discard('dl-1'),
       client.browse.notices(),
       client.browse.dismissNotice('notice-1'),
+      // Both arities of the landing, for the reason the two `attach` calls above are both here: the
+      // optional argument is part of the call signature `ApiClient` promises, and a spec that only
+      // ever called the short form would still compile if it were dropped.
+      client.browse.land('dl-1', 'p-1'),
+      client.browse.land('dl-1', 'p-1', { name: 'benchy.zip' }),
     ]
 
     for (const call of calls) {

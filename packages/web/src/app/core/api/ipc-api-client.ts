@@ -297,6 +297,14 @@ export class IpcApiClient implements ApiClient {
     discard: (downloadId: string): Promise<void> => this.invoke('browse.discard', [downloadId]),
     notices: (): Promise<BrowseNoticeDto[]> => this.invoke('browse.notices'),
     dismissNotice: (id: string): Promise<void> => this.invoke('browse.dismissNotice', [id]),
+    // The trailing options object is omitted rather than sent as `undefined`, exactly as `attach`
+    // omits its URL: the dispatch schema is a `z.tuple`, which rejects an argument list of the
+    // wrong length, so a hole on the wire is a `Validation` failure and not a default.
+    land: (downloadId: string, projectId: string, opts?: { name?: string }): Promise<FileDto> =>
+      this.invoke(
+        'browse.land',
+        opts === undefined ? [downloadId, projectId] : [downloadId, projectId, opts],
+      ),
   }
 
   readonly account = {

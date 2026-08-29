@@ -173,7 +173,10 @@ export class HttpApiClient implements ApiClient {
    * **The download half is refused for the same reason and not a weaker one.** There is no
    * `will-download` on this transport to intercept, no staging directory under a `userData` this
    * shell does not have, and no notice surface — a browser's own download manager already owns
-   * every one of those, and taking them over is not something a page may do.
+   * every one of those, and taking them over is not something a page may do. `land` goes with them
+   * and not with `files.upload`: there is no staged download on this transport for it to name, and
+   * a `land` that fell through to an upload would need a path from the renderer to have anything to
+   * send.
    */
   // Named, unused parameters for the reason the slicer block gives: an arrow taking none still
   // satisfies `implements ApiClient`, but its call signature is what a caller of this class sees.
@@ -194,6 +197,8 @@ export class HttpApiClient implements ApiClient {
     discard: (_downloadId: string): Promise<void> => this.noBrowse(),
     notices: (): Promise<BrowseNoticeDto[]> => this.noBrowse(),
     dismissNotice: (_id: string): Promise<void> => this.noBrowse(),
+    land: (_downloadId: string, _projectId: string, _opts?: { name?: string }): Promise<FileDto> =>
+      this.noBrowse(),
   }
 
   private noBrowse(): Promise<never> {

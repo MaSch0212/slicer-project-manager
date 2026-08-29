@@ -69,7 +69,7 @@ import { siteForUrl } from './registry.ts'
  * ## The sweep surfaces and never deletes
  *
  * A staged download from a previous run is a decision the user has not made yet, not litter.
- * {@link BrowseDownloads.discard} is the only thing that removes one, and (task 4) a landed
+ * {@link BrowseDownloads.discard} is the only thing that removes one, and a landed
  * download's directory goes only after the upload has returned. That is D's rule, and the reason it
  * is D's rule is that deletion has to be justified by *recoverability* rather than by knowledge —
  * nothing here can recreate a download, so nothing here deletes one.
@@ -233,7 +233,7 @@ export type BrowseDownloadTrigger = { preventDefault(): void }
 /** The `webContents` the download came from — read for `pageUrl` and nothing else. */
 export type BrowseDownloadSource = { getURL(): string }
 
-/** One staged download as this process holds it. `find` hands this to task 4's `land`. */
+/** One staged download as this process holds it. `find` hands this to `land`. */
 export type StagedDownload = {
   record: BrowseDownloadRecord
   directory: string
@@ -241,6 +241,19 @@ export type StagedDownload = {
   filePath: string
   isOrphan: boolean
   isVerifiable: boolean
+  /**
+   * Whether `record` was read from a `download.json` or built by {@link unrecordedDownload}.
+   *
+   * **Not on `BrowseDownloadDto`, and not a second verdict.** `isVerifiable` is the verdict, and
+   * this changes it nowhere: a directory with no record is `false` either way. It exists because
+   * `land` has to tell the user *which* of constraint 14's cases refused them, and the only other
+   * way to spot a record-less directory from here is to branch on the stand-in `state:
+   * 'interrupted'` that `unrecordedDownload` fills in — which that function says in as many words
+   * nothing may do, because it is not a reading of anything. A `land` that reported "this download
+   * did not finish" for a directory that never had a record would be stating a fact it does not
+   * have.
+   */
+  hasRecord: boolean
 }
 
 /* -------------------------------------------------------------------------------------------
@@ -343,6 +356,8 @@ type Entry = {
   record: BrowseDownloadRecord
   isOrphan: boolean
   isVerifiable: boolean
+  /** See {@link StagedDownload.hasRecord}. Always true for a download this process staged. */
+  hasRecord: boolean
   /** What is actually on disk, as last measured. The staged-bytes ceiling is computed from it. */
   bytesOnDisk: number
 }
@@ -494,7 +509,13 @@ export class BrowseDownloads {
       )
       return
     }
-    this.#staged.set(downloadId, { record, isOrphan: false, isVerifiable: false, bytesOnDisk: 0 })
+    this.#staged.set(downloadId, {
+      record,
+      isOrphan: false,
+      isVerifiable: false,
+      hasRecord: true,
+      bytesOnDisk: 0,
+    })
 
     // In memory only. `updated` fires repeatedly with `getReceivedBytes()` populated, and the
     // `/browse` page polls `browse.downloads()` — a record rewrite per tick is five fsyncs on a
@@ -575,11 +596,11 @@ export class BrowseDownloads {
   /**
    * One staged download, resolved.
    *
-   * **The handover to task 4, stated as the contract it is rather than as a description of code
-   * that exists.** Nothing calls this yet. `land` is to read `filePath`, and it is to refuse any
-   * record whose `isVerifiable` is false *before* it opens a project — because a `false` there means
-   * the bytes are byte-for-byte indistinguishable from a truncated download, and the upload is the
-   * step after which nothing can be undone.
+   * **The handover to `browse/land.ts`**, which is the only caller. `land` reads `filePath`, and it
+   * refuses any record whose `isVerifiable` is false *before* it opens a project — because a `false`
+   * there means the bytes are byte-for-byte indistinguishable from a truncated download, and the
+   * upload is the step after which nothing can be undone. `hasRecord` is there so that the refusal
+   * can say which of constraint 14's cases it was without branching on a stand-in field.
    */
   find(downloadId: string): StagedDownload | null {
     const entry = this.#staged.get(downloadId)
@@ -587,7 +608,7 @@ export class BrowseDownloads {
     // `safeJoin` on both halves, as `remove` does on the same path and for a stronger reason: the
     // `fileName` of a **record-less** directory is whatever `readdirSync` answered, and it is the
     // one string on a record that has not been through `stagedFileName` — `readRecord` re-validates
-    // the recorded ones, `unrecordedDownload` reports what it found. This is the value task 4 opens
+    // the recorded ones, `unrecordedDownload` reports what it found. This is the value `land` opens
     // a file with, so the join it is built by is the one that refuses to leave the directory.
     const directory = safeJoin(this.#stagingDir, entry.record.downloadId)
     return {
@@ -596,6 +617,7 @@ export class BrowseDownloads {
       filePath: entry.record.fileName === '' ? '' : safeJoin(directory, entry.record.fileName),
       isOrphan: entry.isOrphan,
       isVerifiable: entry.isVerifiable,
+      hasRecord: entry.hasRecord,
     }
   }
 
@@ -622,9 +644,9 @@ export class BrowseDownloads {
   /**
    * Removes a staged directory unconditionally.
    *
-   * `discard` is the only caller today. Task 4's `land` is to be the second, and only **after the
-   * upload has returned** — a failed upload leaves the directory where it is, so the user can try
-   * again rather than losing the download to an error.
+   * Two callers: `discard`, which is the user's answer, and `BrowseLanding.land`, which calls it
+   * only **after the upload has returned** — a failed upload leaves the directory where it is, so
+   * the user can try again rather than losing the download to an error.
    *
    * The id is matched against the map first, whose keys are directories this process enumerated or
    * ids it minted, so the join below is on a value of its own making. `safeJoin` is a second bound
@@ -731,6 +753,7 @@ export class BrowseDownloads {
         record: unrecordedDownload(downloadId, directory, found),
         isOrphan: true,
         isVerifiable: false,
+        hasRecord: false,
         bytesOnDisk: found.size,
       }
     }
@@ -741,6 +764,7 @@ export class BrowseDownloads {
       // `false` for `observedTerminal`: this process did not see this download happen, which is
       // the entire reason the sweep exists and the entire reason `totalBytes: 0` fails here.
       isVerifiable: vouchesForTheBytes(record, bytesOnDisk, false),
+      hasRecord: true,
       bytesOnDisk,
     }
   }

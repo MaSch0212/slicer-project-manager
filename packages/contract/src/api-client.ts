@@ -233,12 +233,12 @@ export interface ApiClient {
    * never a `libraryCall` — because in remote mode there is no open library and a `libraryCall`
    * refuses a null session by design.
    *
-   * **This block grows in three instalments**, one per task that implements it, because
+   * **This block arrived in three instalments**, one per task that implemented it, because
    * `DispatchTable` is a mapped type over this interface: a method declared here without a dispatch
    * entry fails `deno task typecheck`, which is the guarantee wanted and which means each addition
-   * has to be atomic with its implementation. The methods down to `clearLastPage` are the view;
-   * the four after them are the downloads it produces; the landing comes with the task that writes
-   * it. **No count is written out here on purpose** — the block below is the list, a number in
+   * had to be atomic with its implementation. The methods down to `clearLastPage` are the view;
+   * the four after them are the downloads it produces; `land` is what turns one of those into a
+   * file. **No count is written out here on purpose** — the block below is the list, a number in
    * prose beside it is a second copy that nothing checks, and the last one said eleven of twelve.
    *
    * **The security seam, stated where a caller reads it.** The renderer never names a filesystem
@@ -246,7 +246,9 @@ export interface ApiClient {
    * argument through `browseNavigationPolicy` **in the main process** and rejects a blocked one;
    * `discard` takes a `downloadId` and never a path; and the strings that come back — see
    * `BrowseStateDto`, `BrowseDownloadDto` and `BrowseNoticeDto` — are a stranger's, to be rendered
-   * as text.
+   * as text. `land` takes a `downloadId` and a `projectId` for the same reason `discard` takes the
+   * first of them: the staging directory is the main process's, and the only strings that cross are
+   * ids it minted itself and matches against records it enumerated itself.
    */
   browse: {
     /** The site registry (4.4), so the page can render the start links without duplicating it. */
@@ -342,6 +344,32 @@ export interface ApiClient {
 
     /** Forgets one notice. An id that is already gone is a success, not an error. */
     dismissNotice(id: string): Promise<void>
+
+    /**
+     * Lands a staged download into a project as a new file (5.4). **Ids and an optional name,
+     * never a path.**
+     *
+     * The bytes are already in the main process and stay there: local mode streams them into
+     * core's `uploadFile`, remote mode streams them through the proxy to
+     * `POST /api/projects/:id/files`. Both inherit `files.upload`'s quota check, which is the
+     * route parent §9 named for this, and both declare the file's **real size on disk** rather
+     * than the size the download announced — a server that sent no `content-length` records a
+     * `totalBytes` of 0.
+     *
+     * **Refuses a `Conflict` for a download whose record cannot vouch for its bytes**, naming
+     * which of the four cases it was, before it opens anything: with `setSavePath()` in use a
+     * truncated download sits at its final name with no marker of any kind, so the alternative is
+     * a truncated archive landing in the user's project silently. `discard` is the way out of one.
+     *
+     * `name` defaults to the name the download arrived under. A clash is a `Conflict` from
+     * `uploadFile` and is reported rather than worked around — no auto-suffix, because
+     * `benchy-1.zip` beside `benchy.zip` hides the fact that the user already has this model,
+     * which is the thing they were trying to find out.
+     *
+     * The staging directory goes only **after** the upload has returned; a failed one leaves it,
+     * so the user can try again.
+     */
+    land(downloadId: string, projectId: string, opts?: { name?: string }): Promise<FileDto>
   }
 
   account: {

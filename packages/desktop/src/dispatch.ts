@@ -195,6 +195,16 @@ export type ShellApi = {
     discard(downloadId: string): Promise<void>
     notices(): Promise<BrowseNoticeDto[]>
     dismissNotice(id: string): Promise<void>
+    /**
+     * The one browse route that writes into a library, and it names no path either.
+     *
+     * On the shell rather than on a session for the third instance of the reason the rest of this
+     * block gives, and it is not the obvious one: `land` genuinely *needs* a library in local mode,
+     * but a `libraryCall` would refuse a null session — and in remote mode there is no session and
+     * the upload goes through the proxy. `app.ts` implements it over `BrowseLanding`, which
+     * resolves whichever of the two is current per call, exactly as `SlicerLauncher` does.
+     */
+    land(downloadId: string, projectId: string, opts?: { name?: string }): Promise<FileDto>
   }
 }
 
@@ -803,6 +813,31 @@ export const dispatch: DispatchTable = {
     'browse.dismissNotice',
     z.tuple([downloadIdSchema]),
     (shell, id) => shell.browse.dismissNotice(id),
+  ),
+  /**
+   * The landing: two ids and an optional name, and **never a path** (constraint 4).
+   *
+   * The explicit type arguments are here for the reason `browse.attach`'s are — a trailing `?` in
+   * a zod tuple is an optional element, while inference off the callback's parameter list spells
+   * it as `{ name?: string } | undefined`, a *required* one, and the two do not unify.
+   *
+   * `fileNameSchema` is the contract's own, the same object `files.upload` accepts names under, so
+   * a traversing or Windows-reserved name is refused here with the same code and the same issues as
+   * it would be over HTTP. It is optional because the name the download arrived under is the
+   * default, and that one is validated where the record is read.
+   *
+   * **Two things about this schema are worth a reader's attention**, because both differ from the
+   * two entries above and the difference was inherited from the brief rather than chosen here:
+   * `idSchema` bounds the download id at 64 characters where `browse.discard` uses
+   * `downloadIdSchema`'s 512, so a staging directory with a name longer than 64 is discardable but
+   * not landable — it is also unverifiable, so it was already refused, and the only difference is
+   * `Validation` in place of `Conflict`. And `z.object` strips a key this validation was not written
+   * for where `slicers.open`'s `z.strictObject` refuses one; nothing reads the stripped key.
+   */
+  'browse.land': shellCall<'browse.land', [string, string, { name?: string }?]>(
+    'browse.land',
+    z.tuple([idSchema, idSchema, z.object({ name: fileNameSchema.optional() }).optional()]),
+    (shell, downloadId, projectId, opts) => shell.browse.land(downloadId, projectId, opts),
   ),
 
   /*

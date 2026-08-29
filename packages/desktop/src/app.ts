@@ -16,6 +16,7 @@ import { extname, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { BrowseDownloads, MODEL_DOWNLOADS_DIR } from './browse/downloads.ts'
 import { BrowseHost } from './browse/host.ts'
+import { BrowseLanding } from './browse/land.ts'
 import { BROWSE_FILE_NAME } from './browse/last-page.ts'
 import { BrowseNotices } from './browse/notices.ts'
 import { parseFileRequest, serveLibraryFile } from './files.ts'
@@ -1090,6 +1091,22 @@ export function main(): void {
   })
 
   /*
+   * Landing a staged download into a project (spec E 5.4).
+   *
+   * A third object rather than a method on `BrowseDownloads`, for the reason `SlicerSessions` is
+   * separate from `SlicersHost`: staging is about a directory under `userData` and knows nothing
+   * about a library, while this one is the upload — it needs whichever of the two things the shell
+   * is talking to right now, and it is the only part of the browse block that writes into one. The
+   * three accessors are resolved per call for the same reason every other one here is.
+   */
+  const browseLanding = new BrowseLanding({
+    downloads: browseDownloads,
+    session: () => shellHost.session(),
+    isRemote: () => shellHost.mode() === 'remote',
+    remote: () => shellHost.remote(),
+  })
+
+  /*
    * The model browser's native view (spec E §3–4). Built here and nowhere else, so that the shell
    * holds at most one for the life of the process.
    *
@@ -1224,6 +1241,9 @@ export function main(): void {
         discard: (downloadId) => Promise.resolve(browseDownloads.discard(downloadId)),
         notices: () => Promise.resolve(browseNotices.list()),
         dismissNotice: (id) => Promise.resolve(browseNotices.dismiss(id)),
+        // The one browse route that is not `Promise.resolve` of a synchronous call: it streams a
+        // file into a library or over the wire, and it is the only one that writes anything.
+        land: (downloadId, projectId, opts) => browseLanding.land(downloadId, projectId, opts),
       },
     },
   }))

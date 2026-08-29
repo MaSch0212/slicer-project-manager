@@ -19,6 +19,7 @@ import type {
   BrowseDownloadDto,
   BrowseNoticeDto,
   BrowseStateDto,
+  FileDto,
   SlicerConfigDto,
   SlicerLaunchDto,
 } from '@spm/contract/dtos.ts'
@@ -198,6 +199,10 @@ const shell: ShellApi = {
       browseCalls.push('notices')
       return Promise.resolve([browseNotice])
     },
+    land: (downloadId, projectId, opts) => {
+      browseCalls.push(`land ${downloadId} ${projectId} ${opts?.name ?? '-'}`)
+      return Promise.resolve(landedFile)
+    },
     dismissNotice: (id) => {
       browseCalls.push(`dismissNotice ${id}`)
       return Promise.resolve()
@@ -235,6 +240,16 @@ const browseDownload: BrowseDownloadDto = {
   startedAt: 1_700_000_000_000,
   isOrphan: false,
   isVerifiable: true,
+}
+
+/** What the shell answers a landing with. The archive Thingiverse actually hands over (5.5). */
+const landedFile: FileDto = {
+  id: 'file-landed',
+  name: 'benchy.zip',
+  kind: 'other',
+  sizeBytes: 21_060_699,
+  previewState: 'pending',
+  rawUrl: 'spm://app/api/files/file-landed/raw',
 }
 
 const browseNotice: BrowseNoticeDto = {
@@ -350,6 +365,7 @@ function exerciseAll(client: ApiClient): Record<ApiPath, () => Promise<unknown>>
     'browse.discard': () => client.browse.discard('dl-1'),
     'browse.notices': () => client.browse.notices(),
     'browse.dismissNotice': () => client.browse.dismissNotice('notice-1'),
+    'browse.land': () => client.browse.land('dl-1', 'p-1'),
   }
 }
 
@@ -706,6 +722,12 @@ test('every library-backed route refuses when no folder is open', async () => {
     'browse.discard',
     'browse.notices',
     'browse.dismissNotice',
+    // `land` too, and it is the one that needs the sentence rather than the list: it is the only
+    // browse route that writes into a library, so it is the one a reader would expect to be a
+    // `libraryCall`. It is not, because in remote mode there is no session and the upload goes
+    // through the proxy — `BrowseLanding` resolves whichever of the two is current, and refuses
+    // with its own `Conflict` when local mode has nothing open.
+    'browse.land',
   ]
   for (const path of Object.keys(dispatch) as ApiPath[]) {
     if (fromShell.includes(path)) continue
@@ -1309,6 +1331,8 @@ test('the browse routes reach the shell with their arguments, and need no librar
   await dispatch['browse.discard'](deps, ['dl-1'])
   await dispatch['browse.notices'](deps, [])
   await dispatch['browse.dismissNotice'](deps, ['notice-1'])
+  await dispatch['browse.land'](deps, ['dl-1', 'p-1'])
+  await dispatch['browse.land'](deps, ['dl-2', 'p-2', { name: 'benchy.zip' }])
   await dispatch['browse.detach'](deps, [])
 
   assert.deepEqual(browseCalls, [
@@ -1333,6 +1357,11 @@ test('the browse routes reach the shell with their arguments, and need no librar
     'discard dl-1',
     'notices',
     'dismissNotice notice-1',
+    // Two ids in the order they were written, and the optional name absent rather than arriving as
+    // the string "undefined". `downloadId` and `projectId` swapped here typechecks everywhere and
+    // would answer `NotFound` about the wrong one of the two.
+    'land dl-1 p-1 -',
+    'land dl-2 p-2 benchy.zip',
     'detach',
   ])
 })
@@ -1379,6 +1408,27 @@ test('a browse route rejects a wrong argument tuple with Validation, and calls n
     ['browse.dismissNotice', []],
     ['browse.dismissNotice', [null]],
     ['browse.dismissNotice', ['']],
+    // The landing. Arity in both directions, both ids bounded, and the options object checked for
+    // the one key it may carry.
+    ['browse.land', []],
+    ['browse.land', ['dl-1']],
+    ['browse.land', ['dl-1', 'p-1', { name: 'benchy.zip' }, 'extra']],
+    ['browse.land', ['', 'p-1']],
+    ['browse.land', ['dl-1', '']],
+    ['browse.land', ['x'.repeat(65), 'p-1']],
+    ['browse.land', ['dl-1', 'x'.repeat(65)]],
+    // A path-shaped first argument, in the two shapes the schema can actually see: an object,
+    // which is what a renderer forwarding a `{ localPath }` would send, and a string too long to
+    // be an id. A *short* path-shaped string is not refused here and is not meant to be — nothing
+    // joins it onto anything, and what answers it is the map lookup in `BrowseDownloads.find`,
+    // asserted in `browse-land.test.ts` against a real staging directory.
+    ['browse.land', [{ localPath: '/home/someone/.ssh/id_rsa' }, 'p-1']],
+    ['browse.land', [`/home/someone/${'x'.repeat(80)}.zip`, 'p-1']],
+    // The name is `fileNameSchema`'s, the same object `files.upload` accepts names under.
+    ['browse.land', ['dl-1', 'p-1', { name: '../escaped.zip' }]],
+    ['browse.land', ['dl-1', 'p-1', { name: 'CON.zip' }]],
+    ['browse.land', ['dl-1', 'p-1', { name: '' }]],
+    ['browse.land', ['dl-1', 'p-1', 'benchy.zip']],
   ]
   for (const [path, args] of wrong) {
     const error = await rejection(dispatch[path]({ session: null, shell }, args))
