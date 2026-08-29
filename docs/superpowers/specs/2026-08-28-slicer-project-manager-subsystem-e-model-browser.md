@@ -987,7 +987,8 @@ matchKey(url) =
     printables   ->  "printables:"  + <id> from /model/<id>-<slug>
     makerworld   ->  "makerworld:"  + <id> from /models/<id>-<slug>   (locale segment ignored)
     cults3d      ->  "cults3d:"     + the final path segment, percent-decoded, lowercased
-  otherwise:      lowercased host + pathname, trailing slash removed
+  otherwise:      lowercased hostname + pathname, trailing slash removed
+                  (a port is kept, joined as "hostname_port" — see the fallback bullet)
 ```
 
 Every clause answers a measured row rather than a taste:
@@ -1003,8 +1004,16 @@ Every clause answers a measured row rather than a taste:
   within one locale.
 - **`<id>-<slug>` matches on the id** because the slug derives from the title and a retitled model
   changes it.
-- **The fallback is `host + pathname`** for anything the registry does not recognise, which is honest
-  about being a weaker key rather than pretending the four rows are the whole web.
+- **The fallback is ~~`host + pathname`~~ `hostname + pathname`** for anything the registry does not
+  recognise, which is honest about being a weaker key rather than pretending the four rows are the
+  whole web. **Amended during implementation, and the distinction is load-bearing rather than
+  cosmetic**: `host` renders a port as `hostname:port`, so `https://thingiverse:1234/` — a
+  single-label host spelled as a registry id, and a valid `z.url()` — fell back to `thingiverse:1234`,
+  which is the key a real `https://www.thingiverse.com/thing:1234` produces. A crafted
+  `projects.website` could therefore synthesise a real model's key. A port is still kept, so two
+  servers on one hostname are still two keys, but joined as `hostname_port`; that closes the overlap
+  between the two key namespaces structurally rather than probabilistically. `match-key.ts`'s
+  docblock carries the argument and `match-key.test.ts` pins it.
 
 **This is a consequence of the rows, not a rule that was tested.** §9 says so in those words. The URL
 shapes were measured; the key derived from them was not run against a library of real

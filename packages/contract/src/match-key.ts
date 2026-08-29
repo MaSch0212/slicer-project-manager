@@ -42,7 +42,9 @@ export type ModelSiteIdentity = {
 
 /**
  * The match key for a URL: `"<site id>:<identity>"` where a registry row recognises it, and
- * lowercased `host + pathname` where none does.
+ * lowercased `hostname + pathname` where none does — `hostname` and not `host`, because a port is
+ * joined on as `_<port>`. See the fallback bullet below; the difference is what keeps the two key
+ * namespaces disjoint.
  *
  * **Every clause answers a row the spike measured** (`.superpowers/spikes/2026-08-28-model-browser-facts.md`
  * §9), not a taste:
@@ -69,7 +71,7 @@ export type ModelSiteIdentity = {
  *   retitled model changes it.
  * - **Cults3D is the final path segment alone** because nothing else in its URL survives a locale
  *   change, and the category segment (`various`, `home`) also differs per model.
- * - **The fallback is `host + pathname`**, honest about being the weaker key rather than pretending
+ * - **The fallback is `hostname + pathname`**, honest about being the weaker key rather than pretending
  *   the four measured rows are the whole web. The trailing slash goes so that a stored
  *   `https://example.com/thing/` and a browsed `https://example.com/thing` are one key. A port is
  *   kept — two servers on one hostname are two keys — but rendered `hostname_port`, not

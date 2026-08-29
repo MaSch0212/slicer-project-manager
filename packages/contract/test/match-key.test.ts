@@ -79,7 +79,7 @@ test('a matched host whose identity is null falls back rather than keying to the
   assert.equal(matchKey('https://probe.example/not-a-model', [probe]), 'probe.example/not-a-model')
 })
 
-test('the fallback is lowercased host + pathname with the trailing slash removed', () => {
+test('the fallback is lowercased hostname + pathname with the trailing slash removed', () => {
   assert.equal(matchKey('https://example.com/some/path/', []), 'example.com/some/path')
   assert.equal(matchKey('https://example.com/some/path', []), 'example.com/some/path')
   assert.equal(matchKey('https://EXAMPLE.com/Some/Path/', []), 'example.com/some/path')
