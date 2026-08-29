@@ -448,6 +448,12 @@ describe('DesktopBrowsePage', () => {
       expect([...root.querySelectorAll('a')]).toEqual([])
       expect([...root.querySelectorAll('[href]')]).toEqual([])
       expect([...root.querySelectorAll('[src]')]).toEqual([])
+      // And no inline style anywhere, which is the third place a stranger's URL becomes a fetch:
+      // constraint 13 names a CSS `url()` beside the anchor and the image, and a
+      // `[style.background-image]="'url(' + state()!.url + ')'"` is not caught by any of the three
+      // above. The bare `[style]` is the assertion; the `url(` one says what it is for.
+      expect([...root.querySelectorAll('[style]')]).toEqual([])
+      expect([...root.querySelectorAll('[style*="url("]')]).toEqual([])
     })
 
     /*
@@ -466,6 +472,63 @@ describe('DesktopBrowsePage', () => {
       expect(pageText(fixture)).not.toContain('z'.repeat(400))
       expect(pageText(fixture)).not.toContain('q'.repeat(400))
       expect(pageText(fixture)).toContain(truncateForDisplay(longPage))
+    })
+
+    /*
+     * The three site-influenced strings that reach the page through neither `displayUrl` nor a
+     * download row: a notice's `fileName` and `detail`, and the view's own `lastError`.
+     *
+     * Written as its own test because `truncateForDisplay` has six call sites in this template and
+     * the assertions above pin two of them — measured: deleting `truncate(...)` from any one of
+     * these three individually left the whole rest of the suite green. The notice path is
+     * site-influenced twice over: the file name is the site's, and the detail sentence quotes it.
+     */
+    it('bounds a notice and a page error, which reach the template through their own paths', async () => {
+      const long = 'w'.repeat(4000)
+      const { fixture } = await setup({
+        state: { ...IDLE, lastError: `ERR_CERT_${long}` },
+        notices: [
+          {
+            id: 'n1',
+            kind: 'refused',
+            fileName: `<i>${long}</i>.zip`,
+            detail: `there is no room: ${long}`,
+            at: 0,
+          },
+        ],
+      })
+
+      // Nothing became markup, and none of the three laid the chrome out around it.
+      expect(host(fixture).querySelector('i')).toBeNull()
+      expect(pageText(fixture)).not.toContain('w'.repeat(400))
+      expect(pageText(fixture)).toContain(truncateForDisplay(`ERR_CERT_${long}`))
+      expect(pageText(fixture)).toContain(truncateForDisplay(`<i>${long}</i>.zip`))
+      expect(pageText(fixture)).toContain(truncateForDisplay(`there is no room: ${long}`))
+    })
+
+    /*
+     * `projectName` is the one string on this page that constraint 13 does not reach — it is the
+     * library's, not a site's — and it is bounded anyway, because it is still someone's typing of
+     * arbitrary length sitting in a sentence beside a truncated file name.
+     */
+    it('bounds the project name in the landed sentence, though it is library data', async () => {
+      const name = `Project ${'n'.repeat(4000)}`
+      const { fixture, page } = await setup({
+        projects: [project({ id: 'p1', name })],
+        downloads: [download()],
+      })
+      await page.onOpenLanding(download())
+      page.selectedProjectId.set('p1')
+
+      await page.onLand()
+
+      expect(pageText(fixture)).not.toContain('n'.repeat(400))
+      expect(pageText(fixture)).toContain(truncateForDisplay(name))
+      // The result panel is the second of the two that used to claim `aria-modal`; the landing
+      // panel's own assertion is in "the landing UI" below.
+      expect([...host(fixture).querySelectorAll('[role="dialog"]')]).toEqual([])
+      expect([...host(fixture).querySelectorAll('[aria-modal]')]).toEqual([])
+      expect(host(fixture).querySelector('[aria-labelledby="browse-landed-title"]')).not.toBeNull()
     })
 
     /*
