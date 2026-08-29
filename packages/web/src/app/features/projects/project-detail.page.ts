@@ -884,9 +884,10 @@ export class ProjectDetailPage {
    * A launch the user asked for — held back once for Cura, and only once.
    *
    * The warning is a notice with a way past it and not a gate: Cura against a file is perfectly
-   * useful for viewing and slicing, and refusing to launch it would make the feature less useful
-   * than not having it. See `CuraHazardStore` for what is being warned about and why the app can
-   * neither cause it nor fix it.
+   * useful for viewing and slicing, and refusing to launch it over a save-as would make the
+   * feature less useful than not having it. See `CuraHazardStore` for what is being warned about
+   * and why the app can neither cause it nor fix it — including the one unrelated refusal that can
+   * still come back after the user presses past this warning, a `.step` or `.stp` handed to Cura.
    */
   async onLaunch(file: FileDto, mode: SlicerLaunchMode): Promise<void> {
     const config = this.slicerConfig.hasValue() ? this.slicerConfig.value() : null

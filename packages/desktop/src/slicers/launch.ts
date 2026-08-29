@@ -128,8 +128,9 @@ export const SLICER_SESSIONS_DIR = 'slicer-sessions'
  *
  * **Nothing sweeps this directory.** It is not under `sessionsDir`, so `sweepAtStart` never sees
  * it, and no sweeper is added: deleting a file a slicer wrote is D constraint 10 territory, and the
- * directory grows only by the strays it exists to catch — which, on the evidence, is one product on
- * one flag. What it must never become is a directory this project *says* is swept when it is not.
+ * directory grows only by what a slicer writes at a relative path — which is a lock file or a crash
+ * dump as readily as an export, and only the export has been measured, on one product's one flag.
+ * What it must never become is a directory this project *says* is swept when it is not.
  */
 export const SLICER_CWD_DIR = 'slicer-cwd'
 
@@ -500,10 +501,10 @@ export class SlicerLauncher {
    * The order of the steps is load-bearing, and it is the same order in both modes. Everything
    * that can refuse cheaply — the library or the server, the project, the file, the choice of
    * product, whether that product can read this format at all, the install's path — runs
-   * **before** anything is written or downloaded, so a launch
-   * that was never going to work leaves no directory behind and costs no bytes over the wire. The
-   * copy or the download is next, then the strip, then the record, then the spawn; the record is
-   * written before the spawn so a crash in between still leaves a directory that says what it is.
+   * **before** anything is written or downloaded, so a launch that was never going to work leaves
+   * no directory behind and costs no bytes over the wire. The copy or the download is next, then
+   * the strip, then the record, then the spawn; the record is written before the spawn so a crash
+   * in between still leaves a directory that says what it is.
    */
   async open(
     fileId: string,
