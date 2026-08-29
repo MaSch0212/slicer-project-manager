@@ -708,6 +708,13 @@ test.describe('the model browser', () => {
     expect(staged.isVerifiable).toBe(true)
     expect(staged.sourceUrl.startsWith('blob:')).toBe(true)
     expect(statSync(join(stagedDir(staged), staged.fileName)).size).toBe(BLOB_BYTES)
+    // Attribution survives this idiom: the blob navigation becomes a download and never commits, so
+    // the view is still sitting on the page the user was on when `will-download` fires.
+    expect(staged.pageUrl).toBe(`${base}/first`)
+    // And the name is Chromium's, because a bare `location.href` names nothing: a bare UUID with no
+    // extension, which `fileNameSchema` accepts as it stands. Recorded rather than worked around —
+    // `land` lets the user rename.
+    expect(staged.fileName).toMatch(/^[0-9a-f-]{36}$/)
     // The `blob:` arm of `browseNavigationPolicy`, seen from where it matters: this idiom goes
     // through `will-frame-navigate` and `will-navigate`, and a `block` there stops the download
     // before `will-download` ever fires. The null below is the absence of a refusal record, which
@@ -733,6 +740,17 @@ test.describe('the model browser', () => {
     expect(staged.state).toBe('completed')
     expect(staged.isVerifiable).toBe(true)
     expect(statSync(join(stagedDir(staged), staged.fileName)).size).toBe(BLOB_BYTES)
+
+    // **And this idiom loses the attribution entirely — measured, asserted, not worked around.**
+    // The `will-download` carries the *popup's* `webContents`, and a popup whose navigation became
+    // a download never committed a document, so its `getURL()` is the empty string. `pageUrl` is
+    // therefore null and `siteId` with it: this download is staged, verifiable and landable, and it
+    // will match no project by URL. That is spec open question 9.19 — an allowed popup gets none of
+    // this file's hooks and the shell has no handle on it — reaching a second surface, and it is
+    // recorded here rather than papered over with the opener's URL, which nothing in this task
+    // measured a way to reach.
+    expect(staged.pageUrl).toBe(null)
+    expect(staged.siteId).toBe(null)
 
     // Any window the popup arm left behind goes, so the tests after this one see the window count
     // they started with.

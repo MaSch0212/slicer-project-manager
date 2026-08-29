@@ -138,7 +138,17 @@ export type BrowseDownloadRecord = {
   fileName: string
   /** `item.getURL()` — may be a `blob:`. For display and attribution only. */
   sourceUrl: string
-  /** The page the view was on when it started. **This is what matching runs on.** */
+  /**
+   * The page the view was on when it started. **This is what matching runs on**, never `sourceUrl`,
+   * which on the one site ever measured is a `blob:` that identifies nothing.
+   *
+   * **Null for a download a popup started**, measured: `will-download` carries the *popup's*
+   * `webContents`, and a popup whose navigation became a download never committed a document, so
+   * its `getURL()` is the empty string. Such a download is staged, verifiable and landable, and it
+   * matches no project by URL — the user names the project, which spec 6.3 says is the common case
+   * anyway. Reaching the opener's URL instead is spec open question 9.19's territory (an allowed
+   * popup gets none of this subsystem's hooks) and is not something this task measured a route to.
+   */
   pageUrl: string | null
   /** The registry row for `pageUrl`, or null. */
   siteId: string | null
