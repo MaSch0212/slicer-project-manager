@@ -351,6 +351,66 @@ export type BrowseStateDto = {
 }
 
 /**
+ * One staged download: what came down, where it came from, and whether it can be believed.
+ *
+ * **`fileName`, `sourceUrl` and `pageUrl` are a stranger's strings**, exactly as
+ * `BrowseStateDto`'s are and under the same rule: rendered as text only, never into `innerHTML` or
+ * `[innerHTML]`, never through `bypassSecurityTrust*`, never into a `[href]`, a `[src]`, a CSS
+ * `url()` or a `window.open`, and truncated for display. `fileName` is a remote server's
+ * `getFilename()`, `sourceUrl` is often a `blob:` that identifies nothing, and `pageUrl` is
+ * wherever the user had browsed to.
+ *
+ * **`isVerifiable: false` means the bytes cannot be believed, and `land` refuses it.** With
+ * `setSavePath()` in use Chromium writes straight to the final path — no `.crdownload`, no partial
+ * suffix, no sidecar — so a truncated download sits at its final name byte-for-byte
+ * indistinguishable from a complete one. Measured: a destroyed view left a file at 26 214 400 of
+ * 41 943 040 bytes with no marker of any kind. The record beside it is the only thing that can tell
+ * the two apart, and a download whose record does not vouch for it is offered for `discard` and for
+ * nothing else.
+ */
+export type BrowseDownloadDto = {
+  downloadId: string
+  fileName: string
+  /** `getURL()` — which may be a `blob:`. For display and attribution only. */
+  sourceUrl: string
+  /** The page the view was on when it started. This is what matching uses, never `sourceUrl`. */
+  pageUrl: string | null
+  siteId: string | null
+  mimeType: string
+  state: 'progressing' | 'completed' | 'cancelled' | 'interrupted'
+  receivedBytes: number
+  /** `getTotalBytes()`, which can be 0 for a server that sent no length. */
+  totalBytes: number
+  /** Recorded and shown, never acted on. */
+  hadUserGesture: boolean
+  startedAt: number
+  /** True for a download staged by a previous run of the app. */
+  isOrphan: boolean
+  /** The sweep could not vouch for the bytes. `land` refuses it; `discard` is the way out. */
+  isVerifiable: boolean
+}
+
+/**
+ * One thing the model browser has to say out of band, because the page cannot be told.
+ *
+ * A refusal produces one — `preventDefault()` delivers nothing to the site, so without this the
+ * click simply appears to have done nothing — and so does a download that completed while no view
+ * was attached, because nothing polls `browse.downloads()` once `/browse` is gone.
+ *
+ * **`fileName` and `detail` are rendered as text only**, under `BrowseStateDto`'s rule: `fileName`
+ * is a remote server's, and `detail` is a sentence the main process writes about it. Both arrive
+ * already truncated; that is the value carrying its own bound, and not a reason to skip truncating
+ * at render.
+ */
+export type BrowseNoticeDto = {
+  id: string
+  kind: 'refused' | 'completed'
+  fileName: string
+  detail: string
+  at: number
+}
+
+/**
  * What core returns: IDs, never URLs (spec 4.2). Only a transport knows its own scheme, so
  * it decorates these into the DTOs above — /api/files/:id/thumb over HTTP,
  * spm://file/:id/thumb in Electron.
