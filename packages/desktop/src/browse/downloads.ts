@@ -158,9 +158,17 @@ export type BrowseDownloadRecord = {
  * The part of Electron's `DownloadItem` this file uses, and all of it.
  *
  * Declared with method syntax so a real `DownloadItem` — whose `on`/`once` are overloaded and whose
- * listener parameters are wider than these — assigns to it. **`getETag`, `getLastModifiedTime` and
- * `getContentDisposition` are deliberately absent**: all three were measured empty, and a surface
- * that does not name them is a surface nobody can quietly start believing.
+ * listener parameters are wider than these — assigns to it. **That assignment is made, unchecked by
+ * any cast, in `attachTo` below**, which is what turns the previous sentence from a hope into
+ * something `deno task typecheck` enforces: probed by adding a method Electron does not have, which
+ * fails with *"Property 'getNotAThing' is missing in type 'DownloadItem'"*. `BrowseDownloadTrigger`
+ * and `BrowseDownloadSource` are checked at the same call, against Electron's `Event` and
+ * `WebContents`.
+ *
+ * **`getETag`, `getLastModifiedTime` and `getContentDisposition` are deliberately absent**: all three
+ * were measured empty, and a surface that does not name them is a surface nobody can quietly start
+ * believing. Electron does have all three — adding `getETag(): string` here typechecks clean — so
+ * their absence is a rule this file keeps and not one the platform enforces.
  */
 export type BrowseDownloadItem = {
   getFilename(): string
@@ -323,12 +331,11 @@ export class BrowseDownloads {
   attachTo(session: Session): void {
     if (this.#registered) return
     this.#registered = true
+    // **No cast.** Electron's `DownloadItem`, `Event` and `WebContents` are handed straight to the
+    // structural types above, so the compiler is what checks that this file only ever asks the item
+    // for the seven things it declares.
     session.on('will-download', (event, item, webContents) => {
-      this.handleWillDownload(
-        event,
-        item as unknown as BrowseDownloadItem,
-        (webContents as unknown as BrowseDownloadSource | null) ?? null,
-      )
+      this.handleWillDownload(event, item, webContents ?? null)
     })
   }
 
@@ -475,8 +482,13 @@ export class BrowseDownloads {
   }
 
   /**
-   * One staged download, resolved. **The handover to task 4**: `land` reads `filePath` and refuses
-   * anything whose `isVerifiable` is false before it opens a project.
+   * One staged download, resolved.
+   *
+   * **The handover to task 4, stated as the contract it is rather than as a description of code
+   * that exists.** Nothing calls this yet. `land` is to read `filePath`, and it is to refuse any
+   * record whose `isVerifiable` is false *before* it opens a project — because a `false` there means
+   * the bytes are byte-for-byte indistinguishable from a truncated download, and the upload is the
+   * step after which nothing can be undone.
    */
   find(downloadId: string): StagedDownload | null {
     const entry = this.#staged.get(downloadId)
@@ -512,8 +524,11 @@ export class BrowseDownloads {
   }
 
   /**
-   * Removes a staged directory unconditionally. `discard` is one caller; task 4's `land` is the
-   * other, **after the upload has returned** and not before.
+   * Removes a staged directory unconditionally.
+   *
+   * `discard` is the only caller today. Task 4's `land` is to be the second, and only **after the
+   * upload has returned** — a failed upload leaves the directory where it is, so the user can try
+   * again rather than losing the download to an error.
    *
    * The id is matched against the map first, whose keys are directories this process enumerated or
    * ids it minted, so the join below is on a value of its own making. `safeJoin` is a second bound
@@ -539,10 +554,13 @@ export class BrowseDownloads {
    * Which cap this download hits, as the sentence the user is told, or null for "stage it".
    *
    * **`totalBytes: 0` is worth one honest sentence.** A server that sends no `content-length`
-   * reserves nothing against the total ceiling, so a download of unknown size can carry the
-   * staging directory past 4 GiB — the only number available at `will-download` is the one the
-   * server gave. The concurrency cap is what bounds how many such downloads can be in flight, and
-   * the sweep measures what is actually on disk for every subsequent decision.
+   * reserves nothing at the moment it is admitted, because the only number available at
+   * `will-download` is the one the server gave — so one download of unknown size can carry the
+   * staging directory past 4 GiB before anything notices. What bounds it after that is real rather
+   * than declared: {@link BrowseDownloads.#stagedBytes} counts a download in flight at the larger of
+   * what it announced and what it has actually received, and `updated` keeps the second number
+   * current — so the *next* download meets a ceiling that already includes the bytes this one has
+   * landed. The concurrency cap is what bounds how many can be doing that at once.
    */
   #capRefusal(totalBytes: number): string | null {
     const inFlight = [...this.#staged.values()].filter(

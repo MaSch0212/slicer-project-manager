@@ -49,7 +49,7 @@ export type BrowseNotice = {
   kind: BrowseNoticeKind
   /** The staged basename. **A remote server chose it** — see {@link MAX_NOTICE_TEXT}. */
   fileName: string
-  /** One sentence naming what happened. For a refusal, which cap and what it was measured against. */
+  /** One sentence naming what happened. For a refusal, **which cap it hit** and what to do next. */
   detail: string
   at: number
 }
