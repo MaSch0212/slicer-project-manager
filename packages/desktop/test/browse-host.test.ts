@@ -192,6 +192,9 @@ class FakeWindow {
 class FakeSession {
   requestHandlers = 0
   checkHandlers = 0
+  /** Set by the rig's `onSession`, so the *ordering* of the announcement is assertable. */
+  announcedWithHandlers = false
+  announcedBeforeAnyView = false
   setPermissionRequestHandler(): void {
     this.requestHandlers += 1
   }
@@ -217,6 +220,8 @@ type Rig = {
   sessions: Map<string, FakeSession>
   partitions: string[]
   lastPageFile: string
+  /** Every session `onSession` was handed, in order — see the registration test below. */
+  announced: FakeSession[]
 }
 
 function rig(options: { window?: FakeWindow | null } = {}): Rig {
@@ -225,6 +230,7 @@ function rig(options: { window?: FakeWindow | null } = {}): Rig {
   const window = options.window === undefined ? new FakeWindow() : options.window
   const sessions = new Map<string, FakeSession>()
   const partitions: string[] = []
+  const announced: FakeSession[] = []
   const lastPageFile = join(root, `case-${seq}`, BROWSE_FILE_NAME)
   const host = new BrowseHost({
     WebContentsView: FakeView as unknown as BrowseHostCtor,
@@ -236,8 +242,17 @@ function rig(options: { window?: FakeWindow | null } = {}): Rig {
     },
     window: () => window as unknown as BrowserWindow,
     lastPageFile,
+    onSession: (session) => {
+      announced.push(session as unknown as FakeSession)
+      // Read back inside the callback: what `BrowseDownloads.attachTo` needs is a session, and a
+      // host that announced one before its permission handlers were on would be announcing a
+      // session a page could already be loading against.
+      const same = session as unknown as FakeSession
+      same.announcedWithHandlers = same.requestHandlers === 1 && same.checkHandlers === 1
+      same.announcedBeforeAnyView = madeViews.length === 0
+    },
   })
-  return { host, window: window as FakeWindow, sessions, partitions, lastPageFile }
+  return { host, window: window as FakeWindow, sessions, partitions, lastPageFile, announced }
 }
 
 /** The constructor shape `BrowseHost` takes, so the double is cast once and named here. */
@@ -470,6 +485,28 @@ test('attach makes exactly one view, with five webPreferences and no preload', (
   const session = sessions.get(BROWSE_PARTITION)!
   assert.equal(session.requestHandlers, 1)
   assert.equal(session.checkHandlers, 1)
+})
+
+test('the browse session is announced once, with its handlers on and before any view', () => {
+  const { host, sessions, announced } = rig()
+  host.attach(FULL)
+  host.detach()
+  host.attach(FULL)
+  host.attach(FULL)
+
+  // **Once, for the life of the process** (E decision 4). `BrowseDownloads.attachTo` is idempotent
+  // on its own, but this is the other half of the same guarantee: the seam is not per `attach`, so
+  // a download that started before a `detach` and finished after it keeps its `done` handler. The
+  // item lives on the session and outlives every view — measured, destroying the owning view
+  // mid-download does not cancel an `http` download.
+  const session = sessions.get(BROWSE_PARTITION)!
+  assert.deepEqual(announced, [session])
+  // And in the right order, read at the moment of the call rather than at the end: a session
+  // announced before its permission handlers were installed is one a page could already be loading
+  // against, and one announced after a view exists is one a page could already have downloaded
+  // through.
+  assert.equal(session.announcedWithHandlers, true)
+  assert.equal(session.announcedBeforeAnyView, true)
 })
 
 test('a second attach destroys the first view before making the second', () => {

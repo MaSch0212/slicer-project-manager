@@ -1,5 +1,7 @@
 import type {
   BrowseBounds,
+  BrowseDownloadDto,
+  BrowseNoticeDto,
   BrowseStateDto,
   Capabilities,
   LocalLibraryDto,
@@ -234,13 +236,15 @@ export interface ApiClient {
    * **This block grows in three instalments**, one per task that implements it, because
    * `DispatchTable` is a mapped type over this interface: a method declared here without a dispatch
    * entry fails `deno task typecheck`, which is the guarantee wanted and which means each addition
-   * has to be atomic with its implementation. These eleven are the view; the download methods and
-   * the landing come with the tasks that write them.
+   * has to be atomic with its implementation. The first eleven are the view; these four are the
+   * downloads it produces; the landing comes with the task that writes it.
    *
    * **The security seam, stated where a caller reads it.** The renderer never names a filesystem
    * location and never hands a URL to Chromium in the privileged document. `navigate` runs its
-   * argument through `browseNavigationPolicy` **in the main process** and rejects a blocked one, and
-   * the strings that come back — see `BrowseStateDto` — are a stranger's, to be rendered as text.
+   * argument through `browseNavigationPolicy` **in the main process** and rejects a blocked one;
+   * `discard` takes a `downloadId` and never a path; and the strings that come back — see
+   * `BrowseStateDto`, `BrowseDownloadDto` and `BrowseNoticeDto` — are a stranger's, to be rendered
+   * as text.
    */
   browse: {
     /** The site registry (4.4), so the page can render the start links without duplicating it. */
@@ -295,6 +299,47 @@ export interface ApiClient {
 
     /** Forgets the remembered last page. The only thing that does (E decision 8). */
     clearLastPage(): Promise<void>
+
+    /**
+     * Everything staged, including what previous runs left behind (5.3).
+     *
+     * Polled while `/browse` is mounted — the same request/response shape D's session card uses,
+     * rather than a new event channel. It answers with `isOrphan: true` for a download a previous
+     * run of the app staged, and with `isVerifiable: false` for one whose record cannot vouch for
+     * the bytes beside it: **`land` refuses those, and `discard` is the only way out of one.**
+     *
+     * `fileName`, `sourceUrl` and `pageUrl` are a stranger's strings — see `BrowseDownloadDto`.
+     */
+    downloads(): Promise<BrowseDownloadDto[]>
+
+    /**
+     * Deletes a staged download and its directory. **The only thing that removes one.**
+     *
+     * A staged download from a previous run is a decision the user has not made yet, not litter:
+     * nothing sweeps them, nothing expires them, and the start-up sweep enumerates rather than
+     * tidies. Refuses `Conflict` for a download that is still running — removing the directory
+     * would not stop Chromium writing to the path it was already given.
+     */
+    discard(downloadId: string): Promise<void>
+
+    /**
+     * What the shell has to say out of band, oldest first (E decision 7).
+     *
+     * Two things reach this list and neither can be delivered any other way: a **refusal**, because
+     * `preventDefault()` gives the page no error, no failed entry and no DOM change — the click
+     * simply appears to have done nothing — and a download that **completed while no view was
+     * attached**, because nothing polls `downloads()` once `/browse` is torn down.
+     *
+     * A native notification is raised at the same moment. That is the promptness; this is the
+     * record, so an operating system that suppresses notifications costs the user nothing.
+     *
+     * In memory for the life of the shell process: a notice is an interruption about something that
+     * just happened, and the durable half of the same event is the staged download itself.
+     */
+    notices(): Promise<BrowseNoticeDto[]>
+
+    /** Forgets one notice. An id that is already gone is a success, not an error. */
+    dismissNotice(id: string): Promise<void>
   }
 
   account: {

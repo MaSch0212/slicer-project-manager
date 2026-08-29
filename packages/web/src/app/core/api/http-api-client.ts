@@ -1,6 +1,8 @@
 import type { ApiClient, UploadBody } from '@spm/contract/api-client.ts'
 import type {
   BrowseBounds,
+  BrowseDownloadDto,
+  BrowseNoticeDto,
   BrowseStateDto,
   Capabilities,
   LocalLibraryDto,
@@ -167,6 +169,11 @@ export class HttpApiClient implements ApiClient {
    * nothing in the UI reaches these; the refusal is what keeps the promise every method of this
    * class makes — a rejection is always an `AppError` with a `code` the caller can switch on, never
    * a `TypeError` from a method that turned out not to be there.
+   *
+   * **The download half is refused for the same reason and not a weaker one.** There is no
+   * `will-download` on this transport to intercept, no staging directory under a `userData` this
+   * shell does not have, and no notice surface — a browser's own download manager already owns
+   * every one of those, and taking them over is not something a page may do.
    */
   // Named, unused parameters for the reason the slicer block gives: an arrow taking none still
   // satisfies `implements ApiClient`, but its call signature is what a caller of this class sees.
@@ -183,6 +190,10 @@ export class HttpApiClient implements ApiClient {
     reload: (): Promise<BrowseStateDto> => this.noBrowse(),
     state: (): Promise<BrowseStateDto> => this.noBrowse(),
     clearLastPage: (): Promise<void> => this.noBrowse(),
+    downloads: (): Promise<BrowseDownloadDto[]> => this.noBrowse(),
+    discard: (_downloadId: string): Promise<void> => this.noBrowse(),
+    notices: (): Promise<BrowseNoticeDto[]> => this.noBrowse(),
+    dismissNotice: (_id: string): Promise<void> => this.noBrowse(),
   }
 
   private noBrowse(): Promise<never> {

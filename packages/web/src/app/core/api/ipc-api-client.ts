@@ -1,6 +1,8 @@
 import type { ApiClient, UploadBody } from '@spm/contract/api-client.ts'
 import type {
   BrowseBounds,
+  BrowseDownloadDto,
+  BrowseNoticeDto,
   BrowseStateDto,
   Capabilities,
   LocalLibraryDto,
@@ -291,6 +293,10 @@ export class IpcApiClient implements ApiClient {
     reload: (): Promise<BrowseStateDto> => this.invoke('browse.reload'),
     state: (): Promise<BrowseStateDto> => this.invoke('browse.state'),
     clearLastPage: (): Promise<void> => this.invoke('browse.clearLastPage'),
+    downloads: (): Promise<BrowseDownloadDto[]> => this.invoke('browse.downloads'),
+    discard: (downloadId: string): Promise<void> => this.invoke('browse.discard', [downloadId]),
+    notices: (): Promise<BrowseNoticeDto[]> => this.invoke('browse.notices'),
+    dismissNotice: (id: string): Promise<void> => this.invoke('browse.dismissNotice', [id]),
   }
 
   readonly account = {

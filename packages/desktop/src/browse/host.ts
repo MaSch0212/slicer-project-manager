@@ -223,6 +223,21 @@ export type BrowseHostOptions = {
   window: () => BrowserWindow | null
   /** `<userData>/browse.json`. See `last-page.ts` for what it is and why it is named that way. */
   lastPageFile: string
+  /**
+   * Called **once, with the browse session, at the moment it is created** — before any view exists
+   * on it and therefore before anything on it can load a page.
+   *
+   * It exists for exactly one caller: `BrowseDownloads.attachTo`, whose `will-download` listener
+   * lives on the *session* and outlives every view (E decision 4). Registering it per `attach`
+   * would remove it on `detach`, and a download that started before the detach and finished after
+   * it would lose its `done` handler — measured, because destroying the owning view mid-download
+   * does not cancel an `http` download.
+   *
+   * A callback rather than a `BrowseDownloads` parameter, because this class knows nothing about
+   * downloads and should not start: it owns the session's *creation*, and this is the seam that
+   * says so.
+   */
+  onSession?: (session: Session) => void
 }
 
 export class BrowseHost {
@@ -230,6 +245,7 @@ export class BrowseHost {
   readonly #fromPartition: (partition: string) => Session
   readonly #hostWindow: () => BrowserWindow | null
   readonly #lastPageFile: string
+  readonly #onSession: (session: Session) => void
 
   #session: Session | null = null
   #view: WebContentsView | null = null
@@ -265,6 +281,7 @@ export class BrowseHost {
     this.#fromPartition = options.fromPartition
     this.#hostWindow = options.window
     this.#lastPageFile = options.lastPageFile
+    this.#onSession = options.onSession ?? ((): void => {})
   }
 
   /**
@@ -279,8 +296,8 @@ export class BrowseHost {
    * is false here **and** true on `defaultSession` in the same assertion, so the check cannot pass
    * by being a null instrument.
    *
-   * Task 3 attaches its `will-download` listener to this object, once, for the life of the process
-   * — the item lives on the session and outlives the view.
+   * The `will-download` listener goes on this object once, for the life of the process — the item
+   * lives on the session and outlives the view. `onSession` is where, and `BrowseDownloads` is what.
    */
   session(): Session {
     if (this.#session) return this.#session
@@ -303,6 +320,10 @@ export class BrowseHost {
     // whatever it draws from that answer is a decision nobody refused. Windows 11 only.
     session.setPermissionCheckHandler(() => false)
     this.#session = session
+    // Last, and once: the handlers above are on before anything can be asked for, and the download
+    // interceptor is on before any view exists to start one. Assigned to `#session` first so that a
+    // callback which reaches back for `session()` finds this one rather than making a second.
+    this.#onSession(session)
     return session
   }
 

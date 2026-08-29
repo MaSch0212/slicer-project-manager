@@ -3,6 +3,7 @@ import {
   BrowserWindow,
   dialog,
   Menu,
+  Notification,
   protocol,
   session,
   shell,
@@ -13,8 +14,10 @@ import { existsSync, statSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { extname, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { BrowseDownloads, MODEL_DOWNLOADS_DIR } from './browse/downloads.ts'
 import { BrowseHost } from './browse/host.ts'
 import { BROWSE_FILE_NAME } from './browse/last-page.ts'
+import { BrowseNotices } from './browse/notices.ts'
 import { parseFileRequest, serveLibraryFile } from './files.ts'
 import { windowIconFile } from './icons.ts'
 import { registerInvokeHandler } from './ipc.ts'
@@ -1053,6 +1056,60 @@ export function main(): void {
     // Beside `state.json` and `slicers.json`, never inside either (D decision 4): one corrupt write
     // should cost the user their last browsed page or their library choice, never both.
     lastPageFile: join(app.getPath('userData'), BROWSE_FILE_NAME),
+    // The `will-download` listener goes on the session **when the session is created**, which is
+    // before any view exists on it — so there is no window in which a page could start a download
+    // nothing was listening for. Not per `attach`: the `DownloadItem` lives on the session and
+    // outlives every view (E decision 4), measured.
+    onSession: (browseSession) => browseDownloads.attachTo(browseSession),
+  })
+
+  /*
+   * What browsing downloads, and what the app has to say about it out of band (spec E §5).
+   *
+   * **The only place an Electron `Notification` is constructed.** `BrowseNotices` owns the list and
+   * imports nothing from `electron`; this callback is the whole of the OS half, and it is written
+   * so that an operating system which refuses to show one costs the user nothing — the notice is
+   * already in the list `browse.notices()` answers with before `notify` is called at all.
+   *
+   * `isSupported()` because a Linux desktop without a notification daemon is a real configuration,
+   * and `show()` on an unsupported platform is not something to find out about in a crash report.
+   *
+   * The title says which of the two things happened, and the body is the file and the reason. Both
+   * are English, like `BrowseStateDto.lastError` and unlike the shell's native *dialogs* — see the
+   * docblock in `browse/notices.ts` for why that line is drawn where it is.
+   */
+  const browseNotices = new BrowseNotices({
+    notify: (notice) => {
+      if (!Notification.isSupported()) return
+      new Notification({
+        title: notice.kind === 'refused' ? 'Download refused' : 'Download finished',
+        // A remote server chose `fileName`. It arrives already truncated — see `MAX_NOTICE_TEXT` —
+        // and an OS notification renders it as text, which is the rule every string out of the
+        // browse view carries (constraint 13).
+        body: `${notice.fileName}: ${notice.detail}`,
+      }).show()
+    },
+  })
+
+  /*
+   * The staging directory, and the three accessors D's `libraryKeyOf` needs.
+   *
+   * `model-downloads` sits beside the slicer sessions directory under `userData` for the same
+   * reason that one does: it holds files this process put there, in no library, that outlive the
+   * run of the app that staged them.
+   *
+   * Every accessor is resolved **per call** — the library and the remote host both change without a
+   * restart, and a download staged after a mode switch belongs to the library that is open now.
+   */
+  const browseDownloads = new BrowseDownloads({
+    stagingDir: join(app.getPath('userData'), MODEL_DOWNLOADS_DIR),
+    notices: browseNotices,
+    session: () => shellHost.session(),
+    isRemote: () => shellHost.mode() === 'remote',
+    remote: () => shellHost.remote(),
+    // `state().attached` and not a flag of its own: the host already answers this question, and a
+    // second copy of it is a second thing that can disagree with the view actually on screen.
+    isViewAttached: () => browseHost.state().attached,
   })
 
   // The one thing in this process that starts a subprocess the user asked for. `spawn` is
@@ -1147,6 +1204,13 @@ export function main(): void {
         reload: () => Promise.resolve(browseHost.reload()),
         state: () => Promise.resolve(browseHost.state()),
         clearLastPage: () => Promise.resolve(browseHost.clearLastPage()),
+        // On `BrowseDownloads` and `BrowseNotices`, not on `BrowseHost`: a staged download outlives
+        // every view and every attach, which is the whole reason its listener is on the session.
+        // Reached per call like everything else here.
+        downloads: () => Promise.resolve(browseDownloads.list()),
+        discard: (downloadId) => Promise.resolve(browseDownloads.discard(downloadId)),
+        notices: () => Promise.resolve(browseNotices.list()),
+        dismissNotice: (id) => Promise.resolve(browseNotices.dismiss(id)),
       },
     },
   }))
@@ -1176,6 +1240,19 @@ export function main(): void {
         // depends on the sweep having run, and `slicers.sessions()` will fail the same way and say
         // so where the user can see it.
         console.warn('desktop: could not look at the slicer sessions directory', error)
+      }
+
+      // E's own sweep, beside D's and for the same reason — except that this one deletes nothing at
+      // all, not even an empty directory (E constraint 15). It enumerates what previous runs staged
+      // and marks what it cannot vouch for; `browse.discard` is the only thing that removes one.
+      // Before the window, so the first `browse.downloads()` sees a list rather than one being
+      // built underneath it.
+      try {
+        browseDownloads.sweep()
+      } catch (error) {
+        // Same reasoning as above: nothing that follows depends on the sweep having run, and
+        // `browse.downloads()` simply answers with whatever this process staged itself.
+        console.warn('desktop: could not look at the model downloads directory', error)
       }
 
       // Opened *before* the window when there is something to open, so the renderer's first

@@ -15,7 +15,13 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, before, test } from 'node:test'
 import type { ApiClient } from '@spm/contract/api-client.ts'
-import type { BrowseStateDto, SlicerConfigDto, SlicerLaunchDto } from '@spm/contract/dtos.ts'
+import type {
+  BrowseDownloadDto,
+  BrowseNoticeDto,
+  BrowseStateDto,
+  SlicerConfigDto,
+  SlicerLaunchDto,
+} from '@spm/contract/dtos.ts'
 import { AppError } from '@spm/contract/errors.ts'
 import { closeLibrary, ensureLocalUser, openLibrary, type Library } from '@spm/core'
 import { writeZip } from '../../core/test/fixtures/make-3mf.ts'
@@ -180,10 +186,26 @@ const shell: ShellApi = {
       browseCalls.push('clearLastPage')
       return Promise.resolve()
     },
+    downloads: () => {
+      browseCalls.push('downloads')
+      return Promise.resolve([browseDownload])
+    },
+    discard: (downloadId) => {
+      browseCalls.push(`discard ${downloadId}`)
+      return Promise.resolve()
+    },
+    notices: () => {
+      browseCalls.push('notices')
+      return Promise.resolve([browseNotice])
+    },
+    dismissNotice: (id) => {
+      browseCalls.push(`dismissNotice ${id}`)
+      return Promise.resolve()
+    },
   },
 }
 
-/** What the shell's browse half was asked, so the eleven are exercised on their arguments. */
+/** What the shell's browse half was asked, so the fifteen are exercised on their arguments. */
 const browseCalls: string[] = []
 
 const browseState: BrowseStateDto = {
@@ -195,6 +217,32 @@ const browseState: BrowseStateDto = {
   canGoForward: false,
   siteId: 'thingiverse',
   lastError: null,
+}
+
+const browseDownload: BrowseDownloadDto = {
+  downloadId: 'dl-1',
+  fileName: 'benchy.zip',
+  // A `blob:` source beside an `https:` page, which is the measured Thingiverse shape and the
+  // reason the DTO carries both.
+  sourceUrl: 'blob:https://www.thingiverse.com/ae5e',
+  pageUrl: 'https://www.thingiverse.com/thing:1',
+  siteId: 'thingiverse',
+  mimeType: 'application/zip',
+  state: 'completed',
+  receivedBytes: 21_060_699,
+  totalBytes: 21_060_699,
+  hadUserGesture: false,
+  startedAt: 1_700_000_000_000,
+  isOrphan: false,
+  isVerifiable: true,
+}
+
+const browseNotice: BrowseNoticeDto = {
+  id: 'notice-1',
+  kind: 'refused',
+  fileName: 'huge.zip',
+  detail: 'this download is larger than the 2 GiB limit for a single file',
+  at: 1_700_000_000_000,
 }
 
 /**
@@ -298,6 +346,10 @@ function exerciseAll(client: ApiClient): Record<ApiPath, () => Promise<unknown>>
     'browse.reload': () => client.browse.reload(),
     'browse.state': () => client.browse.state(),
     'browse.clearLastPage': () => client.browse.clearLastPage(),
+    'browse.downloads': () => client.browse.downloads(),
+    'browse.discard': () => client.browse.discard('dl-1'),
+    'browse.notices': () => client.browse.notices(),
+    'browse.dismissNotice': () => client.browse.dismissNotice('notice-1'),
   }
 }
 
@@ -633,8 +685,11 @@ test('every library-backed route refuses when no folder is open', async () => {
     'slicers.sessions',
     'slicers.resolveSession',
     'slicers.discardSessions',
-    // All eleven browse routes, for the third instance of the same reason: the model browser is a
-    // native view in *this process*, and in remote mode `deps.session` is null.
+    // All fifteen browse routes, for the third instance of the same reason: the model browser is a
+    // native view in *this process*, and in remote mode `deps.session` is null. The four download
+    // routes are on this list for a second reason as well — the staging directory is under
+    // `userData` and belongs to the machine, not to whichever library happens to be open, so
+    // `browse.downloads()` has to answer before a folder is chosen and after one is closed.
     'browse.sites',
     'browse.attach',
     'browse.detach',
@@ -647,6 +702,10 @@ test('every library-backed route refuses when no folder is open', async () => {
     'browse.reload',
     'browse.state',
     'browse.clearLastPage',
+    'browse.downloads',
+    'browse.discard',
+    'browse.notices',
+    'browse.dismissNotice',
   ]
   for (const path of Object.keys(dispatch) as ApiPath[]) {
     if (fromShell.includes(path)) continue
@@ -1246,6 +1305,10 @@ test('the browse routes reach the shell with their arguments, and need no librar
   await dispatch['browse.reload'](deps, [])
   await dispatch['browse.state'](deps, [])
   await dispatch['browse.clearLastPage'](deps, [])
+  await dispatch['browse.downloads'](deps, [])
+  await dispatch['browse.discard'](deps, ['dl-1'])
+  await dispatch['browse.notices'](deps, [])
+  await dispatch['browse.dismissNotice'](deps, ['notice-1'])
   await dispatch['browse.detach'](deps, [])
 
   assert.deepEqual(browseCalls, [
@@ -1264,6 +1327,12 @@ test('the browse routes reach the shell with their arguments, and need no librar
     'reload',
     'state',
     'clearLastPage',
+    'downloads',
+    // The id arrives as the id and not as an object or a path: the renderer names a `downloadId`
+    // and never a location on disk, and `discard` is the one route here that removes anything.
+    'discard dl-1',
+    'notices',
+    'dismissNotice notice-1',
     'detach',
   ])
 })
@@ -1297,6 +1366,19 @@ test('a browse route rejects a wrong argument tuple with Validation, and calls n
     ['browse.navigate', ['']],
     ['browse.navigate', [`https://example.invalid/${'x'.repeat(2049)}`]],
     ['browse.attach', [{ x: 0, y: 0, width: 1, height: 1 }, '']],
+    // The two routes that take an id. Arity in both directions, and a bound on the string — the
+    // real check is that the id is one the main process minted or enumerated, and this only keeps
+    // an object, or a megabyte of text, out of that lookup.
+    ['browse.downloads', ['dl-1']],
+    ['browse.notices', [{}]],
+    ['browse.discard', []],
+    ['browse.discard', [{ downloadId: 'dl-1' }]],
+    ['browse.discard', ['']],
+    ['browse.discard', ['x'.repeat(513)]],
+    ['browse.discard', ['dl-1', 'dl-2']],
+    ['browse.dismissNotice', []],
+    ['browse.dismissNotice', [null]],
+    ['browse.dismissNotice', ['']],
   ]
   for (const [path, args] of wrong) {
     const error = await rejection(dispatch[path]({ session: null, shell }, args))

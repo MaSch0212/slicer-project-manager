@@ -7,6 +7,8 @@ import type { ApiClient } from '@spm/contract/api-client.ts'
 import { createDecorators } from '@spm/contract/decorate.ts'
 import type {
   BrowseBounds,
+  BrowseDownloadDto,
+  BrowseNoticeDto,
   BrowseStateDto,
   Capabilities,
   FileDto,
@@ -181,6 +183,18 @@ export type ShellApi = {
     reload(): Promise<BrowseStateDto>
     state(): Promise<BrowseStateDto>
     clearLastPage(): Promise<void>
+    /**
+     * The downloads browsing produced, and the shell's out-of-band record of them.
+     *
+     * **Ids, never a path** (constraint 4), exactly like the slicer block: `discard` names a
+     * download the main process minted or enumerated, and the staging directory is never spelled on
+     * this side of the boundary. `app.ts` implements these over `BrowseDownloads` and
+     * `BrowseNotices`, which live beside `BrowseHost` for the same reason it does.
+     */
+    downloads(): Promise<BrowseDownloadDto[]>
+    discard(downloadId: string): Promise<void>
+    notices(): Promise<BrowseNoticeDto[]>
+    dismissNotice(id: string): Promise<void>
   }
 }
 
@@ -299,6 +313,17 @@ const installIdSchema = z.string().min(1).max(512)
  * no record of its own. See `slicers.resolveSession` for why nothing joins it onto a path.
  */
 const launchIdSchema = z.string().min(1).max(512)
+
+/**
+ * A staged download's id, or a browse notice's.
+ *
+ * Both are minted in the main process — a `randomUUID` — and a download's is also the name of a
+ * directory under `model-downloads`, which is where the sweep gets the ones it did not mint. The id
+ * is matched against that set *before* anything joins it onto a path, so this is a bound on the
+ * comparison and not a path check: it keeps an object, or a megabyte of text, out of a `Map`
+ * lookup. `launchIdSchema` carries the same reasoning for the same reason.
+ */
+const downloadIdSchema = z.string().min(1).max(512)
 
 /**
  * Where the `/browse` page says it wants the native view, in CSS pixels of its own document.
@@ -752,6 +777,32 @@ export const dispatch: DispatchTable = {
   'browse.state': shellCall('browse.state', z.tuple([]), (shell) => shell.browse.state()),
   'browse.clearLastPage': shellCall('browse.clearLastPage', z.tuple([]), (shell) =>
     shell.browse.clearLastPage(),
+  ),
+  /*
+   * The downloads instalment: four more `shellCall`s, for the same reason the eleven above are.
+   *
+   * **`downloadIdSchema` is a bound and not a path check.** The renderer names a `downloadId` and
+   * never a location on disk (constraint 4), and the main process matches the id against
+   * directories it enumerated or ids it minted before it joins anything — so what this schema is
+   * for is keeping an object, or a megabyte of text, out of that comparison. Written wide enough
+   * for a `randomUUID` and for a directory name a previous build might have chosen, and narrow
+   * enough that nothing here is a haystack. The same reasoning `launchIdSchema` carries, and the
+   * same reason it is not `idSchema`.
+   *
+   * `dismissNotice` takes a notice id, which is minted in this process and never reaches disk at
+   * all — the same bound, because "it cannot be a path" is not a reason to accept any string.
+   */
+  'browse.downloads': shellCall('browse.downloads', z.tuple([]), (shell) =>
+    shell.browse.downloads(),
+  ),
+  'browse.discard': shellCall('browse.discard', z.tuple([downloadIdSchema]), (shell, downloadId) =>
+    shell.browse.discard(downloadId),
+  ),
+  'browse.notices': shellCall('browse.notices', z.tuple([]), (shell) => shell.browse.notices()),
+  'browse.dismissNotice': shellCall(
+    'browse.dismissNotice',
+    z.tuple([downloadIdSchema]),
+    (shell, id) => shell.browse.dismissNotice(id),
   ),
 
   /*
