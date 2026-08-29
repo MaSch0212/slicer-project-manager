@@ -35,15 +35,65 @@ const BYTES_PER_VERTEX = 12
  */
 export const DEFAULT_MAX_MESH_BYTES = 256_000_000
 
+/**
+ * The default ceiling on one **STEP file**, read from its size on disk before it is opened.
+ *
+ * **A guard against the unmeasured, and not a memory model.** `assertMeshFits` structurally cannot
+ * bound a STEP parse — the triangle count does not exist until OCCT has already tessellated, so by
+ * the time there is a number to check the expensive part is paid. This is the only thing standing
+ * between the queue and a file nobody has tried. What it stands on is thin, and the thinness is
+ * written down here rather than smoothed over.
+ *
+ * **Where 10 MB comes from.** Fitting the reference library's ten STEP files gives ~243 MB of
+ * intercept plus ~25 bytes of peak RSS per input byte, so a 10 MB input predicts 243 + 250 ≈
+ * **493 MB — the entire 500 MB NAS budget, on one file.** It is also **7.2x the largest STEP file
+ * in that library** (1 388 035 bytes), so nothing real is near it from the other direction either.
+ *
+ * **And the fit cannot be accurate, because the cost tracks surface complexity rather than size.**
+ * A 386 KB file yielded 22 137 triangles where a 497 KB one yielded 2 698 — an 8x spread from
+ * comparable inputs. A size-keyed guard mis-prices both, and there is no other signal available
+ * before the parse. What a 50 MB STEP file costs, and whether it degrades or takes the process
+ * down, is **unmeasured**: nothing above 1.39 MB has ever been run. This refuses such a file
+ * rather than finding out on a 2 GB NAS.
+ *
+ * **Raising `SPM_MAX_STEP_MB` is forward-only, and here is what an operator actually does about
+ * it.** `failed` is terminal — `claimPendingPreviews` selects only `pending` — so a raised ceiling
+ * gets the new limit for files the queue has not yet seen and **nothing at all** for the ones it
+ * has already refused. That is the shape of the 326 blank projects, arriving through a
+ * configuration change rather than a release. The only remedy the shipped code offers is to touch
+ * the file's bytes: a rescan that sees the content hash change resets the preview row to `pending`
+ * and zeroes `attempts`. This is already true of `SPM_MAX_MESH_MB`; F neither fixes it nor makes
+ * it worse, and it is recorded here so nobody discovers it in the field.
+ */
+export const DEFAULT_MAX_STEP_BYTES = 10_000_000
+
 /** What a parser is about to allocate for a mesh of this shape, in bytes. */
 export function meshBytesFor(vertexCount: number, triangleCount: number): number {
   return vertexCount * BYTES_PER_VERTEX + triangleCount * BYTES_PER_TRIANGLE
 }
 
-/** Options every mesh parser takes, so the ceiling is the caller's to raise. */
+/**
+ * Options every mesh parser takes, so the ceiling is the caller's to raise.
+ *
+ * **Three things about `maxStepBytes` that are not tidy.**
+ *
+ * It bounds a **file** where every other member bounds a **mesh**, which makes this type's name
+ * slightly wrong. It is not renamed: a rename touches every parser signature in the package, and
+ * buys a better noun and nothing else.
+ *
+ * It has **exactly one reader**, and nobody should add a second by analogy. `assertMeshFits` does
+ * not consult it — that function reads `maxMeshBytes` alone — and `assertStepFileFits` is the only
+ * thing that does. Both halves of that are pinned by a test.
+ *
+ * And it is **not a memory model**. A STEP parse costs a ~244 MB per-process floor that no value
+ * here lowers; this bounds the input, because the input is the only thing knowable before the
+ * parse. See `DEFAULT_MAX_STEP_BYTES`.
+ */
 export type MeshLimits = {
   /** Defaults to `DEFAULT_MAX_MESH_BYTES`. */
   maxMeshBytes?: number
+  /** Defaults to `DEFAULT_MAX_STEP_BYTES`. The file on disk, not the mesh it yields. */
+  maxStepBytes?: number
 }
 
 function megabytes(bytes: number): string {
@@ -62,7 +112,10 @@ function megabytes(bytes: number): string {
  * prediction, and the expensive part of that parse has already been paid. What this bounds there is
  * the adapter's own `positions` allocation and nothing else. It is still worth calling — one
  * ceiling for every arm, and a pathological tessellation is still refused before a `Float32Array`
- * is asked for — but it is not the guard it is on the other three.
+ * is asked for — but it is not the guard it is on the other three. `assertStepFileFits` below is
+ * what stands in for it there, and it bounds the input rather than the mesh. **This function does
+ * not read `maxStepBytes` and must not start**: the two ceilings answer different questions at
+ * different moments, and the STEP one has exactly one reader on purpose.
  *
  * The message names both sizes because the operator's next question is always "by how much", and
  * the answer decides whether `SPM_MAX_MESH_MB` is the fix or the file is.
@@ -80,6 +133,35 @@ export function assertMeshFits(
       `model geometry needs ${megabytes(needed)} (${triangleCount} triangles), ` +
         `more than the ${megabytes(maxMeshBytes)} this server permits`,
       { vertexCount, triangleCount, neededBytes: needed, maxMeshBytes },
+    )
+  }
+}
+
+/**
+ * Refuses a STEP file larger than the ceiling, **before it is opened**.
+ *
+ * `assertMeshFits`'s exact shape, doing something different, which is why the difference is here
+ * rather than left to be inferred. That one bounds an allocation this process is about to make and
+ * can predict. This one bounds an **input**, because the cost it stands in for — OCCT's ~244 MB
+ * per-process floor plus whatever tessellating this particular file adds on top — cannot be
+ * predicted from anything available before the parse.
+ *
+ * `sizeBytes` must come from `statSync` and never from a buffer's `length`: a check on the buffer
+ * is a check after the file is already resident, which is precisely the cost this exists to avoid.
+ * `readStepBytes` in `step.ts` is the one place that ordering lives, and where it is asserted.
+ *
+ * "Permitted for one STEP file", not `assertMeshFits`'s "this server permits" — the same string
+ * ships inside the Electron app, where there is no server. The message names both sizes for the
+ * same reason the neighbour's does: the operator's next question is always "by how much".
+ */
+export function assertStepFileFits(sizeBytes: number, limits: MeshLimits | undefined): void {
+  const maxStepBytes = limits?.maxStepBytes ?? DEFAULT_MAX_STEP_BYTES
+  if (sizeBytes > maxStepBytes) {
+    throw new AppError(
+      'Validation',
+      `this STEP file is ${megabytes(sizeBytes)}, more than the ` +
+        `${megabytes(maxStepBytes)} permitted for one STEP file`,
+      { sizeBytes, maxStepBytes },
     )
   }
 }

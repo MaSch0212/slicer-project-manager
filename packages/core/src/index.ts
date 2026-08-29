@@ -112,4 +112,8 @@ export {
 } from './previews/queue.ts'
 export { MESH_HANDLER, makeMeshHandler } from './previews/mesh-handler.ts'
 export { PREVIEW_HANDLERS, makePreviewHandlers } from './previews/handlers.ts'
-export { DEFAULT_MAX_MESH_BYTES, type MeshLimits } from './previews/mesh/limits.ts'
+export {
+  DEFAULT_MAX_MESH_BYTES,
+  DEFAULT_MAX_STEP_BYTES,
+  type MeshLimits,
+} from './previews/mesh/limits.ts'

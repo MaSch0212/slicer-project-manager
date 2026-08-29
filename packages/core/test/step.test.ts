@@ -4,10 +4,16 @@ import { AppError } from '@spm/contract/errors.ts'
 import type { Ctx } from '../src/ctx.ts'
 import { newId } from '../src/db/ids.ts'
 import type { Library } from '../src/db/open.ts'
-import { PREVIEW_HANDLERS } from '../src/previews/handlers.ts'
+import { makePreviewHandlers, PREVIEW_HANDLERS } from '../src/previews/handlers.ts'
 import { makeMeshHandler } from '../src/previews/mesh-handler.ts'
-import { makeOcctLoader, parseStepFile } from '../src/previews/mesh/step.ts'
-import { runPreviewQueue, type PreviewJob } from '../src/previews/queue.ts'
+import {
+  assertMeshFits,
+  assertStepFileFits,
+  DEFAULT_MAX_STEP_BYTES,
+  type MeshLimits,
+} from '../src/previews/mesh/limits.ts'
+import { makeOcctLoader, parseStepFile, readStepBytes } from '../src/previews/mesh/step.ts'
+import { runPreviewQueue, type PreviewHandler, type PreviewJob } from '../src/previews/queue.ts'
 import { rescan } from '../src/projects/rescan.ts'
 import { assert, test } from './harness.ts'
 import { withLibrary } from './tmp-library.ts'
@@ -277,4 +283,147 @@ test('makeOcctLoader never caches a rejection', async () => {
   // as long as it runs, and nothing else in this suite would notice.
   assert.ok(await load())
   assert.equal(calls, 2)
+})
+
+test('the STEP file ceiling refuses one byte over it and permits one exactly at it', () => {
+  // Both directions in one test, because a ceiling asserted only by its refusals is satisfied by
+  // an implementation that refuses everything — which is the shape of bug that would blank every
+  // STEP file in a library.
+  assert.throws(() => assertStepFileFits(1_001, { maxStepBytes: 1_000 }), AppError)
+  assertStepFileFits(1_000, { maxStepBytes: 1_000 })
+
+  // The default, with literals rather than the constant, so this cannot pass by agreeing with a
+  // moved definition. The value itself is pinned separately below.
+  assert.equal(DEFAULT_MAX_STEP_BYTES, 10_000_000)
+  assertStepFileFits(10_000_000, undefined)
+  assert.throws(() => assertStepFileFits(10_000_001, undefined), AppError)
+  assertStepFileFits(10_000_000, {})
+  assert.throws(() => assertStepFileFits(10_000_001, {}), AppError)
+
+  // The two ceilings are separate readers of separate fields, and neither reads the other's.
+  // `maxStepBytes` has exactly one reader on purpose (see `MeshLimits`), so a tidy-up that made
+  // `assertMeshFits` consult it — or made this one consult `maxMeshBytes` — goes red here.
+  assertStepFileFits(2_000, { maxMeshBytes: 1 })
+  assertMeshFits(0, 1, { maxStepBytes: 1 })
+})
+
+test('the STEP refusal names both sizes, and says permitted rather than this server permits', () => {
+  // A megabyte apart, deliberately: `megabytes()` is `toFixed(1)`, so a boundary pair renders as
+  // the same string twice and "names both sizes" degenerates into naming one of them twice.
+  const thrown = ((): AppError => {
+    try {
+      assertStepFileFits(41_000_000, { maxStepBytes: 10_000_000 })
+    } catch (error) {
+      assert.ok(error instanceof AppError)
+      return error
+    }
+    throw new Error('assertStepFileFits accepted 41 MB against a 10 MB ceiling')
+  })()
+
+  assert.equal(thrown.code, 'Validation')
+  assert.equal(
+    thrown.message,
+    'this STEP file is 41.0 MB, more than the 10.0 MB permitted for one STEP file',
+  )
+  // "permitted for one STEP file", not `assertMeshFits`'s "this server permits": the same string
+  // ships inside the Electron app, where there is no server.
+  assert.ok(!thrown.message.includes('this server permits'), thrown.message)
+  assert.deepEqual(thrown.details, { sizeBytes: 41_000_000, maxStepBytes: 10_000_000 })
+})
+
+test('an oversized STEP file is refused before a byte of it is read', () => {
+  // The half a naive ceiling test misses. Checking the buffer's length is a check after the
+  // whole file is already in memory, which is exactly the cost this ceiling exists to avoid — and
+  // it passes every assertion that only looks at what was thrown.
+  const exploding = {
+    size: () => 1_001,
+    read: (): Uint8Array => {
+      throw new Error('read happened')
+    },
+  }
+  const thrown = ((): unknown => {
+    try {
+      readStepBytes('/never/opened.step', { maxStepBytes: 1_000 }, exploding)
+    } catch (error) {
+      return error
+    }
+    return null
+  })()
+  assert.ok(thrown instanceof AppError, String(thrown))
+  assert.equal(thrown.code, 'Validation')
+  assert.match(thrown.message, /permitted for one STEP file/)
+
+  // The other half, and it is not optional: a `readStepBytes` that never read anything at all
+  // would satisfy the first half perfectly.
+  let reads = 0
+  const counting = {
+    size: () => 1_000,
+    read: (): Uint8Array => {
+      reads++
+      return new Uint8Array([1, 2, 3])
+    },
+  }
+  assert.deepEqual(
+    readStepBytes('/never/opened.step', { maxStepBytes: 1_000 }, counting),
+    new Uint8Array([1, 2, 3]),
+  )
+  assert.equal(reads, 1)
+})
+
+test('the STEP ceiling reaches the parser through the whole handler chain', async () => {
+  await withLibrary(async (lib) => {
+    const { dir } = seedProjectDir(lib)
+    const path = writeStepFixture(dir, 'cube.step')
+
+    // The fixture is 8 247 bytes, so a ceiling of 1 000 puts it over without a large file
+    // anywhere in this repository. Through `makePreviewHandlers` rather than `parseStepFile`,
+    // because what is under test is that the caller's ceiling arrives — the failure task 1's
+    // review found is not "the check is gone" but "the check is there and nothing reaches it".
+    const rasterizer = (limits: MeshLimits): PreviewHandler => {
+      const chain = makePreviewHandlers(limits)
+      // The rasterizer is last by construction (embedded first, see `makePreviewHandlers`), and
+      // taking it by position rather than by index keeps this from pinning the chain's length.
+      return chain[chain.length - 1]!
+    }
+
+    await assert.rejects(
+      () => rasterizer({ maxStepBytes: 1_000 }).run(job(path)),
+      /this STEP file is 0\.0 MB, more than the 0\.0 MB permitted for one STEP file/,
+    )
+
+    // The other side of the boundary, on the same file through the same chain: the refusal above
+    // is the ceiling doing its job and not the chain being broken for STEP files generally.
+    const output = await rasterizer({ maxStepBytes: 1_000_000 }).run(job(path))
+    assert.equal(output?.source, 'rasterized')
+  })
+})
+
+test('a STEP file over the ceiling leaves a failed row naming both sizes', async () => {
+  await withLibrary(async (lib) => {
+    const { ctx, dir } = seedProjectDir(lib)
+    writeStepFixture(dir, 'cube.step')
+    // Two megabytes of nothing in particular. **The content does not matter**, and that is a
+    // second observation of the ordering above: the ceiling refuses before the read and before
+    // the magic guard, so a file that is not STEP at all still produces the ceiling's message.
+    // The 8 KB fixture cannot be reused for this — `megabytes()` is `toFixed(1)`, so it and any
+    // ceiling below it both render `0.0 MB` and "both sizes" collapses into one size twice.
+    writeFileSync(join(dir, 'over.step'), new Uint8Array(2_000_000))
+    await rescan(lib, ctx)
+    promoteStepFilesToModels(lib)
+
+    assert.deepEqual(
+      await runPreviewQueue(lib, { handlers: makePreviewHandlers({ maxStepBytes: 1_000_000 }) }),
+      { ready: 1, failed: 1, unsupported: 0 },
+    )
+
+    // The row, not the throw. `unsupported` writes `error = NULL` and is terminal, so a refusal
+    // arriving as one leaves an operator a blank thumbnail and nothing at all to read.
+    const [cube, over] = previewRows(lib)
+    assert.equal(cube?.state, 'ready')
+    assert.equal(over?.state, 'failed')
+    assert.equal(
+      over?.error,
+      'this STEP file is 2.0 MB, more than the 1.0 MB permitted for one STEP file',
+    )
+  })
 })

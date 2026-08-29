@@ -1,7 +1,7 @@
-import { readFileSync } from 'node:fs'
+import { readFileSync, statSync } from 'node:fs'
 import { AppError } from '@spm/contract/errors.ts'
 import occtimportjs from 'occt-import-js'
-import { allocateMesh, assertMeshFits, type MeshLimits } from './limits.ts'
+import { allocateMesh, assertMeshFits, assertStepFileFits, type MeshLimits } from './limits.ts'
 import type { Mesh } from './mesh.ts'
 
 /**
@@ -180,6 +180,53 @@ function occtToMesh(result: OcctResult, limits: MeshLimits | undefined): Mesh {
 }
 
 /**
+ * The two filesystem calls this module makes, in one object so a test can replace them.
+ *
+ * Not an abstraction anybody asked for: it exists because the property worth pinning about
+ * `readStepBytes` is an *order*, and an order between two direct `node:fs` calls is not observable
+ * from anywhere. There is nothing to spy on a bare `statSync`/`readFileSync` pair, and the obvious
+ * substitute — a path that stats and fails to read — does not exist portably, because `statSync`
+ * on an absent path throws `ENOENT` rather than answering with a size.
+ *
+ * Declared through a named type rather than inferred, and the difference is not cosmetic:
+ * `readFileSync` returns a node `Buffer`, so an inferred `typeof STEP_IO` would demand every
+ * substitute return one too — and nothing that is merely standing in for a read has any business
+ * constructing a `Buffer`. `Uint8Array` is also what this module actually needs, since it is what
+ * `ReadStepFile` is handed.
+ */
+export type StepIo = {
+  size: (path: string) => number
+  read: (path: string) => Uint8Array
+}
+
+const STEP_IO: StepIo = {
+  size: (path) => statSync(path).size,
+  read: (path) => readFileSync(path),
+}
+
+/**
+ * The file's bytes, or the ceiling's refusal — **and the refusal costs no read at all.**
+ *
+ * The whole job of this function is the order of its two lines. The size comes from `statSync`
+ * rather than from the buffer's `length`, because a check on the buffer is a check after the file
+ * is already resident, and holding the file is exactly the cost `assertStepFileFits` exists to
+ * avoid. `parseStepFile` is what makes it worth avoiding: `ReadStepFile` is whole-buffer, so the
+ * file is resident *twice* one line later.
+ *
+ * `io` defaults to the real filesystem and production never passes it. It is a parameter so the
+ * ordering can be observed by a reader that throws if it is ever reached — see the test named for
+ * it, which touches no path and needs no fixture.
+ */
+export function readStepBytes(
+  absPath: string,
+  limits: MeshLimits | undefined,
+  io: StepIo = STEP_IO,
+): Uint8Array {
+  assertStepFileFits(io.size(absPath), limits)
+  return io.read(absPath)
+}
+
+/**
  * Parses a STEP file from disk, holding it whole — the one parser here that does.
  *
  * **This arm is the exception to everything `readMesh`'s docblock says about memory**, and the
@@ -204,12 +251,18 @@ function occtToMesh(result: OcctResult, limits: MeshLimits | undefined): Mesh {
  * concurrency is set.
  *
  * The `await` is for the module, not for the file: `loadOcct()` resolves instantly after the first
- * call, and the bytes are already in hand when it is reached — got there by `readFileSync`, which
- * is the other blocking call in this function. So on the Electron main process the stall the IPC
- * table shares is the read **and** the parse, not the parse alone.
+ * call, and the bytes are already in hand when it is reached — got there by `readStepBytes`, whose
+ * `readFileSync` is the other blocking call in this function. So on the Electron main process the
+ * stall the IPC table shares is the read **and** the parse, not the parse alone.
+ *
+ * **What bounds any of this is `limits.maxStepBytes`, and it bounds the input rather than the
+ * cost.** `assertMeshFits` runs below, after OCCT has tessellated, so on this arm it is a check on
+ * a result and not on a prediction; nothing it does lowers the floor above. `readStepBytes` is the
+ * only guard that runs before a byte is spent, it is keyed on the file's size on disk, and a size
+ * is a poor proxy for what a STEP file costs — see `DEFAULT_MAX_STEP_BYTES`, which says how poor.
  */
 export async function parseStepFile(absPath: string, limits?: MeshLimits): Promise<Mesh> {
-  const bytes = readFileSync(absPath)
+  const bytes = readStepBytes(absPath, limits)
   assertStepMagic(bytes)
   const occt = await loadOcct()
   return occtToMesh(occt.ReadStepFile(bytes, null), limits)
