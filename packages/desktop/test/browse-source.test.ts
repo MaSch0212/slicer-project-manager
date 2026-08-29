@@ -103,6 +103,19 @@ test('no module in packages/desktop/src registers a preload on a session', () =>
  *
  * Subsystem D's equivalent is `packages/core/test/server-boundary.test.ts`, and this is deliberately
  * not there: E may not edit `packages/core` **at all**, its test directory included.
+ *
+ * ## If you are here because this test went red and you were not touching the model browser
+ *
+ * Then it is doing its job in the wrong package's voice, and that is the known cost of pinning
+ * these three lists in a *desktop* file. Adding, removing or renaming a route in
+ * `packages/server/src/routes`, a module under `packages/core/src`, or a file under
+ * `packages/server/test` reddens the two tests below with a message about a subsystem your change
+ * had nothing to do with. **The fix is to update the list, in the same commit as your change** —
+ * `SERVER_ROUTES`, `CORE_MODULES` or `SERVER_TESTS` — and not to weaken the assertion or delete the
+ * test. What it is asserting is that *subsystem E* added none of those, which stays true when you
+ * add one deliberately for some other reason; the list is a baseline, not a ban. Only the
+ * `BROWSER_NAMES` offender list below is a ban, and that one really does mean core or the server
+ * has started naming E's own things.
  */
 const REPO_ROOT = join(import.meta.dirname, '..', '..', '..')
 
