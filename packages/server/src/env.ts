@@ -3,6 +3,7 @@ import {
   DEFAULT_CONCURRENCY,
   DEFAULT_LOG_LEVEL,
   DEFAULT_MAX_MESH_BYTES,
+  DEFAULT_MAX_STEP_BYTES,
   LOG_LEVELS,
   parseLogLevel,
   type LogLevelSetting,
@@ -133,10 +134,20 @@ export function resolvePreviewIntervalMs(raw: string | undefined): number {
 /**
  * How many preview jobs run at once, and therefore how many meshes may be in memory at once.
  *
- * This and `SPM_MAX_MESH_MB` are the two halves of one number: a worker's peak is one mesh plus a
- * fixed reader window, so the queue's peak is roughly `concurrency × (mesh + 80 MB) + 120 MB` —
- * about 46 MB of that constant is Deno's own baseline and the rest is V8 heap the allocator has
- * touched and not given back. The README carries the measured table the formula is fitted to.
+ * **Three variables now, not two.** This and `SPM_MAX_MESH_MB` were described here as the two
+ * halves of one number, over the formula `concurrency × (mesh + 80 MB) + 120 MB`. Both were true
+ * before STEP support and neither is now. A process that has parsed one STEP file carries a
+ * further **~244 MB floor** — measured across ten files, an 8 KB one costing 207 MB and the
+ * largest 278 MB — and `SPM_MAX_STEP_MB` is the variable that bounds what may reach it.
+ *
+ * That floor is **per process rather than per worker, and does not multiply by this number.** The
+ * queue's workers are plain async functions racing over one job array in one process, so there is
+ * one module instance and one WASM heap however many of them there are. A server whose library
+ * holds no STEP file pays none of it.
+ *
+ * The arithmetic is deliberately not restated here for a fourth time: `DEFAULT_CONCURRENCY` in
+ * `@spm/core` carries the three-case table, and the README carries the operator's copy of the same
+ * table. Those two change together or not at all.
  *
  * The default is core's `DEFAULT_CONCURRENCY` read directly, not copied: a server-side constant
  * holding the same number is a second place for it to live and a place for it to drift, and there
@@ -157,10 +168,17 @@ export function resolvePreviewConcurrency(raw: string | undefined): number {
 /**
  * The ceiling on one model's geometry arrays, in megabytes of 1 000 000 bytes.
  *
- * A backstop, not a filter: every read is streamed, so the biggest file in the reference library
- * needs 208.8 MB and the default permits 256. What this refuses is input whose size is a function
+ * A backstop, not a filter: every read is streamed **except the STEP one**, so for STL, OBJ and
+ * 3MF the document is no longer part of the peak — the biggest file in the reference library needs
+ * 208.8 MB and the default permits 256. What this refuses is input whose size is a function
  * of an attacker rather than of a printer — a model declaring a billion degenerate triangles asks
  * for 36 GB, and asking is all it takes.
+ *
+ * **This does not bound a STEP parse. `SPM_MAX_STEP_MB` is the variable that does.** OCCT is
+ * handed the whole file and tessellates before anything countable exists, so on that arm this
+ * ceiling is consulted after the expensive part is already paid, and what it bounds there is the
+ * adapter's own `positions` allocation. Lowering it does not lower the ~244 MB per-process floor a
+ * STEP parse costs, and raising it does not raise it.
  *
  * Megabytes rather than bytes because the number an operator arrives at is "about 300 MB", and
  * `SPM_MAX_MESH_MB=300` is a value they can check at a glance where `300000000` is not. A megabyte
@@ -192,6 +210,40 @@ export function resolveMaxMeshBytes(raw: string | undefined): number {
 }
 
 /**
+ * The ceiling on one STEP **file**, in megabytes of 1 000 000 bytes.
+ *
+ * Its neighbour above bounds a mesh this process is about to allocate and can predict. This bounds
+ * an **input**, because a STEP parse's cost is not knowable before the parse: OCCT tessellates
+ * first, and the measured price is a ~244 MB per-process floor plus an amount that tracks surface
+ * complexity rather than file size — a 386 KB file yielded 22 137 triangles where a 497 KB one
+ * yielded 2 698. `DEFAULT_MAX_STEP_BYTES` in `@spm/core` carries the fit, the two files that
+ * contradict it, and what raising this does *not* do for a file already refused (nothing: `failed`
+ * is terminal until the file's bytes change). Read it before changing this. **It is a guard
+ * against the unmeasured, not a memory model**, and the largest STEP file measured is 1.39 MB.
+ *
+ * **`MAX_STEP_MB` is 2 048 to match `MAX_MESH_MB`, and its reason is the weaker of the two.** The
+ * mesh ceiling's 2 048 is structural — `positions` is one `Float32Array`, 2 GB of it is 512
+ * million elements, inside V8's element limit, and a larger ceiling would be a promise the engine
+ * cannot keep. Nothing equivalent constrains a STEP input. 2 048 here is a typo guard, matched to
+ * the neighbouring constant so an operator reading this file has one ceiling to learn rather than
+ * two. It is **not** a promise that a 2 GB STEP file parses: nothing above 1.39 MB has been
+ * measured at all.
+ */
+export const MAX_STEP_MB = 2_048
+export const DEFAULT_MAX_STEP_MB = DEFAULT_MAX_STEP_BYTES / 1_000_000
+
+export function resolveMaxStepBytes(raw: string | undefined): number {
+  if (raw === undefined) return DEFAULT_MAX_STEP_BYTES
+  const mb = requireWholeNumber(
+    'SPM_MAX_STEP_MB',
+    raw,
+    `a size. Expected a whole number of megabytes from 1 to ${MAX_STEP_MB}`,
+    MAX_STEP_MB,
+  )
+  return mb * 1_000_000
+}
+
+/**
  * The origin activation links are built on, normalised to a bare origin, or `undefined` to use
  * the origin of the request that asked for the link.
  *
@@ -211,6 +263,7 @@ export type ServerEnv = {
   previewIntervalMs: number
   previewConcurrency: number
   maxMeshBytes: number
+  maxStepBytes: number
   devUiOrigin: string | null
   publicOrigin: string | undefined
   webRoot: string
@@ -231,6 +284,7 @@ export function readServerEnv(get: (name: string) => string | undefined): Server
     previewIntervalMs: resolvePreviewIntervalMs(get('SPM_PREVIEW_INTERVAL_MS')),
     previewConcurrency: resolvePreviewConcurrency(get('SPM_PREVIEW_CONCURRENCY')),
     maxMeshBytes: resolveMaxMeshBytes(get('SPM_MAX_MESH_MB')),
+    maxStepBytes: resolveMaxStepBytes(get('SPM_MAX_STEP_MB')),
     // These three already had validators of their own, next to the features they configure.
     // Called from here so that one function is the answer to "what does this server read from
     // the environment", without moving code that is happier where it is.

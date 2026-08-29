@@ -36,6 +36,7 @@ const {
   previewIntervalMs,
   previewConcurrency,
   maxMeshBytes,
+  maxStepBytes,
   devUiOrigin,
   publicOrigin,
   webRoot,
@@ -60,8 +61,8 @@ const PRUNE_INTERVAL_MS = 60 * 60 * 1000
 // longer than the interval does not pile up a tick's worth of no-op runs behind it.
 let previewRunInFlight = false
 // Built once rather than per tick: the chain is stateless, and the only thing the environment
-// contributes to it is the mesh ceiling read above.
-const previewHandlers = makePreviewHandlers({ maxMeshBytes })
+// contributes to it is the two ceilings read above.
+const previewHandlers = makePreviewHandlers({ maxMeshBytes, maxStepBytes })
 setInterval(() => {
   if (previewRunInFlight) {
     log.debug('preview tick skipped, previous run still in flight')
@@ -73,8 +74,10 @@ setInterval(() => {
   // library, not to core. Its *order* is core's, and is not respelled here -- see
   // makePreviewHandlers, which is the one place it exists and the one place a test can pin it.
   //
-  // `concurrency` is the other half of the memory budget: each worker may hold one mesh of up to
-  // `maxMeshBytes`, so these two variables multiply. See the README.
+  // `concurrency` multiplies the *mesh* half of the memory budget: each worker may hold one mesh
+  // of up to `maxMeshBytes`. It does not multiply the STEP half — a process that has parsed one
+  // STEP file carries a ~244 MB floor per process rather than per worker, which `maxStepBytes`
+  // bounds the input to rather than the cost of. See the README's Preview memory table.
   runPreviewQueue(lib, { limit: 20, concurrency: previewConcurrency, handlers: previewHandlers })
     .catch((error) => log.error('preview queue run failed', { err: error }))
     .finally(() => (previewRunInFlight = false))

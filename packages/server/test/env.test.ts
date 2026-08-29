@@ -4,14 +4,17 @@ import { AppError } from '@spm/contract/errors.ts'
 import { DEFAULT_CONCURRENCY } from '@spm/core'
 import {
   DEFAULT_MAX_MESH_MB,
+  DEFAULT_MAX_STEP_MB,
   DEFAULT_PORT,
   DEFAULT_PREVIEW_INTERVAL_MS,
   MAX_INTERVAL_MS,
   MAX_MESH_MB,
+  MAX_STEP_MB,
   readServerEnv,
   resolveLibraryDir,
   resolveLogLevel,
   resolveMaxMeshBytes,
+  resolveMaxStepBytes,
   resolvePort,
   resolvePreviewConcurrency,
   resolvePreviewIntervalMs,
@@ -167,6 +170,31 @@ Deno.test('SPM_MAX_MESH_MB accepts whole megabytes and converts them to bytes', 
   refuses('SPM_MAX_MESH_MB', '2049', () => resolveMaxMeshBytes('2049'))
 })
 
+Deno.test('SPM_MAX_STEP_MB accepts whole megabytes and converts them to bytes', () => {
+  assert.equal(resolveMaxStepBytes(undefined), 10_000_000)
+  // Pinned as a literal beside the constant rather than through it, so this cannot pass by
+  // agreeing with a moved definition. 10 MB is a guard against the unmeasured and not a memory
+  // model: the largest STEP file ever measured is 1.39 MB, and the fitted cost of a 10 MB one is
+  // the whole 500 MB budget. See `DEFAULT_MAX_STEP_BYTES`.
+  assert.equal(DEFAULT_MAX_STEP_MB, 10)
+  assert.equal(resolveMaxStepBytes('40'), 40_000_000)
+  assert.equal(resolveMaxStepBytes('1'), 1_000_000)
+  // Matched to `MAX_MESH_MB` so an operator reading this file has one ceiling to learn rather
+  // than two — a typo guard, and deliberately a weaker reason than the mesh one's structural
+  // `Float32Array` bound. It is not a claim that a 2 GB STEP file parses.
+  assert.equal(MAX_STEP_MB, 2_048)
+  assert.equal(resolveMaxStepBytes('2048'), 2_048_000_000)
+
+  refuses('SPM_MAX_STEP_MB', '', () => resolveMaxStepBytes(''))
+  refuses('SPM_MAX_STEP_MB', ' 40 ', () => resolveMaxStepBytes(' 40 '))
+  refuses('SPM_MAX_STEP_MB', 'ten', () => resolveMaxStepBytes('ten'))
+  refuses('SPM_MAX_STEP_MB', '2.5', () => resolveMaxStepBytes('2.5'))
+  refuses('SPM_MAX_STEP_MB', '-1', () => resolveMaxStepBytes('-1'))
+  // Zero permits no STEP file at all, which would fail every one of them with a size message.
+  refuses('SPM_MAX_STEP_MB', '0', () => resolveMaxStepBytes('0'))
+  refuses('SPM_MAX_STEP_MB', '2049', () => resolveMaxStepBytes('2049'))
+})
+
 Deno.test('SPM_PUBLIC_ORIGIN is normalised to a bare origin, and blank means unset', () => {
   assert.equal(
     resolvePublicOrigin('https://print.example.com/spm?x=1'),
@@ -208,6 +236,7 @@ Deno.test('readServerEnv resolves every variable, defaulting the optional ones',
       previewIntervalMs: DEFAULT_PREVIEW_INTERVAL_MS,
       previewConcurrency: DEFAULT_CONCURRENCY,
       maxMeshBytes: DEFAULT_MAX_MESH_MB * 1_000_000,
+      maxStepBytes: DEFAULT_MAX_STEP_MB * 1_000_000,
       devUiOrigin: null,
       publicOrigin: undefined,
       webRoot: bundled,
@@ -225,6 +254,7 @@ Deno.test('readServerEnv resolves every variable, defaulting the optional ones',
     SPM_PREVIEW_INTERVAL_MS: '250',
     SPM_PREVIEW_CONCURRENCY: '4',
     SPM_MAX_MESH_MB: '512',
+    SPM_MAX_STEP_MB: '40',
     SPM_DEV_UI_ORIGIN: 'http://localhost:4200/ignored/path',
     SPM_PUBLIC_ORIGIN: 'https://print.example.com/ignored/path',
     SPM_WEB_ROOT: 'dist/web/browser',
@@ -238,6 +268,7 @@ Deno.test('readServerEnv resolves every variable, defaulting the optional ones',
       previewIntervalMs: 250,
       previewConcurrency: 4,
       maxMeshBytes: 512_000_000,
+      maxStepBytes: 40_000_000,
       // Each of these three proves the variable is routed through its own validator rather than
       // passed raw: a stray path is dropped, and a relative web root becomes absolute.
       devUiOrigin: 'http://localhost:4200',
