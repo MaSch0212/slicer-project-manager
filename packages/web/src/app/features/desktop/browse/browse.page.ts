@@ -653,6 +653,26 @@ export class DesktopBrowsePage {
   #poll: ReturnType<typeof setInterval> | null = null
   #observer: ResizeObserver | null = null
 
+  /**
+   * Set by `#close`, checked by `#open` after **every** await it does.
+   *
+   * `#close` runs the moment Angular destroys this component, whatever `#open` happens to be in
+   * the middle of — and `#open` is nothing but awaits: `sites` and `attach` first, then
+   * `#loadProjects` and `refresh`, and `#loadProjects` is `projects.list` over HTTP in remote
+   * mode. That is a wide enough window for a user to click away inside. Without this flag the
+   * teardown ran **first** and the registrations after it, against a component nothing would ever
+   * tear down again — an interval polling three IPC calls every {@link BROWSE_POLL_MS} for the
+   * life of the window, two window listeners and a `ResizeObserver`, none of them reachable by
+   * anything. It compounds, because a second visit to `/browse` starts another, and it is silent,
+   * because `host.ts`'s `state()`, `show()` and `setBounds()` do not go through `#requireView()`
+   * and so answer a detached view without complaining.
+   *
+   * **A flag rather than hoisting the registrations above the awaits**, which is the other
+   * available fix: the observer and both listeners call `reportBounds`, and a `setBounds` reported
+   * before `attach` has resolved is a rectangle for a view that does not exist yet.
+   */
+  #destroyed = false
+
   readonly #onWindowChange = (): void => this.reportBounds()
 
   constructor() {
@@ -970,7 +990,13 @@ export class DesktopBrowsePage {
       console.error('browse: the model browser could not be opened', error)
       return
     }
+    // Destroyed while `attach` was outstanding: `#close` has already run, so there is nothing left
+    // to load *for*. See `#destroyed`.
+    if (this.#destroyed) return
     await Promise.all([this.#loadProjects(), this.refresh()])
+    // And again, because `projects.list` is the widest of these awaits. Everything below this line
+    // is a registration only `#close` can undo, and `#close` has already been and gone.
+    if (this.#destroyed) return
     window.addEventListener('resize', this.#onWindowChange)
     // Passive: this only reads a rectangle, and a scroll listener that can call `preventDefault`
     // is a scroll listener Chromium has to wait for.
@@ -991,8 +1017,13 @@ export class DesktopBrowsePage {
    *
    * Angular unmounting this component does nothing at all to a native sibling view, so without
    * this the user's next route is a project list with a third-party page painted over it.
+   *
+   * The flag is set **first**, because this can run while `#open` is still awaiting and the
+   * clearing below would otherwise be undone by registrations that come after it. See
+   * `#destroyed`.
    */
   #close(): void {
+    this.#destroyed = true
     if (this.#poll !== null) clearInterval(this.#poll)
     this.#poll = null
     this.#observer?.disconnect()

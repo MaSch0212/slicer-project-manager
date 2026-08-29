@@ -1,5 +1,5 @@
 import { TestBed } from '@angular/core/testing'
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it, onTestFinished, vi } from 'vitest'
 import type {
   BrowseDownloadDto,
   BrowseNoticeDto,
@@ -155,6 +155,14 @@ async function setup(
     notices?: BrowseNoticeDto[]
     state?: BrowseStateDto
     overrides?: Partial<Fakes>
+    /** `projects.list`, when a test needs to hold the opening sequence open inside it. */
+    list?: ReturnType<typeof vi.fn>
+    /**
+     * Whether to await `ready` before returning. `false` hands back a page that is still opening,
+     * which is the only way to destroy one *during* `#open` — and doing that by ordering rather
+     * than by waiting is the point.
+     */
+    awaitReady?: boolean
   } = {},
 ): Promise<Setup> {
   const browse: Fakes = {
@@ -177,7 +185,7 @@ async function setup(
     land: vi.fn().mockResolvedValue(landedFile()),
     ...options.overrides,
   }
-  const list = vi.fn().mockResolvedValue(options.projects ?? [])
+  const list = options.list ?? vi.fn().mockResolvedValue(options.projects ?? [])
   const create = vi.fn().mockResolvedValue(project({ id: 'new', name: 'New' }))
   TestBed.configureTestingModule({
     providers: [
@@ -201,8 +209,10 @@ async function setup(
   fixture.detectChanges()
   // `ready` is what makes the attach awaitable rather than a microtask count, exactly as
   // `DesktopSlicersPage.ready` does for its first `slicers.get()`.
-  await fixture.componentInstance.ready
-  fixture.detectChanges()
+  if (options.awaitReady !== false) {
+    await fixture.componentInstance.ready
+    fixture.detectChanges()
+  }
   return { fixture, page: fixture.componentInstance, browse, list, create, translate }
 }
 
@@ -306,6 +316,99 @@ describe('DesktopBrowsePage', () => {
       window.dispatchEvent(new Event('resize'))
       expect(browse.setBounds).toHaveBeenCalledTimes(beforeDestroy)
       void page
+    })
+
+    /*
+     * **Destroyed while `#open` is still awaiting, which is where the registrations leak.**
+     *
+     * `#close` clears the interval, disconnects the observer and removes both listeners — but
+     * `#open` *registers* all of them after two awaits, so a destroy landing inside either one ran
+     * teardown first and setup second, against a component nothing would ever tear down again.
+     * What leaks is permanent (an interval making three IPC calls every 500 ms for the life of the
+     * window), cumulative (a second visit to `/browse` starts another) and silent (`state`, `show`
+     * and `setBounds` do not go through the host's `#requireView()`, so a zombie polls a detached
+     * view and logs nothing).
+     *
+     * **Driven by ordering and never by a clock.** The shell fake holds the await open and the
+     * test resolves it by hand, so "destroyed mid-open" is a sequence this test controls rather
+     * than a race it hopes for — the wall-clock version is what CI has twice caught here.
+     *
+     * Two tests because there are two awaits and each has its own guard: below `attach`, nothing
+     * should even be *loaded*; below `projects.list` — the wide one, HTTP in remote mode — nothing
+     * should be *registered*.
+     */
+    it('loads nothing more when the page is destroyed while attach is still outstanding', async () => {
+      let landAttach: (state: BrowseStateDto) => void = () => {}
+      let attachCalled = (): void => {}
+      const attaching = new Promise<void>((resolve) => {
+        attachCalled = resolve
+      })
+      const attach = vi.fn().mockImplementation(() => {
+        attachCalled()
+        return new Promise<BrowseStateDto>((resolve) => {
+          landAttach = resolve
+        })
+      })
+
+      const { fixture, page, browse, list } = await setup({
+        overrides: { attach },
+        awaitReady: false,
+      })
+      // Awaited rather than counted in microtasks: the fake itself says when the page got here.
+      await attaching
+
+      fixture.destroy()
+      landAttach(IDLE)
+      await page.ready
+
+      expect(browse.detach).toHaveBeenCalledTimes(1)
+      // Nothing past the first await ran at all — no project list, no first poll.
+      expect(list).not.toHaveBeenCalled()
+      expect(browse.state).not.toHaveBeenCalled()
+    })
+
+    it('registers no timer and no listeners when the page is destroyed while the project list is outstanding', async () => {
+      let landProjects: (projects: ProjectDto[]) => void = () => {}
+      let listCalled = (): void => {}
+      const listing = new Promise<void>((resolve) => {
+        listCalled = resolve
+      })
+      const list = vi.fn().mockImplementation(() => {
+        listCalled()
+        return new Promise<ProjectDto[]>((resolve) => {
+          landProjects = resolve
+        })
+      })
+      // The interval is the leak with no other observable surface: jsdom has no `ResizeObserver`,
+      // so the page's own guard skips the observer here, and an interval that was scheduled cannot
+      // be seen from the shell fake without waiting for it to fire.
+      const scheduled = vi.spyOn(globalThis, 'setInterval')
+      onTestFinished(() => scheduled.mockRestore())
+
+      const { fixture, page, browse } = await setup({ list, awaitReady: false })
+      await listing
+      const placeholder = (fixture.nativeElement as HTMLElement).querySelector(
+        '[data-browse-viewport]',
+      ) as HTMLElement
+      let rect = { x: 0, y: 120, width: 900, height: 600 }
+      placeholder.getBoundingClientRect = (() => rect) as never
+      const scheduledBefore = scheduled.mock.calls.length
+      const boundsBefore = browse.setBounds.mock.calls.length
+      const statesBefore = browse.state.mock.calls.length
+
+      fixture.destroy()
+      landProjects([])
+      await page.ready
+
+      expect(browse.detach).toHaveBeenCalledTimes(1)
+      // No poll was ever scheduled, so the state call count cannot grow either.
+      expect(scheduled.mock.calls.length).toBe(scheduledBefore)
+      expect(browse.state).toHaveBeenCalledTimes(statesBefore)
+      // And neither window listener is on: a rectangle that really moved reports nothing.
+      rect = { x: 0, y: 40, width: 900, height: 600 }
+      window.dispatchEvent(new Event('resize'))
+      window.dispatchEvent(new Event('scroll'))
+      expect(browse.setBounds).toHaveBeenCalledTimes(boundsBefore)
     })
   })
 
