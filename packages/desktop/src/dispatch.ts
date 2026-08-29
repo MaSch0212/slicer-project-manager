@@ -826,13 +826,18 @@ export const dispatch: DispatchTable = {
    * it would be over HTTP. It is optional because the name the download arrived under is the
    * default, and that one is validated where the record is read.
    *
-   * **Two things about this schema are worth a reader's attention**, because both differ from the
-   * two entries above and the difference was inherited from the brief rather than chosen here:
-   * `idSchema` bounds the download id at 64 characters where `browse.discard` uses
-   * `downloadIdSchema`'s 512, so a staging directory with a name longer than 64 is discardable but
-   * not landable — it is also unverifiable, so it was already refused, and the only difference is
-   * `Validation` in place of `Conflict`. And `z.object` strips a key this validation was not written
-   * for where `slicers.open`'s `z.strictObject` refuses one; nothing reads the stripped key.
+   * **Two things about this schema differ from the two entries above**, and both came from the
+   * task brief verbatim rather than being chosen here, so they are written down rather than left
+   * for a reader to wonder about:
+   *
+   * - `idSchema` bounds the download id at 64 characters where `browse.discard` uses
+   *   `downloadIdSchema`'s 512. Every id this app mints is a `randomUUID` — 36 characters — so the
+   *   only directory this can reach is one somebody put under `model-downloads` by hand, or one a
+   *   future build named differently; such a directory is listable and discardable but answers
+   *   `Validation` here instead of the `Conflict` or `NotFound` it would otherwise get.
+   * - `z.object` strips a key this validation was not written for, where `slicers.open`'s
+   *   `z.strictObject` refuses one. Nothing reads the stripped key, and the object has exactly one
+   *   field, so what it costs is the refusal — not a field reaching anything.
    */
   'browse.land': shellCall<'browse.land', [string, string, { name?: string }?]>(
     'browse.land',

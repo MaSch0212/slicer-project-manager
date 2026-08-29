@@ -185,6 +185,13 @@ export class BrowseLanding {
  * fills in `state: 'interrupted'` as a stand-in and says in as many words that nothing may branch on
  * it, so "this download did not finish" about a directory that never had a record would be a
  * sentence with no reading behind it.
+ *
+ * **Nothing a stranger wrote is interpolated into any of these** (constraint 13). The only values
+ * that reach the text are `state`, one of four literals, and `totalBytes`, a number — not
+ * `fileName`, not `sourceUrl` and not `pageUrl`, all three of which are a website's strings and are
+ * the renderer's to truncate and render as text. An `AppError`'s message is shown by whatever
+ * catches it, and this one has no reason to carry them: the caller already knows which download it
+ * asked about.
  */
 function whyUnlandable(staged: StagedDownload): string {
   if (!staged.hasRecord) {
