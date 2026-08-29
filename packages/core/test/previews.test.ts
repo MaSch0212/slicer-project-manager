@@ -505,3 +505,57 @@ test('rescan re-queueing a changed file releases any stale claim with the retry 
     assert.deepEqual(previewRow(lib), { state: 'pending', attempts: 0, claimedAt: null })
   })
 })
+
+test('a rescan mid-render wins: the stale result is dropped, not written over the reset row', async () => {
+  await withLibrary(async (lib) => {
+    const ctx = seedUser(lib)
+    const dir = join(lib.dir, 'marc', 'Benchy')
+    mkdirSync(dir)
+    const path = join(dir, 'a.3mf')
+    curaProject(path, makePng(300, 300))
+    await rescan(lib, ctx)
+
+    // A render that is still going when the user saves over the file — subsystem B's rasterizer
+    // against a large mesh is minutes (spec 7.1), and the desktop shell fires the queue every
+    // five seconds, so a rescan landing inside one is ordinary rather than exotic.
+    let release = (): void => {}
+    const gate = new Promise<void>((resolve) => (release = resolve))
+    const slow: PreviewHandler = {
+      kinds: ['slicer_project'],
+      run: () =>
+        gate.then(() => ({
+          bytes: makePng(300, 300),
+          width: 300,
+          height: 300,
+          source: 'embedded' as const,
+        })),
+    }
+    const inFlight = runPreviewQueue(lib, { handlers: [slow] })
+    await new Promise((resolve) => setTimeout(resolve, 10))
+
+    curaProject(path, makePng(120, 120))
+    assert.equal((await rescan(lib, ctx)).previewsQueued, 1)
+    assert.deepEqual(previewRow(lib), { state: 'pending', attempts: 0, claimedAt: null })
+
+    // The job finishes holding a lease the row no longer carries, so it records nothing — and
+    // says so in its counts, which is what stops `preview batch` reporting work it did not do.
+    release()
+    assert.deepEqual(await inFlight, { ready: 0, failed: 0, unsupported: 0 })
+
+    // Measured before the guard existed: this row read `state: 'ready'` with the *old* render's
+    // 300x300 and the old `source_hash`, and it stayed that way for good — the rescan above had
+    // already written the new size and mtime, so the next rescan takes the stat-match `continue`
+    // and re-queues nothing. The user's edited model kept its pre-edit thumbnail.
+    assert.deepEqual(previewRow(lib), { state: 'pending', attempts: 0, claimedAt: null })
+    assert.equal((await rescan(lib, ctx)).previewsQueued, 0)
+
+    // Still pending means still claimable, so the next tick renders the bytes that are there.
+    assert.deepEqual(await runPreviewQueue(lib), { ready: 1, failed: 0, unsupported: 0 })
+    // Spread rather than compared whole: node:sqlite returns null-prototype rows.
+    const { width, height } = lib.db.prepare('SELECT width, height FROM previews').get() as {
+      width: number
+      height: number
+    }
+    assert.deepEqual({ width, height }, { width: 120, height: 120 })
+  })
+})

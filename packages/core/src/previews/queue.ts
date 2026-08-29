@@ -12,6 +12,12 @@ export type PreviewJob = {
   absPath: string
   kind: FileKind
   contentHash: Uint8Array | null
+  /**
+   * The lease this job was handed the row under — the exact `claimed_at` `claimPendingPreviews`
+   * wrote. It is what `runOne` writes its result back *against*, so a result is only recorded
+   * while the row is still the one that was claimed. See `finish` there.
+   */
+  claimedAt: number
 }
 
 export type PreviewOutput = {
@@ -110,6 +116,10 @@ function placeholders(n: number): string {
  *   to bound.
  * - **An expired lease is reclaimable**, so a crash costs one attempt rather than stranding
  *   the row until the next rescan.
+ * - **The lease is also the job's write token.** `claimed_at` goes onto the `PreviewJob`, and
+ *   `runOne` writes its outcome back only while the row still carries it — see `finish`. Without
+ *   that, a `rescan` that re-pends a file mid-render had the stale result written straight over
+ *   the row it had just reset.
  */
 export function claimPendingPreviews(
   lib: Library,
@@ -155,6 +165,7 @@ export function claimPendingPreviews(
     fileId: row.fileId,
     kind: row.kind,
     contentHash: row.contentHash,
+    claimedAt: now,
     absPath: join(
       lib.dir,
       ...(row.libraryDir === '.' ? [] : [row.libraryDir]),
@@ -162,6 +173,47 @@ export function claimPendingPreviews(
       ...row.relPath.split(RELATIVE_PATH_SEPARATOR),
     ),
   }))
+}
+
+/**
+ * Writes one job's outcome, **and only while the row is still the one that job claimed**.
+ *
+ * Every terminal write goes through here, and every one of them carries the same two extra
+ * conditions: `state = 'pending'` (a claimed row is still pending — the claim writes only
+ * `claimed_at` and `attempts`) and `claimed_at = <this job's lease>`. Together they say "nobody
+ * has touched this row since I took it".
+ *
+ * **The bug this closes, measured.** `rescan` re-pends a file whose content hash changed —
+ * `state = 'pending'`, `claimed_at = NULL`, `attempts = 0` — and it does that whether or not a
+ * job is in flight for that file. With the write unguarded, the in-flight job then wrote
+ * `state = 'ready'` over the fresh `pending` row with the picture it had rendered from the *old*
+ * bytes, and `source_hash` set to the old hash. Nothing recovered from it: the same rescan had
+ * already written the new `size_bytes` and `mtime_ms`, so the next rescan takes the cheap
+ * stat-match `continue` and never looks at `source_hash` again. The user's edited model kept its
+ * pre-edit thumbnail for as long as the file stayed untouched. Guarded, the stale result is
+ * dropped and the row is left `pending` for the next tick, which renders the bytes that are
+ * actually there.
+ *
+ * **What it does not make atomic, and this is the honest bound.** The PNG is written to
+ * `<fileId>.png` before this runs, so a dropped result has already replaced the bytes at that
+ * path. That is harmless where it matters — a `pending` row's `png_path` is NULL, so nothing
+ * serves those bytes, and the run that re-renders the file overwrites them — but it is not
+ * nothing, and no comment here should say the pair is transactional.
+ *
+ * Returns whether the write landed, so the caller can count only outcomes it actually recorded.
+ */
+function finish(lib: Library, job: PreviewJob, sql: string, params: unknown[]): boolean {
+  const changes = lib.db
+    .prepare(`${sql} AND state = 'pending' AND claimed_at = ?`)
+    .run(...(params as never[]), job.claimedAt).changes
+  if (Number(changes) === 1) return true
+  // debug, not warn: the only way here is a row somebody else moved on purpose — today that is
+  // `rescan` re-pending an edited file — and the queue picking it up again is the right answer,
+  // not an incident.
+  lib.log.debug('preview result dropped, the row was no longer the one claimed', {
+    fileId: job.fileId,
+  })
+  return false
 }
 
 async function runOne(
@@ -173,8 +225,9 @@ async function runOne(
   const matching = handlers.filter((candidate) => candidate.kinds.includes(job.kind))
   if (matching.length === 0) {
     // Unreachable via claimPendingPreviews, which only claims covered kinds; releasing the
-    // lease anyway keeps a hand-built job list from parking a row for PREVIEW_LEASE_MS.
-    lib.db.prepare('UPDATE previews SET claimed_at = NULL WHERE file_id = ?').run(job.fileId)
+    // lease anyway keeps a hand-built job list from parking a row for PREVIEW_LEASE_MS. Guarded
+    // like every other write here, so a release cannot land on somebody else's claim.
+    finish(lib, job, 'UPDATE previews SET claimed_at = NULL WHERE file_id = ?', [job.fileId])
     return
   }
 
@@ -202,13 +255,18 @@ async function runOne(
       // bring a row back is `rescan`, which re-pends it — from any state, attempts reset — when
       // the file's content hash changes. So this is "nothing to render from these bytes", not
       // "nothing to render, ever".
-      lib.db
-        .prepare(
+      if (
+        !finish(
+          lib,
+          job,
           `UPDATE previews SET state = 'unsupported', error = NULL, claimed_at = NULL,
                                updated_at = ?
            WHERE file_id = ?`,
+          [now, job.fileId],
         )
-        .run(now, job.fileId)
+      ) {
+        return
+      }
       lib.log.debug('preview unsupported', { fileId: job.fileId, kind: job.kind })
       counts.unsupported++
       return
@@ -216,21 +274,26 @@ async function runOne(
 
     const target = previewPath(lib, job.fileId)
     writeFileSync(target, output.bytes)
-    lib.db
-      .prepare(
+    if (
+      !finish(
+        lib,
+        job,
         `UPDATE previews SET state = 'ready', source = ?, png_path = ?, width = ?, height = ?,
                              source_hash = ?, error = NULL, claimed_at = NULL, updated_at = ?
          WHERE file_id = ?`,
+        [
+          output.source,
+          [SPM_DIR, PREVIEWS_DIR, `${job.fileId}.png`].join(RELATIVE_PATH_SEPARATOR),
+          output.width,
+          output.height,
+          job.contentHash,
+          now,
+          job.fileId,
+        ],
       )
-      .run(
-        output.source,
-        [SPM_DIR, PREVIEWS_DIR, `${job.fileId}.png`].join(RELATIVE_PATH_SEPARATOR),
-        output.width,
-        output.height,
-        job.contentHash,
-        now,
-        job.fileId,
-      )
+    ) {
+      return
+    }
     lib.log.debug('preview ready', {
       fileId: job.fileId,
       source: output.source,
@@ -243,12 +306,17 @@ async function runOne(
     // attempts is NOT incremented here: claimPendingPreviews already charged this attempt,
     // so doing it again would halve the retry budget for the failures it is meant to bound.
     // The lease is released, because this row has reached a terminal state.
-    lib.db
-      .prepare(
+    if (
+      !finish(
+        lib,
+        job,
         `UPDATE previews SET state = 'failed', error = ?, claimed_at = NULL, updated_at = ?
          WHERE file_id = ?`,
+        [message.slice(0, 500), now, job.fileId],
       )
-      .run(message.slice(0, 500), now, job.fileId)
+    ) {
+      return
+    }
     // warn, not error: a single malformed file is expected traffic for an importer, and
     // MAX_PREVIEW_ATTEMPTS already bounds it. The path is what makes it actionable.
     lib.log.warn('preview failed', { fileId: job.fileId, path: job.absPath, err: error })
