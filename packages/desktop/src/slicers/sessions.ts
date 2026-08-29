@@ -700,6 +700,13 @@ export class SlicerSessions {
    * for the file the record describes. The commonest way to produce one is a Cura Save-As aimed at
    * the launch directory under a name of the user's choosing, and sweep rule 2 is precisely that
    * such a file is never litter.
+   *
+   * There is a second producer since the launcher stopped letting the child inherit a working
+   * directory: a launch that builds a directory hands the slicer **that** directory as its `cwd`,
+   * so anything the slicer writes at a relative path lands here and is reported by the same arm.
+   * Only a *loose* one — the `isFile()` filter below does not descend, so a relative write into a
+   * subdirectory is invisible to this scan. See `SLICER_CWD_DIR` in `launch.ts`, which says what
+   * that cwd does and does not bound.
    */
   #scan(): Session[] {
     if (!existsSync(this.#sessionsDir)) return []

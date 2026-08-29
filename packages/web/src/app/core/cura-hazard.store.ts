@@ -9,9 +9,17 @@ import { Injectable, signal } from '@angular/core'
  * user's own model library. A user who presses Ctrl+S and then Enter writes a copy into that
  * folder, where this app will index it as somebody else's project.
  *
- * The launch still happens after the warning. Cura against a file is perfectly useful for viewing
- * and slicing, and refusing to launch it would make the feature less useful than not having it —
- * so this is a notice with a way past it, not a gate.
+ * The launch still happens after the warning, as far as *this* hazard is concerned. Cura against a
+ * file is perfectly useful for viewing and slicing, and refusing to launch it over a save-as would
+ * make the feature less useful than not having it — so this is a notice with a way past it, not a
+ * gate.
+ *
+ * **One unrelated thing can still refuse after the user presses past it**, and it is not this
+ * store's: the main process refuses a `.step` or a `.stp` handed to Cura outright, because Cura
+ * ships no STEP reader and the measured alternative is an empty plate and a line in a log the user
+ * will never open. That refusal arrives as an `AppError` from the launch call, after this warning
+ * rather than instead of it, because nothing the page holds today says which formats a product
+ * reads.
  *
  * **Once per session, in the renderer's sense of a session.** The flag lives here, in a root
  * provider, rather than in a component, because it must survive navigating between projects; it
