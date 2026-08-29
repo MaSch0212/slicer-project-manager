@@ -18,6 +18,7 @@ import {
   type PreviewTicker,
   type PreviewTickerOptions,
 } from '../src/previews.ts'
+import { binaryStl, cubeMesh } from '../../core/test/fixtures/make-mesh.ts'
 
 /**
  * The preview ticker, against a real library on disk and with no Electron anywhere.
@@ -246,4 +247,72 @@ test('a handler that throws is logged and does not stop the ticker', async () =>
   // core marks each row `failed` rather than letting the run reject; the point of the assertion
   // is that the ticker survived it and drained the batch.
   assert.deepEqual(states(), ['failed', 'failed', 'failed'])
+})
+
+/**
+ * **The `makePreviewHandlers` branch, which no test in this file had ever entered.**
+ *
+ * Every test above passes an explicit `handlers` array, because every one of them is about the
+ * *timer* — the immediate first tick, the in-flight guard, `stop()`. That left
+ * `startPreviewTicker`'s `opts.handlers ?? makePreviewHandlers({ maxMeshBytes, maxStepBytes })`
+ * unreached by the suite, and with it the only thing this shell contributes to the chain at all:
+ * the two ceilings. A typo in either key, or a `makePreviewHandlers()` called with no argument,
+ * would have left every assertion here green while the shipped app silently used core's defaults.
+ *
+ * The failure class is task 1's, not "the check is gone": `assertStepFileFits` and `assertMeshFits`
+ * are both still called and both still refuse — it is the **caller's value never reaching them**
+ * that this catches. So the assertions are on the ceiling's own message, whose text carries the
+ * number that was used; a default-ceiling run renders both files instead and never produces one.
+ *
+ * A library of its own rather than the shared one above, so the three-row fixture every other test
+ * counts on stays exactly three rows.
+ *
+ * The STEP file needs no OCCT and no STEP content: `assertStepFileFits` takes the size from
+ * `statSync` and refuses **before** the read and before the magic guard, which is the ordering
+ * `packages/core`'s own suite pins. Two megabytes of zeroes is therefore a complete fixture.
+ */
+test('the ticker builds the chain at its own ceilings when given no handlers', async () => {
+  const own = mkdtempSync(join(tmpdir(), 'spm-ceilings-'))
+  mkdirSync(join(own, 'Widget'), { recursive: true })
+  writeFileSync(join(own, 'Widget', 'over.step'), new Uint8Array(2_000_000))
+  writeFileSync(join(own, 'Widget', 'cube.stl'), binaryStl(cubeMesh()))
+  const ownLib = openLibrary(own)
+  try {
+    const ownCtx = ensureLocalUser(ownLib)
+    // Two rows, and `.step` is a `model` here only because `classifyFile` says so — this test is
+    // downstream of that and would claim nothing at all without it.
+    assert.equal((await rescan(ownLib, ownCtx)).previewsQueued, 2)
+
+    const ticker = startPreviewTicker(ownLib, {
+      intervalMs: 60_000,
+      // Both ceilings, both far below what the two files need, and neither is core's default.
+      maxStepBytes: 1_000_000,
+      maxMeshBytes: 1,
+    })
+    running.push(ticker)
+    await ticker.stop()
+
+    const rows = ownLib.db
+      .prepare(
+        `SELECT f.rel_path, pv.state, pv.error
+         FROM previews pv JOIN files f ON f.id = pv.file_id ORDER BY f.rel_path`,
+      )
+      .all() as { rel_path: string; state: string; error: string | null }[]
+    assert.deepEqual(
+      rows.map((row) => [row.rel_path, row.state]),
+      [
+        ['cube.stl', 'failed'],
+        ['over.step', 'failed'],
+      ],
+    )
+    // The numbers in the messages are this shell's, not core's 2 048 MB and 10 MB defaults.
+    assert.match(rows[0]!.error ?? '', /model geometry needs .* more than the 0\.0 MB/)
+    assert.equal(
+      rows[1]!.error,
+      'this STEP file is 2.0 MB, more than the 1.0 MB permitted for one STEP file',
+    )
+  } finally {
+    closeLibrary(ownLib)
+    rmSync(own, { recursive: true, force: true })
+  }
 })
