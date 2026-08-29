@@ -148,6 +148,36 @@ test('a STEP file OCCT cannot read fails rather than going quietly unsupported',
   })
 })
 
+test('the operator ceiling is consulted on this arm too, and names both sizes', async () => {
+  // The same idiom the other parsers are pinned with — `mesh-streaming.test.ts`'s ceiling test and
+  // `mesh-handler.test.ts`'s chain test both hand in `{ maxMeshBytes: 1 }`. A ceiling of one byte
+  // is deliberately absurd: where the line sits is a deployment decision and lives in the README,
+  // and what is pinned here is that this arm consults the ceiling at all.
+  //
+  // Reaching the check needs a small ceiling and not a large file, because `parseStepFile` takes
+  // `limits` from its caller — so 8 KB of cube is the whole input, and the only call to
+  // `assertMeshFits` on the STEP arm stops being something a later tidy-up can delete in silence.
+  const thrown = await parseStepFile(stepFixturePath(), { maxMeshBytes: 1 }).then(
+    () => null,
+    (error: unknown) => error,
+  )
+  assert.ok(thrown instanceof AppError)
+  // `Validation`, not an allocation failure: the refusal happens before `positions` is asked for.
+  assert.equal(thrown.code, 'Validation')
+  // Both numbers, because "too big" without them tells an operator nothing about whether the fix
+  // is a bigger ceiling or a smaller model.
+  assert.match(thrown.message, /needs 0\.0 MB \(12 triangles\)/)
+  assert.match(thrown.message, /more than the 0\.0 MB this server permits/)
+
+  // The same file parses under a ceiling it fits under, so the refusal above is the ceiling doing
+  // its job and not the fixture being unreadable — the half that keeps this from passing against a
+  // `parseStepFile` that throws for any `limits` at all.
+  assert.equal(
+    (await parseStepFile(stepFixturePath(), { maxMeshBytes: 1_000_000 })).triangleCount,
+    12,
+  )
+})
+
 test('the mesh handler throws for a broken .stp where it still returns null for .txt', async () => {
   await withLibrary(async (lib) => {
     const { dir } = seedProjectDir(lib)

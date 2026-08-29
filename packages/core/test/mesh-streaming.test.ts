@@ -420,7 +420,11 @@ test('an OBJ far longer than one read chunk streams to the same mesh as the buff
 })
 
 test('the mesh ceiling refuses a model before its arrays are allocated, naming both sizes', async () => {
-  // One ceiling, every entry point — three buffered, four streamed. A ceiling of one byte is
+  // One ceiling, every entry point in this file — three buffered, four streamed. The eighth,
+  // `parseStepFile`, consults the same ceiling and is pinned the same way in `step.test.ts`,
+  // beside the fixture it needs; it is not here because it neither streams nor buffers a document
+  // this suite can write, and its `limits` reach the check after OCCT has already tessellated.
+  // A ceiling of one byte is
   // deliberately absurd, because the interesting question is not where the line sits (that is a
   // deployment decision and lives in the README) but that each format consults it at all, that
   // the refusal is a Validation error rather than an allocation failure, and that the message an
