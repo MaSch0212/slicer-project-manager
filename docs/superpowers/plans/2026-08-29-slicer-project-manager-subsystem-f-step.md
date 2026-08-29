@@ -14,14 +14,25 @@ parser, one column and one constant that make `rescan` reclassify a file whose b
 changed, and one migration. In `packages/desktop`: one measured registry field, one refusal before
 the spawn, a `SpawnSlicer` seam widened to carry an explicit `cwd`, the scratch directory that `cwd`
 points at, and the packaging list. In `packages/server`: one environment variable. In
-`packages/web`: **two comments and no behaviour.** At the repository root: a `LICENSE` and a
+`packages/web`: **one comment and no behaviour.** At the repository root: a `LICENSE` and a
 third-party notice, which this repository has never had.
 
 **Spec:**
 [`2026-08-29-slicer-project-manager-subsystem-f-step.md`](../specs/2026-08-29-slicer-project-manager-subsystem-f-step.md)
 — references of the form "spec 3.4" and "F-3" are to it, and it is binding. **Where this plan and
-the spec disagree, the spec wins and this plan is wrong.** Three places where this plan extends the
-spec rather than restating it are called out as such: decisions 2, 3 and 6 below. Its parent,
+the spec disagree, the spec wins and this plan is wrong.** Six places where this plan extends,
+places differently, or reads against the spec are called out as such, and nowhere else:
+
+| Deviation                                                                  | Where       | Kind                                                                      |
+| -------------------------------------------------------------------------- | ----------- | ------------------------------------------------------------------------- |
+| The `rescan` SELECT gains `kind` as well as `classified_by`                | decision 2  | Extends. The branch cannot be written as specified without it             |
+| `parseStepFile` returns `Promise<Mesh>`, so every decline is a throw       | decision 3  | Extends. The spec fixes the signature and leaves two declines unstated    |
+| `assertStepFileFits` lives in `limits.ts`, not in `step.ts`                | decision 6  | Placement. Identical behaviour                                            |
+| `classify.ts` gains an exported `MODEL_EXTENSIONS` the snapshot enumerates | decision 15 | Extends. Spec §9 asks for "every extension the module branches on"        |
+| The `packages/web` comment correction lands in task 4, not as a sixth step | task 4      | Placement. Spec §8's step 6; constraint 14 requires the falsifying commit |
+| **One** comment in `packages/web` is corrected, not two                    | task 4      | Reads against the spec's count, with the code quoted. See task 4          |
+
+Its parent,
 [`2026-08-22-slicer-project-manager-design.md`](../specs/2026-08-22-slicer-project-manager-design.md),
 is binding above both — except at spec 1.3, where three parent statements are corrected in place
 against measurements.
@@ -88,12 +99,12 @@ because a reviewer sees only the diff, the task text and those constraints.
 | In this plan                                                                       | Not in this plan                                     |
 | ---------------------------------------------------------------------------------- | ---------------------------------------------------- |
 | `.step` / `.stp` → `kind: 'model'`, and the version mechanism that applies it      | Any other STEP extension — `.p21`, `.stpz`, `.stpnc` |
-| `parseStepFile`, the `readMesh` arm, and the seven docblocks that stop being true  | IGES and BREP, which the same library also exposes   |
+| `parseStepFile`, the `readMesh` arm, and the nine docblocks that stop being true   | IGES and BREP, which the same library also exposes   |
 | `DEFAULT_MAX_STEP_BYTES`, `MeshLimits.maxStepBytes`, `SPM_MAX_STEP_MB`             | The interactive browser viewer (spec 7)              |
 | `classified_by`, `CLASSIFIER_VERSION`, migration 003, four `rescan` edits          | Converting STEP to a stored mesh at import time      |
 | `behaviour.opensStep`, the Cura refusal, the widened spawn seam and its `cwd`      | A worker thread or a child process for the parse     |
 | `LICENSE`, `THIRD-PARTY-NOTICES.md`, three new `REQUIRED` entries, and 002 and 003 | Matching a slicer's tessellation density             |
-| Two comment corrections in `packages/web`                                          | macOS and Linux                                      |
+| One comment correction in `packages/web`                                           | macOS and Linux                                      |
 
 **Deliberately deferred, with reasons the spec argues in full:**
 
@@ -102,7 +113,7 @@ because a reviewer sees only the diff, the task text and those constraints.
   against a cost that is 87 % intercept. Both defensible readings give wrong answers in opposite
   directions — 1.27 MB or 10.2 KB for the same `limitOf`. The interim behaviour is what the code
   already does: a thumbnail everywhere a thumbnail appears, and an honest "this viewer opens STL,
-  OBJ, 3MF" if the user clicks through. Task 4 makes the two comments that describe it true again.
+  OBJ, 3MF" if the user clicks through. Task 4 makes the one comment that describes it true again.
 - **The in-place launch branch for STEP** (spec 4.4, F-6). The measurement that would decide it —
   what Ctrl+S proposes in each of the four STEP-capable GUIs — does not exist, and the last time
   that substitution was made it produced a Critical data-loss defect in D. STEP stays on the
@@ -125,8 +136,9 @@ the C, D and E plans and still bind; 8–16 are F's own, and 8, 10, 11 and 12 ar
 subsystem rests on.
 
 1. **The renderer is the existing Angular app, unmodified except at the named seams.** F's entire
-   `packages/web` diff is **two comments** (spec 7.2). No route, no DTO field, no capability, no
-   component. A behavioural change under `packages/web` in this subsystem is a defect.
+   `packages/web` diff is **one comment** (spec 7.2, and see task 4 for why the spec's prose says
+   two and the code has one). No route, no DTO field, no capability, no component. A behavioural
+   change under `packages/web` in this subsystem is a defect.
 2. **The main process is the only thing that touches the filesystem, the database or a subprocess.**
    `nodeIntegration: false`, `contextIsolation: true`, `sandbox: true` stay as they are, and the
    renderer never names a filesystem location.
@@ -179,9 +191,15 @@ subsystem rests on.
     row is `failed` **with a message somebody can read**. `readMesh`'s `default:` arm keeps returning
     `null`, and that is the only `null` in the chain.
 14. **No docblock or document is left asserting a mechanism the code no longer has.** This project's
-    signature defect. Seven docblocks in spec 5.7, two comments in spec 7.2, and the README's preview
-    memory section, which spec 5.7 does not list and which carries the same formula. Each is named in
-    the task that falsifies it and lands **in that task's commit**, not as a follow-up.
+    signature defect. Each is named in the task that falsifies it and lands **in that task's
+    commit**, not as a follow-up. **The list is a floor and not a boundary**: spec 5.7's seven
+    docblocks, spec 7.2's one comment (see task 4), and **five more that no spec section lists** —
+    `desktop/src/previews.ts:74` and `server/src/env.ts:160` (task 2), and `README.md:36`, `:37` and
+    the whole **Preview memory** section (task 2). Four of those five were found by sweeping for the
+    claim rather than by reading the list, which is the method the last one will be found by too:
+    **grep the repository for `stream`, `never holds`, `not a function of the file`, `one budget` and
+    `256 MB` before calling any task done**, and correct whatever that turns up in the commit that
+    falsified it.
 15. **Nothing is deleted.** No task deletes a launch directory it did not create; nothing sweeps
     `<userData>/slicer-cwd/` and no document says anything does; migration 003 adds a column and
     touches no row's existing values; and `land`-style implicit cleanup does not appear anywhere in
@@ -227,6 +245,14 @@ different ways.
    instantiation buys nothing and a per-call one pays 26 ms per thumbnail. Clearing on rejection
    matters because a cached rejected promise would wedge the STEP arm for the life of the process,
    turning one bad start into every STEP file `failed`.
+   **The memo is a closure over an injected factory, not a module-level `let`**, and that is part of
+   the shape rather than a testing convenience: `makeOcctLoader(factory)` returns the memoising
+   loader, and `step.ts` holds exactly one of them (`const loadOcct = makeOcctLoader(occtimportjs)`).
+   A module-level `let occtPromise` offers no seam to count instantiations against and — worse — no
+   way back: `node --test` and `deno test` share one process across a file, so the first test that
+   resolves the memo makes the rejection case unreachable for every test after it, and the rejection
+   case is the half that matters. With a factory-taking constructor each test builds its own loader,
+   the call count is the fake factory's own, and no test depends on the order of any other.
 5. **The Cura refusal sits immediately after `chooseSlicer` and before the install lookup.**
    `open()`'s docblock already states the rule — everything that can refuse cheaply runs before
    anything is written or downloaded — and this is the first point at which both the product and the
@@ -270,6 +296,88 @@ different ways.
 12. **Every docblock correction lands in the commit that falsifies it.** Not a follow-up task, not a
     "docs:" commit afterwards. Constraint 14 is checkable only if the diff that breaks a sentence is
     the diff that fixes it.
+13. **The one STEP fixture is `cube.stp` out of the installed `occt-import-js@0.0.23`, resolved at
+    test time and not committed.** This is the decision C1 forces and it is load-bearing for four
+    test bullets, so it is stated once here rather than three times below.
+    _The problem:_ `packages/core/test/fixtures/` holds four **generators** and no binary model —
+    every mesh suite builds its input in source — and **a STEP file cannot be generated without a
+    CAD kernel.** The ten files the spike measured live in `D:\SPM Library`, which none of the eight
+    CI jobs can read; the two the earlier draft of task 1 pinned by name are third-party models with
+    unrecorded provenance and licence, and one is 1.39 MB.
+    _The decision:_ the only STEP file that can exist in CI without a CAD kernel is the one that
+    ships with the CAD kernel. `occt-import-js@0.0.23` carries its own `cube.stp` — 8 247 bytes,
+    12 triangles — and the spike measured it from a plain `npm install` of the published package
+    (§5.3, §7). `deno install` puts it under `node_modules/occt-import-js/`, in every one of the
+    eight jobs, and constraint 9 pins the version exactly, so the path cannot move without a
+    deliberate version change. _Rejected:_ committing a library file (unrecorded licence, and F is
+    the subsystem that is adding a third-party notice, so importing an unlicensed artifact in the
+    same subsystem is the wrong trade); committing a copy of `cube.stp` (8 KB of LGPL-package
+    content redistributed to save one `resolve` call).
+    _The shape:_ a **fifth generator**, `packages/core/test/fixtures/make-step.ts`, in the shape of
+    the four beside it, exporting `stepFixturePath()` — the resolved absolute path, throwing a
+    message that names the package and the expected relative path if it is not there — and
+    `writeStepFixture(dir, name)`, which copies it under a caller-chosen name so a test can produce
+    `model.step`, `model.stp` or `not-really.stp` in a temp library. Every task below that consumes
+    a STEP fixture names this helper and nothing else.
+    _What gets pinned instead of 3 380 and 20 530:_ `triangleCount === 12`, `positions.length === 108`
+    floats, and the fixture's own `8_247` bytes as an identity check on the file — **and the
+    docblock says plainly that 12 is a weak swap-canary**, because twelve triangles is what any
+    correct tessellation of a box returns, where 3 380 was a number only this library produces.
+    What actually enforces constraint 9 is the exact version in `package.json` and the committed
+    `deno.lock`; what covers the real library is the `deno task dev:desktop` target in the
+    Definition of done, run against the user's ten files by hand.
+    _One cost, named:_ every process that touches this fixture pays the 207 MB floor and 217 ms+ of
+    parse once. Keep STEP-parsing tests few and let them share the process; do not add one per
+    assertion where one parse can carry several.
+14. **`readStepBytes(absPath, limits, io = STEP_IO)` is the seam that makes "refuses before reading"
+    assertable**, and it is task 2's to add. Spec §9 requires the ordering to be asserted and not
+    just the error, and neither mechanism the earlier draft offered exists: `parseStepFile` calls
+    `statSync` and the read directly, with nothing to inject, and `statSync` on an absent path
+    throws `ENOENT` rather than answering with a size. There is also no portable way to build a path
+    whose `stat` succeeds and whose read fails. So the order becomes one function —
+    `const STEP_IO = { size: (p: string) => statSync(p).size, read: (p: string) => readFileSync(p) }`,
+    and `readStepBytes` stats, calls `assertStepFileFits`, and only then reads — with `io` a default
+    parameter a test overrides with a reader that throws if it is ever called. Narrow on purpose:
+    two functions, both `fs`, and the seam is invisible to every caller including `parseStepFile`,
+    whose handed-over signature does not change.
+15. **`classify.ts` exports `MODEL_EXTENSIONS` and both `classifyFile` and the snapshot read it.**
+    **This extends the spec**, which asks in §9 for a snapshot over "every extension the module
+    branches on" without saying how the test learns what those are. A hand-written list of keys
+    catches a _changed_ answer and misses the commonest future bump — a **new** extension, `.ply` or
+    `.3ds`, where no existing answer changes, nothing forces a row into the literal, the test stays
+    green and the version goes unbumped. That is constraint 11's silent no-op arriving through a
+    different door, and F's own case is caught only by the accident that `.step` was previously
+    `other`. So `classifyFile`'s first line becomes
+    `if (MODEL_EXTENSIONS.some((ext) => lower.endsWith(ext))) return { kind: 'model', slicer: null }`
+    over `export const MODEL_EXTENSIONS = ['.stl', '.obj', '.step', '.stp'] as const`, and the
+    snapshot test **computes** its answers by iterating that array plus the `.3mf` fixtures, so an
+    added extension with no row in the frozen literal fails the whole-object comparison. **What it
+    still cannot catch, and the comment must say so:** a branch added outside `MODEL_EXTENSIONS` —
+    a new `.gcode`-shaped arm returning some other kind — and a change inside `classify3mf` that
+    produces the same answers.
+16. **`REQUIRED` moves into `packaging.ts` as `requiredArtifacts(outDir, appDir, executable)`**, and
+    task 5 owns the move. `packaging.ts` exists precisely because `package-app.ts` "packages an
+    application as a side effect of being imported" and so cannot be reached by `node --test`; its
+    own docblock describes it as "the names `package-app.ts` gives what it writes", which is what
+    the list is. `package-app.ts` keeps the loop that stats them. The move is a real change with a
+    size: ~35 lines of array and comments relocated, one import, one call site — and it is what
+    turns the five new entries from unasserted text into something `deno task test:desktop:unit`
+    can fail on. **The alternative was rejected on evidence:** `package:desktop` is run by no CI
+    job — all eight run `ubuntu-latest` and none of them packages — so leaving the list where it is
+    leaves it covered by a manual Windows run and nothing else.
+17. **The concurrency arithmetic is written out twice and pointed at once.** Three verbatim copies
+    were planned; drift between copies is the defect class F exists to fix, so the count comes down
+    to the two that have distinct audiences with no path to each other. `DEFAULT_CONCURRENCY`'s
+    docblock in `previews/queue.ts` carries the three-row table because **spec 5.7 requires it there
+    including the concurrency ≥ 2 line**. `README.md`'s **Preview memory** section carries it
+    because an operator raising `SPM_PREVIEW_CONCURRENCY` is not reading source, and because the
+    repository already pairs the two that way — `DEFAULT_MAX_MESH_BYTES`'s docblock says "the README
+    carries the arithmetic for pairing it with `SPM_PREVIEW_CONCURRENCY`" today. The desktop's
+    `PREVIEW_CONCURRENCY` docblock gets the floor, the blocking note and a pointer at
+    `DEFAULT_CONCURRENCY`'s docblock — no table, because its reader is a developer who can follow a
+    reference. **The remaining
+    drift risk is named rather than designed away:** the table exists twice, in `queue.ts` and in
+    the README, and the two change in one commit or not at all.
 
 ---
 
@@ -281,8 +389,13 @@ launch-side fix and is independent of all of the above; task 4 is the commit tha
 visible and is the one the ordering constraint is about; task 5 is the licence and the packaging, and
 it needs task 4's migration file to exist before it can name it.
 
-**Landing order, as three checkable statements rather than a preference:**
+**Landing order, as four checkable statements rather than a preference:**
 
+- **Task 2 lands after task 1.** Not a blanking window — a build break. Every one of task 2's
+  `packages/core` bullets edits `packages/core/src/previews/mesh/step.ts`, which does not exist
+  until task 1 creates it: `assertStepFileFits` has no caller, `readStepBytes` has nothing to
+  extract, and `deno task typecheck:core` fails on the import. Checkable: at the tip of task 1,
+  `step.ts` exists; at the tip of task 2, it calls `assertStepFileFits`.
 - **Task 4 lands after task 1.** Constraint 8. Checkable: at the tip of task 4,
   `packages/core/src/previews/mesh-handler.ts` contains `case '.step':`, and `git log --oneline` puts
   that commit first. If it does not, every `.step` file in every library reachable by that build is
@@ -316,7 +429,12 @@ must be.
       under `deno run`, and inside `deno task dev:desktop`. Open question 10 — whether esbuild bundles
       the 96 KB emscripten glue for the Electron main process — is the one thing here that can turn a
       small task into a large one, and it is answered by running the build, not by reading it. **Do
-      not write the parser first and discover this at the end.**
+      not write the parser first and discover this at the end.** While the package is freshly
+      installed, settle the other thing that is cheaper to learn now than later: **find `cube.stp`
+      inside `node_modules/occt-import-js/` and write its exact relative path down** — it is the only
+      STEP fixture CI can have (decision 13), the spike measured it out of a plain `npm install` of
+      this same published version, and if the tarball turns out not to carry it that is a blocker to
+      raise rather than to work around (open question 15).
 - [ ] Add `"occt-import-js": "0.0.23"` to `dependencies` in `packages/core/package.json`, and
       `"occt-import-js": "npm:occt-import-js@0.0.23"` to `imports` in root `deno.json`. Exact version,
       no caret (constraint 9). Run `deno install`, and **commit the resulting `deno.lock`** (decision
@@ -329,12 +447,37 @@ must be.
       the same way `copyMigrations` does it and for the same reason. This is needed in **both** branches
       of the esbuild question (decision 7) — the `.wasm` is fetched by the glue at call time and is
       never bundled into JavaScript by anything.
+- [ ] **And add `join(outDir, 'occt-import-js.wasm')` to `build.ts`'s own `assertWritten` call
+      (`:107-110` is the function; the call is the one that already names `main.js`, `preload.js` and
+      the two icons).** This is the in-build twin of task 5's `REQUIRED` entry and it is not the same
+      assertion: `assertWritten` fails at **build** time, in `deno task build:desktop` and therefore
+      in `deno task dev:desktop`, where `REQUIRED` fails only in `deno task package:desktop`, which
+      no CI job runs. If the fallback branch also stages `dist/occt-import-js.js`, name that here
+      too. The reason the icons are "named individually rather than counted" is the reason this is
+      named at all: a `copyWasm()` that silently copies nothing produces a shell that starts and
+      renders a blank thumbnail for every STEP file.
 - [ ] **If the glue bundles cleanly**, leave `COMMON.external` as it is (`['electron']`) and confirm
       the glue resolves the staged `.wasm`. **If it does not**, take the fallback the spec already
       names: add `occt-import-js` to `external`, stage `dist/occt-import-js.js` beside the `.wasm`,
       load the glue with `createRequire`, and pass an explicit `locateFile`. Either way, **record which
       branch was taken in `build.ts`'s docblock**, because the next person to touch the bundle needs
       to know whether the resolution is the glue's default or this repo's.
+- [ ] **The one sentence the fallback needs, which the branch above leaves open: _where_ the
+      `createRequire` goes.** In the fallback `step.ts` still contains a bare
+      `import … from 'occt-import-js'`, `occt-import-js` is `external`, and the packaged app has no
+      `node_modules` — so that specifier resolves to nothing at runtime, and moving the
+      `createRequire` into `step.ts` is not the fix: `packages/core` cannot compute a path only the
+      desktop bundle knows, and core is also what the Deno server and `node --test` load, where the
+      plain import is the **measured-working** path (§5.1, 10/10 on both). So the redirection is one
+      of exactly two things and the choice is recorded in `build.ts`'s docblock beside the branch:
+      **either** an esbuild `alias` (or a small resolve plugin) entry in `build.ts` pointing
+      `occt-import-js` at a desktop-only shim that does the `createRequire` and the `locateFile`,
+      leaving `step.ts`'s import untouched for Deno and Node — **or** an explicit loader seam in
+      `step.ts`: `makeOcctLoader` already takes its factory (decision 4), so the module exports a
+      `setOcctFactory()` the desktop's entry point calls once at startup with its `createRequire`d
+      glue, and core keeps the plain import as the default nobody else has to change. **Prefer the
+      `alias`**: it keeps the one measured path as the source's only path, confines the unmeasured
+      one to the bundle that needs it, and adds no exported mutable state to `packages/core`.
 - [ ] **This task is not finished until a STEP thumbnail renders in `deno task dev:desktop`.** The
       three targets are not equivalent: Deno and Node were measured 10/10 (§5.1), the Electron bundle
       was not measured at all, and it is the only one with no `node_modules` at runtime. A green
@@ -343,21 +486,26 @@ must be.
       `parseStepFile(absPath: string, limits?: MeshLimits): Promise<Mesh>` — the same signature shape
       as `parseStlFile` (`stl.ts:308`), taking the path rather than bytes, so the arm below reads like
       its three siblings.
-- [ ] The module holds the factory once (decision 4):
+- [ ] The module holds the factory once, in a closure over an injected factory rather than in a
+      module-level `let` (decision 4). The exported `makeOcctLoader` is the seam the memo tests drive;
+      `step.ts` itself builds exactly one loader and every parse goes through it:
 
 ```ts
-let occtPromise: Promise<Occt> | null = null
-
-function loadOcct(): Promise<Occt> {
-  if (occtPromise === null) {
-    occtPromise = occtimportjs().catch((error: unknown) => {
-      // Never cache a rejection: a cached one would wedge every STEP file in this process.
-      occtPromise = null
-      throw error
-    })
+export function makeOcctLoader(factory: () => Promise<Occt>): () => Promise<Occt> {
+  let pending: Promise<Occt> | null = null
+  return () => {
+    if (pending === null) {
+      pending = factory().catch((error: unknown) => {
+        // Never cache a rejection: a cached one would wedge every STEP file in this process.
+        pending = null
+        throw error
+      })
+    }
+    return pending
   }
-  return occtPromise
 }
+
+const loadOcct = makeOcctLoader(occtimportjs)
 ```
 
 - [ ] **The magic guard** (F-2). `const STEP_MAGIC = 'ISO-10303-21;'` — thirteen bytes. After the file
@@ -439,23 +587,30 @@ case '.stp':
       `ReadFile`, `ReadIgesFile` or `ReadBrepFile`: spec 1.2 keeps IGES and BREP out of scope, and a
       declared entry point nothing has tested is how an `unsupported` row gets written for a file that
       could have rendered.
-- [ ] **Correct the six docblocks this task falsifies** (spec 5.7, constraint 14). They land in this
-      commit. The table below is the whole list for this task; the seventh is task 5's and the two web
-      comments are task 4's.
+- [ ] **Correct the docblocks this task falsifies** (spec 5.7, constraint 14). They land in this
+      commit. The table below is the whole list for this task — six rows over **five** of spec 5.7's
+      seven entries, because that spec's single `mesh-handler.ts` row covers two paragraphs of one
+      docblock and they are corrected differently. **Spec 5.7's other two are not this task's:** the
+      `registry.ts` `behaviour` docblock is task 3's and `package-app.ts`'s `appCopyright` docblock is
+      task 5's. The `packages/web` comment is task 4's, and the two docblocks spec 5.7 does not list
+      — `desktop/src/previews.ts:74` and `server/src/env.ts:160` — are task 2's.
 
-| File and symbol                                     | What the sentence says now, and what it must become                                                                                                                                                                                                                                                                                                                                                                     |
-| --------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `previews/mesh-handler.ts`, `readMesh`              | "none of them ever holds the file … the peak of a preview job is therefore its `positions` array plus a fixed window, **and not a function of the file at all**". True of three arms, false of the fourth. Must name the exception, say the STEP arm holds the whole file **twice** at the moment of the call (once as the JS `Uint8Array`, once inside the WASM heap), and say it costs ~244 MB regardless of the file |
-| `previews/mesh-handler.ts`, `makeMeshHandler`       | The asynchrony paragraph: "Asynchronous for one reason: `DecompressionStream` … STL and OBJ could have stayed synchronous". A fourth arm now has its own reason — `occtimportjs()` is a factory returning a promise — and the parse itself is **synchronous and blocking** once it starts, 217–1 307 ms of it                                                                                                           |
-| `previews/mesh/limits.ts`, `assertMeshFits`         | "The counts come from a counting pass that allocates nothing … **which is the only order in which a limit is worth having.**" For STEP the counts arrive _after_ OCCT has tessellated, so this call bounds only the adapter's own `positions` allocation. Must say which arms it describes                                                                                                                              |
-| `previews/mesh/limits.ts`, `DEFAULT_MAX_MESH_BYTES` | "**Every read in this package is streamed**, so the document is no longer part of the peak". Must except STEP, and must say that this constant does **not** bound STEP's cost — the single most misleading available inference (constraint 16)                                                                                                                                                                          |
-| `previews/queue.ts`, `DEFAULT_CONCURRENCY`          | "a worker is worth about 290 MB at the worst". Still true for meshes; needs the per-process STEP floor beside it and the arithmetic below, **including the concurrency ≥ 2 line**, because this docblock is what an operator reads before raising `SPM_PREVIEW_CONCURRENCY`                                                                                                                                             |
-| `desktop/src/previews.ts`, `PREVIEW_CONCURRENCY`    | "each worker may hold one mesh, so the two numbers are one budget". Needs the floor, and needs the blocking note, because this is the docblock for the queue that runs **in the Electron main process**, on the same thread as the IPC dispatch table and the `spm://` handler that serves the thumbnails it produces                                                                                                   |
+| File and symbol                                     | What the sentence says now, and what it must become                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `mesh-handler.ts`, `readMesh` (`:31-37`)            | "none of them ever holds the file … the peak of a preview job is therefore its `positions` array plus a fixed window, **and not a function of the file at all**". True of three arms, false of the fourth. Must name the exception, say the STEP arm holds the whole file **twice** at the moment of the call (once as the JS `Uint8Array`, once inside the WASM heap), and say it costs ~244 MB regardless of the file                                                         |
+| `mesh-handler.ts`, `readMesh` (`:39-42`)            | **The same docblock, second paragraph — not `makeMeshHandler`'s, which begins at `:58` and says nothing about asynchrony.** "Asynchronous for one reason: `DecompressionStream` … STL and OBJ could have stayed synchronous". A fourth arm now has its own reason — `occtimportjs()` is a factory returning a promise — and the parse itself is **synchronous and blocking** once it starts, 217–1 307 ms of it                                                                 |
+| `previews/mesh/limits.ts`, `assertMeshFits`         | "The counts come from a counting pass that allocates nothing … **which is the only order in which a limit is worth having.**" For STEP the counts arrive _after_ OCCT has tessellated, so this call bounds only the adapter's own `positions` allocation. Must say which arms it describes                                                                                                                                                                                      |
+| `previews/mesh/limits.ts`, `DEFAULT_MAX_MESH_BYTES` | "**Every read in this package is streamed**, so the document is no longer part of the peak". Must except STEP, and must say that this constant does **not** bound STEP's cost — the single most misleading available inference (constraint 16)                                                                                                                                                                                                                                  |
+| `previews/queue.ts`, `DEFAULT_CONCURRENCY`          | "a worker is worth about 290 MB at the worst". Still true for meshes; needs the per-process STEP floor beside it and the arithmetic below, **including the concurrency ≥ 2 line**, because this docblock is what an operator reads before raising `SPM_PREVIEW_CONCURRENCY`                                                                                                                                                                                                     |
+| `desktop/src/previews.ts`, `PREVIEW_CONCURRENCY`    | "each worker may hold one mesh, so the two numbers are one budget". Needs the floor, and needs the blocking note, because this is the docblock for the queue that runs **in the Electron main process**, on the same thread as the IPC dispatch table and the `spm://` handler that serves the thumbnails it produces. **The three-row table does not go here** — this one carries the floor, the blocking note and a pointer at `DEFAULT_CONCURRENCY`'s docblock (decision 17) |
 
 - [ ] The `DEFAULT_CONCURRENCY` docblock's arithmetic, verbatim, because a formula that holds only at
       the default is worse there than no formula. The three rows are the table below, and the third is
       the one the docblock exists for: this is what an operator reads **before** raising
-      `SPM_PREVIEW_CONCURRENCY`.
+      `SPM_PREVIEW_CONCURRENCY`. **This docblock and the README's Preview memory section (task 2) are
+      the only two places the table appears** — three copies were planned and the third became a
+      pointer, because drift between copies is the defect class F exists to fix (decision 17). These
+      two do still both carry it, and they change in one commit or not at all.
 
 | Case                                       | Peak                                                                  |
 | ------------------------------------------ | --------------------------------------------------------------------- |
@@ -473,30 +628,65 @@ case '.stp':
       does not multiply with concurrency and that is a property of the code rather than a hope:
       `runPreviewQueue`'s "workers" are plain async functions racing over one job array in one process
       on one thread, so there is one module instance and one WASM heap however many there are.
+- [ ] **The fixture, before any test that needs one** (decision 13). Write
+      `packages/core/test/fixtures/make-step.ts` beside `make-3mf.ts`, `make-mesh.ts`, `make-png.ts`
+      and `patch-zip.ts`, exporting `stepFixturePath(): string` — the `cube.stp` inside the installed
+      `occt-import-js@0.0.23`, resolved from `node_modules/`, throwing a message that names the
+      package, the version and the expected relative path if it is absent — and
+      `writeStepFixture(dir: string, name: string): string`, which copies it under a caller-chosen
+      name and returns the path. **This is the only STEP fixture in the repository**, every bullet
+      below uses it, and nothing binary is committed: `packages/core/test/fixtures/` holds four
+      generators and no model today, and a STEP file cannot be generated without a CAD kernel.
+      Record the exact relative path in the helper's docblock once `deno install` has run — the
+      first bullet of this task is where it is learned.
 - [ ] Tests, `packages/core/test/step.test.ts`, under `node --test` **and** `deno test` (both suites
-      run the core directory), against real STEP fixtures. **Pin at least one file by its triangle
-      count**, because that is the number that changes if the library is ever swapped or patched —
-      which constraint 9 forbids and this would detect. Two known-good pairs from §5.4:
-      `Ender_3_fan_redirect_v4.step` → **3 380** triangles and **121 680** `positions` bytes;
-      `Printable_Wrench.A.15.stp` → **20 530** triangles and **739 080** bytes.
-- [ ] Tests, the magic guard: a file named `.stp` whose first bytes are not `ISO-10303-21;` throws
-      `AppError` with `code === 'Validation'`. **And a file with the sequence at offset 0 preceded by
-      nothing parses**, so the guard is not passing by refusing everything — an assertion satisfied by
-      a `parseStepFile` that threw unconditionally would be no assertion at all.
+      run the core directory), against `stepFixturePath()`. **Pin it by its triangle count**:
+      `triangleCount === 12`, `positions.length === 108` floats, and the fixture's own **8 247 bytes**
+      as an identity check that the file under test is the one these numbers were measured on
+      (§5.3). **Say in the test's comment that 12 is a weak swap-canary** — twelve triangles is what
+      any correct tessellation of a box returns, where the library files' 3 380 and 20 530 (§5.4)
+      were numbers only this build produces. Those two remain in the spike for anyone re-running
+      against `D:\SPM Library` by hand; what enforces constraint 9 in CI is the exact version in
+      `package.json` plus the committed `deno.lock`, and what covers the real library is the
+      `deno task dev:desktop` target below.
+- [ ] Tests, the magic guard: a file named `.stp` whose first bytes are not `ISO-10303-21;` — write
+      one with `writeFileSync`, no fixture needed — throws `AppError` with `code === 'Validation'`.
+      **And `stepFixturePath()` parses**, so the guard is not passing by refusing everything — an
+      assertion satisfied by a `parseStepFile` that threw unconditionally would be no assertion at
+      all.
+- [ ] Tests, **the row and not the throw** (spec §9, constraint 5, and the first half of the
+      Definition of done's failed-row line). The bullet above asserts an exception; the thing that
+      ships is a database row, and "asserted as `failed`, not merely as throws, because the whole
+      point is which row it leaves" is the spec's wording. So: drive the same not-really-STEP `.stp`
+      through `makePreviewHandlers()` and `runPreviewQueue` the way the chain test below does, and
+      assert the `previews` row ends `state = 'failed'` with a **non-empty `error`** containing
+      `ISO-10303-21;`. `error` is the column (`001_init.sql:89`) and `queue.ts:313-315` is what
+      writes it, truncated to 500 characters. The ceiling's twin of this assertion is task 2's.
 - [ ] Tests, constraint 13, directly: **the STEP arm never returns `null`.** Drive `readMesh` (or
-      `makeMeshHandler().run`) with a `.step` fixture and with a `.stp` file that is not STEP, and
-      assert the first returns a mesh and the second **throws** — then assert `readMesh` on a `.txt`
-      path still returns `null`, in the same file, so the two outcomes are visibly different and a
-      later "tidy-up" that converts the throw into a `null` goes red.
+      `makeMeshHandler().run`) with `writeStepFixture(dir, 'model.step')` and with a `.stp` file that
+      is not STEP, and assert the first returns a mesh and the second **throws** — then assert
+      `readMesh` on a `.txt` path still returns `null`, in the same file, so the two outcomes are
+      visibly different and a later "tidy-up" that converts the throw into a `null` goes red.
 - [ ] Tests, the whole chain: **a `.step` file through the real `PREVIEW_HANDLERS` ends `ready`, not
-      `unsupported`.** Assert the row's `state`, not that a handler was called. This is the assertion
-      whose absence cost 326 projects, and it is the reason `EMBEDDED_HANDLER_WITH_MODELS` claiming
-      `model` first is worth pinning rather than reasoning about.
-- [ ] Tests, the memo (decision 4): two parses in one process instantiate the factory **once** —
-      assert a call count against an injected or spied factory — and a rejected instantiation does not
-      poison the second attempt. The second half is the one that matters: a cached rejection turns one
-      bad start into every STEP file `failed` for the life of the process, and nothing else in the
-      suite would notice.
+      `unsupported`.** `writeStepFixture(libraryDir, 'cube.step')` for the input, and assert the row's
+      `state`, not that a handler was called. Note that `classifyFile` still answers `other` for
+      `.step` in this task, so the test inserts the `files` row at `kind: 'model'` itself rather than
+      going through `rescan` — task 4's end-to-end bullet is the one that closes that gap, and it is
+      the reason this assertion is not enough on its own. This is the assertion whose absence cost
+      326 projects, and it is the reason `EMBEDDED_HANDLER_WITH_MODELS` claiming `model` first is
+      worth pinning rather than reasoning about.
+- [ ] Tests, the memo (decision 4), driven through `makeOcctLoader` and **not** through
+      `parseStepFile`: build a loader over a fake factory, call it twice, assert the factory's call
+      count is **1**; build a second loader over a factory that rejects once and then resolves, and
+      assert the first call rejects, the second **resolves**, and the factory was called **twice**.
+      The second half is the one that matters — a cached rejection turns one bad start into every
+      STEP file `failed` for the life of the process, and nothing else in the suite would notice.
+      **This is why the memo is a closure and not a module-level `let`:** `node --test` and
+      `deno test` share one process across a file, so a memo held in the module would be resolved by
+      the first parse in this suite and the rejection case would be unreachable for every test after
+      it. Each test here builds its own loader and no test depends on the order of another. That the
+      production module wires the real factory through the same function is covered by the parse
+      tests above, which would not work at all if it did not.
 - [ ] Do not write a test that measures peak RSS. There is no assertion about it that is not flaky
       across machines, and a test that measured it would be re-measuring the spike rather than pinning
       a behaviour. The floor is governed by task 2's ceiling and by the docblocks above, and it is
@@ -506,7 +696,10 @@ case '.stp':
 field list was handed over verbatim and still drifted by four fields):**
 `parseStepFile(absPath: string, limits?: MeshLimits): Promise<Mesh>` from
 `packages/core/src/previews/mesh/step.ts`; the two `case` labels `'.step'` and `'.stp'` on `readMesh`;
-and the rule that this arm throws rather than returning `null`.
+the rule that this arm throws rather than returning `null`; and
+`stepFixturePath()` / `writeStepFixture(dir, name)` from
+`packages/core/test/fixtures/make-step.ts`, which are the only way any later task gets a STEP file
+(decision 13).
 
 ### Task 2 — The STEP size ceiling, and the three build targets it has to reach
 
@@ -525,10 +718,48 @@ carry — cannot repeat here: every seam this task uses was read before it was w
       `limits?.maxStepBytes ?? DEFAULT_MAX_STEP_BYTES`, and on a file over it throw
       `AppError('Validation', …)` **naming both sizes** through the existing private `megabytes()`
       helper, with `{ sizeBytes, maxStepBytes }` in the details. The message's job is the operator's
-      next question, which is always "by how much".
-- [ ] `parseStepFile` calls it on `statSync(absPath).size` **before the read** — not after, and not on
-      the buffer's length. A test that only checks the error passes an implementation that reads 40 MB
-      into memory and then complains, which is exactly the cost the ceiling exists to avoid.
+      next question, which is always "by how much". **The text, verbatim, because a brief that
+      describes a message gets a different one from every implementer and the Definition of done
+      asserts what it says:**
+
+```ts
+throw new AppError(
+  'Validation',
+  `this STEP file is ${megabytes(sizeBytes)}, more than the ` +
+    `${megabytes(maxStepBytes)} permitted for one STEP file`,
+  { sizeBytes, maxStepBytes },
+)
+```
+
+- [ ] "Permitted for one STEP file" rather than `assertMeshFits`'s "this server permits", which is the
+      one thing not copied from the neighbour: the same string ships inside the Electron app, where
+      there is no server, and this is a new message rather than an existing one being reworded.
+- [ ] **The read moves behind `readStepBytes`, which is what makes the ordering assertable**
+      (decision 14). `parseStepFile` reads the file directly today; extract that into one function in
+      `step.ts` whose whole job is the order, with the `fs` calls behind a default parameter:
+
+```ts
+const STEP_IO = {
+  size: (p: string) => statSync(p).size,
+  read: (p: string) => readFileSync(p),
+}
+
+function readStepBytes(
+  absPath: string,
+  limits: MeshLimits | undefined,
+  io: typeof STEP_IO = STEP_IO,
+): Uint8Array {
+  assertStepFileFits(io.size(absPath), limits)
+  return io.read(absPath)
+}
+```
+
+- [ ] The size comes from `statSync`, **not from the buffer's length** — a check on the buffer is a
+      check after the 40 MB is already in memory, which is exactly the cost the ceiling exists to
+      avoid. `parseStepFile` calls `readStepBytes(absPath, limits)` and passes no `io`; the parameter
+      exists so the test below can hand in a reader that throws if it is ever reached, and there is no
+      portable alternative — `statSync` on an absent path throws `ENOENT` rather than answering with
+      a size, and no portable path both stats and fails to read.
 - [ ] **Three things about `MeshLimits` that are not tidy, said in its docblock rather than smoothed
       over.** `maxStepBytes` bounds a **file** where every other member bounds a **mesh**, so the
       type's name becomes slightly wrong — it is not renamed, because a rename touches every parser
@@ -574,6 +805,15 @@ export function resolveMaxStepBytes(raw: string | undefined): number {
       ceiling. **The desktop gets the default and no environment variable**, because the desktop has
       no environment-variable surface for preview limits and F does not invent a configuration file
       for one.
+- [ ] **Two false docblocks this task falsifies that no spec section lists** (constraint 14). Both sit
+      on the line this task edits, which is how they were missed: a sweep for the claim found them,
+      the list did not.
+
+| File and symbol                                        | What the sentence says now, and what it must become                                                                                                                                                                                                                                                                                                                                                                                     |
+| ------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `desktop/src/previews.ts:74`, `PREVIEW_MAX_MESH_BYTES` | "The mesh ceiling, and with `PREVIEW_CONCURRENCY` the whole memory budget: 1 x 256 MB." `PREVIEW_MAX_STEP_BYTES` is being added on the next line, so the two numbers stop being the whole budget in the same diff that says so. Must say the STEP floor sits beside it and is **not** multiplied by `PREVIEW_CONCURRENCY` — and must not imply this ceiling bounds a STEP parse (constraint 16)                                         |
+| `server/src/env.ts:160`, `MAX_MESH_MB`                 | "A backstop, not a filter: **every read is streamed**, so the biggest file in the reference library needs 208.8 MB and the default permits 256." This is the server's copy of the exact sentence spec 5.7 requires be excepted at `limits.ts:11`, and `MAX_STEP_MB` is being added twenty lines below it. Must except STEP the same way, and say `SPM_MAX_MESH_MB` does not bound a STEP parse — `SPM_MAX_STEP_MB` is the one that does |
+
 - [ ] **Where 10 MB comes from, in the constant's docblock, including the part that undercuts it.**
       The fitted model is ~243 MB of intercept plus ~25 bytes of peak per input byte, so a 10 MB input
       predicts 243 + 250 ≈ **493 MB — the entire 500 MB NAS budget, on one file.** It is also **7.2x
@@ -589,25 +829,81 @@ export function resolveMaxStepBytes(raw: string | undefined): number {
       resets the preview row to `pending` and zeroes `attempts`. This is already true of
       `SPM_MAX_MESH_MB`; F does not fix it and does not make it worse, and it is written down so
       nobody discovers it in the field.
-- [ ] **`README.md`, which spec 5.7's table does not list and which carries the same claim.** Add
-      `SPM_MAX_STEP_MB` to the environment table beside `SPM_MAX_MESH_MB` (`:37`), with the default
-      `10` and the range 1 to 2048. Then amend the **Preview memory** section: the rule of thumb
-      `concurrency × (SPM_MAX_MESH_MB + 80) + 120` megabytes (`:73`) is wrong for a process that has
-      parsed a STEP file, in exactly the way the `DEFAULT_CONCURRENCY` docblock is, and the README is
-      what an operator reads before raising either variable. Carry task 1's two-line arithmetic across
-      and label the concurrency ≥ 2 line as arithmetic rather than measurement.
+- [ ] **`README.md`, which spec 5.7's table does not list and which carries the same claim in three
+      places.** Add `SPM_MAX_STEP_MB` to the environment table beside `SPM_MAX_MESH_MB` (`:37`), with
+      the default `10` and the range 1 to 2048. Then all three corrections, which land in this commit
+      with everything else (constraint 14):
+- [ ] **`:36`, the `SPM_PREVIEW_CONCURRENCY` row** — "Each worker may hold one whole mesh, so this
+      multiplies the memory the queue uses." Incomplete for the same reason the Preview memory
+      section is: the STEP floor is per process and does not multiply, so the row must say the
+      per-worker part multiplies and the floor does not. It already points at **Preview memory**,
+      which is where the arithmetic stays.
+- [ ] **`:52`, the Preview memory section's opening** — "Nothing is read whole any more — a 164 MB
+      STL and a 3MF whose model part inflates to 674 MB both pass through a fixed 256 KB window."
+      This is the README's copy of `limits.ts:11`'s sentence and F makes it false. Must except STEP
+      and say the file is resident **twice** at the moment of the call.
+- [ ] **`:73`, the rule of thumb** — `concurrency × (SPM_MAX_MESH_MB + 80) + 120` megabytes is wrong
+      for a process that has parsed a STEP file, in exactly the way the `DEFAULT_CONCURRENCY`
+      docblock is, and the README is what an operator reads before raising either variable. Carry
+      task 1's three-row table across **verbatim** and label the concurrency ≥ 2 line as arithmetic
+      rather than measurement. **This is the second and last copy of that table** (decision 17): it
+      is here rather than pointed at because an operator raising `SPM_PREVIEW_CONCURRENCY` is not
+      reading source, and it is the pairing `DEFAULT_MAX_MESH_BYTES`'s docblock already assumes —
+      "the README carries the arithmetic for pairing it with `SPM_PREVIEW_CONCURRENCY`". The two
+      copies change in one commit or not at all.
 - [ ] Tests, `packages/core`: `assertStepFileFits` refuses at the boundary — a size one byte over the
-      ceiling throws `Validation` and a size exactly at it does not — and the message names both
-      numbers. Assert both directions; a ceiling test that only asserts the refusal passes an
-      implementation that refuses everything.
-- [ ] Tests, the ordering, which is the half a naive test misses: `parseStepFile` on an oversized file
-      **refuses before reading it**. Assert it by injecting or spying the read, or by pointing the
-      parser at a path whose size is reported by a `statSync` the test can answer while the file
-      itself is absent — assert that the read never happened, not only that a throw happened.
+      ceiling throws `Validation` and a size exactly at it does not. Assert both directions; a ceiling
+      test that only asserts the refusal passes an implementation that refuses everything. **The
+      message is asserted in a separate case with numbers a megabyte apart** — `41_000_000` against
+      `{ maxStepBytes: 10_000_000 }`, so the string reads `41.0 MB` and `10.0 MB` — because
+      `megabytes()` is `toFixed(1)` and the boundary pair renders as the same string twice.
+- [ ] Tests, the ordering, which is the half a naive test misses: **the read never happens.** Drive
+      `readStepBytes` with its `io` (decision 14) — the path is never touched, so no fixture and no
+      filesystem are involved:
+
+```ts
+const exploding = {
+  size: () => 1_001,
+  read: () => {
+    throw new Error('read happened')
+  },
+}
+// throws the Validation error, never 'read happened'
+readStepBytes('/never/opened.step', { maxStepBytes: 1_000 }, exploding)
+
+let read = 0
+const counting = {
+  size: () => 1_000,
+  read: () => {
+    read++
+    return new Uint8Array()
+  },
+}
+readStepBytes('/never/opened.step', { maxStepBytes: 1_000 }, counting) // read === 1
+```
+
+- [ ] Both halves, because a seam that never reads anything would pass the first on its own.
+      **The two mechanisms an earlier draft of this plan named do not exist** and neither is worth
+      reaching for: there is nothing to spy on a direct `statSync`/`readFileSync` pair, and
+      `statSync` on an absent path throws `ENOENT` rather than answering with a size.
 - [ ] Tests, the threading, one per hop, because the whole point of this task is that the field
-      arrives: `makePreviewHandlers({ maxStepBytes: N })` produces a chain whose mesh handler refuses a
-      file of `N + 1` bytes. Then break the forwarding in `handlers.ts` — which needs no edit, so
-      breaking it means temporarily dropping the argument — and confirm red.
+      arrives: `makePreviewHandlers({ maxStepBytes: 1_000 })` produces a chain whose mesh handler
+      refuses `writeStepFixture(dir, 'cube.step')` — the fixture is 8 247 bytes (decision 13,
+      `packages/core/test/fixtures/make-step.ts`), so a ceiling of 1 000 puts it over without needing
+      a large file anywhere in the repository. Then break the forwarding in `handlers.ts` — which
+      needs no edit, so breaking it means temporarily dropping the argument — and confirm red.
+- [ ] Tests, **the row and not the throw** (spec §9, constraint 5, and the second half of the
+      Definition of done's failed-row line). Through `runPreviewQueue` this time: a file named
+      `over.step` of **2 000 000 bytes**, `maxStepBytes: 1_000_000`, and the `previews` row ends
+      `state = 'failed'` with an `error` containing **`2.0 MB`** and **`1.0 MB`** — both sizes as
+      `megabytes()` renders them, not merely a non-empty `error`. **The content of that file does not
+      matter and writing 2 MB of anything is the point**: the ceiling refuses before the read and
+      before the magic guard, so a file that is not STEP at all still produces the ceiling's message,
+      which is a second observation of the ordering above. **Do not reuse the 8 KB fixture here** —
+      `megabytes()` is `toFixed(1)`, so 8 247 bytes and a lowered ceiling both render `0.0 MB` and
+      "names both sizes" degenerates to naming one twice. Task 1 owns the magic-guard twin of this
+      assertion; between them they are the only two places in F where the failure contract is
+      observed as a row.
 - [ ] Tests, `packages/server/test/env.test.ts`, in the shape of the `SPM_MAX_MESH_MB` cases already
       there: unset → `10_000_000`; `"40"` → `40_000_000`; `"0"`, `"-1"`, `"2049"` and `"ten"` all
       throw `Validation` naming `SPM_MAX_STEP_MB`.
@@ -660,13 +956,32 @@ if ((extension === '.step' || extension === '.stp') && !SLICERS[slicerId].behavi
 ```
 
 - [ ] `refuseStepFormat` throws `AppError('Validation', …)` carrying `{ slicerId, extension }`
-      (F-4), and **derives the list of capable products from the registry rather than spelling it**
-      (decision 6) — `SLICER_IDS.filter((id) => SLICERS[id].behaviour.opensStep).map((id) =>
-SLICERS[id].displayName)`. This repo's rule, applied by `SLICER_IDS`, `makePreviewHandlers` and
-      `DEFAULT_CONCURRENCY` alike: read rather than copied. The message names the product, says it
-      cannot read STEP files, and says which other slicers to choose — because the alternative the
-      user is otherwise left with is the measured one: a healthy process, an empty plate, and a
-      warning in a log file they will never open.
+      (F-4), and **derives the list of capable products from the registry rather than spelling it**.
+      This repo's rule, applied by `SLICER_IDS`, `makePreviewHandlers` and `DEFAULT_CONCURRENCY`
+      alike: read rather than copied. The message names the product, says it cannot read STEP files,
+      and says which other slicers to choose — because the alternative the user is otherwise left
+      with is the measured one: a healthy process, an empty plate, and a warning in a log file they
+      will never open. **The text, verbatim, for the same reason `assertStepFileFits`'s is given
+      verbatim:**
+
+```ts
+function refuseStepFormat(slicerId: SlicerId, extension: string): never {
+  const capable = SLICER_IDS.filter((id) => SLICERS[id].behaviour.opensStep).map(
+    (id) => SLICERS[id].displayName,
+  )
+  throw new AppError(
+    'Validation',
+    `${SLICERS[slicerId].displayName} cannot open STEP files. ` +
+      `Choose one of ${capable.join(', ')} instead.`,
+    { slicerId, extension },
+  )
+}
+```
+
+- [ ] Which reads, today, as "UltiMaker Cura cannot open STEP files. Choose one of PrusaSlicer,
+      Anycubic Slicer Next, Bambu Studio, OrcaSlicer instead." — and that is the sentence to check
+      against the common shape below, because it is the one the user sees. It offers no conversion
+      advice: the app has no converter and nothing in the spike measured one.
 - [ ] **It is an error and not a `notices()` sentence.** `notices()` says what _will_ happen during a
       launch that is going ahead; this launch does not go ahead. Warning and launching anyway is the
       silent-discard case with extra words, and D already settled the analogous question for
@@ -678,6 +993,12 @@ SLICERS[id].displayName)`. This repo's rule, applied by `SLICER_IDS`, `makePrevi
 - [ ] `SLICER_CWD_DIR = 'slicer-cwd'` in `launch.ts` beside `SLICER_SESSIONS_DIR` (`:90`), and
       `SlicerLauncherOptions` gains `scratchCwdDir: string` beside `sessionsDir` (`:201-202`), with a
       docblock saying `<userData>/slicer-cwd`.
+- [ ] **And the class gains the field the snippet below reads**, which is the half an options-object
+      bullet skips: `readonly #scratchCwdDir: string` beside `readonly #sessionsDir: string`
+      (`launch.ts:411`), and `this.#scratchCwdDir = options.scratchCwdDir` beside
+      `this.#sessionsDir = options.sessionsDir` in the constructor (`:421-431`). Required, not
+      optional, and with no default — constraint 12 is that a `cwd` which can be omitted is a `cwd`
+      that will be, and the same reasoning applies one level up to the directory it points at.
 - [ ] `SpawnSlicer` (`launch.ts:198`) widens. **A required object with one required field, not an
       optional bag** (constraint 12), and narrow on purpose: `detached` and `stdio` are the real
       spawn's business and no test asserts them through this seam.
@@ -744,6 +1065,12 @@ export type SpawnSlicer = (
       deleting a file a slicer wrote is D's constraint 10 territory, and the directory grows only by
       the strays it exists to catch — which, on the evidence, is one product on one flag. What it must
       never become is a directory this project _says_ is swept when it is not.
+- [ ] **The `.step` files in this suite are bytes, not models, and this task uses no fixture.**
+      Nothing here parses one: the launcher copies the file and spawns a recorder. So a
+      `writeFileSync(join(dir, 'part.step'), 'ISO-10303-21;')` is the whole input, the same way this
+      suite already makes its `.stl` and `.3mf` inputs. **Do not reach for task 1's
+      `writeStepFixture`** — this task is independent of tasks 1 and 2 and may land first, and a
+      dependency on their helper would silently make that false.
 - [ ] Tests, `packages/desktop/test/slicers-launch.test.ts`. **Widen the spawn recorder to capture the
       options object, and understand that nothing forces you to.** A two-parameter recorder stays
       assignable to the widened `SpawnSlicer` type, so `deno task typecheck:desktop` is green with the
@@ -774,19 +1101,33 @@ export type SpawnSlicer = (
       asserted individually rather than as a filter over the table, so a row that flips is named in
       the failure.
 
-### Task 4 — The classifier version, migration 003, the four `rescan` edits, and the two web comments
+### Task 4 — The classifier version, migration 003, the four `rescan` edits, and the web comment
 
-`packages/core`, plus two comments in `packages/web`. **This is the commit that makes the feature
+`packages/core`, plus one comment in `packages/web`. **This is the commit that makes the feature
 visible**, and constraint 8 is about this task and no other: it must not land before task 1, and it
 must not land before task 2. After it, the user's ten existing STEP files reclassify and render.
 
 **It is one commit and not four.** The migration without the write sites leaves every row permanently
 stale; the write sites without the migration have no column to write into.
 
-- [ ] `packages/core/src/files/classify.ts`: `classifyFile` gains `.step` and `.stp` on the existing
-      `model` line. The path is already lowercased once at the top (`absPath.toLowerCase()`), so the
+- [ ] `packages/core/src/files/classify.ts`: `classifyFile` gains `.step` and `.stp` as model
+      extensions. The path is already lowercased once at the top (`absPath.toLowerCase()`), so the
       uppercase `.STEP` the user already has in their library is handled by the existing shape and
       `extensionOf` in `mesh-handler.ts` folds case for the same reason. **Neither needs changing.**
+- [ ] **The `model` line becomes a list the snapshot test can enumerate** (decision 15). Today it is
+      `if (lower.endsWith('.stl') || lower.endsWith('.obj'))`, and a chain of `endsWith` is a set no
+      test can read, which is why the frozen snapshot below would not catch the commonest future bump:
+
+```ts
+/** The extensions that classify as `model` on their name alone. Enumerated by the frozen
+ *  snapshot in `test/classify.test.ts`, so an addition here with no row there fails. */
+export const MODEL_EXTENSIONS = ['.stl', '.obj', '.step', '.stp'] as const
+```
+
+- [ ] and `classifyFile`'s first branch becomes
+      `if (MODEL_EXTENSIONS.some((ext) => lower.endsWith(ext))) return { kind: 'model', slicer: null }`.
+      Nothing else in the function changes: the `.3mf` branch, the `other` default and the purity are
+      exactly as they are.
 - [ ] **Extension only. No content check** (F-1). Zero mismatches in both directions over all 2 946
       files: no file with STEP content carries a non-STEP extension, and all ten with a STEP extension
       begin `ISO-10303-21;` at offset 0. The argument against a magic check is the contract, not the
@@ -814,6 +1155,15 @@ ALTER TABLE files ADD COLUMN classified_by INTEGER NOT NULL DEFAULT 0;
       readable without a null branch, and SQLite's `ADD COLUMN` accepts it precisely because the
       default is a constant — the same shape as 002's `ALTER TABLE previews ADD COLUMN claimed_at
 INTEGER`, which is the only precedent this repository has.
+- [ ] **And answer the downgrade question in the same comment, because it is the one a reader of a
+      migration asks and nothing else in F answers it.** An older build opening a database this one
+      has migrated finds `user_version = 3`: `runMigrations` skips every migration whose version is
+      `<= user_version` (`migrate.ts:14-15`), so it runs nothing and does not fail. Its eight-column
+      `INSERT` into `files` omits `classified_by`, which takes the column's `DEFAULT 0` — so rows
+      written by the older build come back as "predates the mechanism", which is exactly what they
+      are, and the newer build reclassifies them on its next rescan. **The downgrade is benign and
+      the reason is the `DEFAULT`**, which is worth one sentence beside the `DEFAULT` rather than
+      being rediscovered by whoever wonders.
 - [ ] `packages/core/src/db/migrate.ts`: `MIGRATIONS` gains
       `{ version: 3, file: '003_classifier_version.sql' }`. `runMigrations` reads a frozen list, so the
       file on disk does nothing without this line.
@@ -896,9 +1246,9 @@ if (Number(known.size_bytes) === file.size && Number(known.mtime_ms) === file.mt
       causes but a future one could — would leave a `ready` row with a PNG for a file the viewer no
       longer offers. Harmless today, and the kind of thing that should be decided when something
       actually causes it (open question 6).
-- [ ] **Correct the two comments in `packages/web/src/app/features/projects/project-detail.page.ts`**
-      (spec 7.2, F-16, constraint 14). They land in this commit because this is the commit that
-      falsifies them. The viewer-link comment at `:441-444` says the link is "Offered for model files
+- [ ] **Correct the comment in `packages/web/src/app/features/projects/project-detail.page.ts`**
+      (spec 7.2, F-16, constraint 14). It lands in this commit because this is the commit that
+      falsifies it. The viewer-link comment at `:441-444` says the link is "Offered for model files
       alone, **which is exactly the set the viewer's three loaders cover**", and names `.stl`, `.obj`
       and mesh `.3mf`. F makes that false. **The gate at `:446` and the thumbnail hit-target gate at
       `:393` are left exactly as they are** — hiding the link for STEP would hide the honest message
@@ -906,11 +1256,34 @@ if (Number(known.size_bytes) === file.size && Number(known.mtime_ms) === file.mt
       the thing `SUPPORTED_FORMATS` exists to prevent. A link that leads to "this viewer opens STL,
       OBJ, 3MF" is a better answer than a control that silently is not there. **No behaviour changes
       in `packages/web` in this task** (constraint 1).
+- [ ] **One comment, not two, and this is where the plan reads against the spec's count.** Spec 7.2's
+      prose says "It does need two corrections" and spec 5.7 says "Two more outside `core`". The code
+      has one false sentence. The second thing 7.2 names is **the thumbnail hit-target**, and its
+      comment (`:381-392`) makes no format claim at all — it is entirely about `aria-hidden` and
+      `tabindex="-1"` on a duplicate link ("It is a duplicate of the labelled 'View <name>' control
+      in the same row"), and 7.2's own words are that it "is gated identically and follows the same
+      decision", which is a statement about the **gate**, not about a sentence. Constraint 14 is
+      about sentences that stop being true; editing a comment that asserts nothing to make a count
+      come out at two is padding, and this repository does not write documentation for its own sake.
+      **So: correct one comment, leave the hit-target's alone, and if a reviewer holds the spec's
+      count as binding the remedy is to amend the spec's sentence, not to invent an edit.** Every
+      other statement of the count in this plan — the Architecture paragraph, the Scope table,
+      constraint 1, this task's title and the Definition of done — says one, and they were changed
+      together so no brief can be extracted that disagrees with another.
+- [ ] **Placement: this correction is here and not in a sixth step**, which is a deliberate departure
+      from spec §8, whose step 6 is "the `packages/web` comment corrections (7.2)". Constraint 14 and
+      decision 12 require a falsified sentence to be corrected **in the commit that falsifies it**,
+      and the commit that falsifies this one is this task's — a later step would leave a window in
+      which `main` carries a comment the code contradicts. The spec's own 5.7 states the same rule
+      ("Each is part of the change, not a follow-up"), so this follows the spec's rule over its
+      ordering list. **No other task moves a spec step.**
 - [ ] Tests, reclassification, the headline case: a file inserted at `kind: 'other'` with
       `classified_by = 0`, rescanned **with its size and mtime untouched on disk**, comes back
       `kind: 'model'` with a re-pended preview row. **The "untouched" is the whole test** — a fixture
       that rewrites the file passes against the broken behaviour, because the stat mismatch would have
-      reclassified it anyway.
+      reclassified it anyway. The file's bytes are irrelevant here: `classifyFile` reads the extension
+      and nothing else, so a `writeFileSync(…, 'ISO-10303-21;')` named `part.step` is the input. The
+      real STEP fixture is only needed by the end-to-end bullet below, which renders one.
 - [ ] Tests, the migration's default: a database opened at `user_version = 2` with `files` rows in it,
       migrated, has `classified_by = 0` on every row **and `0 < CLASSIFIER_VERSION`**. **The second
       half is the assertion** (constraint 11), and it must not be spelled `CLASSIFIER_VERSION === 1`.
@@ -933,7 +1306,15 @@ if (Number(known.size_bytes) === file.size && Number(known.mtime_ms) === file.mt
       bare `resetPreview` produces.
 - [ ] Tests, the forgotten bump (decision 11). One frozen literal in
       `packages/core/test/classify.test.ts` pairing the constant with `classifyFile`'s answer for every
-      extension the module branches on, asserted **whole** against a computed table:
+      extension the module branches on, asserted **whole** against a computed table. **"Computed" is
+      load-bearing and it is what decision 15 exists for:** the test builds its `answers` object by
+      iterating `MODEL_EXTENSIONS` and the `.3mf` fixture cases and calling `classifyFile` on each,
+      then compares the whole `{ version, answers }` object against the literal below with a deep
+      equality. A hand-listed set of keys catches a **changed** answer and misses an **added**
+      extension — `.ply`, `.3ds` — where nothing existing changes, no row is forced into the literal,
+      the test stays green and the version goes unbumped. Computing the keys turns that into a
+      failure: the new extension appears in `answers` and not in the literal, and the deep equality
+      is what notices.
 
 ```ts
 const CLASSIFIER_SNAPSHOT = {
@@ -958,17 +1339,30 @@ const CLASSIFIER_SNAPSHOT = {
 ```
 
 - [ ] The comment above that literal says what it is for and what repairs it: changing what any
-      extension classifies as breaks this test, and the only edit that repairs it is one that touches
-      `CLASSIFIER_VERSION` **in the same commit**, because the version sits inside the literal being
-      edited. **And it says what it cannot catch**, so nobody trusts it further than it goes: a change
-      inside `classify3mf` that produces the same answers on the fixture set. The snapshot pins the
-      function's answers, not its reasoning, and F has no measurement that says which internal changes
-      warrant a bump.
+      extension classifies as, **or adding one to `MODEL_EXTENSIONS`**, breaks this test, and the only
+      edit that repairs it is one that touches `CLASSIFIER_VERSION` **in the same commit**, because
+      the version sits inside the literal being edited. **And it says what it cannot catch**, so
+      nobody trusts it further than it goes: a change inside `classify3mf` that produces the same
+      answers on the fixture set, and a branch added **outside** `MODEL_EXTENSIONS` — a new
+      `.gcode`-shaped arm returning some other kind — which the enumeration does not reach. The
+      snapshot pins the function's answers, not its reasoning, and F has no measurement that says
+      which internal changes warrant a bump.
+- [ ] **This literal contains `version: 1` and constraint 11 forbids `CLASSIFIER_VERSION === 1`, and
+      the two are not in conflict — say so in the comment, because they read as a contradiction and
+      both land in this task.** They are opposite tests of the same constant. The **migration** test
+      asserts `0 < CLASSIFIER_VERSION`, because a bump is legitimate there and a test pinned to
+      today's value would go red for the wrong reason and teach whoever bumped it to edit the test.
+      The **snapshot** pins the value on purpose, because going red on a bump _is_ its mechanism: it
+      is how the edit that changes an answer is forced to touch the version in the same commit. One
+      test must survive a bump; the other exists to be broken by one.
 - [ ] Tests, the assertion the whole feature is for: the ten-file end-to-end shape, scaled down — a
       library containing a `.step` file indexed at `kind: 'other'` before the upgrade, opened by a
       build that has migration 003 and the handler arm, ends with that file `kind: 'model'` and its
-      preview row `ready` with a PNG. This is the only test that observes constraint 8 being satisfied
-      rather than reasoned about.
+      preview row `ready` with a PNG. **This one needs a file that really parses**, so the input is
+      `writeStepFixture(libraryDir, 'part.step')` from `packages/core/test/fixtures/make-step.ts` —
+      task 1's helper over the `cube.stp` inside the installed `occt-import-js` (decision 13), which
+      is the only STEP file the eight CI jobs can reach. This is the only test that observes
+      constraint 8 being satisfied rather than reasoned about.
 
 **Interface handed to task 5 (an asserted invariant):** the migration filename
 `003_classifier_version.sql` exactly as it appears in `MIGRATIONS`, and the fact that
@@ -988,7 +1382,9 @@ meet. No legal advice is offered and none is implied.**
       attach to the library rather than to the code that uses it.
 - [ ] **The copyright holder is a name, and a name is not something an implementation task invents.**
       If the exact line is not already settled, ask rather than guess — this is one of the two places
-      in F where the right move is to stop.
+      in F where the right move is to stop. **It is open question 14**, listed there as well as here
+      because the open-questions list is where an executor looks for blockers and a task that can
+      block on a human decision has to appear in it.
 - [ ] `THIRD-PARTY-NOTICES.md` at the root, naming `occt-import-js@0.0.23`, its LGPL-2.1 licence,
       OpenCascade underneath it, and pointing at the three licence texts that ship beside it. **The
       texts themselves ship** — `LICENSE.md`, `dist/license.occt-import-js.txt` (27 030 B) and
@@ -1013,8 +1409,23 @@ meet. No legal advice is offered and none is implied.**
       off is exactly the kind that expires quietly. If asar is ever turned on, the `.wasm` and the
       licence texts go in `asarUnpack` and the assertion below keeps passing unchanged. Say that in
       the `REQUIRED` docblock.
-- [ ] `REQUIRED` in `package-app.ts` (`:232-257`) gains **five** entries — three new and two that have
-      always been missing:
+- [ ] **`REQUIRED` moves into `packaging.ts` first, and then gains its five entries** (decision 16).
+      The list at `package-app.ts:232-257` becomes
+      `export function requiredArtifacts(outDir: string, appDir: string, executable: string): string[]`
+      in `packages/desktop/packaging.ts`, comments and all; `package-app.ts` imports it, calls it
+      where the array used to be, and keeps the `for (const file of REQUIRED)` loop that stats them.
+      **Size it as a real change, because it is one:** ~35 lines relocated, one `node:path` import
+      added to `packaging.ts`, one call site. Nothing about what is checked changes.
+- [ ] **Why the move is in this task rather than skipped:** `package-app.ts` cannot be imported —
+      "it packages an application as a side effect of being imported", which is `packaging.ts`'s own
+      stated reason for existing — so as long as the list lives there, **no test can read it**, and
+      `packaging.test.ts` today asserts `packagedExecutableName`, `APP_NAME` and `APP_SLUG` and
+      nothing about `REQUIRED`. And nothing else covers it: **`deno task package:desktop` is run by
+      no CI job** — all eight run `ubuntu-latest` and none of them packages — so the five entries
+      would otherwise be text that one manual Windows run checks. `packaging.ts`'s docblock already
+      describes itself as "the names `package-app.ts` gives what it writes", which is what the list
+      is.
+- [ ] The list gains **five** entries — three new and two that have always been missing:
 
 ```ts
 join(appDir, 'dist', 'occt-import-js.wasm'),
@@ -1044,10 +1455,19 @@ join(appDir, 'dist', 'migrations', '003_classifier_version.sql'),
       says Electron's. False the moment the `LICENSE` lands. **The docblock must be rewritten either
       way** — either to state a copyright line or to state a better reason for not having one — and
       which of those is open question 7. Do not leave the sentence standing.
-- [ ] Tests, `packages/desktop/test/packaging.test.ts`: the `REQUIRED` list is the test and it runs on
-      the built output. Add whatever unit-level assertion that file already makes about the list's
-      contents for the five new entries, and prove it can fail by deleting one staged file from a
-      built output and confirming `package:desktop` throws naming it.
+- [ ] Tests, `packages/desktop/test/packaging.test.ts`, which can now reach the list because of the
+      move above. Two assertions, in the shape of the `APP_NAME`/`APP_SLUG` case already there:
+      `requiredArtifacts('out', join('out', 'resources', 'app'), 'x.exe')` contains a path ending
+      `dist/occt-import-js.wasm`, both third-party files, and **all three** migrations — asserted per
+      entry, not as a count, for the reason the icons are named individually rather than counted; and
+      every returned path starts with the `outDir` it was given, so an entry that forgets to join
+      cannot pass. It runs under `deno task test:desktop:unit`, which **is** a CI job.
+- [ ] **And the packaging run stays the other half, because the unit test cannot replace it.** The
+      unit assertion says the list names the files; only `deno task package:desktop` says the build
+      wrote them. Prove that half can fail the way the Definition of done requires: delete one staged
+      file from a built output and confirm `package:desktop` throws naming it. **That run is manual
+      and on Windows** — no CI job packages — so it is a step in this task and a line in the
+      Definition of done, not something CI will catch if it is skipped.
 - [ ] Tests, the licence artifacts exist and are non-empty at the repository root: `LICENSE` and
       `THIRD-PARTY-NOTICES.md`. A one-line assertion, and it is worth having because both are files
       nothing imports — the class of file a build can stop producing without breaking a bundle or a
@@ -1058,9 +1478,11 @@ join(appDir, 'dist', 'migrations', '003_classifier_version.sql'),
 
 ## Open questions
 
-The spec's §10 has sixteen. These are the ones that reach a task. **None of them is resolved here.**
-Each says what an implementer should do on meeting it mid-flight, and for two of them the answer is
-specifically "nothing in F changes".
+The spec's §10 has sixteen. Questions 1–13 are the ones of those that reach a task; **14 and 15 are
+this plan's own** — neither is in the spec's §10, and both are here because an executor reads this
+list for blockers and both can stop a task dead. **None of them is resolved here.** Each says what an
+implementer should do on meeting it mid-flight, and for two of them the answer is specifically
+"nothing in F changes".
 
 1. **What does Ctrl+S propose in each slicer's GUI for a STEP input?** **Unmeasured**, and it is the
    question that decides whether STEP could ever take the in-place branch. The probe could not deliver
@@ -1138,6 +1560,23 @@ specifically "nothing in F changes".
     "perceptible": a stall a user waits through, and a window that will not close because `will-quit`
     cannot be dispatched until the parse returns. **On meeting either:** it is evidence for question 9
     and is not a reason to add a timeout, a cancel path or a second thread inside F.
+14. **What is the copyright holder's name?** **A decision, and the only one in F that blocks a
+    task on a human.** Task 5 writes a `LICENSE` and the Definition of done asserts it exists, and
+    MIT's text carries a year and a named holder — which an implementation task cannot invent and
+    must not guess. Spec 10.11 is the neighbouring question and is not this one: it asks whether
+    `LegalCopyright` in the shipped executable changes once a LICENSE exists, which presumes the
+    holder is known. **On meeting it: stop and ask.** There is no defensible default — not the git
+    author, not the repository name, not "the contributors" — and every other bullet in task 5 can
+    be finished while the answer is outstanding.
+15. **Does the published `occt-import-js@0.0.23` tarball carry its own `cube.stp`?** Everything in
+    §5.3 says yes — the spike measured that file at 8 247 bytes out of a plain `npm install` of this
+    exact version, and the package ships 123 files including its C++ sources — but the plan has not
+    re-run `deno install` to confirm the path, and **decision 13 makes it the only STEP fixture the
+    eight CI jobs can reach**. Task 1's first bullet settles it in the same breath as the esbuild
+    question, before anything is written. **On finding it absent:** stop. Every alternative is a
+    decision somebody else has to make — committing a third-party model with unrecorded provenance
+    and licence into a subsystem that is adding a third-party notice, or shipping the STEP tests as
+    something CI cannot run. Do not pick one while implementing.
 
 ---
 
@@ -1146,7 +1585,12 @@ specifically "nothing in F changes".
 - `deno task verify` green, `deno task test:desktop` green, `deno task e2e` green, CI green on `main`
   across all eight jobs, with `deno.lock` committed.
 - `deno task package:desktop` green, with `dist/occt-import-js.wasm`, the notice, the LGPL text and
-  **all three** migrations present and non-empty in the built output, asserted by `REQUIRED`.
+  **all three** migrations present and non-empty in the built output, asserted by `requiredArtifacts`.
+  **This is a manual run on Windows** — no CI job packages — so it is checked by whoever finishes
+  task 5, and the unit half of it (`packaging.test.ts` over `requiredArtifacts`) is what CI carries.
+- `deno task build:desktop` fails if the `.wasm` was not staged, because `build.ts`'s own
+  `assertWritten` names it — the build-time twin of the line above, and the one that runs inside
+  `deno task dev:desktop`.
 - **A STEP thumbnail renders in `deno task dev:desktop`**, not only under `node --test`. The Electron
   bundle is the one of the three targets that was never measured.
 - `git log --oneline` shows the commit adding `case '.step':` to `readMesh` **before** the commit
@@ -1162,13 +1606,16 @@ specifically "nothing in F changes".
 - Every spawn in `slicers-launch.test.ts` asserts a `cwd` **by value**, for both the launch-directory
   path and the in-place path, and the in-place assertion checks the directory **exists at the moment
   of the spawn**.
-- A `.stp` file that is not STEP leaves a `failed` row **with a message**, and a `.step` file over
-  `SPM_MAX_STEP_MB` leaves a `failed` row with a message naming both sizes — asserted as rows, not as
-  thrown errors.
+- A `.stp` file that is not STEP leaves a `failed` row **with a message** (task 1's row bullet), and a
+  `.step` file over `SPM_MAX_STEP_MB` leaves a `failed` row with a message naming both sizes (task 2's
+  row bullet) — **asserted as rows, not as thrown errors.** Both tasks also assert the throw at the
+  unit level; neither of those unit assertions satisfies this line.
 - No `.step` or `.stp` file anywhere in the test corpus reaches `unsupported`.
-- The seven docblocks in spec 5.7, the two comments in spec 7.2 and the README's preview-memory
-  section have all been corrected, each in the commit that falsified it, and none of them claims that
-  `DEFAULT_MAX_MESH_BYTES` bounds a STEP parse.
+- The seven docblocks in spec 5.7, the **one** comment in spec 7.2 (task 4 says why the spec's prose
+  says two), the two docblocks no spec section lists — `desktop/src/previews.ts:74` and
+  `server/src/env.ts:160` — and the README at `:36`, `:37` and its whole preview-memory section have
+  all been corrected, each in the commit that falsified it, and none of them claims that
+  `DEFAULT_MAX_MESH_BYTES` or `SPM_MAX_MESH_MB` bounds a STEP parse.
 - `LICENSE` and `THIRD-PARTY-NOTICES.md` exist at the repository root, and `package-app.ts` no longer
   says there is no LICENSE file in this repo.
-- Nothing in `packages/web` changed except two comments.
+- Nothing in `packages/web` changed except one comment.
