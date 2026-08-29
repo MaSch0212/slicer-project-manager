@@ -207,6 +207,7 @@
     "downloadsTitle": "Downloads",
     "downloadsNone": "Noch nichts heruntergeladen.",
     "downloadRunning": "Läuft noch — {{ received }} von {{ total }}",
+    "downloadRunningUnknownSize": "Läuft noch — bisher {{ received }}. Dieser Server hat nicht gesagt, wie groß die Datei ist.",
     "downloadOrphan": "Von einem früheren Start dieser App heruntergeladen",
     "downloadUnverifiable": "Für diese Bytes kann nichts bürgen, deshalb lässt sich das nicht zu einem Projekt hinzufügen. Verwerfen ist der einzige Weg weiter; erneut herunterladen der Weg zum Modell.",
     "downloadFailed": "Dieser Download wurde nicht abgeschlossen.",
@@ -233,7 +234,9 @@
     "errorQuota": "Damit würde die Bibliothek ihr Kontingent überschreiten.",
     "errorName": "So darf eine Datei nicht heißen.",
     "errorGone": "Diesen Download oder dieses Projekt gibt es nicht mehr.",
-    "errorRefused": "Dieser Download kann nicht hinzugefügt werden."
+    "errorRefused": "Dieser Download kann nicht hinzugefügt werden.",
+    "errorCreateName": "So darf ein Projekt nicht heißen. Der Name muss zwischen 1 und 200 Zeichen lang sein.",
+    "errorCreateRefused": "Das Projekt konnte nicht angelegt werden, es wurde also nichts hinzugefügt. Der Download ist noch da — versuchen Sie es erneut oder fügen Sie ihn zu einem vorhandenen Projekt hinzu."
   },
   "errors": {
     "quotaExceeded": "Dieser Upload würde das Kontingent überschreiten ({{ usage }} von {{ quota }} belegt)",

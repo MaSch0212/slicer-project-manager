@@ -207,6 +207,7 @@
     "downloadsTitle": "Downloads",
     "downloadsNone": "Nothing downloaded yet.",
     "downloadRunning": "Still downloading — {{ received }} of {{ total }}",
+    "downloadRunningUnknownSize": "Still downloading — {{ received }} so far. This server did not say how big the file is.",
     "downloadOrphan": "Downloaded by an earlier run of this app",
     "downloadUnverifiable": "Nothing can vouch for these bytes, so this cannot be added to a project. Discarding it is the only way on; downloading it again is the way to the model.",
     "downloadFailed": "This download did not finish.",
@@ -233,7 +234,9 @@
     "errorQuota": "That would take the library over its quota.",
     "errorName": "That is not a name a file can have.",
     "errorGone": "That download or that project is not there any more.",
-    "errorRefused": "That download cannot be added."
+    "errorRefused": "That download cannot be added.",
+    "errorCreateName": "That is not a name a project can have. It has to be between 1 and 200 characters.",
+    "errorCreateRefused": "The project could not be created, so nothing was added. The download is still here — try again, or add it to a project that already exists."
   },
   "errors": {
     "quotaExceeded": "This upload would exceed your quota ({{ usage }} of {{ quota }} used)",

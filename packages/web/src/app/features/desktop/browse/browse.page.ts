@@ -137,6 +137,66 @@ export function isArchiveName(name: string): boolean {
 }
 
 /**
+ * Whether the shell would refuse to discard this row — **both halves of the rule, which is the
+ * point of writing it down once.**
+ *
+ * `BrowseDownloads.discard` refuses `!entry.isOrphan && entry.record.state === 'progressing'`
+ * (`packages/desktop/src/browse/downloads.ts`), and its docblock says why the orphan half is
+ * excluded: an orphan is unverifiable and "discarding it is the way out of it". This page used to
+ * gate its Discard control, its make-room count *and* its "still downloading" line on the second
+ * half alone — and the row the first half exists for is the canonical one.
+ *
+ * **An orphan whose record still says `progressing` is exactly what a kill mid-download leaves.**
+ * The record is rewritten only on `done`, which never came, so the sweep surfaces it as
+ * `isOrphan: true, state: 'progressing', isVerifiable: false`. With the orphan half dropped that
+ * row got no Discard button, was skipped by "make room", and rendered "Still downloading — 0 B of
+ * 40 MB" for ever — `receivedBytes` is 0 because nothing rewrote the record — while its real bytes
+ * counted against `MAX_STAGED_BYTES` for the life of the app. E constraint 15 says `discard` is the
+ * only thing that removes a staged download; for that one row, nothing removed one.
+ *
+ * One predicate rather than three conditions, so the control, the count and the sentence cannot
+ * drift apart again: the row says it is downloading in exactly the cases where discarding it is
+ * refused, and offers Discard in exactly the rest.
+ */
+export function isStillDownloading(item: BrowseDownloadDto): boolean {
+  return !item.isOrphan && item.state === 'progressing'
+}
+
+/**
+ * Whether a browsed page's URL may be written down as a project's `website`.
+ *
+ * **`http(s)` only, and this is `last-page.ts`'s argument applied to the other thing this
+ * subsystem persists from a site's choosing.** That module narrows deliberately more tightly than
+ * `browseNavigationPolicy`, which allows `blob:`, `data:` and `about:blank`, because "a `data:`
+ * URL is a whole document inlined into a string". `pageUrl` is `webContents.getURL()` of a view
+ * running under exactly that policy, so a site doing `location.href = 'data:text/html,…'` makes its
+ * own document the page a download came from.
+ *
+ * What that reaches, and why the guard is here rather than only in the schema: the value is
+ * persisted as `projects.website` and rendered at `project-detail.page.ts` as
+ * `<a [href]="detail.website" target="_blank">` — a stranger's string in an `[href]` in the
+ * privileged `spm://app` document. `createProjectSchema.website` is `z.url()`, which accepts
+ * `data:`, `blob:`, `file:` and `javascript:` alike, so nothing below this line narrows it. The
+ * click is caught today by `setWindowOpenHandler` in `app.ts`, whose `navigationPolicy` answers
+ * `block` for `data:` — but that is another subsystem's hook written for another reason, this
+ * subsystem states no dependency on it, and this subsystem is what created the path. Whether the
+ * *schema* should narrow too is a contract question and is deliberately not answered here.
+ *
+ * `new URL` in a `try`, and not `URL.parse`, because `packages/web`'s lib target is ES2022 and
+ * `match-key.ts` — the other URL parser this page depends on — is written the same way for the
+ * same reason.
+ */
+export function isPersistableWebsite(value: string): boolean {
+  let parsed: URL
+  try {
+    parsed = new URL(value)
+  } catch {
+    return false
+  }
+  return parsed.protocol === 'http:' || parsed.protocol === 'https:'
+}
+
+/**
  * A stranger's string, bounded for display (constraint 13, spec 3.10).
  *
  * Angular escapes interpolated text by default, so this is not the escaping — it is the other half
@@ -148,8 +208,13 @@ export function truncateForDisplay(value: string, max = BROWSE_TEXT_MAX): string
   return value.length <= max ? value : `${value.slice(0, max)}…`
 }
 
-/** Which sentence the landing panel is showing, as a kind rather than as a resolved string. */
-type LandFailure = 'clash' | 'quota' | 'name' | 'gone' | 'refused'
+/**
+ * Which sentence the landing panel is showing, as a kind rather than as a resolved string.
+ *
+ * `create` is its own arm and not a sixth code, because the *sentence set* differs rather than the
+ * classification: see {@link classifyCreateFailure}.
+ */
+type LandFailure = 'clash' | 'quota' | 'name' | 'gone' | 'refused' | 'createName' | 'createRefused'
 
 /**
  * `AppError.code` is what the UI switches on, and `Conflict` is the one that needs a note.
@@ -178,6 +243,26 @@ function classifyLandFailure(error: unknown): LandFailure {
     default:
       return 'refused'
   }
+}
+
+/**
+ * The same job for `projects.create`, and **separate because the sentences are about a different
+ * thing.**
+ *
+ * `classifyLandFailure` above was reused for the create call, so a failure to create a *project*
+ * showed the user a message written about a *file*: `Conflict` became "If it already has one under
+ * this name, change the name above and add it again" — the name above being the *file* name field —
+ * and `Validation` became "That is not a name a file can have". Neither sentence is about what
+ * failed.
+ *
+ * **Two kinds and not five**, which is what reading `createProject` gives rather than mirroring the
+ * land table: it takes no quota, it resolves a directory-name collision itself through
+ * `uniqueDirName` so there is no clash to report, and a project that is "not there any more" is not
+ * a thing a *create* can hit. What is left is the schema — `name` is 1–200 characters — and
+ * everything else, which is the transport, the session or the server.
+ */
+function classifyCreateFailure(error: unknown): LandFailure {
+  return isAppError(error) && error.code === 'Validation' ? 'createName' : 'createRefused'
 }
 
 /**
@@ -396,15 +481,32 @@ function classifyLandFailure(error: unknown): LandFailure {
               } @else {
                 <span class="spm-muted">{{ t.translations().browse.fromNoPage }}</span>
               }
-              @if (item.state === 'progressing') {
-                <span class="spm-muted">{{
-                  t.translations().browse.downloadRunning
-                    | interpolate
-                      : {
-                          received: bytes(item.receivedBytes),
-                          total: bytes(item.totalBytes),
-                        }
-                }}</span>
+              <!--
+                "isRunning" and not "state === 'progressing'": an orphan whose record still says
+                "progressing" is what a kill mid-download leaves, and it is not running — nothing
+                in this process is writing to it. Saying otherwise is what hid the fact that it
+                could never be discarded. See "isStillDownloading".
+
+                A total of zero is a server that sent no "content-length", which is a real case the
+                shell admits and counts by what actually arrives. "of 0 B" would be a lie about a
+                file that is visibly growing.
+              -->
+              @if (isRunning(item)) {
+                @if (item.totalBytes > 0) {
+                  <span class="spm-muted">{{
+                    t.translations().browse.downloadRunning
+                      | interpolate
+                        : {
+                            received: bytes(item.receivedBytes),
+                            total: bytes(item.totalBytes),
+                          }
+                  }}</span>
+                } @else {
+                  <span class="spm-muted">{{
+                    t.translations().browse.downloadRunningUnknownSize
+                      | interpolate: { received: bytes(item.receivedBytes) }
+                  }}</span>
+                }
               } @else if (!item.isVerifiable) {
                 <jig-message color="warning" role="status">
                   {{ t.translations().browse.downloadUnverifiable }}
@@ -420,7 +522,9 @@ function classifyLandFailure(error: unknown): LandFailure {
                     {{ t.translations().browse.addToProject }}
                   </button>
                 }
-                @if (item.state !== 'progressing') {
+                <!-- Offered for exactly what "discard" will take, orphans included: the negation
+                     of the arm above, from the same predicate. -->
+                @if (!isRunning(item)) {
                   <button
                     jigButton
                     kind="text"
@@ -774,9 +878,16 @@ export class DesktopBrowsePage {
     this.#byName().map((project) => ({ label: project.name, value: project.id })),
   )
 
-  /** Downloads `discard` will actually take: it refuses a still-running one with `Conflict`. */
+  /**
+   * Downloads `discard` will actually take: it refuses a still-running one with `Conflict`.
+   *
+   * **An orphan is one of them however its record reads** — see {@link isStillDownloading}. Counting
+   * an orphan out of this made the make-room control under-report, and skipping it in
+   * {@link onMakeRoom} made the one thing that removes a staged download decline to remove the one
+   * kind that cannot be removed any other way.
+   */
   protected readonly discardableCount = computed(
-    () => this.downloads().filter((item) => item.state !== 'progressing').length,
+    () => this.downloads().filter((item) => !isStillDownloading(item)).length,
   )
 
   protected readonly landFailureMessage = computed(() => {
@@ -794,6 +905,10 @@ export class DesktopBrowsePage {
         return strings.errorGone
       case 'refused':
         return strings.errorRefused
+      case 'createName':
+        return strings.errorCreateName
+      case 'createRefused':
+        return strings.errorCreateRefused
     }
   })
 
@@ -807,6 +922,11 @@ export class DesktopBrowsePage {
 
   protected isArchive(name: string): boolean {
     return isArchiveName(name)
+  }
+
+  /** The row is being written by this process right now. See {@link isStillDownloading}. */
+  protected isRunning(item: BrowseDownloadDto): boolean {
+    return isStillDownloading(item)
   }
 
   /**
@@ -906,10 +1026,15 @@ export class DesktopBrowsePage {
     await this.refresh()
   }
 
-  /** Everything `discard` will take. A still-running download is left where it is. */
+  /**
+   * Everything `discard` will take. A still-running download is left where it is.
+   *
+   * **Orphans included**, whatever their record says: an orphan `progressing` row is the one the
+   * user has no other way to be rid of. See {@link isStillDownloading}.
+   */
   async onMakeRoom(): Promise<void> {
     for (const item of this.downloads()) {
-      if (item.state === 'progressing') continue
+      if (isStillDownloading(item)) continue
       await this.onDiscard(item.downloadId)
     }
   }
@@ -960,20 +1085,26 @@ export class DesktopBrowsePage {
    * what makes the *second* download from that model match. For a popup download there is no such
    * URL, and the key is left off entirely rather than sent as `null` or as an empty string: a
    * `website` invented here is a `website` a later download would match against wrongly.
+   *
+   * **A `pageUrl` that is not `http(s)` is left off for the same reason a popup's absent one is**,
+   * and it is the *same* omission rather than a second mechanism: see {@link isPersistableWebsite}
+   * for what a `data:` page reaches through this field. The project is still created and the file
+   * still lands — what is lost is a match key that could not have matched anything anyway.
    */
   async onCreateAndLand(): Promise<void> {
     const name = this.newProjectName().trim()
     if (name === '' || this.busy()) return
     const pageUrl = this.#landing()?.pageUrl ?? null
+    const website = pageUrl !== null && isPersistableWebsite(pageUrl) ? pageUrl : null
     this.#busy.set(true)
     this.#landFailure.set(null)
     let project: ProjectDto
     try {
-      project = await this.api.projects.create(
-        pageUrl === null ? { name } : { name, website: pageUrl },
-      )
+      project = await this.api.projects.create(website === null ? { name } : { name, website })
     } catch (error) {
-      this.#landFailure.set(classifyLandFailure(error))
+      // The *create* table, not the land one: this failed to make a project, and "change the name
+      // above" would be pointing at the file-name field. See `classifyCreateFailure`.
+      this.#landFailure.set(classifyCreateFailure(error))
       console.error('browse: creating a project for a download failed', error)
       this.#busy.set(false)
       return
@@ -1015,8 +1146,15 @@ export class DesktopBrowsePage {
       this.address.set(state.url ?? '')
     } catch (error) {
       // `navigate` refuses a URL `browseNavigationPolicy` blocks, in the main process, with a
-      // `Validation`. The next poll carries `lastError` if the load itself failed instead.
+      // `Validation`, and records the sentence for it on the view's `lastError` before it throws —
+      // the same sentence the four hooks write, from the same `describeRefusal`. So the remedy for
+      // a refusal is to *read the state*, not to invent a message here.
+      //
+      // Refreshed rather than left to the interval, because half a second of nothing after pressing
+      // Go is the same silence from the user's side. It is also what makes the refusal testable by
+      // ordering rather than by a clock.
       console.error('browse: a navigation was refused', error)
+      await this.refresh()
     }
   }
 

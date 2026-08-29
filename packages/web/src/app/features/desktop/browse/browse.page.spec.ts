@@ -425,13 +425,12 @@ describe('DesktopBrowsePage', () => {
         title: '<img src=x onerror=alert(1)>',
         url: 'javascript:alert(1)',
       }
-      const { fixture } = await setup({ state: hostile })
-
-      const root = host(fixture)
-      expect(pageText(fixture)).toContain('<img src=x onerror=alert(1)>')
-      expect(pageText(fixture)).toContain('javascript:alert(1)')
-      // Nothing was parsed as markup...
-      expect(root.querySelector('img')).toBeNull()
+      const nasty = download({ pageUrl: 'javascript:alert(1)', fileName: '<img src=x>.zip' })
+      const { fixture, page } = await setup({
+        state: hostile,
+        downloads: [nasty],
+        projects: [project({ id: 'p1', name: 'Benchy' })],
+      })
 
       /*
        * ...and the page has no navigable target of any kind. Asserted as **no anchor and no
@@ -444,16 +443,51 @@ describe('DesktopBrowsePage', () => {
        * or anchor to put a stranger's string into in the first place, which is the property the
        * page is built on: every control here is a button, and the way to go somewhere is
        * `browse.navigate`.
+       *
+       * **Run three times, because "the page" is three different DOMs.** The sweep used to run
+       * with both panels closed, so the sentence it is written as — the *page* has no navigable
+       * target — reached neither the landing panel nor the landed one, and those are exactly where
+       * an anchor would be added next: both name the page a download came from, and "Downloaded
+       * from https://…" is one refactor away from being a link. Nothing in either template violates
+       * it today; this is the assertion's reach being made to match its own words.
        */
-      expect([...root.querySelectorAll('a')]).toEqual([])
-      expect([...root.querySelectorAll('[href]')]).toEqual([])
-      expect([...root.querySelectorAll('[src]')]).toEqual([])
-      // And no inline style anywhere, which is the third place a stranger's URL becomes a fetch:
-      // constraint 13 names a CSS `url()` beside the anchor and the image, and a
-      // `[style.background-image]="'url(' + state()!.url + ')'"` is not caught by any of the three
-      // above. The bare `[style]` is the assertion; the `url(` one says what it is for.
-      expect([...root.querySelectorAll('[style]')]).toEqual([])
-      expect([...root.querySelectorAll('[style*="url("]')]).toEqual([])
+      const sweep = (where: string): void => {
+        const root = host(fixture)
+        // Nothing was parsed as markup...
+        expect(root.querySelector('img'), where).toBeNull()
+        expect([...root.querySelectorAll('a')], where).toEqual([])
+        expect([...root.querySelectorAll('[href]')], where).toEqual([])
+        expect([...root.querySelectorAll('[src]')], where).toEqual([])
+        // And the third place a stranger's URL becomes a fetch: constraint 13 names a CSS `url()`
+        // beside the anchor and the image, and a
+        // `[style.background-image]="'url(' + state()!.url + ')'"` is caught by none of the three
+        // above.
+        expect([...root.querySelectorAll('[style*="url("]')], where).toEqual([])
+      }
+
+      expect(pageText(fixture)).toContain('<img src=x onerror=alert(1)>')
+      expect(pageText(fixture)).toContain('javascript:alert(1)')
+      sweep('with both panels closed')
+      /*
+       * **The stronger form of the style assertion, and it holds only here.** A bare "no `[style]`
+       * anywhere" catches a `[style.background-image]` binding whatever it interpolates, which is
+       * why it is worth making where it can be made — and this page's own chrome carries no inline
+       * style at all. It is *not* extended to the two panels below, and that is a measured
+       * narrowing rather than a hedge: the landing panel renders `jig-select`, whose own popover
+       * wrapper carries `style="min-height: 250px"`. That is a third-party component styling
+       * itself, not this page putting a value into a style, so the assertion that survives into the
+       * panels is the `url(` one above — which is the property constraint 13 actually names.
+       */
+      expect([...host(fixture).querySelectorAll('[style]')]).toEqual([])
+
+      await page.onOpenLanding(nasty)
+      expect(host(fixture).querySelector('[aria-labelledby="browse-landing-title"]')).not.toBeNull()
+      sweep('with the landing panel open')
+
+      page.selectedProjectId.set('p1')
+      await page.onLand()
+      expect(host(fixture).querySelector('[aria-labelledby="browse-landed-title"]')).not.toBeNull()
+      sweep('with the landed panel open')
     })
 
     /*
@@ -551,6 +585,41 @@ describe('DesktopBrowsePage', () => {
       await page.onGo()
 
       expect(browse.navigate).toHaveBeenCalledWith('https://www.printables.com/model/999')
+    })
+
+    /*
+     * **A refusal the user can see, which this path used to produce none of.**
+     *
+     * `navigate` refuses a blocked URL in the main process with a `Validation`, and it throws
+     * *before* `#load` — the only other thing that touches `lastError` — so typing `file:///C:/x`
+     * or `bambustudio://x` into the address control and pressing Go changed nothing on screen at
+     * all: the error went to the console and the `pageFailed` line stayed empty. That is the
+     * silence `notices.ts` argues is unacceptable, reached through the one path notices do not
+     * cover.
+     *
+     * Two halves, one test, because either alone is satisfiable by the wrong fix: the host now
+     * records `describeRefusal`'s sentence before it throws (asserted against the real host in
+     * `packages/desktop/test/browse-host.test.ts`), and the page re-reads the state instead of
+     * waiting for the next poll — half a second of nothing after pressing Go is the same silence.
+     * Driven by ordering and not by a clock.
+     */
+    it('says why a navigation was refused rather than doing nothing visible', async () => {
+      const refusal = 'the model browser does not open bambustudio: URLs'
+      const navigate = vi
+        .fn()
+        .mockRejectedValue(
+          new AppError('Validation', 'that URL cannot be opened in the model browser'),
+        )
+      const { fixture, page, browse, translate } = await setup({ overrides: { navigate } })
+      // What the shell answers once the refusal has been recorded on the view.
+      browse.state.mockResolvedValue({ ...IDLE, lastError: refusal })
+
+      page.address.set('bambustudio://open?model=1')
+      await page.onGo()
+
+      const text = pageText(fixture)
+      expect(text).toContain(translate.translations().browse.pageFailed)
+      expect(text).toContain(refusal)
     })
   })
 
@@ -820,6 +889,82 @@ describe('DesktopBrowsePage', () => {
     })
 
     /*
+     * **`last-page.ts`'s argument, applied to the other thing this subsystem persists from a site's
+     * choosing.** That module narrows to `http(s)` deliberately more tightly than
+     * `browseNavigationPolicy`, which allows `blob:`, `data:` and `about:blank`, because "a `data:`
+     * URL is a whole document inlined into a string". `pageUrl` is `getURL()` of a view running
+     * under exactly that policy, so a site doing `location.href = 'data:text/html,…'` makes its own
+     * document the page a download came from — and this page used to hand that straight to
+     * `projects.create({ website })`, where `createProjectSchema.website` is `z.url()` and accepts
+     * `data:`, `blob:`, `file:` and `javascript:` alike. It is then rendered at
+     * `project-detail.page.ts` as `<a [href]="detail.website" target="_blank">`: a stranger's string
+     * in an `[href]` in the privileged `spm://app` document.
+     *
+     * Not exploitable today — the click reaches `setWindowOpenHandler`, whose `navigationPolicy`
+     * answers `block` for `data:` — but that is another subsystem's hook written for another
+     * reason, and this is the subsystem that created the path. Whether the *schema* should narrow
+     * too is a contract question and is not answered here.
+     *
+     * The key is left off entirely, which is the same omission a popup download already gets, so
+     * there is no second mechanism to keep working. The positive arm is the test above: an `http(s)`
+     * page is still written down, or this would be satisfied by never sending a `website` at all.
+     */
+    it.each([
+      ['data:text/html,<h1>a whole document in a string</h1>'],
+      ['blob:https://www.thingiverse.com/8c1f-1cf8'],
+      ['file:///C:/Users/somebody/secrets.txt'],
+      ['javascript:alert(1)'],
+    ])('does not write %s down as a project website', async (pageUrl) => {
+      const item = download({ downloadId: 'd-odd', pageUrl })
+      const { page, browse, create } = await setup({ downloads: [item] })
+      create.mockResolvedValue(project({ id: 'p-new', name: 'From an odd page' }))
+
+      await page.onOpenLanding(item)
+      page.newProjectName.set('From an odd page')
+      await page.onCreateAndLand()
+
+      expect(create).toHaveBeenCalledWith({ name: 'From an odd page' })
+      // The project is still created and the file still lands: what is dropped is a match key that
+      // could never have matched anything.
+      expect(browse.land).toHaveBeenCalledWith('d-odd', 'p-new', { name: 'benchy.zip' })
+    })
+
+    /*
+     * **A project that could not be created says so about a project.**
+     *
+     * The create call used to be classified by `classifyLandFailure`, which is written about
+     * landing a *file*: a `Conflict` became "If it already has one under this name, change the name
+     * above and add it again" — the name above being the *file* name field — and a `Validation`
+     * became "That is not a name a file can have". Both sentences are about the wrong noun.
+     *
+     * Both arms in one test, because a single arm is satisfiable by a classifier that answers one
+     * kind for everything.
+     */
+    it('reports a failed project creation in words about a project, not about a file', async () => {
+      const { fixture, page, translate, create } = await setup({ downloads: [download()] })
+      const strings = translate.translations().browse
+      create.mockRejectedValueOnce(new AppError('Validation', 'name too long'))
+      await page.onOpenLanding(download())
+      page.newProjectName.set('n'.repeat(300))
+
+      await page.onCreateAndLand()
+
+      expect(pageText(fixture)).toContain(strings.errorCreateName)
+      expect(pageText(fixture)).not.toContain(strings.errorName)
+
+      create.mockRejectedValueOnce(new AppError('Conflict', 'something else entirely'))
+      page.newProjectName.set('Benchy')
+      await page.onCreateAndLand()
+
+      expect(pageText(fixture)).toContain(strings.errorCreateRefused)
+      // The file-clash sentence, which is the one that used to appear here and points at a field
+      // that has nothing to do with what failed.
+      expect(pageText(fixture)).not.toContain(strings.errorClash)
+      // Nothing landed: the panel is still open with the download in it.
+      expect(page.landing()).not.toBeNull()
+    })
+
+    /*
      * Constraint 14 and spec 5.3. `land` refuses an unverifiable record before it opens anything,
      * so a page that offered the control would be offering a button that cannot work — and the
      * bytes behind it are byte-for-byte indistinguishable from a complete file.
@@ -937,6 +1082,118 @@ describe('DesktopBrowsePage', () => {
       const strings = translate.translations().browse
       expect(pageText(fixture)).not.toContain(strings.archiveRemote)
       expect(pageText(fixture)).not.toContain(strings.archiveLocal)
+    })
+  })
+
+  describe('staged downloads', () => {
+    /*
+     * **The row a kill mid-download leaves, which nothing in this suite used to render.**
+     *
+     * `isOrphan: true` appeared nowhere in this file: the `downloadOrphan` tag was drawn and
+     * asserted by nothing, and the whole orphan path was unexercised — which is what let the defect
+     * below through five reviews. The shape is the one `browse-downloads.test.ts` names "the shape
+     * a kill mid-download leaves": the record is rewritten only on `done`, which never came, so the
+     * sweep finds `isOrphan: true, state: 'progressing', isVerifiable: false` with
+     * `receivedBytes: 0` while real bytes sit on disk.
+     *
+     * `BrowseDownloads.discard` takes it — it refuses `!isOrphan && progressing`, and its docblock
+     * says an unverifiable download is discardable because "that is the way out of it". The page
+     * applied the non-orphan half of that rule to both halves, so this row got no Discard control,
+     * was left out of "make room", and claimed to be downloading at 0 B of 40 MB for ever. E
+     * constraint 15 says discard is the only thing that removes a staged download; for this row
+     * nothing removed one, and its bytes counted against the ceiling until the app was restarted.
+     *
+     * One fixture, every consequence, because they are one defect: the tag, the sentence it must
+     * *not* show, the control, the count, and the bulk control taking it.
+     */
+    it('offers discard for an orphan whose record still says progressing, and does not call it running', async () => {
+      const killed = download({
+        downloadId: 'd-orphan',
+        state: 'progressing',
+        receivedBytes: 0,
+        totalBytes: 41_943_040,
+        isOrphan: true,
+        isVerifiable: false,
+      })
+      const { fixture, page, browse, translate } = await setup({
+        notices: [{ id: 'n1', kind: 'refused', fileName: 'x.zip', detail: 'no room', at: 0 }],
+        downloads: [killed],
+      })
+      const strings = translate.translations().browse
+
+      const text = pageText(fixture)
+      expect(text).toContain(strings.downloadOrphan)
+      // The sentence it must not show: nothing in this process is writing to it, and "0 B of
+      // 40 MB" is the number the record could not update.
+      expect(text).not.toContain(
+        strings.downloadRunning.replace('{{ received }}', '0 B').replace('{{ total }}', '40.0 MB'),
+      )
+      expect(text).toContain(strings.downloadUnverifiable)
+      // Unverifiable, so landing is refused before it opens anything — the control is not offered.
+      expect(buttonNamed(fixture, strings.addToProject)).toBeNull()
+
+      const discard = buttonNamed(fixture, strings.discard)
+      expect(discard).not.toBeNull()
+      discard?.click()
+      await Promise.resolve()
+      expect(browse.discard).toHaveBeenCalledWith('d-orphan')
+
+      // And the bulk control counts it and takes it: this row is the one a user has no other way
+      // to be rid of, so "discard the N that are not still running" must mean it.
+      expect(
+        buttonNamed(
+          fixture,
+          strings.makeRoom.replace('{{ count }}', '1').replace('{{ count }}', '1'),
+        ),
+      ).not.toBeNull()
+      browse.discard.mockClear()
+      await page.onMakeRoom()
+      expect(browse.discard).toHaveBeenCalledTimes(1)
+      expect(browse.discard).toHaveBeenCalledWith('d-orphan')
+    })
+
+    /*
+     * The other half of the rule, so the fix above cannot have been "offer discard for everything":
+     * a download this process really is writing is still refused, still says so, and still has no
+     * control.
+     */
+    it('still refuses to offer discard for a download this process is writing', async () => {
+      const running = download({
+        downloadId: 'd-run',
+        state: 'progressing',
+        receivedBytes: 10_000,
+        totalBytes: 41_943_040,
+      })
+      const { fixture, translate } = await setup({ downloads: [running] })
+      const strings = translate.translations().browse
+
+      expect(pageText(fixture)).toContain(
+        strings.downloadRunning
+          .replace('{{ received }}', '9.8 kB')
+          .replace('{{ total }}', '40.0 MB'),
+      )
+      expect(buttonNamed(fixture, strings.discard)).toBeNull()
+      expect(pageText(fixture)).not.toContain(strings.downloadOrphan)
+    })
+
+    /*
+     * A server that sends no `content-length` is a case the shell admits deliberately — it counts
+     * such a download by what has actually arrived — so the row must not read "of 0 B" about a file
+     * that is visibly growing.
+     */
+    it('says how much has arrived, not "of 0 B", when the server named no size', async () => {
+      const unsized = download({
+        downloadId: 'd-unsized',
+        state: 'progressing',
+        receivedBytes: 1_048_576,
+        totalBytes: 0,
+      })
+      const { fixture, translate } = await setup({ downloads: [unsized] })
+      const strings = translate.translations().browse
+
+      const text = pageText(fixture)
+      expect(text).toContain(strings.downloadRunningUnknownSize.replace('{{ received }}', '1.0 MB'))
+      expect(text).not.toContain('0 B')
     })
   })
 
