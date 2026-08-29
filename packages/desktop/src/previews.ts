@@ -72,8 +72,9 @@ export const PREVIEW_INTERVAL_MS = 5_000
  * arguments rather than measurements of this process. It is not only the queue: it is also
  * Electron's browser process, the IPC dispatch table and the `spm://` handler that serves the very
  * thumbnails this produces, all on the same thread. **And a STEP parse holds that thread
- * outright** — 217–1 307 ms, with no yield inside `ReadStepFile`, where every other parser here
- * streams and awaits; what a `spm://` request does when it arrives during one is unmeasured. And it
+ * outright** — 217–1 307 ms, with no yield inside `ReadStepFile`, and the `readFileSync` that
+ * hands it the whole file blocks ahead of that, where every other parser here streams and awaits;
+ * what a `spm://` request does when it arrives during one is unmeasured. And it
  * is sharing the machine with whatever the user is doing — a slicer, a browser, the model they are
  * printing from. Against B1's numbers a second worker adds ~220 MB of peak for 0–1.5 % of wall
  * clock, which is a bad trade on a server and a worse one here.

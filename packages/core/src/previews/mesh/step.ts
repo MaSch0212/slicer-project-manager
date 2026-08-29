@@ -204,7 +204,9 @@ function occtToMesh(result: OcctResult, limits: MeshLimits | undefined): Mesh {
  * concurrency is set.
  *
  * The `await` is for the module, not for the file: `loadOcct()` resolves instantly after the first
- * call, and the bytes are already in hand when it is reached.
+ * call, and the bytes are already in hand when it is reached — got there by `readFileSync`, which
+ * is the other blocking call in this function. So on the Electron main process the stall the IPC
+ * table shares is the read **and** the parse, not the parse alone.
  */
 export async function parseStepFile(absPath: string, limits?: MeshLimits): Promise<Mesh> {
   const bytes = readFileSync(absPath)
