@@ -12,6 +12,7 @@ import {
   BrowseHost,
   browseOpenDecision,
   browseViewBounds,
+  MAX_REFUSAL_SCHEME,
 } from '../src/browse/host.ts'
 import { BROWSE_FILE_NAME, readLastPage, writeLastPage } from '../src/browse/last-page.ts'
 import { MODEL_SITES } from '../src/browse/registry.ts'
@@ -582,6 +583,29 @@ test('hide survives the bounds reports that follow it, and show puts the view ba
   assert.equal(view.visibility[view.visibility.length - 1], true)
 })
 
+test('a view whose contents died is not painted, hidden or moved', () => {
+  const { host } = rig()
+  host.attach(FULL)
+  const view = madeViews[0]!
+  const appliedAtAttach = view.boundsApplied.length
+  const visibilityAtAttach = view.visibility.length
+
+  // **The one route that leaves `#view` set and its contents gone.** `detach`, the window closing
+  // and a re-attach all null the reference; a renderer crash does not, and `state()` and
+  // `#requireView()` have always tested `isDestroyed()` for exactly that. `hide()` and the bounds
+  // path did not, which made the rule inconsistent inside one class rather than absent from it.
+  view.webContents.destroyed = true
+
+  host.hide()
+  host.setBounds({ x: 0, y: 0, width: 1280, height: 860 })
+  host.show()
+  assert.equal(view.boundsApplied.length, appliedAtAttach, 'a dead view was given a rectangle')
+  assert.equal(view.visibility.length, visibilityAtAttach, 'a dead view was told to paint or not')
+  // And the host still answers, because a crashed view is a state to report and not an exception
+  // to raise: `show()` returns the same detached state `state()` does.
+  assert.equal(host.state().attached, false)
+})
+
 /* -------------------------------------------------------------------------------------------
  * Where a view starts, and what it remembers
  * ---------------------------------------------------------------------------------------- */
@@ -710,6 +734,27 @@ test('all four hooks are on the view, and all four consult the browse policy', (
     true,
   )
   assert.equal(host.state().lastError, null)
+})
+
+test('the scheme in a refusal is bounded, because a site chooses how long it is', () => {
+  const { host } = rig()
+  host.attach(FULL)
+  const contents = madeViews[0]!.webContents
+
+  // `URL.parse` accepts this: the character set is `[a-z0-9+.-]`, so nothing here is injectable,
+  // but the *length* is the site's to pick and `lastError` is rendered in the document that holds
+  // the bridge. Without the bound the message is 20 000 characters of the app's own chrome.
+  const absurd = `${'a'.repeat(20_000)}://x`
+  assert.notEqual(URL.parse(absurd), null, 'the premise: this really does parse')
+  contents.fire('will-navigate', { url: absurd, isMainFrame: true })
+  assert.equal(
+    host.state().lastError,
+    `the model browser does not open ${'a'.repeat(MAX_REFUSAL_SCHEME)} URLs`,
+  )
+
+  // And the schemes anyone actually meets are untouched by it.
+  contents.fire('will-navigate', { url: 'bambustudio://open?model=1', isMainFrame: true })
+  assert.equal(host.state().lastError, 'the model browser does not open bambustudio: URLs')
 })
 
 test('the window-open handler navigates in place, allows a popup with named flags, or denies', () => {

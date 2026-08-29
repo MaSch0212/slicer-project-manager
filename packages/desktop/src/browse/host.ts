@@ -291,9 +291,10 @@ export class BrowseHost {
     // made": in a fresh partition with no handler at all, a page was **granted** geolocation and
     // **granted** notifications with no prompt of any kind.
     session.setPermissionRequestHandler((_contents, _permission, callback) => callback(false))
-    // **Spec 9.5 records this handler as unmeasured. It is measured now, and it is not merely
-    // "the same refusal for consistency" — it does work the request handler does not.** Three
-    // partitions, one each, on Electron 44.0.0: with the request handler alone,
+    // **Spec 9.5 recorded this handler as unmeasured. It is measured now — 3.7, 9.5 and the plan
+    // all carry the withdrawal — and it is not merely "the same refusal for consistency": it does
+    // work the request handler does not.** Three partitions, one each, on Electron 44.0.0: with
+    // the request handler alone,
     // `navigator.permissions.query({ name: 'geolocation' })` answered **`"granted"`** while the
     // actual geolocation request was denied; with both handlers it answered `"denied"`, and the
     // check handler fired for `media`, `web-app-installation`, `geolocation` and `notifications`;
@@ -413,7 +414,11 @@ export class BrowseHost {
    */
   hide(): void {
     this.#hiddenOnRequest = true
-    this.#view?.setVisible(false)
+    // The same liveness test `state()` and `#requireView()` make, for the same reason: `#view` is
+    // nulled by `detach`, by the window closing and by a re-attach, but not by the contents dying
+    // on its own — a renderer crash leaves this reference pointing at a destroyed view. One class,
+    // one rule.
+    if (this.#view && !this.#view.webContents.isDestroyed()) this.#view.setVisible(false)
   }
 
   /** Puts a `hide()`n view back, at whatever rectangle the renderer last reported. */
@@ -581,6 +586,19 @@ export class BrowseHost {
    *   screen — with none installed, `window.open` from embedded content makes a real
    *   `BrowserWindow` on the opener's session.
    *
+   *   **The window it does allow gets none of these hooks.** A popup approved by the `popup` arm is
+   *   a fresh `webContents` with no navigation policy and no window-open handler of its own: it may
+   *   navigate wherever it likes and open further windows without this file seeing either. That is
+   *   stated rather than hedged. Containment does not rest on it — the popup is on
+   *   `BROWSE_PARTITION`, which serves no `spm://` and has no preload (`browse.spec.ts` reads
+   *   `typeof window.spm` *inside* the popup and gets `'undefined'`), and Chromium refuses a
+   *   renderer-initiated navigation to an unregistered custom scheme on its own. What is missing is
+   *   the refusal *record*: a blocked scheme in a popup produces no `lastError`. Attaching these
+   *   listeners through `did-create-window` would not be a copy of this function — the `navigate`
+   *   arm loads into the *browse view*, which for a popup would yank the page out from under a
+   *   half-finished login — so it needs its own decision table and its own measurement, and is not
+   *   a passenger on someone else's change.
+   *
    * All four consult `browseNavigationPolicy`. **Never `navigationPolicy`**, which answers
    * `external` for `http(s)` and would hand every link in the model browser to
    * `shell.openExternal` — the browser would never move. The two policies invert on exactly that
@@ -658,7 +676,11 @@ export class BrowseHost {
     const view = this.#view
     const window = this.#window
     const bounds = this.#bounds
-    if (!view || !window || !bounds || window.isDestroyed()) return
+    // `view.webContents.isDestroyed()` for the same reason `hide()` makes the test: the window
+    // being alive does not make the view's contents alive, and a destroyed one is what `state()`
+    // and `#requireView()` both refuse to touch.
+    if (!view || !window || !bounds) return
+    if (window.isDestroyed() || view.webContents.isDestroyed()) return
     if (this.#hiddenOnRequest) {
       view.setVisible(false)
       return
@@ -695,19 +717,34 @@ export class BrowseHost {
 }
 
 /**
+ * The longest scheme `describeRefusal` will repeat back.
+ *
+ * **A scheme is not short on its own.** `'a'.repeat(20000) + '://x'` parses, and `URL.parse` hands
+ * back a 20 001-character protocol — so the length of this part *is* a site's to choose, and the
+ * bound is here rather than assumed. 32 is far above every scheme the policy names
+ * (`bambustudio:`, the longest, is 12) and far below anything worth putting in the chrome.
+ */
+export const MAX_REFUSAL_SCHEME = 32
+
+/**
  * What a refused navigation says, in one place.
  *
  * **The scheme and not the URL.** The string ends up in `BrowseStateDto.lastError`, which is
  * rendered in the privileged document, and a site chooses the URL: a message built from one is a
  * site-authored string of any length in the app's own chrome. The scheme is the part that explains
- * the refusal and the part a site cannot make interesting — `URL.parse` has already parsed it, and
- * an unparseable string has no scheme to name.
+ * the refusal — `URL.parse` has already parsed it, so it holds nothing but `[a-z0-9+.-]`, and an
+ * unparseable string has no scheme to name.
+ *
+ * Its *length* is still the site's, which is what `MAX_REFUSAL_SCHEME` is for. Nothing in a parsed
+ * scheme is injectable and the DTO mandates truncation at render, so this is not the boundary — it
+ * is the message carrying its own bound instead of leaving one renderer's CSS the only thing
+ * between a site and 20 000 characters of the app's own chrome.
  */
 function describeRefusal(url: string): string {
   const protocol = URL.parse(url)?.protocol
   return protocol === undefined
     ? 'the model browser refused a navigation to a URL it could not parse'
-    : `the model browser does not open ${protocol} URLs`
+    : `the model browser does not open ${protocol.slice(0, MAX_REFUSAL_SCHEME)} URLs`
 }
 
 /** Chromium's own failure text, or a bounded stand-in for a rejection that is not an `Error`. */
