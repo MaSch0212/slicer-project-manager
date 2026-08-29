@@ -1,7 +1,10 @@
 import { expect, test, type ElectronApplication, type Page } from '@playwright/test'
+import { existsSync, readFileSync } from 'node:fs'
 import { createServer, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
+import { join } from 'node:path'
 import { BROWSE_PARTITION } from '../src/browse/host.ts'
+import { BROWSE_FILE_NAME, LAST_URL_KEY } from '../src/browse/last-page.ts'
 import { firstWindowOf, launchApp } from './fixtures.ts'
 
 /**
@@ -37,6 +40,7 @@ test.describe('the model browser', () => {
   let page: Page
   let server: Server
   let base: string
+  let userDataDir: string
 
   test.beforeAll(async () => {
     server = createServer((request, response) => {
@@ -61,7 +65,7 @@ test.describe('the model browser', () => {
     })
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
     base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`
-    ;({ app } = await launchApp())
+    ;({ app, userDataDir } = await launchApp())
     page = await firstWindowOf(app)
     await page.waitForLoadState('domcontentloaded')
   })
@@ -430,29 +434,44 @@ test.describe('the model browser', () => {
         callback(true)
       })
     })
-    await attachAt(`${base}/first`)
+    try {
+      await attachAt(`${base}/first`)
 
-    const answer = await inBrowseView<{ geolocation: string; query: string }>(`
-      (async () => ({
-        geolocation: await new Promise((resolve) =>
-          navigator.geolocation.getCurrentPosition(() => resolve('granted'), (e) => resolve('denied:' + e.code))),
-        query: await navigator.permissions.query({ name: 'geolocation' }).then((r) => r.state, (e) => 'err:' + e.message),
-      }))()
-    `)
-    expect(answer.geolocation).toBe('denied:1')
-    // **`setPermissionCheckHandler` is what answers this, and it is measured rather than assumed.**
-    // Spec 9.5 records it as unmeasured. Three partitions on Electron 44.0.0: with only the
-    // request handler set this answered `"granted"`; with both, `"denied"`; with neither, the
-    // query answered `"granted"` and the geolocation request was granted outright. So deleting the
-    // check-handler line turns this line red and nothing else.
-    expect(answer.query).toBe('denied')
+      const answer = await inBrowseView<{ geolocation: string; query: string }>(`
+        (async () => ({
+          geolocation: await new Promise((resolve) =>
+            navigator.geolocation.getCurrentPosition(() => resolve('granted'), (e) => resolve('denied:' + e.code))),
+          query: await navigator.permissions.query({ name: 'geolocation' }).then((r) => r.state, (e) => 'err:' + e.message),
+        }))()
+      `)
+      expect(answer.geolocation).toBe('denied:1')
+      // **`setPermissionCheckHandler` is what answers this, and it is measured rather than
+      // assumed.** Spec 9.5 recorded it as unmeasured and no longer does. Three partitions on
+      // Electron 44.0.0: with only the request handler set this answered `"granted"`; with both,
+      // `"denied"`; with neither, the query answered `"granted"` and the geolocation request was
+      // granted outright. So deleting the check-handler line turns this line red and nothing else.
+      expect(answer.query).toBe('denied')
 
-    const fired = await app.evaluate(
-      () =>
-        (globalThis as unknown as { __spmDefaultPermissions?: string[] }).__spmDefaultPermissions ??
-        [],
-    )
-    expect(fired).toEqual([])
+      const fired = await app.evaluate(
+        () =>
+          (globalThis as unknown as { __spmDefaultPermissions?: string[] })
+            .__spmDefaultPermissions ?? [],
+      )
+      expect(fired).toEqual([])
+    } finally {
+      // **Put `defaultSession` back, and `null` is what "back" means here.** The recorder above
+      // grants everything, and a handler installed on the app's own session outlives the test that
+      // installed it — every test after this one in the file would otherwise run under
+      // grant-everything, which is a trap for an assertion nobody has written yet. `null` restores
+      // the app's *shipped* configuration and not a safer one: `src/` installs no permission
+      // handler on `defaultSession` at all (spec 3.7), and this task measured what Electron then
+      // does — geolocation and notifications are granted with no prompt. Installing a denying
+      // handler here would leave the rest of the file running in a configuration the app does not
+      // have, which is the more expensive mistake.
+      await app.evaluate(({ session }) => {
+        session.defaultSession.setPermissionRequestHandler(null)
+      })
+    }
   })
 
   /* -----------------------------------------------------------------------------------------
@@ -557,22 +576,35 @@ test.describe('the model browser', () => {
     await expect
       .poll(async () => (await state()).url, { timeout: 15_000 })
       .toBe(`${base}/remembered`)
+    // The file, by name, beside `state.json` and **not** inside the browse partition — which is
+    // the whole reason `clearLastPage` has to exist (`last-page.ts`, E decision 8). It is also
+    // what stops the assertion below being a null instrument: "the file is gone" says nothing
+    // unless something first says it was there.
+    expect(rememberedPage()).toBe(`${base}/remembered`)
 
     await invoke('browse.detach')
     await invoke('browse.clearLastPage')
-    // With nothing remembered the default is the registry's first start URL — asserted as a
-    // *refusal to reach the network* rather than by loading it: `attach` with no URL now names
-    // Thingiverse, and this suite must never depend on a site being up. Reading the state right
-    // after the attach is enough to see which URL it went for.
-    await invoke('browse.attach', [{ x: 0, y: 0, width: 1200, height: 700 }])
-    const id = await browseContentsId()
-    const started = await app.evaluate(
-      ({ webContents }, contentsId) => webContents.fromId(contentsId)?.getURL() ?? '',
-      id,
-    )
-    expect(started === '' || started.startsWith('https://www.thingiverse.com/')).toBe(true)
-    await invoke('browse.detach')
+    // **Asserted on the file, and the attach that would show the fallback is deliberately not
+    // made.** With nothing remembered, `browse.attach` with no URL calls `loadURL` on the
+    // registry's first start URL for real — a live request to Thingiverse out of CI. The
+    // assertion that used to stand here (`started === '' || started.startsWith(…)`) tolerated
+    // both outcomes, which is how it avoided depending on the site being up, but it also passes
+    // on the empty string `getURL()` answers before anything commits: it bought a network call
+    // and could not fail. The fallback itself belongs to `browse-host.test.ts`, which asserts it
+    // against a double with no network at all — `attach opens on the registry, then on the
+    // remembered page, then on what it was asked for`. What only a real app can say is that the
+    // file behind it is really gone, and that is what is left here.
+    expect(existsSync(join(userDataDir, BROWSE_FILE_NAME))).toBe(false)
   })
+
+  /** The remembered URL as it is on disk, or null for a file that is not there or says nothing. */
+  function rememberedPage(): string | null {
+    const file = join(userDataDir, BROWSE_FILE_NAME)
+    if (!existsSync(file)) return null
+    const parsed = JSON.parse(readFileSync(file, 'utf8')) as Record<string, unknown>
+    const value = parsed[LAST_URL_KEY]
+    return typeof value === 'string' ? value : null
+  }
 })
 
 /**
