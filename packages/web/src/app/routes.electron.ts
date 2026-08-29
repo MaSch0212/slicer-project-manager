@@ -4,8 +4,8 @@ import { sharedRoutes } from './routes.shared'
 
 /**
  * Desktop-only routes live here and are referenced from nowhere else, so the web build cannot
- * pull them in. Spec D added /settings/slicers; spec E adds /browse, under ./features/desktop/*,
- * replacing the placeholder below.
+ * pull them in. Spec D added /settings/slicers; spec E has taken the /browse it reserved. Both
+ * live under ./features/desktop/*.
  *
  * `fileReplacements` swaps this file in for routes.ts, so it must import the shared list from
  * routes.shared.ts: './routes' would be replaced with this very file.
@@ -27,6 +27,23 @@ export const routes: Routes = [
     canActivate: [authGuard],
     loadComponent: () =>
       import('./features/desktop/slicers/slicers.page').then((m) => m.DesktopSlicersPage),
+  },
+  {
+    /*
+     * Spec E 7.4, guarded exactly as the entry above it is and for the same reason: in local mode
+     * `requiresAuth` is false and the guard passes on its first arm, while in remote mode an
+     * unauthenticated window has no business anywhere but /login.
+     *
+     * **This route is never navigated to a model site.** It is an spm://app route hosting a
+     * native sibling `WebContentsView`, which the page attaches on init and destroys on teardown;
+     * the main window keeps `sandbox`, `contextIsolation` and `nodeIntegration: false` throughout.
+     * That is why the CI grep pair for `DesktopBrowsePage` matters more than the others: this page
+     * in the web build would be a UI expecting a containment a browser tab cannot provide.
+     */
+    path: 'browse',
+    canActivate: [authGuard],
+    loadComponent: () =>
+      import('./features/desktop/browse/browse.page').then((m) => m.DesktopBrowsePage),
   },
   {
     /*

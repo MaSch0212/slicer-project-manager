@@ -658,3 +658,48 @@ h2.spm-project-title {
 .spm-slicer-install jig-radio {
   align-items: flex-start;
 }
+
+/* ------------------------------------------------------------------ browse */
+
+/*
+ * The empty rectangle the native browse view is asked to paint into (spec E 4.2).
+ *
+ * It has no children and it must not get any: a `WebContentsView` is a native sibling of the
+ * renderer's own view, so it paints over anything drawn here with no z-index to negotiate. The
+ * app's own chrome for this page is deliberately above and below it, never on top of it, and the
+ * page reports *this element's* bounding rectangle -- the main process decides what becomes of it,
+ * insetting a chrome band of its own and hiding the view for a rectangle below a minimum area.
+ *
+ * The dashed border is what the user sees before the first paint and while the view is hidden for
+ * a modal, so an empty box reads as a place a page will be rather than as a rendering failure.
+ */
+.spm-browse-viewport {
+  min-height: 60vh;
+  border: 1px dashed var(--jig-color-border);
+  border-radius: var(--jig-size-rounded-lg);
+}
+
+.spm-browse-bar {
+  align-items: flex-start;
+}
+
+.spm-browse-bar form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--jig-size-padding-md);
+}
+
+/* Two lines that must not push the toolbar around as a site renames its own tab. Both values are
+   already truncated by `truncateForDisplay`; this is the layout half of the same rule. */
+.spm-browse-address {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--jig-size-padding-sm);
+  margin: 0;
+}
+
+.spm-browse-download + .spm-browse-download {
+  border-top: 1px solid var(--jig-color-border);
+  padding-top: var(--jig-size-padding-md);
+}
