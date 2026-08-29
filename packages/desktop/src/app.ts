@@ -1031,39 +1031,6 @@ export function main(): void {
   })
 
   /*
-   * The model browser's native view (spec E §3–4). Built here and nowhere else, so that the shell
-   * holds at most one for the life of the process.
-   *
-   * **Everything Electron-shaped it needs is passed in**, which is what lets `browse/host.ts`'s
-   * bounds arithmetic and lifecycle run under plain `node --test`. `WebContentsView` crosses as the
-   * **class**: a factory here would be a second place a `webPreferences` object could be built, and
-   * the one that matters — the browse view's — must stay in one file with nothing spread into it
-   * (constraint 8). Nothing in this function names a `webPreferences` for it, and nothing should.
-   *
-   * `session.fromPartition` rather than the session itself: it is called lazily inside the host,
-   * because it needs `app.whenReady()` and this runs before that.
-   *
-   * The window is resolved **per call**, like every other accessor in this block. `getAllWindows()[0]`
-   * and not `getFocusedWindow()`, which is null whenever the app is in the background — a bounds
-   * report that arrived while the user was in another application would then find no window and
-   * silently do nothing. During the one moment `replaceWindows` has two windows up there is no
-   * browse view, because the callback above destroyed it before building the replacement.
-   */
-  const browseHost = new BrowseHost({
-    WebContentsView,
-    fromPartition: (partition) => session.fromPartition(partition),
-    window: () => BrowserWindow.getAllWindows()[0] ?? null,
-    // Beside `state.json` and `slicers.json`, never inside either (D decision 4): one corrupt write
-    // should cost the user their last browsed page or their library choice, never both.
-    lastPageFile: join(app.getPath('userData'), BROWSE_FILE_NAME),
-    // The `will-download` listener goes on the session **when the session is created**, which is
-    // before any view exists on it — so there is no window in which a page could start a download
-    // nothing was listening for. Not per `attach`: the `DownloadItem` lives on the session and
-    // outlives every view (E decision 4), measured.
-    onSession: (browseSession) => browseDownloads.attachTo(browseSession),
-  })
-
-  /*
    * What browsing downloads, and what the app has to say about it out of band (spec E §5).
    *
    * **The only place an Electron `Notification` is constructed.** `BrowseNotices` owns the list and
@@ -1100,6 +1067,16 @@ export function main(): void {
    *
    * Every accessor is resolved **per call** — the library and the remote host both change without a
    * restart, and a download staged after a mode switch belongs to the library that is open now.
+   *
+   * **Built before `browseHost`, and the two of them refer to each other**, so which way round they
+   * go is a decision and not an accident. `browseHost` needs this object at `onSession` and reaches
+   * it *backwards*, at a `const` already initialised. This object needs `browseHost` for
+   * `isViewAttached` and reaches it forwards — which is safe by construction rather than by
+   * timing: the only caller of `isViewAttached` is the `done` handler of a `DownloadItem`, and the
+   * only way to have one is `attachTo`, which is called from `BrowseHost.session()`. Every path to
+   * the forward reference therefore runs through a method on the very object it names. The other
+   * order gave `onSession` a temporal-dead-zone reference that was safe only because nothing
+   * happened to call `session()` in between.
    */
   const browseDownloads = new BrowseDownloads({
     stagingDir: join(app.getPath('userData'), MODEL_DOWNLOADS_DIR),
@@ -1110,6 +1087,42 @@ export function main(): void {
     // `state().attached` and not a flag of its own: the host already answers this question, and a
     // second copy of it is a second thing that can disagree with the view actually on screen.
     isViewAttached: () => browseHost.state().attached,
+  })
+
+  /*
+   * The model browser's native view (spec E §3–4). Built here and nowhere else, so that the shell
+   * holds at most one for the life of the process.
+   *
+   * **Everything Electron-shaped it needs is passed in**, which is what lets `browse/host.ts`'s
+   * bounds arithmetic and lifecycle run under plain `node --test`. `WebContentsView` crosses as the
+   * **class**: a factory here would be a second place a `webPreferences` object could be built, and
+   * the one that matters — the browse view's — must stay in one file with nothing spread into it
+   * (constraint 8). Nothing in this function names a `webPreferences` for it, and nothing should.
+   *
+   * `session.fromPartition` rather than the session itself: it is called lazily inside the host,
+   * because it needs `app.whenReady()` and this runs before that.
+   *
+   * The window is resolved **per call**, like every other accessor in this block. `getAllWindows()[0]`
+   * and not `getFocusedWindow()`, which is null whenever the app is in the background — a bounds
+   * report that arrived while the user was in another application would then find no window and
+   * silently do nothing. During the one moment `replaceWindows` has two windows up there is no
+   * browse view, because the callback above destroyed it before building the replacement.
+   */
+  const browseHost = new BrowseHost({
+    WebContentsView,
+    fromPartition: (partition) => session.fromPartition(partition),
+    window: () => BrowserWindow.getAllWindows()[0] ?? null,
+    // Beside `state.json` and `slicers.json`, never inside either (D decision 4): one corrupt write
+    // should cost the user their last browsed page or their library choice, never both.
+    lastPageFile: join(app.getPath('userData'), BROWSE_FILE_NAME),
+    // The `will-download` listener goes on the session **when the session is created**, which is
+    // before any view exists on it — so there is no window in which a page could start a download
+    // nothing was listening for. Not per `attach`: the `DownloadItem` lives on the session and
+    // outlives every view (E decision 4), measured.
+    //
+    // Reaching *backwards* to the `const` above, which is the half of the pair that costs nothing:
+    // see the note on `browseDownloads` for why the two are in this order.
+    onSession: (browseSession) => browseDownloads.attachTo(browseSession),
   })
 
   // The one thing in this process that starts a subprocess the user asked for. `spawn` is
