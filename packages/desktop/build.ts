@@ -1,5 +1,6 @@
 import * as esbuild from 'esbuild'
 import { mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
+import { createRequire } from 'node:module'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -14,6 +15,52 @@ const here = dirname(fileURLToPath(import.meta.url))
 const outDir = join(here, 'dist')
 const migrationsSrc = resolve(here, '../core/src/db/migrations')
 const iconsSrc = join(here, 'icons')
+// Resolved rather than spelled out as `../../node_modules/…`: Deno's `nodeModulesDir: "auto"` puts
+// the real package under `node_modules/.deno/occt-import-js@0.0.23/` and leaves a symlink behind,
+// and `deno task build:desktop` is what runs this file.
+const occtWasmSrc = createRequire(import.meta.url).resolve(
+  'occt-import-js/dist/occt-import-js.wasm',
+)
+
+/**
+ * The three CommonJS names an ESM bundle does not define, defined.
+ *
+ * **This is the answer to "does the OCCT glue survive esbuild", and it was measured rather than
+ * reasoned about.** `occt-import-js` ships one emscripten glue file, and esbuild inlines it into
+ * `main.js` with no warnings and no errors — but the bundled result then dies on its first call
+ * with `Dynamic require of "fs" is not supported`. The glue is CommonJS written for Node: it does
+ * `require('fs')` and `require('path')` at module scope and sets `scriptDirectory = __dirname + '/'`
+ * (the only thing `locateFile` has to go on when it fetches the `.wasm`). None of those three names
+ * exists in an ESM bundle, so esbuild substitutes a shim that throws.
+ *
+ * With them defined, the same bundle parses `cube.stp` to its measured 12 triangles under plain
+ * Node, and `__dirname` is `dist/` — which is exactly where `copyWasm` below puts the `.wasm`, and
+ * `resources/app/dist/` once `package-app.ts` has moved the bundle. So the resolution the glue uses
+ * is its own default rather than anything this repo computes.
+ *
+ * **The branch this build did *not* take**, recorded because the next person to touch this file
+ * will want to know which resolution is in force: the alternative was to add `occt-import-js` to
+ * `external`, stage its 96 KB `dist/occt-import-js.js` beside the `.wasm`, and point the specifier
+ * at a desktop-only shim doing its own `createRequire` and `locateFile`. That was rejected on one
+ * ground: it would make the Electron bundle load a *different module* from the one `node --test`
+ * and `deno test` measure, so the shell's only loading path would be the one no test covers. The
+ * cost of the branch actually taken is that these three names are now visible to everything in the
+ * bundle — a future dependency that sniffs `typeof __dirname` to detect CommonJS will take that arm
+ * here, and a dynamic `require` of a package will resolve against `dist/`, where a packaged app has
+ * no `node_modules`, instead of failing loudly at build time.
+ *
+ * Main only. The preload is already CommonJS and has all three for real; an `import` statement in
+ * that bundle would throw at load time in a sandboxed preload, which is the whole point of `PRELOAD`
+ * being `format: 'cjs'` below.
+ */
+const NODE_CJS_INTEROP = [
+  "import { createRequire as __spmCreateRequire } from 'node:module'",
+  "import { dirname as __spmDirname } from 'node:path'",
+  "import { fileURLToPath as __spmFileURLToPath } from 'node:url'",
+  'const require = __spmCreateRequire(import.meta.url)',
+  'const __filename = __spmFileURLToPath(import.meta.url)',
+  'const __dirname = __spmDirname(__filename)',
+].join('\n')
 
 /**
  * The main bundle is ESM and that is not a style choice.
@@ -32,6 +79,7 @@ const MAIN: esbuild.BuildOptions = {
   entryPoints: [join(here, 'src/main.ts')],
   outfile: join(outDir, 'main.js'),
   format: 'esm',
+  banner: { js: NODE_CJS_INTEROP },
 }
 
 /**
@@ -52,8 +100,10 @@ const PRELOAD: esbuild.BuildOptions = {
 const COMMON: esbuild.BuildOptions = {
   bundle: true,
   platform: 'node',
-  // Electron is supplied by the runtime, not bundled. Everything else — @spm/core, @spm/contract
-  // and zod — is bundled in, so dist/ needs no node_modules beside it.
+  // Electron is supplied by the runtime, not bundled. Everything else — @spm/core, @spm/contract,
+  // zod and the occt-import-js glue — is bundled in, so dist/ needs no node_modules beside it.
+  // It does need one loose file beside it: `copyWasm` stages the OCCT `.wasm`, which is data the
+  // glue fetches at call time and which no bundler ever inlines.
   external: ['electron'],
   target: 'node24',
   sourcemap: true,
@@ -104,6 +154,27 @@ async function copyIcons(): Promise<number> {
   return files.length
 }
 
+/**
+ * The 7.6 MB OCCT WebAssembly module, beside the bundle it is fetched from.
+ *
+ * **Needed whatever esbuild does with the glue**, which is why it is a separate step from the
+ * bundling decision recorded in `NODE_CJS_INTEROP`: the `.wasm` is data the glue reads with
+ * `fs.readFileSync` at call time, from `__dirname + '/occt-import-js.wasm'`. No bundler inlines it,
+ * and nothing about the JavaScript changes that.
+ *
+ * `__dirname` is `dist/` here and `resources/app/dist/` in a packaged application, so the file has
+ * to travel with `main.js` exactly as the icons and the migrations do — a path reaching back into
+ * `node_modules` would work in the repo and resolve to nothing on a user's machine.
+ *
+ * Read-then-write for the same reason `copyMigrations` gives: CopyFileW carries the source's mtime
+ * across on Windows, so a copied file looks older than the build that produced it.
+ */
+async function copyWasm(): Promise<number> {
+  const bytes = await readFile(occtWasmSrc)
+  await writeFile(join(outDir, 'occt-import-js.wasm'), bytes)
+  return bytes.byteLength
+}
+
 async function assertWritten(...files: string[]): Promise<void> {
   for (const file of files) {
     const info = await stat(file).catch(() => null)
@@ -118,6 +189,7 @@ await esbuild.build({ ...COMMON, ...MAIN })
 await esbuild.build({ ...COMMON, ...PRELOAD })
 const migrations = await copyMigrations()
 const icons = await copyIcons()
+const wasmBytes = await copyWasm()
 await assertWritten(
   join(outDir, 'main.js'),
   join(outDir, 'preload.js'),
@@ -125,8 +197,15 @@ await assertWritten(
   // spellings and a rename in `icons/` would otherwise pass the count check and fail at runtime.
   join(outDir, 'icons', 'icon.ico'),
   join(outDir, 'icons', 'icon.png'),
+  // Named for the same reason and a sharper one: the glue asks for this exact spelling, and a
+  // `copyWasm` that silently produced nothing yields a shell that starts, opens a library and
+  // renders a blank thumbnail for every STEP file in it. This fails the *build* — and so
+  // `deno task dev:desktop` — where `package-app.ts`'s `REQUIRED` list only fails packaging,
+  // which no CI job runs.
+  join(outDir, 'occt-import-js.wasm'),
 )
 console.log(
-  `desktop: bundled main + preload, copied ${migrations} migrations and ${icons} icons to ${outDir}`,
+  `desktop: bundled main + preload, copied ${migrations} migrations, ${icons} icons and ` +
+    `${wasmBytes} bytes of occt-import-js.wasm to ${outDir}`,
 )
 await esbuild.stop()
