@@ -61,8 +61,15 @@ export type SlicerDef = {
   argv(file: string): string[]
 
   /**
-   * What this slicer does to a file it is handed, as measured. Read by the launch paths to decide
-   * what the app may honestly claim; never a strip set — see the module docblock.
+   * What this slicer does to a file it is handed, as measured.
+   *
+   * Read by the launch paths to decide **two** things: what the app may honestly claim about a
+   * launch that is going ahead — `notices()`, which is what the first four flags drive — and
+   * whether the launch happens at all, which is `opensStep`. A refusal is not a claim about a
+   * launch that is going ahead, so the two are not the same job and the sentence has to name both.
+   *
+   * Never a strip set — see the module docblock, and see `opensStep` for why that argument runs
+   * the other way for this one field.
    */
   behaviour: {
     /**
@@ -79,6 +86,38 @@ export type SlicerDef = {
     alwaysPromptsOn3mf: boolean
     /** Whether a modal fires on the *absence* of its own config — Bambu (§20). */
     promptsWithoutOwnConfig: boolean
+    /**
+     * Whether the product reads a `.step` or a `.stp` at all. **False for Cura alone**, and it is
+     * the one flag here that stops a launch rather than phrasing a sentence about one.
+     *
+     * Measured three ways plus a control (2026-08-29 STEP spike §1d). **One:** Cura 5.13.0 handed
+     * a `.step` or a `.stp` on argv reaches exactly one visible window, titled
+     * `Untitled - UltiMaker Cura 5.13.0`, with no dialog and nothing to dismiss. **Two, the
+     * control that makes it a real negative:** the same install in the same session handed
+     * `cone.stl` shows `cone - UltiMaker Cura 5.13.0`, so the title *does* pick up a loaded file's
+     * basename on that machine and `Untitled` is a measured absence rather than a broken probe.
+     * **Three:** Cura's own log says `Unsupported Mime Type Database file extension` seven
+     * milliseconds after `Attempting to read file`, and then nothing. **Corroborated from the
+     * shipped code:** its plugin directory lists eleven readers by name — `3MFReader`, `AMFReader`,
+     * `CuraProfileReader`, `GCodeGzReader`, `GCodeProfileReader`, `GCodeReader`, `ImageReader`,
+     * `LegacyProfileReader`, `TrimeshReader`, `UFPReader`, `X3DReader` — none of which reads STEP,
+     * in both 5.12.0 and 5.13.0. The other four were measured opening both extensions (§1a–§1c,
+     * §2).
+     *
+     * **What it is not, and this bounds it.** It is not a general capability matrix and must not
+     * grow into one. It is one boolean because exactly one measurement distinguishes exactly one
+     * product; a `formats: Set<string>` per slicer would be four rows of speculation and one row
+     * of evidence, and the four would be unfalsifiable until somebody added a format nobody had
+     * measured.
+     *
+     * **Why this field is admissible under a module docblock that refuses a `strip` one.** The two
+     * cases are opposites. A strip set is indexed by the flavour of the *file* — what can be
+     * removed is whatever the authoring slicer put in — so it cannot live on a `SlicerId` key at
+     * all. STEP capability is indexed by the *product*: it is a fact about Cura, measured on Cura,
+     * and the file has nothing to do with it, so a `SlicerId`-keyed table is the only place it can
+     * live.
+     */
+    opensStep: boolean
   }
 }
 
@@ -116,6 +155,7 @@ export const SLICERS: Readonly<Record<SlicerId, SlicerDef>> = {
       discardsForeignProjects: false,
       alwaysPromptsOn3mf: false,
       promptsWithoutOwnConfig: false,
+      opensStep: false,
     },
   },
   prusaslicer: {
@@ -131,6 +171,7 @@ export const SLICERS: Readonly<Record<SlicerId, SlicerDef>> = {
       discardsForeignProjects: false,
       alwaysPromptsOn3mf: true,
       promptsWithoutOwnConfig: false,
+      opensStep: true,
     },
   },
   anycubic: {
@@ -146,6 +187,7 @@ export const SLICERS: Readonly<Record<SlicerId, SlicerDef>> = {
       discardsForeignProjects: true,
       alwaysPromptsOn3mf: false,
       promptsWithoutOwnConfig: false,
+      opensStep: true,
     },
   },
   bambu: {
@@ -161,6 +203,7 @@ export const SLICERS: Readonly<Record<SlicerId, SlicerDef>> = {
       discardsForeignProjects: false,
       alwaysPromptsOn3mf: false,
       promptsWithoutOwnConfig: true,
+      opensStep: true,
     },
   },
   orca: {
@@ -177,6 +220,7 @@ export const SLICERS: Readonly<Record<SlicerId, SlicerDef>> = {
       discardsForeignProjects: false,
       alwaysPromptsOn3mf: false,
       promptsWithoutOwnConfig: false,
+      opensStep: true,
     },
   },
 }
