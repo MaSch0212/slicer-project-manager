@@ -1,6 +1,7 @@
 import type { MeshLimits } from './mesh/limits.ts'
 import type { Mesh } from './mesh/mesh.ts'
 import { parseObjFile } from './mesh/obj.ts'
+import { parseStepFile } from './mesh/step.ts'
 import { parseStlFile } from './mesh/stl.ts'
 import { parse3mfMesh } from './mesh/threemf.ts'
 import { encodePng } from './png.ts'
@@ -17,7 +18,7 @@ import type { PreviewHandler, PreviewJob, PreviewOutput } from './queue.ts'
  *
  * `lastIndexOf` over the whole path rather than over its basename, and that is safe rather than
  * merely untested: any dot in a *directory* name is necessarily followed by a separator, and no
- * separator can appear inside one of the three extensions matched below. So a dotted directory
+ * separator can appear inside any of the extensions matched below. So a dotted directory
  * can only ever produce a false negative, for a file with no extension of its own
  * (`v1.2/README`) — and `null`, meaning unsupported, is the right answer there anyway. It can
  * never produce a false positive. `classifyFile` reasons about the whole path the same way.
@@ -30,16 +31,28 @@ function extensionOf(absPath: string): string {
 /**
  * Reads whichever mesh format `absPath` names, or `null` if it names none of them.
  *
- * Every arm takes the path rather than bytes, and none of them ever holds the file: an STL and an
- * OBJ are read in 256 KB chunks, and a 3MF's model part is inflated straight into the parser's
- * window. The peak of a preview job is therefore its `positions` array plus a fixed window, and
- * not a function of the file at all — which for the reference library's 164 MB STL and 674 MB
- * inflated 3MF model part is the difference between fitting on a 2 GB NAS and not.
+ * Every arm takes the path rather than bytes, and **three of the four never hold the file**: an STL
+ * and an OBJ are read in 256 KB chunks, and a 3MF's model part is inflated straight into the
+ * parser's window. For those three the peak of a preview job is its `positions` array plus a fixed
+ * window, and not a function of the file at all — which for the reference library's 164 MB STL and
+ * 674 MB inflated 3MF model part is the difference between fitting on a 2 GB NAS and not.
  *
- * Asynchronous for one reason: `DecompressionStream` is a `TransformStream`, so the 3MF path
- * cannot be pulled synchronously. STL and OBJ could have stayed synchronous but are streamed the
- * same way, because `MESH_HANDLER.run` already returns a `Promise` and there is nothing above here
- * for the asynchrony to spread to.
+ * **The STEP arm is the exception, and it is not a small one.** `ReadStepFile` is whole-buffer with
+ * no streaming form, and it copies what it is given into the WASM heap, so at the moment of the
+ * call the file is resident **twice** — once as the `Uint8Array` read from disk, once inside the
+ * module. That is the small half. The large half is a per-process floor: **~244 MB of peak RSS
+ * during any parse, regardless of the file**. An 8 KB STEP file with twelve triangles cost 207 MB
+ * measured, and the reference library's largest cost 278 MB. It is paid per process rather than per
+ * file, and a process that never parses a STEP file pays none of it. `parseStepFile` carries the
+ * measurements and `queue.ts`'s `DEFAULT_CONCURRENCY` carries what they do to the budget.
+ *
+ * Asynchronous originally for one reason: `DecompressionStream` is a `TransformStream`, so the 3MF
+ * path cannot be pulled synchronously. STL and OBJ could have stayed synchronous but are streamed
+ * the same way, because `MESH_HANDLER.run` already returns a `Promise` and there is nothing above
+ * here for the asynchrony to spread to. The STEP arm has since added a second reason of its own,
+ * and it is a different one: `occtimportjs()` is a factory that returns a promise for the
+ * instantiated WASM module. **The parse itself is synchronous and blocking once it starts** —
+ * 217–1 307 ms of it, cold — so the `await` on this arm buys the module and buys no yielding.
  */
 function readMesh(absPath: string, limits: MeshLimits | undefined): Promise<Mesh | null> {
   switch (extensionOf(absPath)) {
@@ -49,6 +62,9 @@ function readMesh(absPath: string, limits: MeshLimits | undefined): Promise<Mesh
       return parseObjFile(absPath, limits)
     case '.3mf':
       return parse3mfMesh(absPath, limits)
+    case '.step':
+    case '.stp':
+      return parseStepFile(absPath, limits)
     default:
       return Promise.resolve(null)
   }

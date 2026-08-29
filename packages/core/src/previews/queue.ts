@@ -60,6 +60,33 @@ export const MAX_PREVIEW_ATTEMPTS = 3
  * faster here, 0% on the second machine, because parsing and rasterizing are CPU-bound JavaScript
  * on one thread. `SPM_PREVIEW_CONCURRENCY` raises it for a library that waits on I/O instead; the
  * README carries the table.
+ *
+ * **Since STEP support there is a second term, and it does not behave like the first.** A process
+ * that has parsed one STEP file peaks at ~244 MB while parsing any of them, whatever the file:
+ * measured across ten, an 8 KB file cost 207 MB and the largest 278 MB, and peak RSS stayed flat
+ * over a second pass. **That floor does not multiply with concurrency, and that is a property of
+ * the code rather than a hope** — the "workers" below are plain async functions racing over one job
+ * array in one process on one thread, so there is one module instance and one WASM heap however
+ * many of them there are. A process that never parses a STEP file pays none of it.
+ *
+ * The arithmetic an operator needs before raising this, in full, because a formula that holds only
+ * at the default is worse here than no formula:
+ *
+ * | Case                | Peak                                                             |
+ * | ------------------- | ---------------------------------------------------------------- |
+ * | Before STEP support | `concurrency × (mesh + ~80 MB) + ~120 MB`                         |
+ * | At concurrency 1    | larger of `mesh + ~80 MB + ~120 MB` and ~244 MB — **not** the sum  |
+ * | At concurrency ≥ 2  | they add: `(concurrency − 1) × (mesh + ~80 MB) + ~120 MB + ~244 MB` |
+ *
+ * Why row two is "whichever is larger" and row three is a sum: at one worker a mesh job and a STEP
+ * parse cannot be in flight together, so only one of the two terms is ever the peak. At two or more
+ * a worker can be *holding* an allocated `positions` array across an `await` when the STEP parse
+ * starts, and the reference library's worst is 208.8 MB of it.
+ *
+ * **Row three is arithmetic over two separately measured processes, not a measurement.** The
+ * 400–410 MB backfill figure is the mesh path alone and the ~244 MB figure is the STEP path alone;
+ * nobody has measured a process that does both. The direction is up and the shape is the one above;
+ * the number is not claimed.
  */
 export const DEFAULT_CONCURRENCY = 1
 

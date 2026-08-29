@@ -51,9 +51,16 @@ export const PREVIEW_INTERVAL_MS = 5_000
  * How many previews are rendered at once. **One**, which is core's `DEFAULT_CONCURRENCY`, passed
  * explicitly rather than left to the default so the budget below is visible at the call site.
  *
- * It is a memory decision, and it multiplies with `PREVIEW_MAX_MESH_BYTES`: each worker may hold
- * one mesh, so the two numbers are one budget. **The figures are B1's, measured on the Deno
- * server, and the Electron peak was not re-measured in this task** — they are carried across
+ * It is a memory decision, and for meshes it multiplies with `PREVIEW_MAX_MESH_BYTES`: each worker
+ * may hold one mesh, so those two numbers are one budget. **STEP does not join that budget, it sits
+ * underneath it.** A process that has parsed one STEP file peaks at ~244 MB while parsing any of
+ * them, whatever the file, and the floor is per process rather than per worker — so raising the
+ * concurrency does not multiply it. `DEFAULT_CONCURRENCY`'s docblock in `@spm/core` carries the
+ * arithmetic for the two together, in the one place it lives; it is not repeated here, because two
+ * copies of a formula is how the formula drifts.
+ *
+ * **The mesh figures below are B1's, measured on the Deno server, and the Electron peak was not
+ * re-measured in this task** — they are carried across
  * because the mesh, the parser and the rasterizer are the same code with the same ceiling, not
  * because anybody watched this process's RSS. B1 put a worker's peak at about 290 MB against a
  * 256 MB ceiling (208.8 MB for the largest mesh in the reference library, plus a fixed reader
@@ -61,13 +68,15 @@ export const PREVIEW_INTERVAL_MS = 5_000
  * — for 1.5 % less wall-clock on one machine and 0 % on another, because parsing and rasterizing
  * are CPU-bound JavaScript on one thread.
  *
- * The desktop shell has two reasons to keep it at one where a server might not, and both are
+ * The desktop shell has three reasons to keep it at one where a server might not, and all three are
  * arguments rather than measurements of this process. It is not only the queue: it is also
  * Electron's browser process, the IPC dispatch table and the `spm://` handler that serves the very
- * thumbnails this produces, all on the same thread. And it is sharing the machine with whatever
- * the user is doing — a slicer, a browser, the model they are printing from. Against B1's numbers
- * a second worker adds ~220 MB of peak for 0–1.5 % of wall clock, which is a bad trade on a
- * server and a worse one here.
+ * thumbnails this produces, all on the same thread. **And a STEP parse holds that thread
+ * outright** — 217–1 307 ms, with no yield inside `ReadStepFile`, where every other parser here
+ * streams and awaits; what a `spm://` request does when it arrives during one is unmeasured. And it
+ * is sharing the machine with whatever the user is doing — a slicer, a browser, the model they are
+ * printing from. Against B1's numbers a second worker adds ~220 MB of peak for 0–1.5 % of wall
+ * clock, which is a bad trade on a server and a worse one here.
  */
 export const PREVIEW_CONCURRENCY = 1
 

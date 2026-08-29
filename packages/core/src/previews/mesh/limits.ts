@@ -8,14 +8,23 @@ const BYTES_PER_VERTEX = 12
 /**
  * The default ceiling on one mesh's geometry arrays.
  *
- * **A backstop, not the mechanism.** Every read in this package is streamed, so the document is no
- * longer part of the peak and nothing in the reference library is refused by this. The two worst
+ * **A backstop, not the mechanism.** Every read in this package is streamed *except the STEP one*,
+ * so for STL, OBJ and 3MF the document is no longer part of the peak, and nothing in the reference
+ * library is refused by this. The two worst
  * files are the Köln Pokal 3MF — 2 899 850 triangles over 8 699 550 unshared vertices, so 104.4 MB
  * of `positions` beside 104.4 MB of the vertex table they index, 208.8 MB — and Baby Groot's
  * 164 MB binary STL at 3 295 832 triangles, which needs 118.7 MB and no vertex table at all. What
  * this exists for is input whose triangle count is a function of an attacker rather than of a
  * printer: a model part declaring a billion degenerate triangles asks for 36 GB, and asking is all
  * it takes.
+ *
+ * **This constant does not bound what a STEP file costs, and that is the most misleading thing a
+ * reader could infer from it.** `parseStepFile` hands the whole file to OCCT, which tessellates
+ * before anything countable exists, and the measured cost of doing so is a per-process floor of
+ * ~244 MB of peak RSS that is not the mesh at all: the largest `positions` array over the whole
+ * reference STEP sample is 796 932 bytes, three orders of magnitude under this number. Lowering
+ * this will not lower that floor and raising it will not raise it. What this does bound on that
+ * arm is the adapter's own `positions` allocation, after the parse. See `parseStepFile`.
  *
  * 256 MB is the library's worst file plus 23%, which is the smallest round number that is a
  * backstop rather than a filter. It is not derived from the memory budget — one worker's peak is
@@ -44,10 +53,19 @@ function megabytes(bytes: number): string {
 /**
  * Refuses a mesh that would not fit, **before** the allocation rather than after it.
  *
- * The counts come from a counting pass that allocates nothing, so this runs while the process is
- * still holding only the parser's fixed window — which is the only order in which a limit is worth
- * having. The message names both sizes because the operator's next question is always "by how
- * much", and the answer decides whether `SPM_MAX_MESH_MB` is the fix or the file is.
+ * **On the STL, OBJ and 3MF arms** the counts come from a counting pass that allocates nothing, so
+ * this runs while the process is still holding only the parser's fixed window — which is the only
+ * order in which a limit is worth having.
+ *
+ * **On the STEP arm it cannot, and the call there means something narrower.** OCCT tessellates
+ * before any count exists, so the numbers reaching this function are a result rather than a
+ * prediction, and the expensive part of that parse has already been paid. What this bounds there is
+ * the adapter's own `positions` allocation and nothing else. It is still worth calling — one
+ * ceiling for every arm, and a pathological tessellation is still refused before a `Float32Array`
+ * is asked for — but it is not the guard it is on the other three.
+ *
+ * The message names both sizes because the operator's next question is always "by how much", and
+ * the answer decides whether `SPM_MAX_MESH_MB` is the fix or the file is.
  */
 export function assertMeshFits(
   vertexCount: number,

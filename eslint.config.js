@@ -60,12 +60,23 @@ export default tseslint.config(
                 '!node:*/**',
                 '!@spm',
                 '!@spm/**',
+                // The one npm package core imports, named individually rather than through any
+                // wider hole. It is the OCCT WebAssembly build behind `previews/mesh/step.ts`,
+                // and it is here because the argument this rule asks for was made and measured:
+                // the same plain `import occtimportjs from 'occt-import-js'` parses the same
+                // fixture to the same 12 triangles under `node --test` and under `deno test`,
+                // and there is no Deno-only or Node-only path through it. The glue is CommonJS
+                // and reaches for `require`/`__dirname` itself, which is a *bundler* problem
+                // rather than a portability one — see `NODE_CJS_INTEROP` in
+                // `packages/desktop/build.ts`, which is where it is solved and where the
+                // measurement is written down.
+                '!occt-import-js',
                 '!.',
                 '!..',
                 '!./**',
                 '!../**',
               ],
-              message: `${CORE_RUNTIME_MESSAGE} Only node: builtins, @spm/* workspace packages and relative paths are allowed here.`,
+              message: `${CORE_RUNTIME_MESSAGE} Only node: builtins, @spm/* workspace packages, relative paths and occt-import-js are allowed here.`,
             },
           ],
         },

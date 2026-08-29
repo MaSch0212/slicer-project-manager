@@ -199,14 +199,20 @@ test('a .step file classified as other is never claimed', async () => {
 test('a model the handler cannot read is unsupported, not failed', async () => {
   await withLibrary(async (lib) => {
     const { ctx, dir } = seedProjectDir(lib)
-    writeFileSync(join(dir, 'part.step'), 'ISO-10303-21;')
+    // **This used to be a `.step` file, and subsystem F is why it is not.** The fixture only has
+    // to be a format `readMesh` has no arm for; `.step` was that until `parseStepFile` shipped,
+    // at which point these same bytes — a bare `ISO-10303-21;` with no body — started reaching
+    // OCCT, being refused by it, and leaving `failed` rather than `unsupported`. PLY is the
+    // replacement for the same reason `.step` was chosen originally: a real mesh format that
+    // nothing here parses, so the fixture is not a nonsense extension nobody would ever meet.
+    writeFileSync(join(dir, 'part.ply'), 'ply\nformat ascii 1.0\nend_header\n')
     await rescan(lib, ctx)
 
     // classifyFile only ever calls .stl/.obj/.3mf a model, so this is forced: the point is the
     // handler's contract for a `model` job in a format it has no parser for. `null` (→
     // `unsupported`, never retried) is right and a throw (→ `failed`, against the retry
     // budget) is wrong, because re-reading the file will never make it readable.
-    lib.db.prepare("UPDATE files SET kind = 'model' WHERE rel_path = 'part.step'").run()
+    lib.db.prepare("UPDATE files SET kind = 'model' WHERE rel_path = 'part.ply'").run()
 
     assert.deepEqual(await runPreviewQueue(lib, { handlers: HANDLERS }), {
       ready: 0,

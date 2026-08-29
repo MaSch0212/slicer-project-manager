@@ -5,5 +5,20 @@
        the same root devDependency packages/core's Node tests use. */
     "types": ["node"]
   },
-  "include": ["src", "test", "build.ts", "package-app.ts", "packaging.ts", "playwright.config.ts"]
+  "include": [
+    "src",
+    "test",
+    "build.ts",
+    "package-app.ts",
+    "packaging.ts",
+    "playwright.config.ts",
+    /* One file from another package, and it has to be named here. `occt-import-js` publishes no
+       type declarations, so `packages/core/src/previews/mesh/occt-import-js.d.ts` supplies them;
+       core's own tsconfig picks it up through `include: ["src"]`, but this program compiles
+       `step.ts` by importing `@spm/core` without including core's directory, and an ambient
+       `declare module` that is not in the program does not exist. Without this line
+       `deno task typecheck:desktop` fails TS7016 on a file this package does not own. The
+       alternative was a `/// <reference>` in `step.ts`, which `@typescript-eslint` refuses. */
+    "../core/src/previews/mesh/occt-import-js.d.ts"
+  ]
 }

@@ -96,7 +96,7 @@ test('no module in packages/desktop/src registers a preload on a session', () =>
  * module for it to call, and a core or server file that names one of E's own things.
  *
  * They do **not** see an edit to the body of an existing core function. Nothing in this repository
- * can, short of pinning a content hash of forty-one files in a desktop test — which would turn every
+ * can, short of pinning a content hash of forty-three files in a desktop test — which would turn every
  * later, legitimate core change into a red test in the wrong package, with a message about a
  * subsystem that had nothing to do with it. What covers that is core's own suite, which runs
  * unchanged in `deno task verify`, and the diff a reviewer reads.
@@ -187,6 +187,8 @@ const CORE_MODULES = [
   'previews/mesh/limits.ts',
   'previews/mesh/mesh.ts',
   'previews/mesh/obj.ts',
+  'previews/mesh/occt-import-js.d.ts',
+  'previews/mesh/step.ts',
   'previews/mesh/stl.ts',
   'previews/mesh/threemf.ts',
   'previews/png.ts',
