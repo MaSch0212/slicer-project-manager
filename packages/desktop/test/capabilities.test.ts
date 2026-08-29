@@ -44,9 +44,10 @@ test('the shell columns are exactly what spec 2.4 says the shell contributes', (
     // object and remote mode never reads it, so one edit would light the page up in one mode only.
     canLaunchSlicer: true,
     canConfigureSlicers: true,
-    // Still false until spec E ships it, which is a deliberate departure from the spec table: a
-    // capability whose feature does not exist lights up UI that goes nowhere.
-    canBrowseModelSites: false,
+    // Shipped by spec E, and flipped in this column *and* the one below for the same reason the
+    // slicer flags were: browsing is a property of the machine, not of the library, so the
+    // desktop app pointed at a remote server can still embed a browser.
+    canBrowseModelSites: true,
   })
 
   assert.deepEqual(REMOTE_SHELL_CAPABILITIES, {
@@ -58,21 +59,20 @@ test('the shell columns are exactly what spec 2.4 says the shell contributes', (
     canPickLocalFolder: false,
     canLaunchSlicer: true,
     canConfigureSlicers: true,
-    canBrowseModelSites: false,
+    canBrowseModelSites: true,
   })
 })
 
 test('local mode is the shell column alone, with no backend to union with', () => {
-  // Spec 2.4's second column, minus the one flag spec E still owns. There is no second operand:
-  // with no backend, unioning the column with itself would be a no-op that read as if it were
-  // doing something.
+  // Spec 2.4's second column, whole. There is no second operand: with no backend, unioning the
+  // column with itself would be a no-op that read as if it were doing something.
   assert.deepEqual(LOCAL_SHELL_CAPABILITIES, {
     requiresAuth: false,
     canManageUsers: false,
     canPickLocalFolder: true,
     canLaunchSlicer: true,
     canConfigureSlicers: true,
-    canBrowseModelSites: false,
+    canBrowseModelSites: true,
   })
 })
 
@@ -85,12 +85,14 @@ test('remote mode is the union, and it is spec 2.4 third column', () => {
     canManageUsers: true,
     // Neither column offers it. Spec 2.4 says `no` for this row.
     canPickLocalFolder: false,
-    // Carried through from the shell column over a backend that reports both false — which is
-    // the whole row spec 2.4 wrote the union for, now driven with the real constants rather than
-    // with a hypothetical column.
+    // Carried through from the shell column over a backend that reports all three false — which
+    // is the whole row spec 2.4 wrote the union for, now driven with the real constants rather
+    // than with a hypothetical column. `canBrowseModelSites` joined them in spec E: the browse
+    // view is a `WebContentsView` in this process, and the Deno server has no opinion worth
+    // hearing about whether this machine can embed one.
     canLaunchSlicer: true,
     canConfigureSlicers: true,
-    canBrowseModelSites: false,
+    canBrowseModelSites: true,
   })
 })
 
@@ -112,26 +114,53 @@ test('unioning the local column with a backend would light up a folder control t
 })
 
 /**
- * The row spec 2.4 wrote the union for: the Electron app pointed at a remote server needs remote
- * auth *and* a shell-owned capability the server denies, at the same time.
+ * The row spec 2.4 wrote the union for, and **the one test in this file that is deliberately not
+ * about today's constants.**
  *
- * **Re-pointed at `canBrowseModelSites` when spec D flipped the two slicer flags.** This test used
- * to build a column with all three set and assert all three came through; two of them are now
- * `true` in `REMOTE_SHELL_CAPABILITIES` itself, so for those rows the fixture had stopped
- * differing from the constant it spreads and the assertion had decayed into "`true || false` is
- * `true`". `canBrowseModelSites` is still false in both real columns until spec E ships it, so it
- * is the flag that can still carry the property this test was written for. The two slicer flags
- * are now driven from the real constants by the remote-mode union test above.
+ * The property is a property of the *operator*: for a shell-owned flag, a backend's `false` must
+ * not switch off a shell's `true`. Nothing about that sentence names a flag.
+ *
+ * **It has now decayed twice by being written against the real columns.** It was first built by
+ * spreading `REMOTE_SHELL_CAPABILITIES` and setting the three shell-owned flags; spec D flipped
+ * two of them in the constant itself, so for those rows the fixture stopped differing from what it
+ * spread and the assertion became "`true || false` is `true`". Spec D re-pointed it at
+ * `canBrowseModelSites`, the one shell-owned flag still false in both columns — and spec E flips
+ * that one too, so there is no flag left in the real columns to carry the property.
+ *
+ * So both operands are **literals**, and neither is derived from a constant this package ships.
+ * `shell` says true for the three shell-owned rows and `backend` says false for the same three,
+ * which is the disagreement the union exists to resolve; the real columns are asserted whole, and
+ * the real union against the real server column is asserted, by the three tests above. Change
+ * `unionCapabilities` to `&&` on any shell-owned row and this goes red — which is what a fixture
+ * spread from the constant it is testing had stopped being able to do.
  */
 test('a backend cannot veto a capability the shell has', () => {
-  // Stated rather than assumed: with the backend answering `true` this would pass whatever the
-  // union did with the shell's column.
-  assert.equal(SERVER_CAPABILITIES.canBrowseModelSites, false)
-  const withBrowsing: Capabilities = { ...REMOTE_SHELL_CAPABILITIES, canBrowseModelSites: true }
-  assert.deepEqual(unionCapabilities(withBrowsing, SERVER_CAPABILITIES), {
+  const shell: Capabilities = {
+    requiresAuth: false,
+    canManageUsers: false,
+    canPickLocalFolder: true,
+    canLaunchSlicer: true,
+    canConfigureSlicers: true,
+    canBrowseModelSites: true,
+  }
+  const backend: Capabilities = {
     requiresAuth: true,
     canManageUsers: true,
     canPickLocalFolder: false,
+    canLaunchSlicer: false,
+    canConfigureSlicers: false,
+    canBrowseModelSites: false,
+  }
+
+  assert.deepEqual(unionCapabilities(shell, backend), {
+    // The backend's restriction wins, because `||` on a restriction is the most restrictive answer.
+    requiresAuth: true,
+    // The backend's affordance survives a shell that has none — the mirror case, below.
+    canManageUsers: true,
+    // All four of these are the property: the shell says it can, the backend says it cannot, and
+    // the shell wins on every one of them. `canPickLocalFolder` is mode-scoped rather than
+    // shell-owned in the real columns, and here it is simply a fourth row the operator must carry.
+    canPickLocalFolder: true,
     canLaunchSlicer: true,
     canConfigureSlicers: true,
     canBrowseModelSites: true,

@@ -35,9 +35,9 @@ import type { Capabilities } from '@spm/contract/dtos.ts'
  *
  * `canLaunchSlicer` and `canConfigureSlicers` are true because spec D shipped them: the shell
  * detects the slicers installed on this machine, `/settings/slicers` configures them, and both
- * work whichever library is open. `canBrowseModelSites` stays false until E ships it, which is a
- * deliberate departure from the spec table: a capability whose feature does not exist lights up
- * UI that goes nowhere.
+ * work whichever library is open. `canBrowseModelSites` is true because spec E shipped it, on the
+ * same argument: the browse view is a `WebContentsView` in *this process*, and which library is
+ * open has nothing to say about whether this process can embed one.
  *
  * **A flag flipped here is flipped in this column only**, and an earlier version of this comment
  * claimed otherwise. Local mode *returns* this object (`shell.ts:170`); remote mode unions
@@ -51,7 +51,7 @@ export const LOCAL_SHELL_CAPABILITIES: Capabilities = {
   canPickLocalFolder: true,
   canLaunchSlicer: true,
   canConfigureSlicers: true,
-  canBrowseModelSites: false,
+  canBrowseModelSites: true,
 }
 
 /**
@@ -73,8 +73,12 @@ export const LOCAL_SHELL_CAPABILITIES: Capabilities = {
  * The two slicer flags are true here for the same reason they are true in the local column — the
  * machine this process runs on has the slicers on it whatever library is open — and this is the
  * row spec 2.4 wrote the union for: the Deno server reports both false, and a server that cannot
- * launch a slicer must not be able to switch off a shell that can. `canBrowseModelSites` is false
- * until E, as above.
+ * launch a slicer must not be able to switch off a shell that can. `canBrowseModelSites` is true
+ * here as well as locally, and **the landing goes to whichever library is open**: the browser is
+ * embedded by this process on this machine, and `browse.land` streams the staged bytes through
+ * the proxy to the remote server. The browser column stays false, now on evidence rather than on
+ * a deferral — the sites refuse framing, a `WebContentsView` is what loads them, and a browser
+ * build has no `WebContentsView`.
  */
 export const REMOTE_SHELL_CAPABILITIES: Capabilities = {
   requiresAuth: false,
@@ -82,7 +86,7 @@ export const REMOTE_SHELL_CAPABILITIES: Capabilities = {
   canPickLocalFolder: false,
   canLaunchSlicer: true,
   canConfigureSlicers: true,
-  canBrowseModelSites: false,
+  canBrowseModelSites: true,
 }
 
 /**

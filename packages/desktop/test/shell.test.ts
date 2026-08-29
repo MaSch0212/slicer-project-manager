@@ -525,11 +525,12 @@ test('capabilities are the shell column in local mode and the union in remote mo
     // From the shell's *remote* column. The local column says true, and unioning that one here
     // is the defect `capabilities.test.ts` names.
     canPickLocalFolder: false,
-    // Also from the shell's remote column, over a `BACKEND_COLUMN` that says false for both:
-    // a server that cannot launch a slicer does not stop the machine this window runs on.
+    // Also from the shell's remote column, over a `BACKEND_COLUMN` that says false for all
+    // three: a server that cannot launch a slicer, or embed a browser, does not stop the machine
+    // this window runs on from doing either.
     canLaunchSlicer: true,
     canConfigureSlicers: true,
-    canBrowseModelSites: false,
+    canBrowseModelSites: true,
   })
   assert.deepEqual(requests, ['/api/capabilities'])
 })

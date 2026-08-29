@@ -581,7 +581,9 @@ test('capabilities answers without a library, and says auth is not required', as
     // open, so both are the shell's to offer even with no session.
     canLaunchSlicer: true,
     canConfigureSlicers: true,
-    canBrowseModelSites: false,
+    // Spec E, on the same argument: the browse view is a `WebContentsView` in this process, and
+    // no library has to be open for this process to be able to embed one.
+    canBrowseModelSites: true,
   })
   assert.deepEqual(
     await dispatch.capabilities({ session: null, shell }, []),
