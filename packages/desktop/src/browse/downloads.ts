@@ -159,7 +159,7 @@ export const MAX_RECORDED_TEXT = 2048
 
 export type BrowseDownloadState = 'progressing' | 'completed' | 'cancelled' | 'interrupted'
 
-/** `download.json`, in full. **The handover to task 4**, and the shape the sweep reads back. */
+/** `download.json`, in full. **What `land` is handed**, and the shape the sweep reads back. */
 export type BrowseDownloadRecord = {
   /** The directory name, minted by the main process. */
   downloadId: string
@@ -784,7 +784,7 @@ export class BrowseDownloads {
  *   handler writes to — across a module boundary, to buy a shorter file. Widening the surface of
  *   the one type that carries the constraint-14 verdict is a bad trade for a line count.
  * - **Nothing else reads a staging directory.** A file earns its own module when a second caller
- *   needs half of it; task 4's `land` reaches all of this through `find()`. If `land` turns out to
+ *   needs half of it, and `browse/land.ts` reaches all of this through `find()`. If `land` turns out to
  *   need to re-read a record from disk at landing time — to re-verify after the user has had the
  *   app open for a week, say — that is a second caller and the measurement that justifies the
  *   split. Do it then, and not for the line count.
