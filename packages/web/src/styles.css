@@ -662,7 +662,8 @@ h2.spm-project-title {
 /* ------------------------------------------------------------------ browse */
 
 /*
- * The empty rectangle the native browse view is asked to paint into (spec E 4.2).
+ * The empty rectangle the native browse view is asked to paint into, and the only thing this page
+ * knows about where that view goes (spec E 4.2).
  *
  * It has no children and it must not get any: a `WebContentsView` is a native sibling of the
  * renderer's own view, so it paints over anything drawn here with no z-index to negotiate. The
@@ -671,15 +672,14 @@ h2.spm-project-title {
  * insetting a chrome band of its own and hiding the view for a rectangle below a minimum area.
  *
  * The dashed border is what the user sees before the first paint and while the view is hidden for
- * a modal, so an empty box reads as a place a page will be rather than as a rendering failure.
+ * a modal, so an empty box reads as a place a page will be rather than as a rendering failure. The
+ * box stays in flow while the view is hidden for a panel, which is why the page scrolls an opened
+ * panel into view: on a short window the panel would otherwise open below a screenful of it.
+ *
+ * `60vh` crosses `BROWSE_MIN_AREA`'s 200 px (`packages/desktop/src/browse/host.ts`) at a window
+ * about 333 px tall, below which the shell hides the view rather than shrinking it. That is
+ * designed behaviour, not a bound this value has to respect, and nothing exercises it.
  */
-/* The rectangle the native browse view is given, and the only thing this page knows about where
-   that view goes. It stays in flow while the view is hidden for a panel, which is why the page
-   scrolls a panel into view when it opens.
-
-   `60vh` crosses `BROWSE_MIN_AREA`'s 200 px (`packages/desktop/src/browse/host.ts`) at a window
-   about 333 px tall, below which the shell hides the view rather than shrinking it. That is
-   designed behaviour, not a bound this value has to respect, and nothing exercises it. */
 .spm-browse-viewport {
   min-height: 60vh;
   border: 1px dashed var(--jig-color-border);
