@@ -97,7 +97,13 @@ describe('HttpApiClient', () => {
   })
 
   /**
-   * The same shape again, for the whole browse block, and all eleven rather than one of them.
+   * The same shape again, for the whole browse block, and every method of it rather than one.
+   *
+   * **The whole block means the download half too.** `HttpApiClient` grew `downloads`, `discard`,
+   * `notices` and `dismissNotice` when the interface did, and this list did not grow with it — so
+   * four methods were refusing on nothing but the compiler's word for a round. There is no
+   * `will-download` on this transport to intercept, no staging directory under a `userData` this
+   * shell does not have, and no notice surface; a browser's own download manager owns all three.
    *
    * The model browser is a `WebContentsView` the main process owns; over HTTP there is no such
    * thing and no route that would make one. The `expect(fetchMock)` half is the interesting one for
@@ -127,6 +133,13 @@ describe('HttpApiClient', () => {
       client.browse.reload(),
       client.browse.state(),
       client.browse.clearLastPage(),
+      client.browse.downloads(),
+      // The id is passed rather than nothing, for the reason the rectangle is: the parameters on
+      // this class are named and unused, and a spec calling them with nothing would still compile
+      // if somebody removed them and with them the call signature `ApiClient` promises.
+      client.browse.discard('dl-1'),
+      client.browse.notices(),
+      client.browse.dismissNotice('notice-1'),
     ]
 
     for (const call of calls) {
