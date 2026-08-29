@@ -651,6 +651,39 @@ test('a record read back from disk is bounded too, because userData is editable'
   assert.equal(found.siteId, 'thingiverse')
 })
 
+/**
+ * The fourth string on that list, which the test above does not reach.
+ *
+ * `siteId` is the one field that is a registry match at mint time and a **file's contents** on the
+ * way back in, which is why `readRecord` bounds it and why the `MAX_RECORDED_TEXT` docblock names
+ * it separately. Every other test in this file reads a record back with the short literal
+ * `'thingiverse'` in it, so deleting `bounded()` from that one line turned nothing red — found by
+ * task 3's re-review, closed here because task 4's `land` is the first code to re-read a record
+ * from disk in anger.
+ *
+ * The verdict is asserted beside it for the reason the test above gives: truncating a display
+ * string is not a refusal, and a test that only checked the length would be satisfied by a
+ * `readRecord` that had started rejecting the record outright.
+ */
+test('a siteId read back from disk is bounded like every other stranger string', () => {
+  const { downloads, stagingDir } = rig()
+  stage(stagingDir, 'orphan-site', {
+    fileName: 'benchy.zip',
+    bytes: 2048,
+    record: completedRecord({
+      totalBytes: 2048,
+      receivedBytes: 2048,
+      siteId: 's'.repeat(50_000),
+    }),
+  })
+
+  downloads.sweep()
+
+  const found = only(downloads.list())
+  assert.equal(found.siteId?.length, MAX_RECORDED_TEXT)
+  assert.equal(found.isVerifiable, true)
+})
+
 test('a webContents that has not committed a document yet is no page at all', () => {
   const rigged = rig()
   start(rigged, {}, '')
