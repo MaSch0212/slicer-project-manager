@@ -925,9 +925,16 @@ implementer should do on meeting it.** Do not silently resolve any of the others
    anywhere, so the popup arm is designed from the measured `window.open` table plus knowledge of the
    idiom. **On meeting a sign-in that does not complete:** keep the `allow` arm and keep `noopener` off;
    the deny-all alternative kills the idiom outright and the plan would rather ship the arm that can work.
-6. **`setPermissionCheckHandler`.** **Unmeasured** — only the request handler was probed. **On meeting
-   it:** set it to the same refusal and mark it unmeasured in a comment. Do not widen either handler to
-   grant a permission on the strength of a site asking for it.
+6. **`setPermissionCheckHandler`.** ~~**Unmeasured** — only the request handler was probed. **On meeting
+   it:** set it to the same refusal and mark it unmeasured in a comment.~~ **Withdrawn during task 2,
+   which measured it** (`packages/desktop/src/browse/host.ts:295-303`, and `browse.spec.ts` pins the
+   answer). Three partitions on Electron 44.0.0: with the request handler alone,
+   `navigator.permissions.query({ name: 'geolocation' })` answers **`"granted"`** while the request
+   itself is denied; with both, `"denied"`; with neither, the query answers `"granted"` and the request
+   is granted outright. So it is not "the same refusal for consistency" — it is the only thing that
+   answers the query API, and nothing should be written into a comment calling it unmeasured. Spec 3.7
+   and spec 9.5 carry the same withdrawal, and so does the task-2 bullet above. **What still stands:** do
+   not widen either handler to grant a permission on the strength of a site asking for it.
 7. **Do `WebContentsView` bounds, resize and focus behave acceptably in the real Angular shell?**
    **Unmeasured**, and named by the spike as the famously fiddly part. Task 2's inset-and-intersect is
    reasoning, and it is specifically **not established** that the inset achieves the property it is
