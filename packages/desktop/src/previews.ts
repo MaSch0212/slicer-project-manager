@@ -57,8 +57,9 @@ export const PREVIEW_INTERVAL_MS = 5_000
  * underneath it.** A process that has parsed one STEP file peaks at ~244 MB while parsing any of
  * them, whatever the file, and the floor is per process rather than per worker — so raising the
  * concurrency does not multiply it. `DEFAULT_CONCURRENCY`'s docblock in `@spm/core` carries the
- * arithmetic for the two together, in the one place it lives; it is not repeated here, because two
- * copies of a formula is how the formula drifts.
+ * three-case table for the terms together, and the README carries the operator's copy of the same
+ * table — those two change together or not at all. It is not repeated here, because a third copy
+ * of a formula is a third place for it to drift.
  *
  * **The mesh figures below are B1's, measured on the Deno server, and the Electron peak was not
  * re-measured in this task** — they are carried across
@@ -94,8 +95,8 @@ export const PREVIEW_CONCURRENCY = 1
  * **Nothing about this constant bounds a STEP parse**, which is the most misleading thing to infer
  * from a mesh ceiling in a file that now renders STEP: on that arm it is consulted after OCCT has
  * already tessellated, and it bounds only the adapter's own `positions` allocation.
- * `DEFAULT_CONCURRENCY` in `@spm/core` carries the arithmetic for the terms together, in the one
- * place it lives.
+ * `DEFAULT_CONCURRENCY` in `@spm/core` carries the arithmetic for the terms together, and the
+ * README carries the operator's copy of the same table — those two change together or not at all.
  */
 export const PREVIEW_MAX_MESH_BYTES = DEFAULT_MAX_MESH_BYTES
 
