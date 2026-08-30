@@ -1,7 +1,10 @@
 # Third-party notices
 
-Slicer Project Manager is distributed under the MIT licence in `LICENSE`. It also carries software
-written by other people under other licences, and this file is the notice those licences ask for.
+Slicer Project Manager is distributed under the MIT licence in `LICENSE` — at the repository root,
+and staged into every build as `dist/LICENSE` (`resources/app/dist/LICENSE` in an installed
+application), so the sentence you are reading names a file that is actually beside this one. It also
+carries software written by other people under other licences, and this file is the notice those
+licences ask for.
 
 Everything below is a statement about files: which package, which version, which licence text, and
 where that text is on disk in a build of this application. Nothing here is legal advice, and none
@@ -41,6 +44,12 @@ copy of that text rather than two. `dist/license.occt.txt` is a distinct file an
 shipping an application that is missing one. This file is staged beside them, as
 `dist/third-party/THIRD-PARTY-NOTICES.md`. In an installed application those paths are under
 `resources/app/`.
+
+This application's own `LICENSE` travels by the same two mechanisms but lands at `dist/LICENSE`,
+one directory up. That is on purpose: `dist/third-party/LICENSE.md` is `occt-import-js`'s LGPL-2.1,
+and an MIT licence granted by this application sitting one dot-extension away from an LGPL licence
+received by it is a confusion worth a directory level to avoid. `dist/LICENSE` sits beside
+`main.js`, which is what it licenses.
 
 Both texts are LGPL-2.1. The two differ only in whitespace — the OCCT copy indents with tabs where
 the other uses spaces, and wraps two lines differently — and are otherwise the same document.

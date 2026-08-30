@@ -115,9 +115,9 @@ describe('requiredArtifacts', () => {
     // the prefix assertion vacuously, and one that ignored its arguments would pass none of the
     // membership checks. This is the cheapest thing that fails on both.
     //
-    // `>= 10` against the sixteen entries the list actually has is deliberately slack, and this
-    // line's only job is killing `[]`. Six entries could be dropped without tripping it, which
-    // costs nothing here: the executable is named on the next line and the other fifteen are named
+    // `>= 10` against the seventeen entries the list actually has is deliberately slack, and this
+    // line's only job is killing `[]`. Seven entries could be dropped without tripping it, which
+    // costs nothing here: the executable is named on the next line and the other sixteen are named
     // individually by the three tests below, and those are what a dropped entry fails. A tight
     // count would add a second thing to edit
     // every time the list grows, and counting is the thing those tests were written to avoid.
@@ -177,11 +177,19 @@ describe('requiredArtifacts', () => {
     // survived packaging: `build.ts` asserts it was staged, which is a different question from
     // whether packager copied it. The three text files are the notice obligation, and they are the
     // same class of file as `favicon.svg` — nothing imports them, so nothing else would notice.
+    //
+    // `dist/LICENSE` is the fourth and points the other way: the licence this application *grants*
+    // rather than one it received. MIT asks that its notice accompany every copy of the software,
+    // and `dist/main.js` is one — so a packaged app without it is self-non-compliant, quite apart
+    // from `THIRD-PARTY-NOTICES.md` opening by naming a file that would not be there. The
+    // repository-root check above is a different assertion: that one says the source file still
+    // exists, this one says it travels.
     for (const expected of [
       'dist/occt-import-js.wasm',
       'dist/third-party/THIRD-PARTY-NOTICES.md',
       'dist/third-party/LICENSE.md',
       'dist/third-party/license.occt.txt',
+      'dist/LICENSE',
     ]) {
       assert.ok(
         relative.includes(`resources/app/${expected}`),

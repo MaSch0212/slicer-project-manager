@@ -171,5 +171,12 @@ export function requiredArtifacts(outDir: string, appDir: string, executable: st
     join(appDir, 'dist', 'third-party', 'THIRD-PARTY-NOTICES.md'),
     join(appDir, 'dist', 'third-party', 'LICENSE.md'),
     join(appDir, 'dist', 'third-party', 'license.occt.txt'),
+    // And this application's own licence, which is an obligation in the other direction: MIT asks
+    // that its notice travel in "all copies or substantial portions of the Software", and
+    // `dist/main.js` is a copy. It is also what `THIRD-PARTY-NOTICES.md` names in its first
+    // sentence, so without it that file points at something no packaged app has. Not under
+    // `third-party/`, because `LICENSE.md` there is `occt-import-js`'s LGPL-2.1 and the two would
+    // sit a dot-extension apart; `build.ts`'s `copyLicence` carries the rest of the reasoning.
+    join(appDir, 'dist', 'LICENSE'),
   ]
 }

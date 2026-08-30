@@ -27,6 +27,8 @@ const occtPackageRoot = dirname(
   createRequire(import.meta.url).resolve('occt-import-js/package.json'),
 )
 const noticeSrc = resolve(here, '../..', 'THIRD-PARTY-NOTICES.md')
+// This application's own licence, which the notice beside it names in its first sentence.
+const licenceSrc = resolve(here, '../..', 'LICENSE')
 
 /**
  * The three CommonJS names an ESM bundle does not define, defined.
@@ -202,6 +204,28 @@ async function copyWasm(): Promise<number> {
  * Read-then-write for the same reason `copyMigrations` does it: `cp` carries the source mtime
  * across on Windows, so a copied file looks older than the build that produced it.
  */
+/**
+ * This application's own MIT licence, into the packaged app.
+ *
+ * MIT's one obligation is inclusion — the copyright and permission notice go into "all copies or
+ * substantial portions of the Software" — and `dist/main.js` in a packaged app is a copy of the
+ * Software. So this is the same class of failure as the LGPL texts next door, pointed the other
+ * way: not a licence this application received, but the one it grants. `THIRD-PARTY-NOTICES.md`
+ * opens by naming `LICENSE` and then frames itself as a statement about "where that text is on
+ * disk in a build of this application" — before this, that first sentence named a file no packaged
+ * app had.
+ *
+ * **`dist/LICENSE`, deliberately not `dist/third-party/LICENSE`.** That directory already holds
+ * `LICENSE.md`, which is `occt-import-js`'s LGPL-2.1; two files a dot-extension apart in one
+ * directory, one granting and one received, is a confusion worth a directory level to avoid. Here
+ * it sits beside `main.js`, which is the thing it licenses.
+ *
+ * Read-then-write for the reason `copyMigrations` gives about mtimes on Windows.
+ */
+async function copyLicence(): Promise<void> {
+  await writeFile(join(outDir, 'LICENSE'), await readFile(licenceSrc))
+}
+
 async function copyThirdParty(): Promise<number> {
   const dest = join(outDir, 'third-party')
   await mkdir(dest, { recursive: true })
@@ -232,6 +256,7 @@ const migrations = await copyMigrations()
 const icons = await copyIcons()
 const wasmBytes = await copyWasm()
 const notices = await copyThirdParty()
+await copyLicence()
 await assertWritten(
   join(outDir, 'main.js'),
   join(outDir, 'preload.js'),
@@ -254,6 +279,10 @@ await assertWritten(
   join(outDir, 'third-party', 'THIRD-PARTY-NOTICES.md'),
   join(outDir, 'third-party', 'LICENSE.md'),
   join(outDir, 'third-party', 'license.occt.txt'),
+  // This application's own licence, which is the same class of unimported, unread file and the
+  // one the notice's first sentence points at. See `copyLicence` for why it is not in
+  // `third-party/` with the other three.
+  join(outDir, 'LICENSE'),
 )
 console.log(
   `desktop: bundled main + preload, copied ${migrations} migrations, ${icons} icons and ` +
