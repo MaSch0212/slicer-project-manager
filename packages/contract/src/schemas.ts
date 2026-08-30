@@ -86,6 +86,7 @@ export const settingsPatchSchema = z.object({
   viewMode: z.enum(['grid', 'list']).optional(),
   sort: z.enum(['name', 'createdAt', 'updatedAt']).optional(),
   dir: z.enum(['asc', 'desc']).optional(),
+  navCollapsed: z.boolean().optional(),
 })
 
 export const projectQuerySchema = z.object({

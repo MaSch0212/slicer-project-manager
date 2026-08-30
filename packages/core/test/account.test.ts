@@ -1,12 +1,15 @@
 import { existsSync } from 'node:fs'
 import { join, resolve } from 'node:path'
+import { DEFAULT_SETTINGS } from '@spm/contract/dtos.ts'
 import type { AppError } from '@spm/contract/errors.ts'
+import { z } from 'zod'
 import { activateAccount, login } from '../src/auth/login.ts'
 import { PW_ALGO, PW_ITERATIONS, hashPassword } from '../src/auth/password.ts'
 import { timingSafeEqual } from '../src/auth/tokens.ts'
 import {
   changePassword,
   getSettings,
+  jsonCodec,
   me,
   putSettings,
   updateProfile,
@@ -163,17 +166,75 @@ test('settings return defaults, then merge a patch', async () => {
     const { user } = await activateAccount(lib, boot!.token, 'a good long password', null)
     const ctx = { userId: user.id, isAdmin: true }
 
-    assert.deepEqual(getSettings(lib, ctx), {
-      theme: 'system',
-      language: 'en',
-      viewMode: 'grid',
-      sort: 'updatedAt',
-      dir: 'desc',
-    })
+    // DEFAULT_SETTINGS, not a literal copy: a literal here would silently stop covering
+    // whichever key the object gains next (R4 in task-1's brief is this exact trap).
+    assert.deepEqual(getSettings(lib, ctx), DEFAULT_SETTINGS)
     assert.equal(putSettings(lib, ctx, { language: 'de' }).language, 'de')
     assert.equal(putSettings(lib, ctx, { theme: 'dark' }).language, 'de')
     assert.equal(getSettings(lib, ctx).theme, 'dark')
   })
+})
+
+// Spec 3.2: the codec table's enum tightening is a deliberate behaviour change, not
+// incidental. Before it, getSettings copied a user_settings row into the DTO with no check,
+// so a row written by a build that once offered a "purple" theme (or edited by hand) shipped
+// straight to the renderer. Mutating enumCodec's `values.includes` guard to always accept the
+// raw value turns this test red, which is the point: it is what stands between the codec table
+// being a contract and being a lookup (spec 3.2's own words).
+test('a stored theme value the enum no longer accepts falls back to the default, not through', async () => {
+  await withLibrary(async (lib) => {
+    const boot = await ensureBootstrapAdmin(lib)
+    const { user } = await activateAccount(lib, boot!.token, 'a good long password', null)
+    const ctx = { userId: user.id, isAdmin: true }
+
+    lib.db
+      .prepare('INSERT INTO user_settings (user_id, key, value) VALUES (?, ?, ?)')
+      .run(user.id, 'theme', 'purple')
+
+    const settings = getSettings(lib, ctx)
+    assert.equal(settings.theme, DEFAULT_SETTINGS.theme)
+    assert.notEqual(settings.theme, 'purple')
+  })
+})
+
+test('navCollapsed round-trips true and false through putSettings/getSettings', async () => {
+  await withLibrary(async (lib) => {
+    const boot = await ensureBootstrapAdmin(lib)
+    const { user } = await activateAccount(lib, boot!.token, 'a good long password', null)
+    const ctx = { userId: user.id, isAdmin: true }
+
+    assert.equal(getSettings(lib, ctx).navCollapsed, false)
+    assert.equal(putSettings(lib, ctx, { navCollapsed: true }).navCollapsed, true)
+    assert.equal(getSettings(lib, ctx).navCollapsed, true)
+    assert.equal(putSettings(lib, ctx, { navCollapsed: false }).navCollapsed, false)
+    assert.equal(getSettings(lib, ctx).navCollapsed, false)
+  })
+})
+
+test('a navCollapsed row holding garbage falls back to the default', async () => {
+  await withLibrary(async (lib) => {
+    const boot = await ensureBootstrapAdmin(lib)
+    const { user } = await activateAccount(lib, boot!.token, 'a good long password', null)
+    const ctx = { userId: user.id, isAdmin: true }
+
+    lib.db
+      .prepare('INSERT INTO user_settings (user_id, key, value) VALUES (?, ?, ?)')
+      .run(user.id, 'navCollapsed', 'yes')
+
+    assert.equal(getSettings(lib, ctx).navCollapsed, false)
+  })
+})
+
+// jsonCodec has no production caller in this subsystem (segments H and I wire it up), so this
+// exercises the codec directly rather than through getSettings/putSettings.
+test('jsonCodec decodes a valid payload, and returns undefined for malformed JSON or a schema failure', () => {
+  const codec = jsonCodec(z.object({ tags: z.array(z.string()) }))
+
+  const encoded = codec.encode({ tags: ['petg', 'functional'] })
+  assert.deepEqual(codec.decode(encoded), { tags: ['petg', 'functional'] })
+
+  assert.equal(codec.decode('{not valid json'), undefined)
+  assert.equal(codec.decode('{"tags": [1, 2]}'), undefined)
 })
 
 test('ensureLocalUser makes one flat-library user and is idempotent', async () => {

@@ -108,6 +108,8 @@ export type SettingsDto = {
   viewMode: 'grid' | 'list'
   sort: 'name' | 'createdAt' | 'updatedAt'
   dir: 'asc' | 'desc'
+  /** Whether the navigation sidebar is collapsed to icons. Desktop layout only; see §4. */
+  navCollapsed: boolean
 }
 
 export const DEFAULT_SETTINGS: SettingsDto = {
@@ -116,6 +118,7 @@ export const DEFAULT_SETTINGS: SettingsDto = {
   viewMode: 'grid',
   sort: 'updatedAt',
   dir: 'desc',
+  navCollapsed: false,
 }
 
 /**
