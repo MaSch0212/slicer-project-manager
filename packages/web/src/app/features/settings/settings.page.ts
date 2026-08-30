@@ -101,17 +101,23 @@ export class SettingsPage {
    * The early return is not a micro-optimisation: what the URL already says is not a selection
    * the user just made, and re-navigating to it would push a duplicate history entry.
    *
-   * The second guard is for a state the application cannot reach, and it is here because a
-   * mutation run reached it. `jig-tabs` re-asserts its first tab whenever the active id matches
-   * none of the tabs it is rendering, and that re-assertion arrives here as an ordinary change —
-   * so a window at `/settings/slicers` with no Slicers header would be bounced to `/settings`,
-   * measured in a real window. It cannot happen in a shipped build: the header and the route are
-   * gated on the same `canConfigureSlicers`, and the web build has neither. Refusing a tab this
-   * shell has no route for is the cheap way to keep it that way.
+   * **A warning for whoever adds the third tab.** `jig-tabs` re-asserts its **first** tab whenever
+   * the active id matches none of the tabs it is rendering, and that re-assertion arrives here as
+   * an ordinary change — indistinguishable from a click. Measured twice: in a real window, and by
+   * calling this method with `'general'` while the router sat at `/settings/slicers`, which ended
+   * at `/settings`. So a tab whose header is absent while its URL is open does not merely show
+   * the wrong highlight; the page is navigated off the URL the user asked for.
+   *
+   * It cannot bite today because the Slicers header and the `slicers` route are gated by the same
+   * `canConfigureSlicers` — hardcoded `true` in the desktop shell's capabilities, and the web
+   * build has neither the header nor the route — so the active id always names a rendered tab.
+   * **A third tab whose header is gated differently from its route makes this reachable.** There
+   * is deliberately no guard here against it: the state is unreachable from any input this build
+   * can produce, so a guard could not be proven by mutation on a reachable path, and dead code
+   * with a comment claiming it works is worse than this warning.
    */
   onTabChange(tab: string): void {
     if (tab === this.activeTab()) return
-    if (tab === SLICERS_TAB && !this.capabilities.capabilities().canConfigureSlicers) return
     void this.router.navigateByUrl(tab === SLICERS_TAB ? SLICERS_URL : SETTINGS_URL)
   }
 }
