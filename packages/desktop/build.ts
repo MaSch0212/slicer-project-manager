@@ -242,8 +242,9 @@ await assertWritten(
   // Named for the same reason and a sharper one: the glue asks for this exact spelling, and a
   // `copyWasm` that silently produced nothing yields a shell that starts, opens a library and
   // renders a blank thumbnail for every STEP file in it. This fails the *build* — and so
-  // `deno task dev:desktop` — where `package-app.ts`'s `REQUIRED` list only fails packaging,
-  // which no CI job runs.
+  // `deno task dev:desktop` — where the same path in `requiredArtifacts()` fails only
+  // `deno task package:desktop`, which no CI job runs. Both are wanted: this one says the file was
+  // staged, that one says packager carried it into the packaged app.
   join(outDir, 'occt-import-js.wasm'),
   // The licence obligation, named for the same reason and one more: nothing in this repository
   // imports these, and nothing at run time reads them, so a `copyThirdParty` that wrote an empty

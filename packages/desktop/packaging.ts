@@ -5,9 +5,14 @@ import { join } from 'node:path'
  *
  * Separate from `package-app.ts` for the reason `src/icons.ts` is separate from `app.ts`:
  * `package-app.ts` is a top-level script that packages an application as a side effect of being
- * imported, so nothing in it can be reached by `node --test`. What is left here is a three-branch
- * platform decision where one branch is "refuse" — the shape that wants exhaustive cheap coverage
- * rather than a name confirmed by looking at one operating system's output directory.
+ * imported, so nothing in it can be reached by `node --test`. Two things live here for that reason
+ * and no other, and both are things a test has to be able to read:
+ *
+ * - a three-branch platform decision where one branch is "refuse" — the shape that wants
+ *   exhaustive cheap coverage rather than a name confirmed by looking at one operating system's
+ *   output directory;
+ * - `requiredArtifacts()`, the list of files that must exist in the packaged output, which was a
+ *   private const in `package-app.ts` and therefore covered by nothing but a manual run.
  */
 
 /** `app.setName` decides the userData directory; this only names the folder and the executable. */

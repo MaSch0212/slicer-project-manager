@@ -178,13 +178,14 @@ OCCT `.wasm` that reads STEP files, and the third-party licence texts under `thi
     deno task package:desktop
 
 writes an unpacked, runnable application to
-`packages/desktop/out/slicer-project-manager-<platform>-<arch>/`. Start it with the `electron`
-executable in that directory. It is a directory and not an installer — installers and code signing
-are deferred, with the reasons in the subsystem plan's Scope — but it is self-contained: it carries
-the Electron runtime, the bundled main process and the renderer, and needs no Node, no Deno and no
-`node_modules` on the machine that runs it. What it does still need is whatever Electron itself
-needs from the platform (on Linux, `libgtk-3` and Chromium's other shared libraries; on Windows,
-nothing a supported Windows lacks).
+`packages/desktop/out/slicer-project-manager-<platform>-<arch>/`. Start it with the executable in
+that directory — `Slicer Project Manager.exe` on Windows, `slicer-project-manager` elsewhere; the
+script prints the path it wrote. It is a directory and not an installer — installers and code
+signing are deferred, with the reasons in the subsystem plan's Scope — but it is self-contained: it
+carries the Electron runtime, the bundled main process, the renderer and the third-party licence
+texts, and needs no Node, no Deno and no `node_modules` on the machine that runs it. What it does
+still need is whatever Electron itself needs from the platform (on Linux, `libgtk-3` and Chromium's
+other shared libraries; on Windows, nothing a supported Windows lacks).
 
 ### Environment
 
