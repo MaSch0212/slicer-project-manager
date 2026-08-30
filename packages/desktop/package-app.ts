@@ -51,8 +51,14 @@ import { APP_NAME, APP_SLUG, packagedExecutableName, requiredArtifacts } from '.
  * it: `resources/app` being a plain directory is what leaves `dist/occt-import-js.wasm` an ordinary
  * replaceable file, which is how this application meets LGPL-2.1 §6b for the OCCT library it ships.
  * Inside an archive it stops being one. The `.wasm` and the three files under `dist/third-party/`
- * would have to be named in packager's `asarUnpack`; `requiredArtifacts()` in `packaging.ts` says
- * so at the entries themselves and keeps passing either way, because it stats the unpacked paths.
+ * would have to be named in packager's `asarUnpack` for that to stay true — which is recorded both
+ * in `requiredArtifacts()`'s docblock in `packaging.ts` and in `THIRD-PARTY-NOTICES.md`.
+ *
+ * The artifact check further down this file does **not** carry that change silently. It stats
+ * `appDir`, which it builds as `join(outDir, 'resources', 'app')`; an asar build writes
+ * `resources/app.asar` and `resources/app.asar.unpacked/` and no `resources/app`, so every entry
+ * would fail until the list and this path were rewritten together. Turning asar on is therefore a
+ * loud change, not a quiet one.
  *
  * ## The renderer, and why it is staged rather than referenced
  *

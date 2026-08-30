@@ -96,6 +96,40 @@ export function packagedExecutableName(platform: string): string {
  * none of which packages, so every entry rested on one manual Windows run. `packaging.test.ts` now
  * asserts the names; the packaging run remains the only thing that says the build wrote the files.
  *
+ * ## The migrations are respelled, and that is a standing cost
+ *
+ * The three migration entries below are literals, so **this list has to be edited with every
+ * migration added to `packages/core`, for ever**. The failure of forgetting is the exact one the
+ * list exists to catch: `runMigrations` reads a frozen list and `readFileSync` throws on the first
+ * file that is not there, so a packaged application missing a migration starts fine and then fails
+ * the moment a folder is picked.
+ *
+ * The durable fix is to derive these entries from that same frozen list — `MIGRATIONS` in
+ * `packages/core/src/db/migrate.ts`, the one place a new migration has to be declared for the
+ * application to run it at all. Then the two lists cannot disagree. (`build.ts` is not a third
+ * place: `copyMigrations` reads the directory rather than naming files.) It is not done here for
+ * two reasons: `MIGRATIONS` is a module-private `const` today, so it would have to be exported to
+ * be read; and reading it would make this module import from `@spm/core` — a packaging script
+ * pulling in the core package to learn three file names — which is a decision about the boundary
+ * between the packages, and subsystem F packages what already exists rather than reshaping that.
+ * **Do it the first time a fourth migration is added and this list is not**, rather than now: one
+ * forgotten migration is what makes the export and the import worth their cost, and until then it
+ * is a cost paid against a hypothetical.
+ *
+ * ## If `asar` is ever turned on, this list is not what keeps the LGPL argument true
+ *
+ * `package-app.ts` passes `asar: false`, and that is load-bearing: `dist/occt-import-js.wasm` being
+ * an ordinary file on disk is how this application meets LGPL-2.1 §6b for the OCCT library it
+ * ships, which `THIRD-PARTY-NOTICES.md` sets out. With `asar: true` the `.wasm` and the three files
+ * under `dist/third-party/` would have to be named in packager's `asarUnpack` for that to stay
+ * true.
+ *
+ * The entries below do **not** quietly survive that change, and nobody should expect them to.
+ * Packager writes `resources/app.asar` plus `resources/app.asar.unpacked/` instead of
+ * `resources/app`, and `package-app.ts` builds `appDir` as `join(outDir, 'resources', 'app')` — a
+ * directory an asar build does not create — so every path here would fail until these entries were
+ * rewritten too. That is the wanted behaviour rather than a gap: it means asar cannot be turned on
+ * without reading this.
  */
 export function requiredArtifacts(outDir: string, appDir: string, executable: string): string[] {
   return [
@@ -108,8 +142,8 @@ export function requiredArtifacts(outDir: string, appDir: string, executable: st
     join(appDir, 'dist', 'main.js'),
     join(appDir, 'dist', 'preload.js'),
     join(appDir, 'dist', 'occt-import-js.wasm'),
-    // Every migration, not a spot-check. See the docblock for what one missing file costs and for
-    // what to do the fourth time one is forgotten.
+    // Every migration, not a spot-check. See the docblock for what one missing file costs, what
+    // respelling them here costs in return, and the derivation that would retire it.
     join(appDir, 'dist', 'migrations', '001_init.sql'),
     join(appDir, 'dist', 'migrations', '002_preview_claim.sql'),
     join(appDir, 'dist', 'migrations', '003_classifier_version.sql'),
