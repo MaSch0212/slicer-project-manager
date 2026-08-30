@@ -55,7 +55,16 @@ const SLICERS_URL = '/settings/slicers'
         </jig-tabs>
       </div>
 
-      <div class="spm-settings-panel">
+      <!--
+        The panel role, named by the tab that is open. The strip and the routed content are two
+        sibling elements, and without a role here the content has no programmatic relation to the
+        control that chose it. The name is an aria-label rather than an aria-labelledby pointing
+        at the header, because jig generates the header ids internally and exposes neither them
+        nor any attribute passthrough; the accessible name is the same either way. jig's own
+        aria-controls on the headers still points at a panel it does not render in navigation
+        mode -- that half is not reachable from this codebase.
+      -->
+      <div class="spm-settings-panel" role="tabpanel" [attr.aria-label]="activeTabLabel()">
         <router-outlet />
       </div>
     </main>
@@ -79,12 +88,26 @@ export class SettingsPage {
 
   readonly activeTab = computed(() => (this.slicersActive() ? SLICERS_TAB : GENERAL_TAB))
 
+  /** The open tab's own label, so the panel below the strip carries the same name its header does. */
+  protected readonly activeTabLabel = computed(() => {
+    const settings = this.t.translations().settings
+    return this.activeTab() === SLICERS_TAB ? settings.slicers : settings.general
+  })
+
   /**
    * Navigates rather than storing the selection, which is the whole point of a tab strip in
    * navigation mode: the URL is the state, and `activeTab` reads it back.
    *
    * The early return is not a micro-optimisation: what the URL already says is not a selection
    * the user just made, and re-navigating to it would push a duplicate history entry.
+   *
+   * The second guard is for a state the application cannot reach, and it is here because a
+   * mutation run reached it. `jig-tabs` re-asserts its first tab whenever the active id matches
+   * none of the tabs it is rendering, and that re-assertion arrives here as an ordinary change —
+   * so a window at `/settings/slicers` with no Slicers header would be bounced to `/settings`,
+   * measured in a real window. It cannot happen in a shipped build: the header and the route are
+   * gated on the same `canConfigureSlicers`, and the web build has neither. Refusing a tab this
+   * shell has no route for is the cheap way to keep it that way.
    */
   onTabChange(tab: string): void {
     if (tab === this.activeTab()) return

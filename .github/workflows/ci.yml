@@ -107,8 +107,10 @@ jobs:
 
       # Spec D's /settings/slicers. It reaches the shell over IPC to read and write slicers.json
       # and to open a native executable picker, so it must be as absent from the web bundle as
-      # the two above. The shared /settings page links to it -- by routerLink string only, gated
-      # on a capability -- and that link is what would drag it in if the rule were ever broken.
+      # the two above. Since spec G it is a child route of the shared /settings page, whose tab
+      # strip offers it by capability flag and URL string only -- routes.electron.ts is the one
+      # file that names the component, and an import of it from the shared page is what would
+      # drag it in if the rule were ever broken.
       - name: web bundle carries no desktop slicers page
         run: |
           if grep -rl DesktopSlicersPage packages/web/dist/web/browser; then

@@ -26,6 +26,11 @@ import {
  * - **A picked file that is gone says so.** The shell answers `NotFound`, which on every other
  *   call on this page means a stale row in a list; the sentence that belongs to *that* meaning
  *   sends the user to a scan that cannot help.
+ * - **The tab strip above it is the way back** (spec G 6). This page used to be a route of its own
+ *   with no way out of it, and the tab strip is the whole of the fix. The `ng test` suite pins the
+ *   same behaviour against a hand-written route tree; what only a real window can say is that the
+ *   application's own route list, its `authGuard`, its capability flags and jig's control agree
+ *   with each other well enough for a deep link to land on the right highlighted tab.
  *
  * **It is machine-independent, which the task report first wrongly claimed it could not be.** The
  * two-Cura configuration is written into the launch's own `userData` before start-up, so nothing
@@ -66,6 +71,57 @@ async function launchWithSlicers(config: unknown): Promise<LaunchedApp> {
   writeFileSync(join(userDataDir, 'slicers.json'), JSON.stringify(config), 'utf8')
   return await launchApp([{ name: 'Widget', files: { 'notes.txt': 'a project' } }], [], userDataDir)
 }
+
+/**
+ * Spec G 6, in the window the feedback was written about.
+ *
+ * **This exists because the other tests in this file could not have caught it.** They assert on
+ * the install rows and on an alert, and the router outlet renders those from the URL whatever the
+ * strip above it is doing — measured: forcing `activeTab` to General unconditionally left this
+ * file fully green while turning the unit suite red. A deep link that lands on the wrong
+ * highlighted tab, or a strip that does not render at all, is invisible to every assertion here
+ * except the ones below.
+ */
+test('the tab strip is above the slicers, and the URL says which tab is open', async () => {
+  const { app } = await launchWithSlicers(TWO_CURAS)
+  try {
+    const page = await firstWindowOf(app)
+    await page.waitForURL('spm://app/projects', { timeout: 30_000 })
+    await page.goto('spm://app/settings/slicers')
+
+    const tabs = page.getByRole('tab')
+    await expect(tabs).toHaveCount(2)
+    await expect(tabs.nth(0)).toHaveText('General')
+    await expect(tabs.nth(1)).toHaveText('Slicers')
+
+    // The deep link decides which tab is open. This is the half a component-local flag could not
+    // do, and the half the rest of this file cannot see.
+    await expect(tabs.nth(1)).toHaveAttribute('aria-selected', 'true')
+    await expect(tabs.nth(0)).toHaveAttribute('aria-selected', 'false')
+    // ...above the page it chose, which is what makes it a way back rather than a breadcrumb.
+    await expect(page.getByRole('radio')).toHaveCount(2)
+    const strip = await tabs.nth(0).boundingBox()
+    const rows = await page.getByRole('radio').first().boundingBox()
+    expect(strip).not.toBeNull()
+    expect(rows).not.toBeNull()
+    expect(strip!.y + strip!.height).toBeLessThanOrEqual(rows!.y)
+
+    // One click back to General, with no browser Back and no dead end.
+    await tabs.nth(0).click()
+    await page.waitForURL('spm://app/settings')
+    await expect(tabs.nth(0)).toHaveAttribute('aria-selected', 'true')
+    await expect(tabs.nth(1)).toHaveAttribute('aria-selected', 'false')
+    await expect(page.getByRole('combobox', { name: 'Language' })).toHaveCount(1)
+
+    // And forward again: the strip is a two-way control, not an exit.
+    await tabs.nth(1).click()
+    await page.waitForURL('spm://app/settings/slicers')
+    await expect(tabs.nth(1)).toHaveAttribute('aria-selected', 'true')
+    await expect(page.getByRole('radio')).toHaveCount(2)
+  } finally {
+    await app.close()
+  }
+})
 
 test('two installs of one product stack, and neither is chosen for the user', async () => {
   const { app } = await launchWithSlicers(TWO_CURAS)

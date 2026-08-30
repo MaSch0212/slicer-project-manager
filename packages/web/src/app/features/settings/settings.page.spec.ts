@@ -8,6 +8,7 @@ import { API_CLIENT } from '../../core/api/api-client.token'
 import { CapabilitiesStore } from '../../core/capabilities.store'
 import { TranslateService } from '../../core/i18n/translate.service'
 import { SettingsPage } from './settings.page'
+import { routes as webRoutes } from '../../routes'
 import { provideJigForTests } from '../../../testing/jig'
 
 /** What the Deno server publishes: no shell, so no slicers to configure. */
@@ -124,6 +125,25 @@ describe('SettingsPage', () => {
     ])
   })
 
+  /*
+   * Spec G C6. The strip and the routed content are siblings, so without a role on the second one
+   * there is nothing telling a screen reader that the thing below the tabs is what the tabs chose.
+   * The name has to follow the URL for the same reason the highlight does.
+   */
+  it('gives the routed content a tabpanel role named by the open tab', async () => {
+    const { harness, translate } = await setup(DESKTOP_CAPABILITIES)
+    const panel = () =>
+      (harness.fixture.nativeElement as HTMLElement).querySelector('[role="tabpanel"]')
+
+    await harness.navigateByUrl('/settings', SettingsPage)
+    harness.detectChanges()
+    expect(panel()?.getAttribute('aria-label')).toBe(translate.translations().settings.general)
+
+    await harness.navigateByUrl('/settings/slicers', SettingsPage)
+    harness.detectChanges()
+    expect(panel()?.getAttribute('aria-label')).toBe(translate.translations().settings.slicers)
+  })
+
   describe('the tab strip', () => {
     it('offers General alone where the shell cannot configure slicers', async () => {
       const { harness, translate } = await setup()
@@ -209,5 +229,49 @@ describe('SettingsPage', () => {
       expect(router.url).toBe('/settings/slicers')
       expect(tabHeaders(harness).map((tab) => tab.getAttribute('tabindex'))).toEqual(['-1', '0'])
     })
+  })
+})
+
+/*
+ * Everything above runs against a route tree this file spells out. This one runs against the web
+ * build's real list, because restructuring `/settings` into a parent moved the URL's fate into a
+ * file no component spec reads: renaming the shared path was caught only by routes.electron.spec's
+ * throw, and nothing said the *web* build had lost `/settings` with it.
+ *
+ * `requiresAuth: false` is what lets `authGuard` pass on its first arm with no session, which is
+ * the Electron local-mode case and the cheapest honest way to get past a guard this spec is not
+ * about. The components are the real ones, lazily loaded by the real route.
+ */
+describe("the web build's /settings", () => {
+  it('resolves to the settings page, with the General tab in its outlet', async () => {
+    const api = {
+      settings: { get: vi.fn().mockResolvedValue(DEFAULT_SETTINGS), put: vi.fn() },
+      capabilities: vi.fn().mockResolvedValue({ ...BROWSER_CAPABILITIES, requiresAuth: false }),
+    }
+    TestBed.configureTestingModule({
+      providers: [
+        ...provideJigForTests(),
+        provideRouter(webRoutes),
+        { provide: API_CLIENT, useValue: api },
+      ],
+    })
+    const translate = TestBed.inject(TranslateService)
+    await translate.ready
+    await TestBed.inject(CapabilitiesStore).load()
+
+    const harness = await RouterTestingHarness.create()
+    const page = await harness.navigateByUrl('/settings', SettingsPage)
+    harness.detectChanges()
+
+    expect(page).toBeInstanceOf(SettingsPage)
+    expect(TestBed.inject(Router).url).toBe('/settings')
+    // The General tab really rendered into the outlet -- its three controls are the proof that the
+    // empty-path child resolved rather than the parent rendering an empty page. Queried on the
+    // whole host rather than through the panel's role, so this test answers for the route and
+    // nothing else.
+    const host = harness.fixture.nativeElement as HTMLElement
+    expect(host.querySelectorAll('jig-select')).toHaveLength(3)
+    // And the Slicers tab is not on offer here: the child does not exist in this list.
+    expect(labels(harness)).toEqual([translate.translations().settings.general])
   })
 })

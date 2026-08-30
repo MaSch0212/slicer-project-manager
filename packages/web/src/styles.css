@@ -130,9 +130,16 @@ p {
    so jig renders the header row and no panel at all (read from the installed control's own
    template, which renders a panel only `@if (content.template)`). The routed tab therefore lands
    in an outlet below the strip rather than inside the padded panel the theme would have drawn,
-   and this is the gap that panel would have supplied. `.spm-main`'s own 80rem cap is the
-   "readable maximum" spec G 6.3 asks for -- the page is no longer `--narrow`, so the Slicers
-   tab's install rows get the same measure every other page has. */
+   and this rule is what separates the two.
+
+   The value is **chosen, not restored**: nova's own tab panel is `padding-top: size.padding.md`,
+   while `--spm-gap` is `size.padding.lg`. This is the gap the rest of this page stacks at, which
+   is the consistency worth having here -- it is not a reproduction of jig's, and it has not been
+   compared against jig's in a running window.
+
+   `.spm-main`'s own 80rem cap is the "readable maximum" spec G 6.3 asks for -- the page is no
+   longer `--narrow`, so the Slicers tab's install rows get the same measure every other page
+   has. */
 .spm-settings-panel {
   margin-top: var(--spm-gap);
 }
