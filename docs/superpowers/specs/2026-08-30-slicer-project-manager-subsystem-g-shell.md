@@ -393,3 +393,37 @@ The subsystem is done when all of these hold.
 - **`SQLITE_BUSY` in `packages/desktop/test/library.spec.ts`.** An intermittent "database is
   locked" seen twice in this session and reproduced by neither task 3's implementer nor its
   reviewer at either the parent or the child commit. Not this segment's, not investigated.
+- **`packages/desktop/test/library.spec.ts:240`** anchors a negative assertion on a URL poll
+  rather than on rendered content. Pre-existing.
+- **The e2e suite is near a login rate limit.** `/api/auth/login` allows ten attempts a minute,
+  the suite runs in one window, and it spends eight. Four navigation specs share one captured
+  `storageState` (`NAV_AUTH_STATE`) for this reason. **Two more login-using specs will break
+  `viewer.spec.ts`.** There is a pin on the budget but no mechanism enforcing it.
+- **`Alt` revealing the hidden menu bar is untested** and stays that way — it is OS-level.
+- **`settingsPatchSchema` is not pinned against `SettingsDto`.** A key added to one and not the
+  other compiles. Pre-existing, and the codec table added in §3 makes it cheaper to fix later.
+
+## 11. Copy handed to later segments
+
+Task 7's sweep was scoped to this segment's own surfaces and was forbidden from touching the
+others, so it listed what it found instead. These strings violate §8 and are owned by the segment
+that owns their surface:
+
+| String                                                                                    | Problem                                               | Owner          |
+| ----------------------------------------------------------------------------------------- | ----------------------------------------------------- | -------------- |
+| `projects.handedTo`                                                                       | §8's own worked example — "Handed _file_ to _slicer_" | H or J         |
+| `projects.curaHazard`                                                                     | "on the machine this was measured on" — §8 rule 2     | H or J         |
+| `slicerSessions.lead`, `orphan`, `orphanLead`, `processAlive`, `processGone`, `diffLimit` | names internal concepts throughout                    | **J**          |
+| `viewer.tooLarge`, `viewer.noWebgl`                                                       | describes the implementation                          | J              |
+| `viewer.noWebgl`, `fetchFailed`, `parseFailed` (German)                                   | informal _du_ where the app is formal _Sie_           | J              |
+| `browse.downloadUnverifiable`, `archiveRemote`, `errorClash`, `fromNoPage`, `verifying`   | names internal concepts                               | I              |
+| `admin.confirmDeleteUser`                                                                 | over-explains                                         | **unassigned** |
+
+**`slicerSessions.*` needs care.** It lives in `core/`, not in a feature folder, so a segmentation
+scoped by folder leaves it unowned. It is assigned to J because J removes that surface entirely —
+the feedback is "the 'Files a slicer still has' section is very confusing, remove it and add some
+automatic cleanup job" — so those strings are deleted rather than swept. **If J's scope changes,
+this reverts to an unowned sweep and must be reassigned.**
+
+Segments H, I and J should each apply §8 to their own surfaces and, like task 7, list rather than
+fix anything outside them.
