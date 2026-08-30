@@ -114,6 +114,13 @@ describe('requiredArtifacts', () => {
     // The positive control for everything below: an implementation that returned `[]` would pass
     // the prefix assertion vacuously, and one that ignored its arguments would pass none of the
     // membership checks. This is the cheapest thing that fails on both.
+    //
+    // `>= 10` against the sixteen entries the list actually has is deliberately slack, and this
+    // line's only job is killing `[]`. Six entries could be dropped without tripping it, which
+    // costs nothing here: the executable is named on the next line and the other fifteen are named
+    // individually by the three tests below, and those are what a dropped entry fails. A tight
+    // count would add a second thing to edit
+    // every time the list grows, and counting is the thing those tests were written to avoid.
     assert.ok(paths.length >= 10, `expected the packaging list, found ${paths.length} entries`)
     assert.ok(paths.includes(join(outDir, 'x.exe')), 'the executable is not in the list')
   })
