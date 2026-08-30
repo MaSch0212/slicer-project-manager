@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict'
 import { statSync } from 'node:fs'
-import { dirname, join, resolve } from 'node:path'
+import { dirname, join, resolve, sep } from 'node:path'
 import { describe, test } from 'node:test'
 import { fileURLToPath } from 'node:url'
-import { APP_NAME, APP_SLUG, packagedExecutableName } from '../packaging.ts'
+import { APP_NAME, APP_SLUG, packagedExecutableName, requiredArtifacts } from '../packaging.ts'
 
 /**
  * The packaged executable's name per platform, exhaustively, in plain Node.
@@ -78,8 +78,68 @@ describe('the licence artifacts at the repository root', () => {
   for (const name of ['LICENSE']) {
     test(`${name} exists and is not empty`, () => {
       const info = statSync(join(repoRoot, name), { throwIfNoEntry: false })
-      assert.ok(info?.isFile(), `${name} is missing from the repository root`)
+      assert.ok(info !== undefined, `${name} is missing from the repository root`)
+      assert.ok(info.isFile(), `${name} is not a file`)
       assert.ok(info.size > 0, `${name} is empty`)
     })
   }
+})
+
+/**
+ * The list `package-app.ts` stats after packaging, reachable because it lives here now.
+ *
+ * It moved out of `package-app.ts` for the reason `packagedExecutableName` is here at all: that
+ * script packages an application as a side effect of being imported, so nothing in it can be read
+ * by `node --test`, and the list was therefore covered by exactly one thing — a manual
+ * `deno task package:desktop` on Windows. **No CI job packages**; all eight run `ubuntu-latest`.
+ * These assertions are the half of it CI can carry: they say the list names the files. Only the
+ * packaging run says the build wrote them.
+ */
+describe('requiredArtifacts', () => {
+  const outDir = join('out', 'slicer-project-manager-win32-x64')
+  const appDir = join(outDir, 'resources', 'app')
+  const paths = requiredArtifacts(outDir, appDir, 'x.exe')
+  const relative = paths.map((path) =>
+    path
+      .slice(outDir.length + 1)
+      .split(sep)
+      .join('/'),
+  )
+
+  test('names the executable it was given, under the directory it was given', () => {
+    // The positive control for everything below: an implementation that returned `[]` would pass
+    // the prefix assertion vacuously, and one that ignored its arguments would pass none of the
+    // membership checks. This is the cheapest thing that fails on both.
+    assert.ok(paths.length >= 10, `expected the packaging list, found ${paths.length} entries`)
+    assert.ok(paths.includes(join(outDir, 'x.exe')), 'the executable is not in the list')
+  })
+
+  test('every path is under the output directory it was handed', () => {
+    // An entry that forgot to `join` — a bare 'dist/main.js', say — would be stat'd relative to
+    // wherever the packaging script happens to be running and would pass for the wrong reason.
+    for (const path of paths) {
+      assert.ok(path.startsWith(outDir + sep), `${path} is not under ${outDir}`)
+    }
+  })
+
+  test('names what a packaged application cannot start without', () => {
+    // Named individually rather than counted, for the reason the two icons are: a count survives a
+    // rename, and every one of these is a file whose absence produces a window that opens blank or
+    // a library that will not open, a long way from the packaging step that dropped it.
+    for (const expected of [
+      'package.json',
+      'dist/main.js',
+      'dist/preload.js',
+      'dist/renderer/index.html',
+      'dist/renderer/favicon.svg',
+      'dist/renderer/manifest.webmanifest',
+      'dist/icons/icon.ico',
+      'dist/icons/icon.png',
+    ]) {
+      assert.ok(
+        relative.includes(`resources/app/${expected}`),
+        `the packaging list does not name ${expected}`,
+      )
+    }
+  })
 })

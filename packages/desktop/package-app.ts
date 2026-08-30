@@ -2,7 +2,7 @@ import { packager } from '@electron/packager'
 import { cp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { APP_NAME, APP_SLUG, packagedExecutableName } from './packaging.ts'
+import { APP_NAME, APP_SLUG, packagedExecutableName, requiredArtifacts } from './packaging.ts'
 
 /**
  * An unpacked, runnable application directory — the plan's Definition of Done, and not an
@@ -238,43 +238,7 @@ if (packagedDir !== outDir) {
 
 const appDir = join(outDir, 'resources', 'app')
 
-/**
- * What must be there afterwards, checked rather than assumed.
- *
- * A packaging script that exits 0 having written half a directory is worse than one that fails:
- * the failure it produces is a window that opens and is blank, or one that opens and cannot open
- * a library, both a long way from the step that caused them. Handing the copying to packager does
- * not retire this list — it widens what it is for, because the copy is now done by a tool whose
- * `ignore` and prune rules this repo does not control.
- */
-const REQUIRED = [
-  // The executable, under the name `packaging.ts` chose. Packager's own rename is what produces
-  // it, so this is the assertion that `executableName` still means what it means — a packager
-  // release that changed how it sanitises that string would otherwise ship a differently-named
-  // binary and say nothing.
-  join(outDir, executable),
-  join(appDir, 'package.json'),
-  join(appDir, 'dist', 'main.js'),
-  join(appDir, 'dist', 'preload.js'),
-  join(appDir, 'dist', 'migrations', '001_init.sql'),
-  join(appDir, 'dist', 'renderer', 'index.html'),
-  // The window icon, which is a different thing from the executable's own icon resource above:
-  // this is the file `BrowserWindow` reads at runtime. Staging brings these across — they are
-  // inside `dist/` — so this is not what puts them here; it is what notices when they stop
-  // arriving. The failure it replaces is silent by construction: `BrowserWindow`'s `icon` option
-  // does not throw on a path that does not exist, it just shows Electron's default, and the
-  // developer who packaged it sees the right icon because `windowIconPath()` also resolves in the
-  // repo layout. Both spellings, because `windowIconPath()` picks between them by platform and
-  // this script runs on one platform at a time.
-  join(appDir, 'dist', 'icons', 'icon.ico'),
-  join(appDir, 'dist', 'icons', 'icon.png'),
-  // Copied in with the renderer, and named here for the same reason: the home-screen icon and
-  // the manifest are the only files in the renderer directory that nothing in the app *imports*,
-  // so a build that stopped emitting them would break no bundle and no test that watched imports.
-  join(appDir, 'dist', 'renderer', 'favicon.svg'),
-  join(appDir, 'dist', 'renderer', 'manifest.webmanifest'),
-]
-for (const file of REQUIRED) {
+for (const file of requiredArtifacts(outDir, appDir, executable)) {
   const info = await stat(file).catch(() => null)
   if (!info?.isFile() || info.size === 0) throw new Error(`package:desktop did not write ${file}`)
 }

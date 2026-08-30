@@ -1,3 +1,5 @@
+import { join } from 'node:path'
+
 /**
  * The names `package-app.ts` gives what it writes, and the one platform where it stops.
  *
@@ -70,4 +72,52 @@ export function packagedExecutableName(platform: string): string {
     )
   }
   return platform === 'win32' ? `${APP_NAME}.exe` : APP_SLUG
+}
+
+/**
+ * What must be in the packaged output afterwards, checked rather than assumed.
+ *
+ * A packaging script that exits 0 having written half a directory is worse than one that fails:
+ * the failure it produces is a window that opens and is blank, or one that opens and cannot open
+ * a library, both a long way from the step that caused them. Handing the copying to
+ * `@electron/packager` does not retire this list — it widens what it is for, because the copy is
+ * now done by a tool whose `ignore` and prune rules this repo does not control.
+ *
+ * `package-app.ts` stats every path this returns and throws on the first that is not a non-empty
+ * file. The list is here rather than there because **that script cannot be imported** — it packages
+ * an application as a side effect of being imported, which is this module's whole reason to exist —
+ * so as long as the list lived in it, nothing could read it. And nothing else covered it either:
+ * `deno task package:desktop` is run by **no CI job**, all eight of which are `ubuntu-latest` and
+ * none of which packages, so every entry rested on one manual Windows run. `packaging.test.ts` now
+ * asserts the names; the packaging run remains the only thing that says the build wrote the files.
+ *
+ */
+export function requiredArtifacts(outDir: string, appDir: string, executable: string): string[] {
+  return [
+    // The executable, under the name `packagedExecutableName` chose. Packager's own rename is what
+    // produces it, so this is the assertion that `executableName` still means what it means — a
+    // packager release that changed how it sanitises that string would otherwise ship a
+    // differently-named binary and say nothing.
+    join(outDir, executable),
+    join(appDir, 'package.json'),
+    join(appDir, 'dist', 'main.js'),
+    join(appDir, 'dist', 'preload.js'),
+    join(appDir, 'dist', 'migrations', '001_init.sql'),
+    join(appDir, 'dist', 'renderer', 'index.html'),
+    // The window icon, which is a different thing from the executable's own icon resource: this is
+    // the file `BrowserWindow` reads at runtime. Staging brings these across — they are inside
+    // `dist/` — so this is not what puts them here; it is what notices when they stop arriving. The
+    // failure it replaces is silent by construction: `BrowserWindow`'s `icon` option does not throw
+    // on a path that does not exist, it just shows Electron's default, and the developer who
+    // packaged it sees the right icon because `windowIconPath()` also resolves in the repo layout.
+    // Both spellings, because `windowIconPath()` picks between them by platform and the packaging
+    // script runs on one platform at a time.
+    join(appDir, 'dist', 'icons', 'icon.ico'),
+    join(appDir, 'dist', 'icons', 'icon.png'),
+    // Copied in with the renderer, and named here for the same reason: the home-screen icon and
+    // the manifest are the only files in the renderer directory that nothing in the app *imports*,
+    // so a build that stopped emitting them would break no bundle and no test that watched imports.
+    join(appDir, 'dist', 'renderer', 'favicon.svg'),
+    join(appDir, 'dist', 'renderer', 'manifest.webmanifest'),
+  ]
 }
