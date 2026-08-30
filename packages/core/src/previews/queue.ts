@@ -77,12 +77,22 @@ export const MAX_PREVIEW_ATTEMPTS = 3
  * | ------------------- | ---------------------------------------------------------------- |
  * | Before STEP support | `concurrency × (mesh + ~80 MB) + ~120 MB`                         |
  * | At concurrency 1    | larger of `mesh + ~80 MB + ~120 MB` and ~244 MB — **not** the sum  |
- * | At concurrency ≥ 2  | they add: `(concurrency − 1) × (mesh + ~80 MB) + ~120 MB + ~244 MB` |
+ * | At concurrency ≥ 2  | larger of `(concurrency − 1) × (mesh + ~80 MB) + ~120 MB + ~244 MB` and row one |
  *
- * Why row two is "whichever is larger" and row three is a sum: at one worker a mesh job and a STEP
+ * **Row one is the floor under the other two.** Adding a feature cannot lower a process's peak, so
+ * no row is ever a budget below what row one asks for the same `concurrency` and `mesh`.
+ *
+ * Why every row after the first is "whichever is larger": at one worker a mesh job and a STEP
  * parse cannot be in flight together, so only one of the two terms is ever the peak. At two or more
- * a worker can be *holding* an allocated `positions` array across an `await` when the STEP parse
- * starts, and the reference library's worst is 208.8 MB of it.
+ * they do add — a worker can be *holding* an allocated `positions` array across an `await` when the
+ * STEP parse starts, and the reference library's worst is 208.8 MB of it — but the parse occupies a
+ * worker, so the ~244 MB **replaces** that worker's mesh term instead of piling on top of it. Row
+ * three's sum therefore carries one fewer mesh than row one and comes out `164 − mesh` above it,
+ * which is *negative* once `mesh` passes ~164 MB: at the shipped `SPM_MAX_MESH_MB=256` and
+ * concurrency 2 the sum is 700 MB against row one's 792 MB. 792 is what to provision, because the
+ * moment when every worker holds a mesh and none is in the kernel is still available to a process
+ * that also parses STEP files. Without the `max` this row under-budgets the shipped configuration,
+ * and it is the row an operator raising the concurrency reads.
  *
  * **Row three is arithmetic over two separately measured processes, not a measurement.** The
  * 400–410 MB backfill figure is the mesh path alone and the ~244 MB figure is the STEP path alone;

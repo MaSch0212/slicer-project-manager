@@ -83,12 +83,15 @@ I/O — a network-mounted library, or spinning disks — not to use more cores.
 
 As a rule of thumb, budget by the case you are in. A process that has never parsed a STEP file
 still follows the old single formula; one that has carries a further term that does not multiply.
+**Row one is the floor under the other two, not merely the row above them**: adding a feature
+cannot lower a process's peak, so never provision below what row one asks for the same
+`concurrency` and `mesh`.
 
-| Case                | Peak                                                                |
-| ------------------- | ------------------------------------------------------------------- |
-| Before STEP support | `concurrency × (mesh + ~80 MB) + ~120 MB`                           |
-| At concurrency 1    | larger of `mesh + ~80 MB + ~120 MB` and ~244 MB — **not** the sum   |
-| At concurrency ≥ 2  | they add: `(concurrency − 1) × (mesh + ~80 MB) + ~120 MB + ~244 MB` |
+| Case                | Peak                                                                            |
+| ------------------- | ------------------------------------------------------------------------------- |
+| Before STEP support | `concurrency × (mesh + ~80 MB) + ~120 MB`                                       |
+| At concurrency 1    | larger of `mesh + ~80 MB + ~120 MB` and ~244 MB — **not** the sum               |
+| At concurrency ≥ 2  | larger of `(concurrency − 1) × (mesh + ~80 MB) + ~120 MB + ~244 MB` and row one |
 
 Read `mesh` as `SPM_MAX_MESH_MB`: this is meant to bound the configuration from above, so it uses
 the _ceiling_ rather than the model you actually have. The 80 is the decompressor; the 120 is
@@ -98,10 +101,16 @@ a library whose largest mesh is 209 MB rather than the permitted 256 — substit
 gives 409 MB, which is the measurement — and at concurrency 2 it predicts 792 MB against 621 MB
 measured, so it stays conservative as the worker count grows.
 
-Row two is "whichever is larger" and row three is a sum because at one worker a mesh job and a STEP
-parse cannot be in flight together, so only one of the two terms is ever the peak. At two or more a
-worker can be _holding_ an allocated mesh across an `await` when the STEP parse starts, and the
-reference library's worst is 209 MB of it.
+Why every row after the first is "whichever is larger". At one worker a mesh job and a STEP parse
+cannot be in flight together, so only one of the two terms is ever the peak. At two or more they do
+add — a worker can be _holding_ an allocated mesh across an `await` when the STEP parse starts, and
+the reference library's worst is 209 MB of it — but the STEP parse occupies a worker, so its term
+**replaces** that worker's mesh term rather than piling on top of it. Which is why row three's sum
+has one fewer mesh in it than row one does, and why it needs the `max`: the sum comes out
+`164 − mesh` above row one, so once `mesh` passes ~164 MB it is the _smaller_ number. At the
+shipped `SPM_MAX_MESH_MB=256` and concurrency 2 the sum is 700 MB where row one is 792 MB — and
+792 MB is what to provision, because the moment when every worker holds a mesh and none is in the
+kernel is still available to a process that also parses STEP files.
 
 **Row three is arithmetic over two separately measured processes, not a measurement.** The
 400–410 MB backfill figure is the mesh path alone and the ~244 MB figure is the STEP path alone;
