@@ -225,15 +225,24 @@ test('a navCollapsed row holding garbage falls back to the default', async () =>
   })
 })
 
-// jsonCodec has no production caller in this subsystem (segments H and I wire it up), so this
-// exercises the codec directly rather than through getSettings/putSettings.
-test('jsonCodec decodes a valid payload, and returns undefined for malformed JSON or a schema failure', () => {
+// jsonCodec has no production caller in this subsystem (segments H and I wire it up), so these
+// exercise the codec directly rather than through getSettings/putSettings. Three separate tests,
+// not one sequential fixture: a regression in the malformed-JSON guard throws before a later
+// assertion in the same test body would run, which would silently shadow the schema-rejection
+// case behind it.
+test('jsonCodec round-trips a payload the schema accepts', () => {
   const codec = jsonCodec(z.object({ tags: z.array(z.string()) }))
-
   const encoded = codec.encode({ tags: ['petg', 'functional'] })
   assert.deepEqual(codec.decode(encoded), { tags: ['petg', 'functional'] })
+})
 
+test('jsonCodec decode returns undefined for malformed JSON', () => {
+  const codec = jsonCodec(z.object({ tags: z.array(z.string()) }))
   assert.equal(codec.decode('{not valid json'), undefined)
+})
+
+test('jsonCodec decode returns undefined for JSON that parses but fails the schema', () => {
+  const codec = jsonCodec(z.object({ tags: z.array(z.string()) }))
   assert.equal(codec.decode('{"tags": [1, 2]}'), undefined)
 })
 

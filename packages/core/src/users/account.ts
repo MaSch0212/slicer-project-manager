@@ -145,14 +145,12 @@ export function getSettings(lib: Library, ctx: Ctx): SettingsDto {
   for (const key of SETTING_KEYS) {
     const raw = stored[key]
     if (raw === undefined) continue
-    // TypeScript cannot track, across a loop over the union `keyof SettingsDto`, that this
-    // particular codec is the one that was typed against this particular key's value type —
-    // a known limitation of correlated unions (settings.page.ts's `onPatch` hits the same
-    // wall on the web side). The pairing is correct by construction: both `raw` and `codec`
-    // are read from the same `key`, and `SETTING_CODECS`'s own declared type is what actually
-    // catches a codec assigned to the wrong key.
-    const codec = SETTING_CODECS[key] as SettingCodec<unknown>
-    const decoded = codec.decode(raw)
+    // No cast needed here, unlike the write side in putSettings below: `decode`'s parameter
+    // is the same `string` type in every codec, and its return sits in a covariant position,
+    // so TypeScript resolves `SETTING_CODECS[key].decode(raw)` to the union of each codec's
+    // return type — which is exactly `SettingsDto[keyof SettingsDto] | undefined`, and that is
+    // assignable to `merged`'s `Record<string, unknown>` on its own.
+    const decoded = SETTING_CODECS[key].decode(raw)
     if (decoded !== undefined) merged[key] = decoded
   }
   return merged as SettingsDto
@@ -166,7 +164,15 @@ export function putSettings(lib: Library, ctx: Ctx, patch: Partial<SettingsDto>)
   for (const key of SETTING_KEYS) {
     const value = patch[key]
     if (value === undefined) continue
-    // Same correlated-union limitation as the cast in getSettings above.
+    // Here, unlike the read side in getSettings above, a cast is load-bearing: `encode`'s
+    // value parameter sits in a contravariant position, so calling the raw union of codecs
+    // would require `value` to satisfy every key's parameter type simultaneously — the
+    // intersection of five disjoint string-literal unions and `boolean`, which TypeScript
+    // resolves to `never` (confirmed by removing this cast: `deno task typecheck:core` reports
+    // exactly one error, here, "not assignable to parameter of type 'never'"). The cast is safe
+    // because the pairing is correct by construction: `codec` and `value` are read from the
+    // same `key`, and `SETTING_CODECS`'s own declared type is what actually catches a codec
+    // assigned to the wrong key.
     const codec = SETTING_CODECS[key] as SettingCodec<unknown>
     upsert.run(ctx.userId, key, codec.encode(value))
   }
