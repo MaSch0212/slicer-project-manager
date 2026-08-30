@@ -64,3 +64,19 @@ test('serverUrlSchema accepts http and https and no other scheme', () => {
   assert.equal(serverUrlSchema.safeParse('https://example.invalid:8443/').success, true)
   assert.equal(serverUrlSchema.safeParse('http://192.168.1.10:8080').success, true)
 })
+
+test('serverUrlSchema rejects an address carrying credentials', () => {
+  // A decision, not a side effect: every one of these is a valid https URL. A library server is
+  // an origin the app stores and reconnects to, so a password in it would be persisted as part
+  // of that origin -- and userinfo is the oldest way there is to make one host read as another.
+  for (const bad of [
+    'https://user:pass@example.invalid/',
+    'https://user@example.invalid/',
+    'https://:pass@example.invalid/',
+    'http://admin:hunter2@192.168.1.10:8080/',
+  ]) {
+    assert.equal(serverUrlSchema.safeParse(bad).success, false, bad)
+  }
+  // The same host without them is still fine, so this rejects the credentials and not the URL.
+  assert.equal(serverUrlSchema.safeParse('https://example.invalid/').success, true)
+})

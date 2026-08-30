@@ -95,6 +95,7 @@
     "connectToServer": "Stattdessen mit einem Server verbinden",
     "serverUrl": "Serveradresse",
     "serverUrlHint": "Zum Beispiel https://print.example.com",
+    "serverUrlInvalid": "Geben Sie eine Adresse ein, die mit http:// oder https:// beginnt und weder Benutzernamen noch Passwort enthält.",
     "connect": "Verbinden",
     "connectCancel": "Abbrechen",
     "libraryFailed": "Dieser Ordner konnte nicht als Bibliothek geöffnet werden.",

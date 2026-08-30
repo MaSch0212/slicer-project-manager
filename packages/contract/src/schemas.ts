@@ -80,6 +80,15 @@ export const fileNameSchema = z
 
 export const fileRenameSchema = z.object({ name: fileNameSchema })
 
+/** The parsed URL, or null where `new URL` throws. Used by `serverUrlSchema` below. */
+function parseUrlOrNull(value: string): URL | null {
+  try {
+    return new URL(value)
+  } catch {
+    return null
+  }
+}
+
 /**
  * The address of a Slicer Project Manager server, as typed by the user before a shell is asked
  * to point a window at it (spec G 6.1).
@@ -89,20 +98,34 @@ export const fileRenameSchema = z.object({ name: fileNameSchema })
  * is about to become the origin of a window must be `http:` or `https:` and nothing else, so the
  * scheme is checked here rather than assumed from the shape of the string.
  *
+ * Embedded credentials are refused for a different reason, and it is a decision rather than a
+ * side effect of the scheme check: `https://user:pass@example.invalid/` is a perfectly valid
+ * URL. A library server is an origin this app stores and reconnects to, so a password in it
+ * would be persisted as part of that origin; the userinfo field is also the oldest trick there
+ * is for making one host look like another; and this app has a real sign-in for saying who you
+ * are. There is nothing an address of this shape can do here that the account cannot.
+ *
  * `new URL` rather than a `startsWith` test on purpose: a prefix test answers a question about
- * the characters, and this needs an answer about the scheme the same parser will resolve. The
- * `try` is not dead — `z.url()` runs first and rejects most non-URLs, but a schema is a value
- * other code composes with, and a refinement that throws instead of returning false would turn
- * a validation failure into an exception at whatever call site did the composing.
+ * the characters, and both of these need an answer about what the parser resolves. The `try` is
+ * not dead — `z.url()` runs first and rejects most non-URLs, but a schema is a value other code
+ * composes with, and a refinement that throws instead of returning false would turn a validation
+ * failure into an exception at whatever call site did the composing.
+ *
+ * The two checks are separate refinements so that each failure says which one it was. Both
+ * messages are English, like every other message in this file; the one place a user reads a
+ * refusal of this schema — the connect form in settings — renders its own translated string
+ * rather than these (spec G C4).
  */
-export const serverUrlSchema = z.url().refine((value) => {
-  try {
-    const { protocol } = new URL(value)
+export const serverUrlSchema = z
+  .url()
+  .refine((value) => {
+    const protocol = parseUrlOrNull(value)?.protocol
     return protocol === 'http:' || protocol === 'https:'
-  } catch {
-    return false
-  }
-}, 'the address must start with http:// or https://')
+  }, 'the address must start with http:// or https://')
+  .refine((value) => {
+    const parsed = parseUrlOrNull(value)
+    return parsed !== null && parsed.username === '' && parsed.password === ''
+  }, 'the address must not carry a user name or a password')
 
 export const settingsPatchSchema = z.object({
   theme: z.enum(['light', 'dark', 'system']).optional(),

@@ -6,6 +6,7 @@ import { API_CLIENT } from '../../core/api/api-client.token'
 import { CapabilitiesStore } from '../../core/capabilities.store'
 import { TranslateService } from '../../core/i18n/translate.service'
 import { NotifyService } from '../../core/notify.service'
+import de from '../../core/i18n/locales/de.json'
 import en from '../../core/i18n/locales/en.json'
 import { SettingsGeneralTab } from './general.tab'
 import { provideJigForTests } from '../../../testing/jig'
@@ -79,6 +80,18 @@ async function setup(
   await TestBed.inject(CapabilitiesStore).load()
   const fixture = TestBed.createComponent(SettingsGeneralTab)
   return { fixture, api, notify, tab: fixture.componentInstance, translate }
+}
+
+/**
+ * Resolves once `translations()` is actually German. `setLanguage` only writes a signal; the
+ * `de` locale is a separate chunk, so the republish happens a dynamic import later.
+ */
+async function untilTranslated(translate: TranslateService): Promise<void> {
+  for (let attempt = 0; attempt < 50; attempt++) {
+    if (translate.translations().settings.serverUrlInvalid === de.settings.serverUrlInvalid) return
+    await new Promise((resolve) => setTimeout(resolve, 0))
+  }
+  throw new Error('the German locale never arrived')
 }
 
 /** The `role="alert"` the convention requires, as actually rendered. */
@@ -243,6 +256,60 @@ describe('SettingsGeneralTab', () => {
     await expect(tab.onConnect()).resolves.toBeUndefined()
 
     expect(notify.error).toHaveBeenCalledWith(en.settings.connectFailed)
+  })
+
+  it('refuses an address carrying credentials', async () => {
+    const { tab, api } = await setup()
+    tab.connectModel.set({ url: 'https://user:pass@example.invalid/' })
+
+    await tab.onConnect()
+
+    expect(api.library.connect).not.toHaveBeenCalled()
+  })
+
+  // Constraint C4: every string a user reads is translated. `validateStandardSchema` would put
+  // zod's own English issue text here whatever the language, so the message comes from the
+  // locale files and this is what says so.
+  it('shows a translated message for a refused address, in the chosen language', async () => {
+    const { fixture, tab, translate } = await setup()
+    tab.connectOpen.set(true)
+    tab.connectModel.set({ url: 'javascript:alert(1)' })
+    // jigErrors surfaces on `touched`, which is what a real submit does through `onInvalid`.
+    await tab.onConnect()
+    fixture.detectChanges()
+    const host = fixture.nativeElement as HTMLElement
+
+    expect(host.textContent).toContain(en.settings.serverUrlInvalid)
+
+    translate.setLanguage('de')
+    // `setLanguage` is synchronous, but the German locale is a lazy chunk (see
+    // TranslateService.loadTranslations), so the translations signal is republished only once
+    // that import lands. Waiting for the signal itself rather than for a fixed number of ticks.
+    await untilTranslated(translate)
+    fixture.detectChanges()
+
+    expect(host.textContent).toContain(de.settings.serverUrlInvalid)
+    expect(host.textContent).not.toContain(en.settings.serverUrlInvalid)
+  })
+
+  // Reopening the form used to meet the user with their own rejected typing under a red message
+  // they had not just earned.
+  it('empties the connect form when it is cancelled', async () => {
+    const { fixture, tab } = await setup()
+    tab.connectOpen.set(true)
+    tab.connectModel.set({ url: 'javascript:alert(1)' })
+    await tab.onConnect()
+    fixture.detectChanges()
+
+    tab.onCancelConnect()
+    tab.connectOpen.set(true)
+    fixture.detectChanges()
+
+    const host = fixture.nativeElement as HTMLElement
+    expect(tab.connectModel().url).toBe('')
+    expect((host.querySelector('#settings-server-url') as HTMLInputElement).value).toBe('')
+    // `reset` clears `touched` as well, so the field is not showing a refusal over an empty box.
+    expect(host.textContent).not.toContain(en.settings.serverUrlInvalid)
   })
 
   it('labels the server address field once it is revealed', async () => {

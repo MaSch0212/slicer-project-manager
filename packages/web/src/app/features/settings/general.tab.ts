@@ -1,5 +1,5 @@
 import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core'
-import { FormField, form, submit, validateStandardSchema } from '@angular/forms/signals'
+import { FormField, form, submit, validate } from '@angular/forms/signals'
 import type { SettingsDto } from '@spm/contract/dtos.ts'
 import { serverUrlSchema } from '@spm/contract/schemas.ts'
 import { JigButton } from '@awdlab/jig/button'
@@ -168,7 +168,7 @@ import { ImportPanel } from '../import/import.panel'
                 >
                   {{ t.translations().settings.connect }}
                 </button>
-                <button jigButton kind="text" type="button" (click)="connectOpen.set(false)">
+                <button jigButton kind="text" type="button" (click)="onCancelConnect()">
                   {{ t.translations().settings.connectCancel }}
                 </button>
               </div>
@@ -233,13 +233,24 @@ export class SettingsGeneralTab {
 
   /**
    * The address is validated **before** the transport is called, and that ordering is the point.
-   * `serverUrlSchema` allows `http:` and `https:` and nothing else, `submit()` only runs its
-   * action when the form is valid, so `javascript:alert(1)` never becomes an argument to
-   * `library.connect` — it is refused here, in the renderer, rather than trusted to whatever is
-   * on the other end of the bridge.
+   * `serverUrlSchema` allows `http:` and `https:` and no other scheme, and refuses an address
+   * carrying credentials; `submit()` only runs its action when the form is valid, so
+   * `javascript:alert(1)` never becomes an argument to `library.connect` — it is refused here,
+   * in the renderer, rather than trusted to whatever is on the other end of the bridge.
+   *
+   * **`validate` and not `validateStandardSchema`, for one reason: the message.**
+   * `validateStandardSchema` surfaces zod's own issue text, which is English in a file that has
+   * no business holding translations, and constraint C4 binds every string a user reads. So the
+   * schema still decides *whether* the address is allowed and this decides what is *said* about
+   * it. Reading `t.translations()` inside the validator is also what makes the message follow a
+   * language change, rather than freezing whichever language the form was built in.
    */
   readonly connectForm = form(this.connectModel, (path) => {
-    validateStandardSchema(path.url, serverUrlSchema)
+    validate(path.url, ({ value }) =>
+      serverUrlSchema.safeParse(value()).success
+        ? null
+        : { kind: 'serverUrl', message: this.t.translations().settings.serverUrlInvalid },
+    )
   })
 
   // Public, like ProjectsPage.onCreate/onRescan and the auth pages' onSubmit: the specs
@@ -288,6 +299,20 @@ export class SettingsGeneralTab {
       // detail; this is the user-facing half.
       this.notify.error(this.t.translations().settings.libraryFailed)
     }
+  }
+
+  /**
+   * Closes the connect form and empties it.
+   *
+   * Emptying is the point. What is in the field at this moment is, in the case that matters, an
+   * address that was just refused — and leaving it there means the next person to open the form
+   * meets their own rejected typing under a red message they did not just earn. `reset` rather
+   * than assigning the model, because it clears `touched` along with the value: the same field
+   * showing a validation error over an empty box would be the same wart in a different shape.
+   */
+  onCancelConnect(): void {
+    this.connectOpen.set(false)
+    this.connectForm().reset({ url: '' })
   }
 
   /** Points the shell at a server instead. Same three outcomes as `onChooseFolder`. */
