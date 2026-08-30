@@ -256,8 +256,18 @@ that both URLs keep working and both tabs stay reachable.
 
 ### 6.1 Library location
 
-A card in the **General** tab, rendered only when `canPickLocalFolder` is true, showing the
-library the shell has open and offering two actions:
+A card in the **General** tab, rendered only when `canPickLocalFolder` is true, offering two
+actions.
+
+**Amended 2026-08-30, during task 5.** This section originally said the card also showed "the
+library the shell has open". That was unimplementable as written and the error was mine:
+`ApiClient.library` exposes `pick` and `connect` and nothing that reads the current library back,
+while this same section forbids adding IPC. A card cannot display a value no transport returns.
+The clause is withdrawn; showing the open library needs a `library.current()` on the client and a
+main-process handler behind it, and is **recorded debt** in §10 rather than smuggled into a task
+that was told not to add IPC.
+
+The two actions:
 
 - **Choose folder** — `api.library.pick()`. Unchanged behaviour: `null` on cancel is not a
   failure, and the shell reloads the window itself on success.
@@ -371,3 +381,15 @@ The subsystem is done when all of these hold.
 - `createProjectSchema.website` accepting `data:` and `javascript:` — pre-existing debt in the
   contract, reachable from segment J's write paths, and not widened here. §6.1's connect input
   gets its own scheme check rather than waiting for that fix.
+- **Showing which library is currently open** (§6.1, amended). Needs `library.current()` on
+  `ApiClient` and a main-process handler. Genuinely useful — a user with both a local folder and a
+  server has no way to tell from the UI which one they are looking at — but it is main-process
+  work that no task in this segment was scoped for.
+- **Zod schema messages are not translated.** They reach the user through `jigErrors` in English
+  whatever the chosen language. Task 5 fixed this for the one field it added by supplying a
+  translated message at the form rather than surfacing the schema's; every other schema in
+  `packages/contract/src/schemas.ts` still has the problem. A general fix is an i18n pass over
+  validation messages and is not attempted here.
+- **`SQLITE_BUSY` in `packages/desktop/test/library.spec.ts`.** An intermittent "database is
+  locked" seen twice in this session and reproduced by neither task 3's implementer nor its
+  reviewer at either the parent or the child commit. Not this segment's, not investigated.
