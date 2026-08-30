@@ -88,7 +88,17 @@
     "sortName": "A–Z",
     "sortNewest": "Neueste",
     "general": "Allgemein",
-    "slicers": "Slicer"
+    "slicers": "Slicer",
+    "libraryTitle": "Wo Ihre Bibliothek liegt",
+    "libraryLead": "Öffnen Sie einen Ordner auf diesem Computer oder verbinden Sie sich mit einem Slicer-Projektverwaltung-Server. Sobald die neue Bibliothek offen ist, wird alles neu geladen.",
+    "chooseFolder": "Ordner auswählen…",
+    "connectToServer": "Stattdessen mit einem Server verbinden",
+    "serverUrl": "Serveradresse",
+    "serverUrlHint": "Zum Beispiel https://print.example.com",
+    "connect": "Verbinden",
+    "connectCancel": "Abbrechen",
+    "libraryFailed": "Dieser Ordner konnte nicht als Bibliothek geöffnet werden.",
+    "connectFailed": "Dieser Server war nicht erreichbar."
   },
   "slicers": {
     "lead": "Welche Slicer auf diesem Computer installiert sind und welche Installation davon diese App startet.",

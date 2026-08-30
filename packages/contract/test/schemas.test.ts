@@ -5,6 +5,7 @@ import {
   createUserSchema,
   fileNameSchema,
   projectPatchSchema,
+  serverUrlSchema,
   usernameSchema,
 } from '../src/schemas.ts'
 
@@ -52,4 +53,14 @@ test('fileNameSchema rejects Windows-reserved device names but accepts look-alik
 test('projectPatchSchema allows clearing website with null but not with a bad url', () => {
   assert.equal(projectPatchSchema.safeParse({ website: null }).success, true)
   assert.equal(projectPatchSchema.safeParse({ website: 'not a url' }).success, false)
+})
+
+test('serverUrlSchema accepts http and https and no other scheme', () => {
+  // z.url() alone accepts every one of these: they are absolute URLs, and it is the *scheme*
+  // that makes them unusable as the origin of a window.
+  for (const bad of ['javascript:alert(1)', 'data:text/html,x', 'file:///c:/', 'not a url']) {
+    assert.equal(serverUrlSchema.safeParse(bad).success, false, bad)
+  }
+  assert.equal(serverUrlSchema.safeParse('https://example.invalid:8443/').success, true)
+  assert.equal(serverUrlSchema.safeParse('http://192.168.1.10:8080').success, true)
 })

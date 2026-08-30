@@ -80,6 +80,30 @@ export const fileNameSchema = z
 
 export const fileRenameSchema = z.object({ name: fileNameSchema })
 
+/**
+ * The address of a Slicer Project Manager server, as typed by the user before a shell is asked
+ * to point a window at it (spec G 6.1).
+ *
+ * The scheme check is the entire reason this exists. `z.url()` on its own is not it: it accepts
+ * every absolute URL the WHATWG parser accepts, `javascript:alert(1)` included. Something that
+ * is about to become the origin of a window must be `http:` or `https:` and nothing else, so the
+ * scheme is checked here rather than assumed from the shape of the string.
+ *
+ * `new URL` rather than a `startsWith` test on purpose: a prefix test answers a question about
+ * the characters, and this needs an answer about the scheme the same parser will resolve. The
+ * `try` is not dead — `z.url()` runs first and rejects most non-URLs, but a schema is a value
+ * other code composes with, and a refinement that throws instead of returning false would turn
+ * a validation failure into an exception at whatever call site did the composing.
+ */
+export const serverUrlSchema = z.url().refine((value) => {
+  try {
+    const { protocol } = new URL(value)
+    return protocol === 'http:' || protocol === 'https:'
+  } catch {
+    return false
+  }
+}, 'the address must start with http:// or https://')
+
 export const settingsPatchSchema = z.object({
   theme: z.enum(['light', 'dark', 'system']).optional(),
   language: z.enum(['en', 'de']).optional(),

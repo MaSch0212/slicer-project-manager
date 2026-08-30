@@ -88,7 +88,17 @@
     "sortName": "A–Z",
     "sortNewest": "Newest",
     "general": "General",
-    "slicers": "Slicers"
+    "slicers": "Slicers",
+    "libraryTitle": "Where your library is",
+    "libraryLead": "Open a folder on this computer, or connect to a Slicer Project Manager server. Everything reloads once the new library is open.",
+    "chooseFolder": "Choose a folder…",
+    "connectToServer": "Connect to a server instead",
+    "serverUrl": "Server address",
+    "serverUrlHint": "For example https://print.example.com",
+    "connect": "Connect",
+    "connectCancel": "Cancel",
+    "libraryFailed": "That folder could not be opened as a library.",
+    "connectFailed": "That server could not be reached."
   },
   "slicers": {
     "lead": "Which slicers are installed on this computer, and which install of each one this app launches.",

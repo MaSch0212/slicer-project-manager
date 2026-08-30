@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { type Capabilities, DEFAULT_SETTINGS } from '@spm/contract/dtos.ts'
 import { API_CLIENT } from '../../core/api/api-client.token'
 import { CapabilitiesStore } from '../../core/capabilities.store'
+import { NotifyService } from '../../core/notify.service'
 import { TranslateService } from '../../core/i18n/translate.service'
 import { SettingsPage } from './settings.page'
 import { routes as webRoutes } from '../../routes'
@@ -253,6 +254,10 @@ describe("the web build's /settings", () => {
         ...provideJigForTests(),
         provideRouter(webRoutes),
         { provide: API_CLIENT, useValue: api },
+        // The real General tab injects NotifyService, whose snackbar creator cannot be
+        // constructed under TestBed at all (see testing/jig.ts). This spec is about the route
+        // resolving, so the service is stood in for rather than reached.
+        { provide: NotifyService, useValue: { success: vi.fn(), error: vi.fn(), info: vi.fn() } },
       ],
     })
     const translate = TestBed.inject(TranslateService)
