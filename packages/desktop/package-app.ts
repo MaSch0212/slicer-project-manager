@@ -192,10 +192,22 @@ await writeFile(
  * GitHub published the app; `MaSch0212` is the owner in `git remote -v`, the only publisher
  * identity this repository states.
  *
- * `appCopyright` is deliberately **not** passed, so `LegalCopyright` stays Electron's. There is no
- * LICENSE file and no `author` field anywhere in this repo, so any copyright line here would be
- * invented, and the compiled code in this binary genuinely *is* Electron's — their notice is a
- * true statement about the file. Packager leaves it alone when `appCopyright` is absent.
+ * `appCopyright` is still deliberately **not** passed, so `LegalCopyright` stays Electron's — but
+ * the reason changed, and the old one is gone. It used to be that there was no LICENSE file and no
+ * `author` field anywhere in this repo, so any copyright line here would have been invented. There
+ * is a `LICENSE` now: MIT, with a named holder, and a line could be written from it.
+ *
+ * What holds the omission is narrower and is about what the string is attached to. `LegalCopyright`
+ * is a field of *this executable's* version resource, and this executable is Electron's compiled
+ * binary with its icon and its product strings replaced — none of this repository's own code is
+ * compiled into it. This app lives in `resources/app`, which the binary loads at run time. So
+ * Electron's notice remains a true statement about the bytes it is attached to.
+ *
+ * That is a reason rather than a settlement, and the plan records it as an open question: the other
+ * reading, that a version resource describes the product a user installed rather than the object
+ * file it sits in, is at least as common in shipped software, and under it this line should say
+ * `Copyright (c) 2026 Marc Schmidt`. Whichever way it is decided, the change is one option on this
+ * call. Packager leaves the field alone when `appCopyright` is absent.
  */
 const [packagedDir] = await packager({
   dir: stagingDir,

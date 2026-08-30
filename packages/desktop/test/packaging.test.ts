@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict'
+import { statSync } from 'node:fs'
+import { dirname, join, resolve } from 'node:path'
 import { describe, test } from 'node:test'
+import { fileURLToPath } from 'node:url'
 import { APP_NAME, APP_SLUG, packagedExecutableName } from '../packaging.ts'
 
 /**
@@ -59,4 +62,24 @@ describe('packagedExecutableName', () => {
     assert.equal(packagedExecutableName('win32'), `${APP_NAME}.exe`)
     assert.equal(packagedExecutableName('linux'), APP_SLUG)
   })
+})
+
+/**
+ * The files at the repository root that nothing imports.
+ *
+ * The same reason `favicon.svg` and `manifest.webmanifest` are in the packaging list: a licence is
+ * read by people and by nothing in the build, so a merge that dropped it — or a checkout that
+ * never had it — breaks no bundle, no import and no test that watches imports. This is the one
+ * thing that notices.
+ */
+describe('the licence artifacts at the repository root', () => {
+  const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../..')
+
+  for (const name of ['LICENSE']) {
+    test(`${name} exists and is not empty`, () => {
+      const info = statSync(join(repoRoot, name), { throwIfNoEntry: false })
+      assert.ok(info?.isFile(), `${name} is missing from the repository root`)
+      assert.ok(info.size > 0, `${name} is empty`)
+    })
+  }
 })
