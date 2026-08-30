@@ -134,7 +134,10 @@ test('classifyFile routes by extension and falls back to other', async () => {
  * version produced a row's `kind` and does not ask again until the bytes move, which splits them:
  * "we read the file and it is not a zip" is an answer worth recording, and "we could not open the
  * file" is a transient that must not be recorded as one. `unreadable` is the only thing here that
- * tells them apart, and `rescan`'s version-mismatch branch is what reads it.
+ * tells them apart, and both of `rescan`'s reclassifying branches read it — the version-mismatch
+ * one because it is the branch that would otherwise stamp the transient as permanent, and the
+ * stat-mismatch one so that its safety does not rest on the hash happening to run before the
+ * classify.
  */
 test('a 3MF that is not a zip answers other; one that cannot be opened says so', async () => {
   await withDir((dir) => {
@@ -178,10 +181,25 @@ test('fileContentHash is a stable 32-byte digest that follows content', async ()
  * and teach whoever bumped the constant to edit the test. This one exists to be broken by a bump:
  * going red *is* how the edit that changes an answer is forced to touch the version beside it.
  *
+ * **An answer is `kind/slicer`, not `kind`.** `Classification` carries both, `reclassifyFile`
+ * writes both into the row, and a wrong `slicer` is as permanent as a wrong `kind` — a rescan
+ * re-asks on the version, which is the same version either way. `kind` alone left the classifier's
+ * most order-sensitive code uncovered here: reorder `SLICER_HEADER_REGISTRY` so that
+ * `X-BBL-Client-Type` is tested before `OrcaSlicer-Version` and every Orca project becomes
+ * `bambu` — the per-slicer tests above go red, get updated, and the change ships **without a
+ * bump**, leaving every already-indexed Orca project labelled `bambu` for good. That is exactly
+ * the failure this mechanism exists to prevent, one field over. The five slicer fixtures were
+ * already in the loop below; only what is recorded from them changed.
+ *
+ * A null slicer is written `none` rather than left to stringify: the value is part of a literal
+ * people read and edit, and `model/null` invites the question of whether that is the absence or
+ * the string.
+ *
  * **What it cannot catch**, so nobody trusts it further than it goes:
  * - A change inside `classify3mf` that produces the same answers on the eight fixtures below.
  * - A branch added **outside** `MODEL_EXTENSIONS` — a new `.gcode`-shaped arm returning some other
  *   kind — which the enumeration does not reach and which therefore forces no row here.
+ * - `unreadable`, the third field, which no fixture here reaches through this loop.
  *
  * The snapshot pins the function's answers, not its reasoning, and nothing in this repository
  * measures which internal changes warrant a bump.
@@ -189,21 +207,27 @@ test('fileContentHash is a stable 32-byte digest that follows content', async ()
 const CLASSIFIER_SNAPSHOT = {
   version: 1,
   answers: {
-    '.stl': 'model',
-    '.obj': 'model',
-    '.step': 'model',
-    '.stp': 'model',
-    '.3mf/cura': 'slicer_project',
-    '.3mf/prusaslicer': 'slicer_project',
-    '.3mf/orca': 'slicer_project',
-    '.3mf/bambu': 'slicer_project',
-    '.3mf/anycubic': 'slicer_project',
-    '.3mf/unsliced': 'slicer_project',
-    '.3mf/mesh': 'model',
-    '.3mf/not-a-zip': 'other',
-    '.gcode': 'other',
-    '.txt': 'other',
+    '.stl': 'model/none',
+    '.obj': 'model/none',
+    '.step': 'model/none',
+    '.stp': 'model/none',
+    '.3mf/cura': 'slicer_project/cura',
+    '.3mf/prusaslicer': 'slicer_project/prusaslicer',
+    '.3mf/orca': 'slicer_project/orca',
+    '.3mf/bambu': 'slicer_project/bambu',
+    '.3mf/anycubic': 'slicer_project/anycubic',
+    '.3mf/unsliced': 'slicer_project/none',
+    '.3mf/mesh': 'model/none',
+    '.3mf/not-a-zip': 'other/none',
+    '.gcode': 'other/none',
+    '.txt': 'other/none',
   },
+}
+
+/** The whole of a `Classification` that this snapshot freezes, in one string per fixture. */
+function answerOf(path: string): string {
+  const classification = classifyFile(path)
+  return `${classification.kind}/${classification.slicer ?? 'none'}`
 }
 
 test('the classifier version and every answer it gives are frozen together', async () => {
@@ -218,7 +242,7 @@ test('the classifier version and every answer it gives are frozen together', asy
     for (const ext of MODEL_EXTENSIONS) {
       const path = join(dir, `part${ext}`)
       writeFileSync(path, 'not read by classifyFile, which looks only at the name')
-      answers[ext] = classifyFile(path).kind
+      answers[ext] = answerOf(path)
     }
 
     const threeMf: [string, (path: string) => void][] = [
@@ -234,13 +258,13 @@ test('the classifier version and every answer it gives are frozen together', asy
     for (const [label, write] of threeMf) {
       const path = join(dir, `${label}.3mf`)
       write(path)
-      answers[`.3mf/${label}`] = classifyFile(path).kind
+      answers[`.3mf/${label}`] = answerOf(path)
     }
 
     for (const ext of ['.gcode', '.txt']) {
       const path = join(dir, `f${ext}`)
       writeFileSync(path, 'x')
-      answers[ext] = classifyFile(path).kind
+      answers[ext] = answerOf(path)
     }
 
     assert.deepEqual({ version: CLASSIFIER_VERSION, answers }, CLASSIFIER_SNAPSHOT)
