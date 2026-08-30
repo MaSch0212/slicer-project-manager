@@ -55,6 +55,8 @@ type Options = {
   settings?: SettingsDto
   /** Left signed out, to exercise the gate the rest of the navigation sits behind. */
   signedIn?: boolean
+  /** The signed-in user's own flag, which is half of the Users gate. */
+  admin?: boolean
 }
 
 async function setup(options: Options = {}) {
@@ -66,6 +68,7 @@ async function setup(options: Options = {}) {
     ),
     settings = DEFAULT_SETTINGS,
     signedIn = true,
+    admin = true,
   } = options
 
   const api = {
@@ -103,7 +106,7 @@ async function setup(options: Options = {}) {
   await TestBed.inject(TranslateService).ready
   const auth = TestBed.inject(AuthStore)
   if (signedIn) {
-    auth.setUser(USER)
+    auth.setUser({ ...USER, isAdmin: admin })
   }
   const capabilityStore = TestBed.inject(CapabilitiesStore)
   await capabilityStore.load()
@@ -132,13 +135,23 @@ function root(fixture: { nativeElement: unknown }): HTMLElement {
   return fixture.nativeElement as HTMLElement
 }
 
-/** The sidebar's own navigation, which is the desktop host of the entry list. */
-function sidebar(fixture: { nativeElement: unknown }): HTMLElement {
-  const element = root(fixture).querySelector('.spm-sidebar')
+/**
+ * The sidebar, or `null` where the shell drew none.
+ *
+ * Nullable rather than throwing, because "there is no sidebar" is now a state the shell has: a
+ * signed-out user of a shell that requires authentication gets no navigation chrome at all.
+ */
+function sidebar(fixture: { nativeElement: unknown }): HTMLElement | null {
+  return root(fixture).querySelector('.spm-sidebar')
+}
+
+/** The sidebar, where a test is asserting on what is inside it. */
+function sidebarOf(fixture: { nativeElement: unknown }): HTMLElement {
+  const element = sidebar(fixture)
   if (!element) {
     throw new Error('the shell rendered no sidebar')
   }
-  return element as HTMLElement
+  return element
 }
 
 /**
@@ -198,7 +211,31 @@ describe('App', () => {
    */
   it('waits for a user before offering the navigation where the shell requires one', async () => {
     const { fixture } = await setup({ signedIn: false })
-    expect(labelsIn(sidebar(fixture))).toEqual([])
+    expect(root(fixture).querySelectorAll('.spm-nav-entry')).toHaveLength(0)
+  })
+
+  /**
+   * No entries, no chrome (review finding 5).
+   *
+   * A signed-out user of a shell that requires authentication used to get a 240px column holding
+   * a brand and a control to collapse nothing — and pressing that control PUT `/api/settings`,
+   * was answered 401, and showed an error snackbar for an action the shell itself offered. The
+   * condition is the entry list's own length, so it cannot disagree with the list.
+   */
+  it('draws no navigation chrome at all where there is nowhere to go', async () => {
+    const { fixture } = await setup({ signedIn: false })
+
+    expect(sidebar(fixture)).toBeNull()
+    expect(root(fixture).querySelectorAll(`[aria-label="${en.nav.open}"]`)).toHaveLength(0)
+    expect(root(fixture).querySelectorAll(`[aria-label="${en.nav.toggle}"]`)).toHaveLength(0)
+  })
+
+  it('draws the chrome again as soon as there is somewhere to go', async () => {
+    const { fixture } = await setup()
+
+    expect(sidebar(fixture)).not.toBeNull()
+    expect(root(fixture).querySelectorAll(`[aria-label="${en.nav.open}"]`)).toHaveLength(1)
+    expect(root(fixture).querySelectorAll(`[aria-label="${en.nav.toggle}"]`)).toHaveLength(1)
   })
 
   it('offers the navigation immediately where the shell requires no authentication', async () => {
@@ -206,17 +243,17 @@ describe('App', () => {
       signedIn: false,
       capabilities: { ...WEB_CAPABILITIES, requiresAuth: false, canManageUsers: false },
     })
-    expect(labelsIn(sidebar(fixture))).toEqual([en.projects.title, en.settings.title])
+    expect(labelsIn(sidebarOf(fixture))).toEqual([en.projects.title, en.settings.title])
   })
 
   it('offers no model-browser link where the shell cannot embed one', async () => {
     const { fixture } = await setup()
-    expect(labelsIn(sidebar(fixture))).not.toContain(en.browse.title)
+    expect(labelsIn(sidebarOf(fixture))).not.toContain(en.browse.title)
   })
 
   it('offers the model-browser link where the shell can embed one', async () => {
     const { fixture } = await setup({ capabilities: EVERY_ENTRY })
-    const browse = [...sidebar(fixture).querySelectorAll('a')].filter(
+    const browse = [...sidebarOf(fixture).querySelectorAll('a')].filter(
       (anchor) => anchor.getAttribute('href') === '/browse',
     )
     expect(browse).toHaveLength(1)
@@ -227,29 +264,29 @@ describe('App', () => {
     const { fixture, auth } = await setup()
     auth.setUser({ ...USER, isAdmin: false })
     fixture.detectChanges()
-    expect(labelsIn(sidebar(fixture))).not.toContain(en.admin.title)
+    expect(labelsIn(sidebarOf(fixture))).not.toContain(en.admin.title)
   })
 
   it('offers user administration to an admin of a shell that has users', async () => {
     const { fixture } = await setup()
-    expect(labelsIn(sidebar(fixture))).toContain(en.admin.title)
+    expect(labelsIn(sidebarOf(fixture))).toContain(en.admin.title)
   })
 
   it('offers no sign-out where the shell requires no authentication', async () => {
     const { fixture } = await setup({
       capabilities: { ...WEB_CAPABILITIES, requiresAuth: false },
     })
-    expect(labelsIn(sidebar(fixture))).not.toContain(en.app.signOut)
+    expect(labelsIn(sidebarOf(fixture))).not.toContain(en.app.signOut)
     // The rest of the navigation is still there — otherwise gating the whole block off would
     // pass the line above for the wrong reason.
-    expect(labelsIn(sidebar(fixture))).toEqual(
+    expect(labelsIn(sidebarOf(fixture))).toEqual(
       expect.arrayContaining([en.projects.title, en.settings.title]),
     )
   })
 
   it('shows sign-out where there is a session to end', async () => {
     const { fixture } = await setup()
-    expect(labelsIn(sidebar(fixture))).toContain(en.app.signOut)
+    expect(labelsIn(sidebarOf(fixture))).toContain(en.app.signOut)
   })
 
   // The shell used to bind (click)="auth.logout()" directly. AuthStore.logout clears local
@@ -293,13 +330,13 @@ describe('App', () => {
   it('renders the collapsed sidebar the setting describes, and names its control the same', async () => {
     const { fixture } = await setup({ settings: { ...DEFAULT_SETTINGS, navCollapsed: true } })
 
-    expect(sidebar(fixture).classList.contains('spm-sidebar--collapsed')).toBe(true)
+    expect(sidebarOf(fixture).classList.contains('spm-sidebar--collapsed')).toBe(true)
     const toggle = byLabel(fixture, en.nav.toggle)
     expect(toggle.getAttribute('aria-expanded')).toBe('false')
     // The labels are hidden by CSS, not removed: an icon-only entry with no accessible name is
     // the failure this rule exists to prevent, and jsdom lays nothing out, so the assertion is
     // that the text is still in the tree.
-    expect(labelsIn(sidebar(fixture))).toContain(en.projects.title)
+    expect(labelsIn(sidebarOf(fixture))).toContain(en.projects.title)
   })
 
   it('names the collapse control the same in both states', async () => {
@@ -331,7 +368,7 @@ describe('App', () => {
 
     expect(notify.error).toHaveBeenCalledWith(en.errors.generic)
     expect(settings.settings().navCollapsed).toBe(false)
-    expect(sidebar(fixture).classList.contains('spm-sidebar--collapsed')).toBe(false)
+    expect(sidebarOf(fixture).classList.contains('spm-sidebar--collapsed')).toBe(false)
   })
 
   /* ---------------------------------------------------------------------- drawer */
@@ -357,22 +394,92 @@ describe('App', () => {
   })
 
   /**
-   * One entry list, two hosts (spec G 4.3).
+   * One entry list, two hosts, asserted structurally (spec G 4.3, review finding 1).
    *
-   * This does not read the source and does not count elements: it renders both hosts with every
-   * gate open and compares what each of them actually put in the document — the labels, the
-   * destinations and the icons. A second copy of the list in the drawer passes a count and fails
-   * this the moment one of the three drifts, which is what a second copy is for.
+   * The agreement tests below compare what each host rendered. **That catches divergence, not
+   * duplication** — a hand-written second list that happens to agree on the day it is written
+   * passes them, which was measured on the first version of this file. This one asks the
+   * question the other way round: how many navigation components are in the document, and does
+   * every rendered entry belong to one of them. A copy written into the drawer's template is not
+   * an `spm-nav-list` element, so its entries have no such ancestor however faithful they are.
    */
-  it('renders the same entries in the drawer as in the sidebar', async () => {
+  it('renders one navigation component per host, and every entry inside one', async () => {
     const { fixture } = await setup({ capabilities: EVERY_ENTRY })
-    const fromSidebar = entriesIn(sidebar(fixture))
 
-    const fromDrawer = entriesIn(await openDrawer(fixture))
+    // Closed: the sidebar's, and nothing else in the document.
+    expect(root(fixture).querySelectorAll('spm-nav-list')).toHaveLength(1)
 
-    expect(fromSidebar).toHaveLength(5)
-    expect(fromDrawer).toEqual(fromSidebar)
+    await openDrawer(fixture)
+
+    expect(root(fixture).querySelectorAll('spm-nav-list')).toHaveLength(2)
+    expect(root(fixture).querySelectorAll('jig-drawer spm-nav-list')).toHaveLength(1)
+    const entries = [...root(fixture).querySelectorAll('.spm-nav-entry')]
+    expect(entries).toHaveLength(10)
+    expect(entries.filter((entry) => entry.closest('spm-nav-list') === null)).toEqual([])
   })
+
+  /**
+   * The same entries in both hosts, **across varied state** (spec G 4.3, review finding 1).
+   *
+   * Comparing the two hosts under one capability set proves only that they agree there, and a
+   * hand-written duplicate agrees there by construction — the measured failure that produced this
+   * suite. Every gate therefore gets a case in which it is closed. A copy that does not implement
+   * the gates cannot follow them, so it goes red on the first case that hides an entry; a copy
+   * that does implement them has re-derived every gate in this application, which is the defect
+   * stated out loud.
+   *
+   * Each case also pins the sidebar's own labels, so a fixture that quietly stopped hiding
+   * anything would fail rather than make the comparison vacuous.
+   */
+  const AGREEMENT_CASES: { name: string; options: Options; labels: string[] }[] = [
+    {
+      name: 'every gate open',
+      options: { capabilities: EVERY_ENTRY },
+      labels: [
+        en.projects.title,
+        en.browse.title,
+        en.settings.title,
+        en.admin.title,
+        en.app.signOut,
+      ],
+    },
+    {
+      name: 'a shell that cannot embed a model browser',
+      options: { capabilities: WEB_CAPABILITIES },
+      labels: [en.projects.title, en.settings.title, en.admin.title, en.app.signOut],
+    },
+    {
+      name: 'a shell with no users to manage',
+      options: { capabilities: { ...EVERY_ENTRY, canManageUsers: false } },
+      labels: [en.projects.title, en.browse.title, en.settings.title, en.app.signOut],
+    },
+    {
+      name: 'a signed-in user who is not an admin',
+      options: { capabilities: EVERY_ENTRY, admin: false },
+      labels: [en.projects.title, en.browse.title, en.settings.title, en.app.signOut],
+    },
+    {
+      name: 'a shell that requires no authentication',
+      options: {
+        capabilities: { ...EVERY_ENTRY, requiresAuth: false, canManageUsers: false },
+        signedIn: false,
+      },
+      labels: [en.projects.title, en.browse.title, en.settings.title],
+    },
+  ]
+
+  for (const agreement of AGREEMENT_CASES) {
+    it(`renders the same entries in the drawer as in the sidebar — ${agreement.name}`, async () => {
+      const { fixture } = await setup(agreement.options)
+      expect(labelsIn(sidebarOf(fixture))).toEqual(agreement.labels)
+      const fromSidebar = entriesIn(sidebarOf(fixture))
+
+      const fromDrawer = entriesIn(await openDrawer(fixture))
+
+      expect(fromSidebar).toHaveLength(agreement.labels.length)
+      expect(fromDrawer).toEqual(fromSidebar)
+    })
+  }
 
   /**
    * A drawer left open over the page the user just navigated to is the defect this closes

@@ -9,9 +9,10 @@ export async function signIn(page: Page): Promise<void> {
   await page.getByLabel('Username').fill('admin')
   await page.getByLabel('Password').fill(PASSWORD)
   await page.getByRole('button', { name: 'Sign in' }).click()
-  // Land on /projects before touching the nav: the shell header is already rendered on
-  // /login, so clicking a link while the login's own navigation is still in flight starts a
-  // navigation the login one then wins.
+  // Land on /projects before touching the nav. Since spec G 4 the navigation is not rendered on
+  // /login at all — the shell draws no chrome while the entry list is empty — so this is what
+  // makes the links exist; and it also still keeps a click from starting a navigation while the
+  // login's own `router.navigate(['/projects'])` is in flight, which the login one then wins.
   await expect(page.getByRole('heading', { name: 'Projects' })).toBeVisible()
 }
 

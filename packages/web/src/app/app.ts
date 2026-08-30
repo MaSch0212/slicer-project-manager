@@ -11,6 +11,7 @@ import tablerLayoutSidebarLeftExpand from '@iconify/icons-tabler/layout-sidebar-
 import tablerMenu2 from '@iconify/icons-tabler/menu-2'
 import { AuthStore } from './core/auth.store'
 import { TranslateService } from './core/i18n/translate.service'
+import { NavEntriesStore } from './core/nav-entries'
 import { SpmNavList } from './core/nav-list'
 import { NotifyService } from './core/notify.service'
 import { SettingsStore } from './core/settings.store'
@@ -22,85 +23,104 @@ import { SettingsStore } from './core/settings.store'
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <div class="spm-shell">
-      <!-- Above the breakpoint. Hidden below it by the one media query in styles.css, which is
-           a rule about the viewport and not about the shell: a narrow desktop window gets the
-           drawer too, because the constraint is width. -->
-      <nav
-        class="spm-sidebar"
-        [class.spm-sidebar--collapsed]="collapsed()"
-        [attr.aria-label]="t.translations().nav.label"
-      >
-        <!-- The same mark the browser tab shows: the favicon in packages/web/public, which the
-             Angular build copies to the site root unhashed.
+      <!-- No entries, no chrome.
 
-             alt="" is what does the work. The link's own text already names the app, so a
-             second accessible name here would have a screen reader announce "Slicer Project
-             Manager Slicer Project Manager". aria-hidden says the same thing twice on
-             purpose: this is exactly the kind of decoration someone later "fixes" by adding
-             alt text.
-
-             width and height are the intrinsic box, so the sidebar head does not reflow between
-             layout and image decode. The src is resolved through the base href="/" in
-             index.html, which is what makes it spm://app/favicon.svg in the Electron
-             renderer rather than a lookup relative to the current route.
-
-             No backticks in this comment, and no dollar-brace either: the template is a JS
-             template literal, so both are syntax before they are text. Measured -- a first
-             version of this comment quoted the file path in backticks and esbuild failed
-             with 'Expected "}" but found "packages"'.
-
-             There is exactly one of these in the document. The narrow top bar below carries a
-             plain title instead of a second brand link, so "the link that names the app" stays
-             a single element for anything looking for it by name. -->
-        <a class="spm-brand" routerLink="/projects">
-          <img
-            class="spm-brand-mark"
-            src="favicon.svg"
-            alt=""
-            aria-hidden="true"
-            width="28"
-            height="28"
-          />
-          <span class="spm-brand-name">{{ t.translations().app.title }}</span>
-        </a>
-
-        <spm-nav-list [collapsed]="collapsed()" (signOut)="onSignOut()" />
-
-        <!-- The accessible name does not change with the state; only the icon does. A control
-             whose name flips between "Collapse" and "Expand" is announced as a different control
-             each time it is pressed, which is what aria-expanded is for saying instead.
-
-             The name comes from the tooltip rather than a separate aria-label: JigTooltip's
-             autoAria writes aria-label itself in "label" mode, and *removes* any aria-label it
-             did not write. An aria-label set here alongside a tooltip would be deleted on the
-             next render. -->
-        <button
-          jigButton
-          kind="icon"
-          class="spm-nav-toggle"
-          type="button"
-          [attr.aria-expanded]="!collapsed()"
-          [jigTooltip]="t.translations().nav.toggle"
-          jigTooltipAutoAriaMode="label"
-          (click)="onToggleCollapsed()"
+           On /login of a shell that requires authentication the entry list is empty, and what
+           used to render around it was a 240px column holding a brand and a control to collapse
+           nothing -- with a collapse button that PUTs /api/settings, is answered 401, and shows
+           the user an error for an action the shell itself invited. The condition is the list's
+           own length and not a repeat of the auth gate: a gate written twice is a gate that can
+           disagree with itself, and this is the honest question anyway ("is there anywhere to
+           go?"). It is why the entries live in a store rather than inside the component this
+           block would otherwise be wrapped around. -->
+      @if (navEntries.entries().length > 0) {
+        <!-- Above the breakpoint. Hidden below it by the one media query in styles.css, which is
+             a rule about the viewport and not about the shell: a narrow desktop window gets the
+             drawer too, because the constraint is width. -->
+        <nav
+          class="spm-sidebar"
+          [class.spm-sidebar--collapsed]="collapsed()"
+          [attr.aria-label]="t.translations().nav.label"
         >
-          <jig-icon [icon]="collapsed() ? icons.expand : icons.collapse" />
-        </button>
-      </nav>
+          <!-- The same mark the browser tab shows: the favicon in packages/web/public, which the
+               Angular build copies to the site root unhashed.
+
+               alt="" is what does the work. The link's own text already names the app, so a
+               second accessible name here would have a screen reader announce "Slicer Project
+               Manager Slicer Project Manager". aria-hidden says the same thing twice on
+               purpose: this is exactly the kind of decoration someone later "fixes" by adding
+               alt text.
+
+               That makes the span the link's only accessible name, in both states -- which is
+               why styles.css hides it when collapsed with the clip pattern rather than with
+               display:none. A collapsed brand link styled the obvious way is a link with no
+               name at all, and it is the first thing a keyboard user reaches.
+
+               width and height are the intrinsic box, so the sidebar head does not reflow between
+               layout and image decode. The src is resolved through the base href="/" in
+               index.html, which is what makes it spm://app/favicon.svg in the Electron
+               renderer rather than a lookup relative to the current route.
+
+               No backticks in this comment, and no dollar-brace either: the template is a JS
+               template literal, so both are syntax before they are text. Measured -- a first
+               version of this comment quoted the file path in backticks and esbuild failed
+               with 'Expected "}" but found "packages"'.
+
+               There is exactly one of these in the document. The narrow top bar below carries a
+               plain title instead of a second brand link, so "the link that names the app" stays
+               a single element for anything looking for it by name. -->
+          <a class="spm-brand" routerLink="/projects">
+            <img
+              class="spm-brand-mark"
+              src="favicon.svg"
+              alt=""
+              aria-hidden="true"
+              width="28"
+              height="28"
+            />
+            <span class="spm-brand-name">{{ t.translations().app.title }}</span>
+          </a>
+
+          <spm-nav-list [collapsed]="collapsed()" (signOut)="onSignOut()" />
+
+          <!-- The accessible name does not change with the state; only the icon does. A control
+               whose name flips between "Collapse" and "Expand" is announced as a different
+               control each time it is pressed, which is what aria-expanded is for saying instead.
+
+               The name comes from the tooltip rather than a separate aria-label: JigTooltip's
+               autoAria writes aria-label itself in "label" mode, and *removes* any aria-label it
+               did not write. An aria-label set here alongside a tooltip would be deleted on the
+               next render. -->
+          <button
+            jigButton
+            kind="icon"
+            class="spm-nav-toggle"
+            type="button"
+            [attr.aria-expanded]="!collapsed()"
+            [jigTooltip]="t.translations().nav.toggle"
+            jigTooltipAutoAriaMode="label"
+            (click)="onToggleCollapsed()"
+          >
+            <jig-icon [icon]="collapsed() ? icons.expand : icons.collapse" />
+          </button>
+        </nav>
+      }
 
       <div class="spm-shell-body">
         <!-- At or below the breakpoint, and nowhere else. No brand link here: see the sidebar. -->
         <div class="spm-topbar">
-          <button
-            jigButton
-            kind="icon"
-            type="button"
-            [attr.aria-expanded]="drawerOpen()"
-            [attr.aria-label]="t.translations().nav.open"
-            (click)="drawerOpen.set(true)"
-          >
-            <jig-icon [icon]="icons.menu" />
-          </button>
+          @if (navEntries.entries().length > 0) {
+            <button
+              jigButton
+              kind="icon"
+              type="button"
+              [attr.aria-expanded]="drawerOpen()"
+              [attr.aria-label]="t.translations().nav.open"
+              (click)="drawerOpen.set(true)"
+            >
+              <jig-icon [icon]="icons.menu" />
+            </button>
+          }
           <span class="spm-topbar-title">{{ t.translations().app.title }}</span>
         </div>
 
@@ -134,6 +154,7 @@ import { SettingsStore } from './core/settings.store'
 })
 export class App {
   protected readonly t = inject(TranslateService)
+  protected readonly navEntries = inject(NavEntriesStore)
   private readonly auth = inject(AuthStore)
   private readonly notify = inject(NotifyService)
   private readonly settings = inject(SettingsStore)

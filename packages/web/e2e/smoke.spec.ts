@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test'
 import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
+import { signIn } from './fixtures'
 
 const PASSWORD = 'e2e test password'
 
@@ -58,10 +59,11 @@ test('the language switch takes effect without a reload', async ({ page }) => {
   await page.getByLabel('Password').fill(PASSWORD)
   await page.getByRole('button', { name: 'Sign in' }).click()
 
-  // Wait for the post-login navigation to land before touching the nav. The Settings link
-  // lives in the shell header, so it is already clickable on /login: clicking it while the
-  // login's own `router.navigate(['/projects'])` is still in flight starts a navigation that
-  // the login one then wins, leaving the projects page rendered under a /settings URL.
+  // Wait for the post-login navigation to land before touching the nav. Since spec G 4 the
+  // sidebar is not drawn on /login at all — the shell draws no chrome while the entry list is
+  // empty — so this is what makes the Settings link exist; and it also still keeps a click from
+  // starting a navigation while the login's own `router.navigate(['/projects'])` is in flight,
+  // which the login one then wins, leaving the projects page under a /settings URL.
   await expect(page.getByRole('heading', { name: 'Projects' })).toBeVisible()
 
   await page.getByRole('link', { name: 'Settings' }).click()
@@ -105,7 +107,13 @@ test('the brand mark and the icon assets are served at the site root', async ({ 
   // `assets` copy of `packages/web/public`, and reach the desktop renderer through that *plus*
   // the `spm://` handler's content-type map. A change to angular.json's assets glob breaks this
   // one and nothing else.
+  // Signed in, not on /login: the brand moved into the sidebar (spec G 4.2), and the sidebar is
+  // not drawn while the navigation has no entries — which on /login it has not.
   await page.goto('/login')
+  await page.getByLabel('Username').fill('admin')
+  await page.getByLabel('Password').fill(PASSWORD)
+  await page.getByRole('button', { name: 'Sign in' }).click()
+  await expect(page.getByRole('heading', { name: 'Projects' })).toBeVisible()
 
   const mark = page.locator('.spm-brand-mark')
   await expect(mark).toBeVisible()
@@ -155,3 +163,93 @@ function magicOf(body: Buffer): string {
   if (body[0] === 0x7b) return 'json'
   return hex
 }
+
+const APP_TITLE = 'Slicer Project Manager'
+const NAV_TOGGLE = 'Collapse or expand the navigation'
+
+/**
+ * The collapsed sidebar's accessible names, which no `ng test` assertion can reach.
+ *
+ * Both of the things this asserts depend on CSS, and jsdom loads none: `styles.css` is what hides
+ * the labels, and whether it hides them with the clip pattern or with `display: none` is the
+ * difference between a named control and an unnamed one. Playwright's role queries read the real
+ * accessibility tree, so they are the only place the difference shows.
+ *
+ * The brand link is the one that bit: its image is `alt=""` and `aria-hidden` on purpose, so the
+ * label span is its *only* name, and it is the first thing a keyboard user reaches in a collapsed
+ * sidebar.
+ */
+test('the collapsed sidebar keeps the names it had when expanded', async ({ page }) => {
+  await signIn(page)
+
+  const brand = page.getByRole('link', { name: APP_TITLE, exact: true })
+  const projects = page.getByRole('link', { name: 'Projects', exact: true })
+  await expect(brand).toHaveCount(1)
+  await expect(projects).toHaveCount(1)
+
+  await page.getByRole('button', { name: NAV_TOGGLE }).click()
+  await expect(page.locator('.spm-sidebar--collapsed')).toHaveCount(1)
+
+  // Same names, with no visible text anywhere in the sidebar.
+  await expect(brand).toHaveCount(1)
+  await expect(projects).toHaveCount(1)
+  // And the control that got the user here is still called what it was called, so a screen
+  // reader announces one control in two states rather than two controls.
+  await expect(page.getByRole('button', { name: NAV_TOGGLE })).toHaveAttribute(
+    'aria-expanded',
+    'false',
+  )
+
+  // `navCollapsed` is persisted server-side against the shared admin account, so leaving it
+  // collapsed would change the layout every later test in this suite runs against. Putting it
+  // back is also the other half of the assertion: the toggle works in both directions.
+  await page.getByRole('button', { name: NAV_TOGGLE }).click()
+  await expect(page.locator('.spm-sidebar--collapsed')).toHaveCount(0)
+})
+
+/**
+ * Spec G §9 acceptance criterion 3, and the only place it can be asserted.
+ *
+ * `playwright.config.ts` pins no viewport, so every other spec in this suite runs at Chromium's
+ * 1280x720 default and never crosses the breakpoint. This block moves below it. `reducedMotion`
+ * is emulated at the same time because the motion guard is the other half of the same stylesheet
+ * and the drawer is the thing it guards.
+ */
+test.describe('below the breakpoint', () => {
+  // `reducedMotion` through `contextOptions` and not as a `use` key of its own: this Playwright
+  // (1.62) exposes it on `BrowserContextOptions`, and the flat form is a type error here.
+  test.use({
+    viewport: { width: 700, height: 900 },
+    contextOptions: { reducedMotion: 'reduce' },
+  })
+
+  test('there is no sidebar, and a hamburger opens a modal drawer that navigates and closes', async ({
+    page,
+  }) => {
+    await signIn(page)
+
+    // Rendered, and hidden by the one media query — not absent, which is what a broken
+    // capability gate would look like instead.
+    await expect(page.locator('.spm-sidebar')).toHaveCount(1)
+    await expect(page.locator('.spm-sidebar')).toBeHidden()
+
+    const hamburger = page.getByRole('button', { name: 'Open the navigation' })
+    await expect(hamburger).toBeVisible()
+    await expect(hamburger).toHaveAttribute('aria-expanded', 'false')
+
+    await hamburger.click()
+
+    const drawer = page.getByRole('dialog')
+    await expect(drawer).toBeVisible()
+    await expect(drawer).toHaveAttribute('aria-modal', 'true')
+    // The reduced-motion guard, read off the element the user would have watched slide in.
+    // `styles.css` is unlayered and jig's animation is inside its own cascade layer, which is
+    // what lets a plain rule win here with no !important.
+    expect(await drawer.evaluate((element) => getComputedStyle(element).animationName)).toBe('none')
+
+    await drawer.getByRole('link', { name: 'Settings', exact: true }).click()
+
+    await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible()
+    await expect(drawer).toBeHidden()
+  })
+})

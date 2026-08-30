@@ -220,9 +220,19 @@ test('the capability set in remote mode is the union, and the UI keys off it', a
     timeout: 20_000,
   })
 
-  // The affordance, not the flag: the header control that local mode offers is absent here
-  // because the capability says so, and no component asked which shell it was in.
-  await expect(page.getByRole('button', { name: 'Change library folder' })).toHaveCount(0)
+  // The affordance, not the flag: the folder picker that local mode offers is absent here
+  // because the capability says so, and no component asked which shell it was in. On the settings
+  // page since spec G 6.1 — the name this used to look for ("Change library folder") was deleted
+  // from both locale files with the header, and a locator for a string that no longer exists
+  // anywhere is satisfied by refusing everything.
+  await page.getByRole('link', { name: 'Settings' }).click()
+  // Anchored on a control the General tab always renders, and asserted only once it is on
+  // screen: a `toHaveCount(0)` fired while the tab is still resolving passes because nothing has
+  // rendered yet, which is the same vacuous pass this assertion was rewritten to escape.
+  await expect(page.getByRole('combobox', { name: 'Language' })).toBeVisible()
+  await expect(page.getByRole('button', { name: /Choose a folder/ })).toHaveCount(0)
+  // Back where the rest of this test expects to be.
+  await page.getByRole('link', { name: 'Projects' }).click()
   // And the one the server contributes *is* there, which is the other half of the union: a
   // browser talking to this server would show it too, and a local-folder desktop app would not.
   await expect(page.getByRole('link', { name: 'Users' })).toHaveCount(1)

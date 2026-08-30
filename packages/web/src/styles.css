@@ -126,15 +126,28 @@ p {
    the mark at the heading size, and the German title is longer still. So in the sidebar the name
    wraps, and the mark is pinned to the first line rather than to the middle of two. */
 .spm-sidebar .spm-brand {
+  position: relative;
   align-items: flex-start;
   white-space: normal;
   line-height: 1.2;
 }
 
-/* The mark stays, the words go. The brand is still a link to the projects page in both states,
-   and it still has the same accessible name -- see the comment on it in app.ts. */
+/*
+ * The mark stays, the words go -- from the eye only.
+ *
+ * The span is the brand link's *only* accessible name: the mark beside it is `alt=""` and
+ * `aria-hidden`, deliberately, so the link is not announced twice. `display: none` here would
+ * therefore leave the collapsed sidebar's first tab stop a link with no name at all (WCAG 4.1.2),
+ * which is the same mistake the entry labels below are careful not to make. So this is the same
+ * clip pattern they use, for the same reason, and the link keeps its name in both states.
+ */
 .spm-sidebar--collapsed .spm-brand-name {
-  display: none;
+  position: absolute;
+  overflow: hidden;
+  width: 1px;
+  height: 1px;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 
 /* Pushed to the sidebar's foot by the entry list's own `flex: 1`. */
