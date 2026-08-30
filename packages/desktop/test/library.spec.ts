@@ -144,13 +144,25 @@ test('the switch control opens another folder without a restart, and lets go of 
   await expectProjects(page, ['Widget A'])
 
   // The control exists because `canPickLocalFolder` is true, and it is found the way a screen
-  // reader finds it — through the tooltip's aria label, with no test hook in the markup.
-  const control = page.getByRole('button', { name: 'Change library folder' })
+  // reader finds it — by its own visible text, with no test hook in the markup. It lives on the
+  // settings page since spec G 6.1; it used to be an icon button in the header, which the sidebar
+  // replaced. Reached by the navigation rather than by an address, so nothing here reloads the
+  // window before the pick does.
+  await page.getByRole('link', { name: 'Settings' }).click()
+  const control = page.getByRole('button', { name: /Choose a folder/ })
   await expect(control).toHaveCount(1)
 
   await stubFolderPicker(app, after)
+  // The shell reloads the window itself once the new library is open, and it reloads whatever
+  // route was showing — which is the settings page, because that is where the control is. Armed
+  // before the click, because the reload can land before the click's own promise settles.
+  const reloaded = page.waitForEvent('load')
   await control.click()
+  await reloaded
 
+  // Back to the grid the way a user gets there. Still no URL loaded by this test, so what appears
+  // in it can only have come from the shell swapping the library underneath the window.
+  await page.getByRole('link', { name: 'Projects' }).click()
   await expectProjects(page, ['Bracket'])
   expect(rememberedDir(userDataDir)).toBe(after)
   expect(existsSync(join(after, '.spm', 'app.db'))).toBe(true)
@@ -229,11 +241,17 @@ test('a cancelled picker leaves a usable window, not a login screen or a dead ap
   expect(existsSync(join(userDataDir, 'state.json'))).toBe(false)
 
   // And the way back in is the same control, which is offered because the capability says the
-  // shell can open a folder — not because anything checked whether one is open.
+  // shell can open a folder — not because anything checked whether one is open. On the settings
+  // page since spec G 6.1, and reachable from the navigation with no library open at all.
   const chosen = seededFolder('Widget A')
   await stubFolderPicker(app, chosen)
-  await page.getByRole('button', { name: 'Change library folder' }).click()
+  await page.getByRole('link', { name: 'Settings' }).click()
+  const reloaded = page.waitForEvent('load')
+  await page.getByRole('button', { name: /Choose a folder/ }).click()
+  await reloaded
 
+  // The reload lands back on the settings page, because that is the route the window was on.
+  await page.getByRole('link', { name: 'Projects' }).click()
   await expectProjects(page, ['Widget A'])
   expect(rememberedDir(userDataDir)).toBe(chosen)
 

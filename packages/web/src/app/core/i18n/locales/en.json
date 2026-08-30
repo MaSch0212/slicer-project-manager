@@ -1,8 +1,12 @@
 {
   "app": {
     "title": "Slicer Project Manager",
-    "signOut": "Sign out",
-    "changeFolder": "Change library folder"
+    "signOut": "Sign out"
+  },
+  "nav": {
+    "label": "Main navigation",
+    "toggle": "Collapse or expand the navigation",
+    "open": "Open the navigation"
   },
   "auth": {
     "username": "Username",

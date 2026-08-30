@@ -69,7 +69,10 @@ test('a zipped CuraManager library is uploaded, imported and shows up as project
   page,
 }) => {
   await signIn(page)
-  await page.getByRole('link', { name: 'Import' }).click()
+  // Through settings, because that is where importing lives now (spec G 6.2): it is a
+  // once-and-done job, so it sits with the other once-and-done settings rather than in the
+  // navigation. `/import` still resolves for anyone who has the address.
+  await page.getByRole('link', { name: 'Settings' }).click()
   await expect(page.getByRole('heading', { name: 'Import a CuraManager library' })).toBeVisible()
 
   // Names nothing else in the suite uses, so this cannot collide with the projects the other

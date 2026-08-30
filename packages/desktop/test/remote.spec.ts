@@ -341,7 +341,10 @@ test('switching to a local folder leaves nothing of the server behind', async ()
 
   // No login screen, because the capability set is the local column again.
   expect(local.url()).toBe('spm://app/projects')
-  await expect(local.getByRole('button', { name: 'Change library folder' })).toHaveCount(1)
+  // The folder picker is offered again, which is the capability set talking: it sits on the
+  // settings page since spec G 6.1 rather than in the header the sidebar replaced.
+  await local.getByRole('link', { name: 'Settings' }).click()
+  await expect(local.getByRole('button', { name: /Choose a folder/ })).toHaveCount(1)
 
   // And the server is gone from the shell as well as from the renderer: the `/api` branch of the
   // protocol handler finds no remote host, so it refuses rather than proxying out of a server the

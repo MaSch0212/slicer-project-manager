@@ -1,178 +1,141 @@
-import { ChangeDetectionStrategy, Component, effect, inject, signal } from '@angular/core'
-import { Router, RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router'
+import { ChangeDetectionStrategy, Component, computed, effect, inject, signal } from '@angular/core'
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop'
+import { NavigationEnd, Router, RouterLink, RouterOutlet } from '@angular/router'
 import { ColorSchemeService } from '@awdlab/jig/api/ng'
 import { JigButton } from '@awdlab/jig/button'
+import { JigDrawer } from '@awdlab/jig/drawer'
 import { JigIcon } from '@awdlab/jig/icon'
-import { JigMessage } from '@awdlab/jig/message'
-import { JigToolbar } from '@awdlab/jig/toolbar'
 import { JigTooltip } from '@awdlab/jig/tooltip'
-import tablerFolder from '@iconify/icons-tabler/folder'
-import tablerLogout from '@iconify/icons-tabler/logout'
-import tablerSearch from '@iconify/icons-tabler/search'
-import tablerSettings from '@iconify/icons-tabler/settings'
-import tablerStack2 from '@iconify/icons-tabler/stack-2'
-import tablerUpload from '@iconify/icons-tabler/upload'
-import tablerUsers from '@iconify/icons-tabler/users'
-import { API_CLIENT } from './core/api/api-client.token'
+import tablerLayoutSidebarLeftCollapse from '@iconify/icons-tabler/layout-sidebar-left-collapse'
+import tablerLayoutSidebarLeftExpand from '@iconify/icons-tabler/layout-sidebar-left-expand'
+import tablerMenu2 from '@iconify/icons-tabler/menu-2'
 import { AuthStore } from './core/auth.store'
-import { CapabilitiesStore } from './core/capabilities.store'
 import { TranslateService } from './core/i18n/translate.service'
+import { SpmNavList } from './core/nav-list'
+import { NotifyService } from './core/notify.service'
 import { SettingsStore } from './core/settings.store'
 
 /** The shell: routing, nav and the theme sync. */
 @Component({
   selector: 'app-root',
-  imports: [
-    RouterLink,
-    RouterLinkActive,
-    RouterOutlet,
-    JigButton,
-    JigIcon,
-    JigMessage,
-    JigToolbar,
-    JigTooltip,
-  ],
+  imports: [RouterLink, RouterOutlet, JigButton, JigDrawer, JigIcon, JigTooltip, SpmNavList],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <div class="spm-shell">
-      <header class="spm-header">
-        <div class="spm-header-inner">
-          <!-- One tab stop for the whole bar, arrow keys between the items, and the end
-               placement stays right-aligned as the window narrows. -->
-          <jig-toolbar>
-            <!-- The same mark the browser tab shows: packages/web/public/favicon.svg, which the
-                 Angular build copies to the site root unhashed.
+      <!-- Above the breakpoint. Hidden below it by the one media query in styles.css, which is
+           a rule about the viewport and not about the shell: a narrow desktop window gets the
+           drawer too, because the constraint is width. -->
+      <nav
+        class="spm-sidebar"
+        [class.spm-sidebar--collapsed]="collapsed()"
+        [attr.aria-label]="t.translations().nav.label"
+      >
+        <!-- The same mark the browser tab shows: the favicon in packages/web/public, which the
+             Angular build copies to the site root unhashed.
 
-                 alt="" is what does the work. The link's own text already names the app, so a
-                 second accessible name here would have a screen reader announce "Slicer Project
-                 Manager Slicer Project Manager". aria-hidden says the same thing twice on
-                 purpose: this is exactly the kind of decoration someone later "fixes" by adding
-                 alt text.
+             alt="" is what does the work. The link's own text already names the app, so a
+             second accessible name here would have a screen reader announce "Slicer Project
+             Manager Slicer Project Manager". aria-hidden says the same thing twice on
+             purpose: this is exactly the kind of decoration someone later "fixes" by adding
+             alt text.
 
-                 width and height are the intrinsic box, so the header does not reflow between
-                 layout and image decode. The src is resolved through the base href="/" in
-                 index.html, which is what makes it spm://app/favicon.svg in the Electron
-                 renderer rather than a lookup relative to the current route.
+             width and height are the intrinsic box, so the sidebar head does not reflow between
+             layout and image decode. The src is resolved through the base href="/" in
+             index.html, which is what makes it spm://app/favicon.svg in the Electron
+             renderer rather than a lookup relative to the current route.
 
-                 No backticks in this comment, and no dollar-brace either: the template is a JS
-                 template literal, so both are syntax before they are text. Measured -- a first
-                 version of this comment quoted the file path in backticks and esbuild failed
-                 with 'Expected "}" but found "packages"'. -->
-            <a class="spm-brand" routerLink="/projects">
-              <img
-                class="spm-brand-mark"
-                src="favicon.svg"
-                alt=""
-                aria-hidden="true"
-                width="28"
-                height="28"
-              />
-              {{ t.translations().app.title }}
-            </a>
+             No backticks in this comment, and no dollar-brace either: the template is a JS
+             template literal, so both are syntax before they are text. Measured -- a first
+             version of this comment quoted the file path in backticks and esbuild failed
+             with 'Expected "}" but found "packages"'.
 
-            <!-- One <ng-container placement="end">, not one attribute per link: the toolbar
-                 resolves projection slots at compile time, so a control-flow block whose root
-                 holds several projectable nodes drops all but the first out of its slot
-                 (NG8011). Wrapping them makes the @if a single node again. -->
-            <!-- The same expression the auth guard uses (core/auth/guards.ts), and for the same
-                 reason: in a shell that requires no authentication there is nothing to be
-                 signed in *to*, so the navigation must not wait for a user. This is a
-                 capability, not a shell check — no component here knows it is in Electron. -->
-            @if (!capabilities.capabilities().requiresAuth || auth.isAuthenticated()) {
-              <ng-container placement="end">
-                <a jigButton kind="text" routerLink="/projects" routerLinkActive="spm-nav-active">
-                  <jig-icon [icon]="icons.projects" />
-                  {{ t.translations().projects.title }}
-                </a>
-                <a jigButton kind="text" routerLink="/import" routerLinkActive="spm-nav-active">
-                  <jig-icon [icon]="icons.import" />
-                  {{ t.translations().import.title }}
-                </a>
-                <!-- Spec E 7.4's canBrowseModelSites. A routerLink string and nothing more:
-                     this file is shared code and must not import from features/desktop/, so the
-                     route it names does not exist in the web build at all. It is never rendered
-                     there either, because the capability that gates it is false in the browser
-                     column -- the capability model doing its job in place of a build-time
-                     condition, exactly as the folder picker below does. -->
-                @if (capabilities.capabilities().canBrowseModelSites) {
-                  <a jigButton kind="text" routerLink="/browse" routerLinkActive="spm-nav-active">
-                    <jig-icon [icon]="icons.browse" />
-                    {{ t.translations().browse.title }}
-                  </a>
-                }
-                <a jigButton kind="text" routerLink="/settings" routerLinkActive="spm-nav-active">
-                  <jig-icon [icon]="icons.settings" />
-                  {{ t.translations().settings.title }}
-                </a>
-                @if (capabilities.capabilities().canManageUsers && auth.isAdmin()) {
-                  <a
-                    jigButton
-                    kind="text"
-                    routerLink="/admin/users"
-                    routerLinkActive="spm-nav-active"
-                  >
-                    <jig-icon [icon]="icons.users" />
-                    {{ t.translations().admin.title }}
-                  </a>
-                }
-                <!-- Spec 2.4's canPickLocalFolder, and the whole of how the desktop shell's
-                     folder picker reaches the UI: a capability, an ApiClient call, and no
-                     component that knows what an Electron is. False in the browser, where the
-                     library lives on a server and there is no folder to choose. The dialog and
-                     the reload both belong to the main process -- all this does is ask. -->
-                @if (capabilities.capabilities().canPickLocalFolder) {
-                  <button
-                    jigButton
-                    kind="icon"
-                    type="button"
-                    [jigTooltip]="t.translations().app.changeFolder"
-                    jigTooltipAutoAriaMode="label"
-                    (click)="onChangeFolder()"
-                  >
-                    <jig-icon [icon]="icons.folder" />
-                  </button>
-                }
-                <!-- Only where there is a session to end. Without this gate the desktop shell
-                     shows a sign-out button that drops the user on /login: a page with nothing
-                     to sign in to (auth.login answers Forbidden, which the login page renders as
-                     "Username or password is not correct"), reached by a control that also takes
-                     the navigation away on the way out. The button did nothing wrong — there is
-                     simply no such thing as signing out of a folder you opened. -->
-                @if (capabilities.capabilities().requiresAuth) {
-                  <button
-                    jigButton
-                    kind="icon"
-                    type="button"
-                    [jigTooltip]="t.translations().app.signOut"
-                    jigTooltipAutoAriaMode="label"
-                    (click)="onSignOut()"
-                  >
-                    <jig-icon [icon]="icons.signOut" />
-                  </button>
-                }
-              </ng-container>
-            }
-          </jig-toolbar>
+             There is exactly one of these in the document. The narrow top bar below carries a
+             plain title instead of a second brand link, so "the link that names the app" stays
+             a single element for anything looking for it by name. -->
+        <a class="spm-brand" routerLink="/projects">
+          <img
+            class="spm-brand-mark"
+            src="favicon.svg"
+            alt=""
+            aria-hidden="true"
+            width="28"
+            height="28"
+          />
+          <span class="spm-brand-name">{{ t.translations().app.title }}</span>
+        </a>
+
+        <spm-nav-list [collapsed]="collapsed()" (signOut)="onSignOut()" />
+
+        <!-- The accessible name does not change with the state; only the icon does. A control
+             whose name flips between "Collapse" and "Expand" is announced as a different control
+             each time it is pressed, which is what aria-expanded is for saying instead.
+
+             The name comes from the tooltip rather than a separate aria-label: JigTooltip's
+             autoAria writes aria-label itself in "label" mode, and *removes* any aria-label it
+             did not write. An aria-label set here alongside a tooltip would be deleted on the
+             next render. -->
+        <button
+          jigButton
+          kind="icon"
+          class="spm-nav-toggle"
+          type="button"
+          [attr.aria-expanded]="!collapsed()"
+          [jigTooltip]="t.translations().nav.toggle"
+          jigTooltipAutoAriaMode="label"
+          (click)="onToggleCollapsed()"
+        >
+          <jig-icon [icon]="collapsed() ? icons.expand : icons.collapse" />
+        </button>
+      </nav>
+
+      <div class="spm-shell-body">
+        <!-- At or below the breakpoint, and nowhere else. No brand link here: see the sidebar. -->
+        <div class="spm-topbar">
+          <button
+            jigButton
+            kind="icon"
+            type="button"
+            [attr.aria-expanded]="drawerOpen()"
+            [attr.aria-label]="t.translations().nav.open"
+            (click)="drawerOpen.set(true)"
+          >
+            <jig-icon [icon]="icons.menu" />
+          </button>
+          <span class="spm-topbar-title">{{ t.translations().app.title }}</span>
         </div>
-      </header>
 
-      @if (signOutFailed() || changeFolderFailed()) {
-        <div class="spm-header-inner">
-          <jig-message color="error" role="alert">{{
-            t.translations().errors.generic
-          }}</jig-message>
-        </div>
-      }
+        <router-outlet />
+      </div>
 
-      <router-outlet />
+      <!-- The same list component the sidebar renders, and never a second copy of the entries.
+           No collapsed input: navCollapsed has no effect on mobile, where the drawer is always
+           the full list.
+
+           lazy, with the entries in a #content template rather than projected between the tags:
+           projected content is instantiated by *this* template regardless of the drawer's state,
+           so a closed drawer would keep a full second navigation in the document -- reachable by
+           anything that walks the DOM, and a second set of links for a test to trip over.
+           Deferring it means a closed drawer holds nothing at all. -->
+      <jig-drawer
+        [(open)]="drawerOpen"
+        [modal]="true"
+        [lazy]="true"
+        position="start"
+        [header]="t.translations().app.title"
+      >
+        <ng-template #content>
+          <nav [attr.aria-label]="t.translations().nav.label">
+            <spm-nav-list (signOut)="onSignOut()" />
+          </nav>
+        </ng-template>
+      </jig-drawer>
     </div>
   `,
 })
 export class App {
-  protected readonly auth = inject(AuthStore)
-  protected readonly capabilities = inject(CapabilitiesStore)
   protected readonly t = inject(TranslateService)
-  private readonly api = inject(API_CLIENT)
+  private readonly auth = inject(AuthStore)
+  private readonly notify = inject(NotifyService)
   private readonly settings = inject(SettingsStore)
   // The actual theme hook: @awdlab/jig ships a `dark` class toggle driven by this service,
   // not a `data-theme` attribute. ColorScheme is 'light' | 'dark' | 'system' — the same
@@ -183,41 +146,58 @@ export class App {
   private readonly router = inject(Router)
 
   protected readonly icons = {
-    projects: tablerStack2,
-    import: tablerUpload,
-    browse: tablerSearch,
-    settings: tablerSettings,
-    users: tablerUsers,
-    folder: tablerFolder,
-    signOut: tablerLogout,
+    menu: tablerMenu2,
+    collapse: tablerLayoutSidebarLeftCollapse,
+    expand: tablerLayoutSidebarLeftExpand,
   }
 
-  readonly signOutFailed = signal(false)
-  readonly changeFolderFailed = signal(false)
+  /**
+   * Read straight off the store, never mirrored into a local signal.
+   *
+   * `SettingsStore.patch` is optimistic: it writes the key, sends the PUT, and puts the old
+   * value back if the server refuses. A local signal set alongside the patch would keep the
+   * value the server rejected, so the sidebar would sit collapsed under a message saying the
+   * change did not save. Deriving it means the rollback *is* the visual undo.
+   */
+  protected readonly collapsed = computed(() => this.settings.settings().navCollapsed)
+
+  /**
+   * Mobile only. Nothing persists it: a drawer is open for as long as it is being used.
+   *
+   * Public because `[(open)]` is two-way — the drawer writes its own closes back into this
+   * signal, so reading it is reading the control's state and not a copy of it.
+   */
+  readonly drawerOpen = signal(false)
 
   constructor() {
     effect(() => {
       this.colorScheme.set(this.settings.settings().theme)
     })
+
+    // A drawer left open over the page the user just navigated to is the defect this
+    // subscription exists to prevent (spec G 4.3). NavigationEnd rather than NavigationStart so
+    // a navigation that a guard cancels does not close it for nothing.
+    this.router.events.pipe(takeUntilDestroyed()).subscribe((event) => {
+      if (event instanceof NavigationEnd) {
+        this.drawerOpen.set(false)
+      }
+    })
   }
 
   /**
-   * Asks the shell for a different library folder.
+   * Collapses or expands the sidebar, and persists the choice.
    *
-   * Nothing happens here on success, and that is the design rather than an omission: the shell
-   * that opened the folder is the only thing that knows every store in this renderer is now
-   * holding data from a library it has closed, so it reloads the window itself. A cancelled
-   * picker resolves to null and is not a failure — the library that was open stays open.
+   * The setting is the state — there is nothing to set here beyond asking the store to move it,
+   * because the template reads the store. A refused write therefore needs no undo of its own:
+   * the store has already put the previous value back by the time this catch runs, and all that
+   * is left to do is say so. `patch` rethrows after rolling back, which is why this is a `try`
+   * and not a `.then`.
    */
-  async onChangeFolder(): Promise<void> {
-    this.changeFolderFailed.set(false)
+  async onToggleCollapsed(): Promise<void> {
     try {
-      await this.api.library.pick()
+      await this.settings.patch({ navCollapsed: !this.settings.settings().navCollapsed })
     } catch {
-      // A folder that will not open is the realistic case: a file where a folder was, a drive
-      // that is not mounted, a database from a newer schema. The shell has already logged the
-      // detail; this is the user-facing half.
-      this.changeFolderFailed.set(true)
+      this.notify.error(this.t.translations().errors.generic)
     }
   }
 
@@ -226,16 +206,20 @@ export class App {
    * `AuthStore.logout` rethrows after clearing local state in its `finally`, so a failed
    * logout escaped as an unhandled rejection with nothing shown; and nothing navigated, so
    * a *successful* sign-out left the user on `/projects` with the grid still rendered.
+   *
+   * It stays in the shell rather than in `SpmNavList` because the navigation to `/login` that
+   * has to follow is the shell's business, and both hosts of the list route through this one
+   * handler.
    */
   async onSignOut(): Promise<void> {
-    this.signOutFailed.set(false)
     try {
       await this.auth.logout()
     } catch {
       // The local session is already gone (logout clears it in a `finally`); what may have
       // survived is the server's own session row, which the user cannot fix from here — so
-      // this reports, it does not offer a retry.
-      this.signOutFailed.set(true)
+      // this reports, it does not offer a retry. A snackbar and not a banner: it is the result
+      // of an action the user just took (spec G 7).
+      this.notify.error(this.t.translations().errors.generic)
     }
     // Outside the try on purpose: either way the user is signed out locally, so leaving
     // them on an authenticated route would be the same bug in both branches.

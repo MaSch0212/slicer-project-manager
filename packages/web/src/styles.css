@@ -69,25 +69,186 @@ p {
 
 /* ---------------------------------------------------------------- app shell */
 
+/* Two columns above the breakpoint: the sidebar and everything else. Below it the sidebar is
+   `display: none` and this is a one-column layout again, which is why nothing here changes
+   direction -- a row with one item in it is a column. */
 .spm-shell {
   display: flex;
   min-height: 100dvh;
+  align-items: stretch;
+}
+
+.spm-shell-body {
+  display: flex;
+  /* `min-width: 0` and not `overflow: hidden`: a flex item's automatic minimum size is its
+     content, so without this a wide table or a long unbroken path inside a page pushes the
+     column wider than the viewport and takes the sidebar off screen with it. */
+  min-width: 0;
+  flex: 1;
   flex-direction: column;
 }
 
-.spm-header {
+/*
+ * The navigation sidebar (spec G 4.2).
+ *
+ * `align-self: flex-start` is what makes `position: sticky` mean anything here. The shell is a
+ * stretch flex container, so without it the sidebar is already as tall as the whole scrolling
+ * page and has nothing to stick inside; with it the element is its own 100dvh box and the
+ * viewport scrolls past it.
+ *
+ * `overflow-y: auto` for the case the entry list outgrows a short window -- the foot control
+ * must stay reachable rather than being pushed below the fold of an element that does not
+ * scroll.
+ */
+.spm-sidebar {
   position: sticky;
   top: 0;
-  z-index: 10;
-  border-bottom: 1px solid var(--jig-color-border);
+  display: flex;
+  overflow-y: auto;
+  width: 240px;
+  height: 100dvh;
+  flex: none;
+  align-self: flex-start;
+  flex-direction: column;
+  gap: var(--jig-size-padding-md);
+  border-right: 1px solid var(--jig-color-border);
   background: var(--jig-color-background);
+  padding: var(--jig-size-padding-md);
+  transition: width 160ms ease;
 }
 
-.spm-header-inner {
-  margin: 0 auto;
+.spm-sidebar--collapsed {
+  width: 64px;
+}
+
+/* The brand link is `white-space: nowrap` for the toolbar it used to live in, where there was
+   room to the right of it. There is not here: "Slicer Project Manager" does not fit 240px minus
+   the mark at the heading size, and the German title is longer still. So in the sidebar the name
+   wraps, and the mark is pinned to the first line rather than to the middle of two. */
+.spm-sidebar .spm-brand {
+  align-items: flex-start;
+  white-space: normal;
+  line-height: 1.2;
+}
+
+/* The mark stays, the words go. The brand is still a link to the projects page in both states,
+   and it still has the same accessible name -- see the comment on it in app.ts. */
+.spm-sidebar--collapsed .spm-brand-name {
+  display: none;
+}
+
+/* Pushed to the sidebar's foot by the entry list's own `flex: 1`. */
+.spm-nav-toggle {
+  align-self: flex-start;
+}
+
+.spm-sidebar--collapsed .spm-nav-toggle {
+  align-self: center;
+}
+
+/* The slim bar that replaces the sidebar below the breakpoint, and is not rendered above it.
+   `display: none` here rather than `display: flex` inside the media query: the desktop layout is
+   the one written without a query. */
+.spm-topbar {
+  display: none;
+  align-items: center;
+  gap: var(--jig-size-padding-sm);
+  border-bottom: 1px solid var(--jig-color-border);
+  padding: var(--jig-size-padding-sm) var(--jig-size-padding-md);
+}
+
+.spm-topbar-title {
+  font-size: var(--jig-font-size-lg);
+  font-weight: var(--jig-font-weight-bold);
+}
+
+/* ------------------------------------------------------------- navigation list */
+
+/*
+ * The component's own host element, which is the flex item -- not the list inside it.
+ *
+ * Measured in a running window: with the growth on `.spm-nav-list` alone the collapse control sat
+ * directly under the brand instead of at the foot, because the sidebar's flex child is
+ * `<spm-nav-list>` and an Angular host element is `display: inline` until something says
+ * otherwise. So the host grows and the list fills it.
+ */
+spm-nav-list {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+}
+
+/* `flex: 1` is what puts the collapse control at the foot of the sidebar: the list takes the
+   leftover height rather than the control being positioned against the bottom edge. */
+.spm-nav-list {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 0.125rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* One rule for both arms of the entry template. The sign-out entry is a `<button>` and the rest
+   are anchors, so this resets the button's own font, background and border to the anchor's --
+   a control that acts and a control that goes somewhere look the same in a navigation list, and
+   only one of them can be an anchor. */
+.spm-nav-entry {
+  position: relative;
+  display: flex;
   width: 100%;
-  max-width: var(--spm-page-max);
-  padding: var(--jig-size-padding-md) var(--jig-size-padding-lg);
+  align-items: center;
+  gap: var(--jig-size-padding-sm);
+  border: none;
+  border-radius: var(--jig-size-rounded-md);
+  background: none;
+  padding: var(--jig-size-padding-sm) var(--jig-size-padding-md);
+  color: var(--jig-color-text);
+  font: inherit;
+  text-align: start;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.spm-nav-entry:hover {
+  background: var(--jig-color-surface-100);
+}
+
+.spm-nav-entry:focus-visible {
+  outline: 2px solid var(--jig-color-primary-500);
+  outline-offset: -2px;
+}
+
+/* Applied by routerLinkActive. Colour *and* weight, because colour alone is not a difference
+   everyone can see. */
+.spm-nav-active {
+  background: var(--jig-color-surface-100);
+  color: var(--jig-color-primary-500);
+  font-weight: var(--jig-font-weight-semibold);
+}
+
+.spm-nav-list--collapsed .spm-nav-entry {
+  justify-content: center;
+  padding-inline: var(--jig-size-padding-sm);
+}
+
+/*
+ * Collapsed labels are hidden from the eye and kept for the accessibility tree (spec G 4.2).
+ *
+ * `display: none` and `visibility: hidden` would both remove the text from the accessibility
+ * tree as well, leaving an icon with no accessible name at all -- the tooltip the entry gains
+ * when collapsed is a visual aid, not a substitute name. This is the clip pattern instead: the
+ * element still renders, is still read, and occupies a pixel nobody can see.
+ */
+.spm-nav-list--collapsed .spm-nav-label {
+  position: absolute;
+  overflow: hidden;
+  width: 1px;
+  height: 1px;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 
 .spm-brand {
@@ -378,11 +539,6 @@ p {
 .spm-block {
   display: block;
 }
-.spm-nav-active {
-  --spm-nav-active: 1;
-  font-weight: var(--jig-font-weight-semibold);
-}
-
 .spm-block-mb {
   display: block;
   margin-bottom: var(--jig-size-padding-lg);
@@ -727,4 +883,50 @@ h2.spm-project-title {
 .spm-browse-download + .spm-browse-download {
   border-top: 1px solid var(--jig-color-border);
   padding-top: var(--jig-size-padding-md);
+}
+
+/* ------------------------------------------------------------- the breakpoint */
+
+/*
+ * The application's only breakpoint (spec G 4.1), and deliberately the only one: every segment
+ * after this one uses this line rather than picking its own.
+ *
+ * 768px, because it is the width at which a two-column shell stops having room for a 240px
+ * sidebar beside a card grid, and because it is the conventional tablet-portrait line. It is not
+ * derived from a measurement of this application and this comment does not pretend otherwise.
+ *
+ * The layout is driven by the viewport and not by a capability: a narrow desktop window gets the
+ * drawer too, which is correct, because the constraint is width and not device.
+ */
+@media (max-width: 768px) {
+  .spm-sidebar {
+    display: none;
+  }
+
+  .spm-topbar {
+    display: flex;
+  }
+}
+
+/*
+ * Reduced motion (constraint C6).
+ *
+ * The sidebar's width transition is this file's own. The drawer's slide is jig's, injected into
+ * the `jig` cascade layer -- and layered CSS always loses to unlayered CSS, so an unlayered rule
+ * here wins with no !important and no specificity game (the same property this file has relied on
+ * from the start).
+ *
+ * `animation: none` rather than a near-zero duration: the drawer waits out its own exit animation
+ * before it unmounts its content, and it waits only on animations that are actually running, so
+ * removing them shortens the close rather than stalling it.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .spm-sidebar {
+    transition: none;
+  }
+
+  jig-drawer {
+    animation: none;
+    transition: none;
+  }
 }

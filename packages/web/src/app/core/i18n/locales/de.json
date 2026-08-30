@@ -1,8 +1,12 @@
 {
   "app": {
     "title": "Slicer-Projektverwaltung",
-    "signOut": "Abmelden",
-    "changeFolder": "Bibliotheksordner wechseln"
+    "signOut": "Abmelden"
+  },
+  "nav": {
+    "label": "Hauptnavigation",
+    "toggle": "Navigation ein- oder ausklappen",
+    "open": "Navigation öffnen"
   },
   "auth": {
     "username": "Benutzername",

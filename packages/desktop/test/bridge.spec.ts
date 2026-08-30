@@ -347,7 +347,10 @@ test('the import page imports a picked archive without copying it into the libra
     const page = await firstWindowOf(app)
     await page.waitForLoadState('domcontentloaded')
 
-    await page.getByRole('link', { name: 'Import' }).click()
+    // Through settings, because that is where importing lives now (spec G 6.2): it is a
+    // once-and-done job, so it sits with the other once-and-done settings rather than in the
+    // navigation. `spm://app/import` still resolves for anyone who has the address.
+    await page.getByRole('link', { name: 'Settings' }).click()
     await expect(page.getByRole('heading', { name: 'Import a CuraManager library' })).toBeVisible()
 
     // A path, not an inline buffer: a user picks a file that exists, and only a file that exists
@@ -392,7 +395,8 @@ test('the desktop shell offers no sign-out, and still shows the rest of the navi
     await expect.poll(() => page.url()).toBe('spm://app/projects')
 
     // The nav is there — without this, gating it off entirely would also pass the next line.
-    for (const link of ['Projects', 'Import', 'Settings']) {
+    // No 'Import': spec G 4.4 took it out of the navigation and settings offers it instead.
+    for (const link of ['Projects', 'Settings']) {
       await expect(page.getByRole('link', { name: link })).toBeVisible()
     }
     await expect(page.getByRole('button', { name: 'Sign out' })).toHaveCount(0)
