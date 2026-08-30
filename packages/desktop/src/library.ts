@@ -683,9 +683,10 @@ export class LibraryHost {
    *
    * So a kill mid-render costs one attempt and fifteen minutes of invisibility (`PREVIEW_LEASE_MS`
    * counted from the *claim*, not from the restart — relaunching sooner does not shorten it), and
-   * three of them retire the row until a rescan sees the file's bytes change, which resets the
-   * state and the attempts. That is the queue's own design for a crash and is not re-invented
-   * here: nothing in this shell clears `claimed_at` at startup.
+   * three of them retire the row until a rescan re-pends it — when the file's bytes change, or
+   * when a `CLASSIFIER_VERSION` bump gives the file a different kind — which resets the state and
+   * the attempts. That is the queue's own design for a crash and is not re-invented here: nothing
+   * in this shell clears `claimed_at` at startup.
    */
   shutdown(): void {
     const current = this.#current

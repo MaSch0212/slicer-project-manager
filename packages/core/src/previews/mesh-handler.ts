@@ -83,12 +83,13 @@ function readMesh(absPath: string, limits: MeshLimits | undefined): Promise<Mesh
  * **`slicer_project` is covered as well as `model`**, because a project saved but never sliced
  * embeds no thumbnail, and 326 of the 374 slicer projects in the reference library are in that
  * state — every one of them blank, because `unsupported` was the only outcome available to them
- * and the only things that re-queue such a row are a change to its bytes and a `CLASSIFIER_VERSION`
- * bump that gives it a *different* kind, which for a `.3mf` slicer project is neither. Widening the kind is safe rather
- * than merely convenient: `classifyFile` only ever reaches `classify3mf`, the sole producer of
- * `slicer_project`, for a path ending `.3mf`, so every job of that kind lands on the `.3mf` arm
- * of `readMesh` above. It is second in `PREVIEW_HANDLERS`, so a project that *does* carry a
- * thumbnail still uses it — cheaper, and closer to what the slicer showed the user.
+ * and the only things that re-queue such a row are a change to its bytes and a
+ * `CLASSIFIER_VERSION` bump that gives it a *different* kind, which for a `.3mf` slicer project is
+ * neither. Widening the kind is safe rather than merely convenient: `classifyFile` only ever
+ * reaches `classify3mf`, the sole producer of `slicer_project`, for a path ending `.3mf`, so every
+ * job of that kind lands on the `.3mf` arm of `readMesh` above. It is second in
+ * `PREVIEW_HANDLERS`, so a project that *does* carry a thumbnail still uses it — cheaper, and
+ * closer to what the slicer showed the user.
  *
  * **`null` and a throw are different outcomes, and the difference is the point.** `null` is
  * "there is deterministically nothing to render here" and the queue records `unsupported` — the
@@ -97,7 +98,8 @@ function readMesh(absPath: string, limits: MeshLimits | undefined): Promise<Mesh
  * which the queue records as `failed`.
  *
  * Neither state is retried by the queue itself (`claimPendingPreviews` selects only `pending`),
- * and both come back if `rescan` sees the file's content hash change. What actually separates
+ * and both come back whenever `rescan` re-pends the row — a changed content hash, or the
+ * `CLASSIFIER_VERSION` bump named above where it moves the file's kind. What actually separates
  * them is the row they leave behind: `failed` carries the error message, `unsupported` writes
  * `error = NULL`. So an exotic extension that somehow reached `kind: 'model'` returns `null`,
  * while a `.stl` whose bytes are corrupt lets the parser's `AppError('Validation', …)`
