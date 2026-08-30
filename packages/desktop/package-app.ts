@@ -23,8 +23,10 @@ import { APP_NAME, APP_SLUG, packagedExecutableName, requiredArtifacts } from '.
  * Electron on the machine that runs it**, because `build.ts` bundles every dependency the main
  * process imports — `@spm/core`, `@spm/contract`, zod and the `occt-import-js` glue — into the
  * main bundle, and stages the loose files that bundle then reads beside it: the OCCT `.wasm`, the
- * SQL migrations and the window icons. Those are this app's own files, not Electron's; the rest
- * of the directory is Electron's own distribution.
+ * SQL migrations and the window icons. It stages three more that nothing reads — the third-party
+ * notice and the two LGPL texts under `dist/third-party/`, which are there because a packaged
+ * application has no `node_modules` to point a notice at. Those are all this app's own files, not
+ * Electron's; the rest of the directory is Electron's own distribution.
  *
  * What it does still assume is the platform's own C/C++ runtime and desktop libraries, which is
  * Electron's requirement rather than this app's: on Linux, the shared libraries the CI job
@@ -45,6 +47,12 @@ import { APP_NAME, APP_SLUG, packagedExecutableName, requiredArtifacts } from '.
  *
  * An installer would want both of those inverted, and that is one of the things deferred with it:
  * when packaging becomes real, dropping `*.map` and turning asar on are two lines in this file.
+ * **Turning asar on is no longer only two lines**, and that is the one thing to read before doing
+ * it: `resources/app` being a plain directory is what leaves `dist/occt-import-js.wasm` an ordinary
+ * replaceable file, which is how this application meets LGPL-2.1 §6b for the OCCT library it ships.
+ * Inside an archive it stops being one. The `.wasm` and the three files under `dist/third-party/`
+ * would have to be named in packager's `asarUnpack`; `requiredArtifacts()` in `packaging.ts` says
+ * so at the entries themselves and keeps passing either way, because it stats the unpacked paths.
  *
  * ## The renderer, and why it is staged rather than referenced
  *
@@ -208,6 +216,10 @@ await writeFile(
  * file it sits in, is at least as common in shipped software, and under it this line should say
  * `Copyright (c) 2026 Marc Schmidt`. Whichever way it is decided, the change is one option on this
  * call. Packager leaves the field alone when `appCopyright` is absent.
+ *
+ * None of that is the licence obligation this application actually has, which is a separate
+ * mechanism and is met by files rather than by a version resource: `THIRD-PARTY-NOTICES.md` and the
+ * two LGPL texts ship under `dist/third-party/`, staged by `build.ts` and asserted below.
  */
 const [packagedDir] = await packager({
   dir: stagingDir,

@@ -102,7 +102,12 @@ export function requiredArtifacts(outDir: string, appDir: string, executable: st
     join(appDir, 'package.json'),
     join(appDir, 'dist', 'main.js'),
     join(appDir, 'dist', 'preload.js'),
+    join(appDir, 'dist', 'occt-import-js.wasm'),
+    // Every migration, not a spot-check. See the docblock for what one missing file costs and for
+    // what to do the fourth time one is forgotten.
     join(appDir, 'dist', 'migrations', '001_init.sql'),
+    join(appDir, 'dist', 'migrations', '002_preview_claim.sql'),
+    join(appDir, 'dist', 'migrations', '003_classifier_version.sql'),
     join(appDir, 'dist', 'renderer', 'index.html'),
     // The window icon, which is a different thing from the executable's own icon resource: this is
     // the file `BrowserWindow` reads at runtime. Staging brings these across — they are inside
@@ -119,5 +124,13 @@ export function requiredArtifacts(outDir: string, appDir: string, executable: st
     // so a build that stopped emitting them would break no bundle and no test that watched imports.
     join(appDir, 'dist', 'renderer', 'favicon.svg'),
     join(appDir, 'dist', 'renderer', 'manifest.webmanifest'),
+    // The LGPL notice obligation, and the same class of file as the two above: nothing imports
+    // these and nothing reads them at run time, so they are exactly what a packaging step can stop
+    // producing in silence. `LICENSE.md` is `occt-import-js`'s own copy of LGPL-2.1 and
+    // `license.occt.txt` is Open CASCADE's; upstream's third text is byte-identical to the first,
+    // which `THIRD-PARTY-NOTICES.md` records with its digest.
+    join(appDir, 'dist', 'third-party', 'THIRD-PARTY-NOTICES.md'),
+    join(appDir, 'dist', 'third-party', 'LICENSE.md'),
+    join(appDir, 'dist', 'third-party', 'license.occt.txt'),
   ]
 }

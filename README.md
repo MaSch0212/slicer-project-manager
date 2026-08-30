@@ -171,7 +171,8 @@ the header's folder control is deliberately absent, because there is no local fo
 tools are on the **View** menu, as in any Electron app.
 
 `deno task build:desktop` is the same build with the renderer optimized. It produces
-`packages/desktop/dist` (the main bundle, the preload and the SQL migrations) and
+`packages/desktop/dist` (the main bundle, the preload, the SQL migrations, the window icons, the
+OCCT `.wasm` that reads STEP files, and the third-party licence texts under `third-party/`) and
 `packages/web/dist/electron` (the renderer), and is what the desktop test suite runs against.
 
     deno task package:desktop

@@ -1,7 +1,7 @@
 import * as esbuild from 'esbuild'
 import { mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
-import { dirname, join, resolve } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 /**
@@ -21,6 +21,12 @@ const iconsSrc = join(here, 'icons')
 const occtWasmSrc = createRequire(import.meta.url).resolve(
   'occt-import-js/dist/occt-import-js.wasm',
 )
+// The same package's own root, for the licence texts `copyThirdParty` stages. Resolved through its
+// `package.json` for the reason above: the directory on disk is not `node_modules/occt-import-js`.
+const occtPackageRoot = dirname(
+  createRequire(import.meta.url).resolve('occt-import-js/package.json'),
+)
+const noticeSrc = resolve(here, '../..', 'THIRD-PARTY-NOTICES.md')
 
 /**
  * The three CommonJS names an ESM bundle does not define, defined.
@@ -175,6 +181,41 @@ async function copyWasm(): Promise<number> {
   return bytes.byteLength
 }
 
+/**
+ * The third-party notice and the LGPL texts, beside the library they are about.
+ *
+ * `occt-import-js` is LGPL-2.1 and so is the OCCT kernel compiled into its `.wasm`, and §6 of that
+ * licence asks for prominent notice and a copy of the licence to accompany the work. A packaged
+ * application has no `node_modules`, so pointing at the texts where npm put them would produce a
+ * notice referring to files that are not on the user's disk. Copying them is 54 KB.
+ *
+ * **Three files, two texts.** Upstream ships `LICENSE.md`, `dist/license.occt-import-js.txt` and
+ * `dist/license.occt.txt`; the first two are byte-identical — measured, same SHA-256 — so the first
+ * is staged once under its own name and the third is staged as itself. `THIRD-PARTY-NOTICES.md`
+ * records that, with the digest, so nobody comparing this directory against the tarball reads the
+ * absent third filename as a file that went missing.
+ *
+ * Read out of the installed package rather than committed here, for the reason `stepFixturePath()`
+ * gives about the STEP fixture: a copy in this repository is a second spelling free to drift from
+ * whatever version `deno.json` actually pins.
+ *
+ * Read-then-write for the same reason `copyMigrations` does it: `cp` carries the source mtime
+ * across on Windows, so a copied file looks older than the build that produced it.
+ */
+async function copyThirdParty(): Promise<number> {
+  const dest = join(outDir, 'third-party')
+  await mkdir(dest, { recursive: true })
+  const sources = [
+    noticeSrc,
+    join(occtPackageRoot, 'LICENSE.md'),
+    join(occtPackageRoot, 'dist', 'license.occt.txt'),
+  ]
+  for (const source of sources) {
+    await writeFile(join(dest, basename(source)), await readFile(source))
+  }
+  return sources.length
+}
+
 async function assertWritten(...files: string[]): Promise<void> {
   for (const file of files) {
     const info = await stat(file).catch(() => null)
@@ -190,6 +231,7 @@ await esbuild.build({ ...COMMON, ...PRELOAD })
 const migrations = await copyMigrations()
 const icons = await copyIcons()
 const wasmBytes = await copyWasm()
+const notices = await copyThirdParty()
 await assertWritten(
   join(outDir, 'main.js'),
   join(outDir, 'preload.js'),
@@ -203,9 +245,17 @@ await assertWritten(
   // `deno task dev:desktop` — where `package-app.ts`'s `REQUIRED` list only fails packaging,
   // which no CI job runs.
   join(outDir, 'occt-import-js.wasm'),
+  // The licence obligation, named for the same reason and one more: nothing in this repository
+  // imports these, and nothing at run time reads them, so a `copyThirdParty` that wrote an empty
+  // directory would break no bundle and no test that watches imports. `requiredArtifacts()` names
+  // them again on the packaged output, which is a different question — this says the build staged
+  // them, that says packager carried them across.
+  join(outDir, 'third-party', 'THIRD-PARTY-NOTICES.md'),
+  join(outDir, 'third-party', 'LICENSE.md'),
+  join(outDir, 'third-party', 'license.occt.txt'),
 )
 console.log(
   `desktop: bundled main + preload, copied ${migrations} migrations, ${icons} icons and ` +
-    `${wasmBytes} bytes of occt-import-js.wasm to ${outDir}`,
+    `${wasmBytes} bytes of occt-import-js.wasm and ${notices} third-party files to ${outDir}`,
 )
 await esbuild.stop()

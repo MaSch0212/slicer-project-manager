@@ -65,17 +65,21 @@ describe('packagedExecutableName', () => {
 })
 
 /**
- * The files at the repository root that nothing imports.
+ * The two files at the repository root that nothing imports.
  *
- * The same reason `favicon.svg` and `manifest.webmanifest` are in the packaging list: a licence is
- * read by people and by nothing in the build, so a merge that dropped it — or a checkout that
- * never had it — breaks no bundle, no import and no test that watches imports. This is the one
- * thing that notices.
+ * The same reason `favicon.svg` and `manifest.webmanifest` are in the packaging list: a licence and
+ * a third-party notice are read by people and by nothing in the build, so a merge that dropped one
+ * — or a checkout that never had it — breaks no bundle, no import and no test that watches imports.
+ * This is the one thing that notices.
+ *
+ * `THIRD-PARTY-NOTICES.md` has a second reason: `build.ts` reads it from here and stages it into
+ * every build, so its absence is a build failure rather than a quiet one. That is the mechanism;
+ * this is what says the source file it reads is still in the repository.
  */
 describe('the licence artifacts at the repository root', () => {
   const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../..')
 
-  for (const name of ['LICENSE']) {
+  for (const name of ['LICENSE', 'THIRD-PARTY-NOTICES.md']) {
     test(`${name} exists and is not empty`, () => {
       const info = statSync(join(repoRoot, name), { throwIfNoEntry: false })
       assert.ok(info !== undefined, `${name} is missing from the repository root`)
@@ -135,6 +139,42 @@ describe('requiredArtifacts', () => {
       'dist/renderer/manifest.webmanifest',
       'dist/icons/icon.ico',
       'dist/icons/icon.png',
+    ]) {
+      assert.ok(
+        relative.includes(`resources/app/${expected}`),
+        `the packaging list does not name ${expected}`,
+      )
+    }
+  })
+
+  test('names all three migrations, not just the first', () => {
+    // `001_init.sql` alone used to be the whole of it, and 002 has never been in this list.
+    // `runMigrations` reads a frozen list and `readFileSync` throws on the first file that is not
+    // there, so a staging that dropped one produces an app that starts and then fails the moment a
+    // folder is picked. Asserted per entry rather than as a count, because a count survives a
+    // rename and this is the failure the list exists to prevent.
+    for (const migration of [
+      '001_init.sql',
+      '002_preview_claim.sql',
+      '003_classifier_version.sql',
+    ]) {
+      assert.ok(
+        relative.includes(`resources/app/dist/migrations/${migration}`),
+        `the packaging list does not name ${migration}`,
+      )
+    }
+  })
+
+  test('names the OCCT wasm and the licence texts that have to travel with it', () => {
+    // The `.wasm` is what LGPL-2.1 §6b wants left replaceable, and until now nothing checked it
+    // survived packaging: `build.ts` asserts it was staged, which is a different question from
+    // whether packager copied it. The three text files are the notice obligation, and they are the
+    // same class of file as `favicon.svg` — nothing imports them, so nothing else would notice.
+    for (const expected of [
+      'dist/occt-import-js.wasm',
+      'dist/third-party/THIRD-PARTY-NOTICES.md',
+      'dist/third-party/LICENSE.md',
+      'dist/third-party/license.occt.txt',
     ]) {
       assert.ok(
         relative.includes(`resources/app/${expected}`),
