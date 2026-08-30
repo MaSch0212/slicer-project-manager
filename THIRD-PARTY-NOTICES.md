@@ -9,8 +9,11 @@ is implied.
 
 ## occt-import-js 0.0.23 — LGPL-2.1
 
-- **Package:** [`occt-import-js`](https://github.com/kovacsv/occt-import-js), version `0.0.23`, by
-  Viktor Kovács.
+- **Package:** [`occt-import-js`](https://github.com/kovacsv/occt-import-js), version `0.0.23`,
+  published from the GitHub account `kovacsv`. **Unmeasured:** that account name is the whole of
+  what the installed package says about who wrote it — its `package.json` has a `repository` field
+  reading `github:kovacsv/occt-import-js` and **no `author` field**, and no personal name appears
+  anywhere in the package. Nothing further is claimed here.
 - **Licence:** LGPL-2.1, as declared by the package's own `package.json`.
 - **Dependencies:** none. It is one npm package and nothing else comes with it.
 - **What this application uses it for:** reading STEP (`.step`, `.stp`) files and turning them into
@@ -61,20 +64,45 @@ what follows, and what follows is met without one.
 
 - **The notice** is this file, staged into every build.
 - **A copy of the licence** is the two texts in the table above, staged beside it.
-- **Option 6b** — "use a suitable shared library mechanism", one that uses a copy of the library at
-  run time and "will operate properly with a modified version of the library, if the user installs
-  one" — is what this application does. The library is not linked into the main bundle: it is
-  `occt-import-js.wasm`, a loose file in `dist/`, read at call time. Replacing that file with
-  another build of `occt-import-js` is enough to change which library the application runs. The
-  packaged application stores `resources/app` as a plain directory tree, so the file is an ordinary
-  file on disk there too, and `requiredArtifacts()` asserts it is present.
+- **Option 6b** is what this application does. Quoted whole from the shipped text rather than
+  summarised, because one of its two conditions is the one a reader would argue about:
+
+  > b) Use a suitable shared library mechanism for linking with the Library. A suitable mechanism is
+  > one that (1) uses at run time a copy of the library already present on the user's computer
+  > system, rather than copying library functions into the executable, and (2) will operate properly
+  > with a modified version of the library, if the user installs one, as long as the modified
+  > version is interface-compatible with the version that the work was made with.
+
+  **Condition (1)** is the contested half, because this application ships its own copy of the
+  library rather than finding one already installed. What (1) draws its line against is named in its
+  own second clause — "copying library functions into the executable" — and that is not what happens
+  here. `occt-import-js.wasm` is a loose file in `dist/`, read from disk at call time; nothing links
+  it into the main bundle and nothing embeds it in the binary. Installing the application is what
+  puts that file on the user's computer system, and every run afterwards loads the copy already
+  present there. Distributing a copy of the library alongside the work is what §6 as a whole
+  permits and what this notice accompanies; §6b governs how the executable reaches it.
+
+  **Condition (2)** is met without argument: replacing that one file with another build of
+  `occt-import-js` changes which library the application runs, with no relink and no rebuild. The
+  packaged application stores `resources/app` as a plain directory tree, so it is an ordinary file
+  on disk there too, and `requiredArtifacts()` asserts it is present.
+
+  Condition (1) is therefore a reading, recorded plainly so a reader who takes "already present on
+  the user's computer system" to mean "installed independently of this application" can see exactly
+  what is and is not claimed. It changes little in practice: the obligations this application
+  actually performs — the notice, both licence texts, an unmodified and replaceable library, and
+  the source pointer below — are what the strictest of 6a to 6e ask for regardless of which one is
+  named.
+
 - **The library is unmodified.** The `.wasm` is copied byte for byte out of the installed package
   by `copyWasm()` in `packages/desktop/build.ts`. Nothing in this repository patches, rebuilds or
   post-processes it, and the JavaScript glue is bundled as published.
 
 If `packages/desktop/package-app.ts` is ever changed to pass `asar: true`, the `.wasm` and the
-licence texts would need naming in `asarUnpack` for the paragraph above to stay true. It passes
-`asar: false` today.
+licence texts would need naming in `asarUnpack` for the §6b argument above to stay true — inside an
+archive the `.wasm` stops being an ordinary file on disk. It passes `asar: false` today, and
+`requiredArtifacts()`'s docblock in `packages/desktop/packaging.ts` records the same requirement at
+the other end.
 
 ### Corresponding source
 
