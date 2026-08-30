@@ -78,6 +78,18 @@ import { remoteDownload, remoteProject, requireRemote, type RemoteProxy } from '
  * the first draft of the spec, which is why `test/slicers-launch.test.ts` asserts the exact path
  * that was spawned rather than trusting this paragraph.
  *
+ * **`.step` and `.stp` are in "everything else", and for a third reason that is neither of the
+ * above.** The first branch's argument does not fail for them: nothing measured says a slicer
+ * proposes to overwrite a STEP input the way it would a `model`-kind `.3mf`. What is missing is the
+ * measurement itself — **what Ctrl+S proposes for a STEP input is unmeasured in every slicer** (plan
+ * open question 1; the probe could not deliver a keystroke), and the copy branch is the conservative
+ * answer and the status quo, so it costs nothing to take it. It is therefore the one branch
+ * assignment here resting on an absence of evidence rather than on an argument, and moving STEP onto
+ * the first branch is a one-line change in `#prepare` that should carry the measurement with it
+ * rather than ride along with something else. `test/slicers-launch.test.ts` asserts the exact path
+ * spawned for a `.step` — inside the launch directory, basename preserved — so the move cannot
+ * happen quietly.
+ *
  * ## Never half-strip, and never fall back
  *
  * A strip that refuses refuses the whole launch (constraint 9). For Anycubic the tempting fallback
@@ -521,6 +533,16 @@ export class SlicerLauncher {
     // Before the install lookup, and so before anything is written or downloaded: launching a
     // product that cannot read the format is the silent failure this refusal exists to replace.
     // Lowercased because the user's own library holds `Nozzle Wiper Guard.STEP`.
+    //
+    // **It also runs before `#prepare`, which is what refuses `as-is` for anything that is not a
+    // slicer project — so a `.step` opened `as-is` in Cura reports the format rather than the
+    // mode.** Both refusals are correct and neither is silent; the format one is merely the less
+    // apt of the two on that path, and only there, since a `.step` is never a `slicer_project` and
+    // the four STEP-capable slicers fall through to the apter message already. Left in this order
+    // deliberately: moving it later would put a refusal after `#prepare` has created a directory
+    // and copied bytes, which is the property the docblock above calls load-bearing, and hoisting
+    // `refuseNotAProject` up here would put the same kind check in two places for the sake of one
+    // word on one unusual path. A duplicated refusal is the worse trade.
     const extension = extname(source.name).toLowerCase()
     if ((extension === '.step' || extension === '.stp') && !SLICERS[slicerId].behaviour.opensStep) {
       refuseStepFormat(slicerId, extension)
