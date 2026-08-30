@@ -533,7 +533,7 @@ test('a server address the shell will not accept is reported, and nothing change
   await page.getByLabel('Server address').fill('file:///C:/Windows')
   await page.getByRole('button', { name: 'Connect', exact: true }).click()
 
-  await expect(page.getByRole('alert')).toContainText('not a server address')
+  await expect(page.getByRole('alert')).toContainText('could not be used to connect')
   expect(page.url()).toBe('spm://app/desktop/connect')
 })
 

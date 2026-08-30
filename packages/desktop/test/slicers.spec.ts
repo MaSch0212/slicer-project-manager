@@ -185,9 +185,9 @@ test('a picked executable that is not there says so, and does not send the user 
     await page.getByRole('button', { name: 'Add by hand' }).first().click()
 
     const alert = page.getByRole('alert')
-    await expect(alert).toContainText('That file is not there any more')
+    await expect(alert).toContainText('That file is no longer there')
     // The sentence that belongs to a stale list, which is what this used to say.
-    await expect(alert).not.toContainText('Look for installed slicers again')
+    await expect(alert).not.toContainText('Search for installed slicers again')
     // And nothing was added on the way past.
     await expect(page.getByRole('radio')).toHaveCount(2)
   } finally {

@@ -83,7 +83,7 @@ describe('ImportPanel', () => {
     const rendered = text(fixture)
     expect(rendered).toContain('2 projects and 7 files imported, 4 tags applied.')
     expect(rendered).toContain('MyLibrary')
-    expect(rendered).toContain('3 entries were skipped')
+    expect(rendered).toContain('3 items were skipped')
   })
 
   it('refuses anything that is not a .zip without calling the server', async () => {
