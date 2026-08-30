@@ -99,16 +99,16 @@
     "connectToServer": "Connect to a server instead",
     "serverUrl": "Server address",
     "serverUrlHint": "For example https://print.example.com",
-    "serverUrlInvalid": "Enter an address starting with http:// or https://, with no user name or password in it.",
+    "serverUrlInvalid": "Enter only the server address, starting with http:// or https:// — no page or folder after it, and no user name or password.",
     "connect": "Connect",
     "connectCancel": "Cancel",
-    "libraryFailed": "That folder could not be opened as a library.",
-    "connectFailed": "That server could not be reached."
+    "libraryFailed": "The library could not be opened.",
+    "connectFailed": "The connection to that server could not be established."
   },
   "slicers": {
     "lead": "The slicers installed on this computer, and which install of each one to launch.",
     "windowsOnly": "Slicers can only be found automatically on Windows. Add yours by hand below.",
-    "rescan": "Look for installed slicers",
+    "rescan": "Search for installed slicers",
     "addManual": "Add by hand…",
     "remove": "Remove",
     "notInstalled": "Not found on this computer.",
@@ -129,7 +129,7 @@
     "errorNotFound": "That install is no longer listed. Search for installed slicers again.",
     "errorPickedGone": "That file is no longer there. Pick it again, or choose another one.",
     "errorValidation": "That install belongs to a different slicer.",
-    "errorDetection": "Looking for installed slicers did not work on this computer. Try again, or add the slicer by hand."
+    "errorDetection": "Searching for installed slicers did not work on this computer. Try again, or add the slicer by hand."
   },
   "slicerSessions": {
     "title": "Files a slicer still has",

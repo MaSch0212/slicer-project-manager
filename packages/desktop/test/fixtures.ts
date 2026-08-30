@@ -160,7 +160,7 @@ export async function launchApp(
     // The environment names the folder, so there should be no startup prompt here at all. The
     // empty `SPM_FAKE_PICKER` says what happens if that is ever wrong: the startup prompt is
     // cancelled rather than a real dialog opening on the runner — and, because it answers only
-    // that prompt, a spec built on this fixture can still click the header control and have
+    // that prompt, a spec built on this fixture can still click the settings library card and have
     // `stubFolderPicker` answer it.
     env: { ...process.env, SPM_LIBRARY_DIR: libraryDir, SPM_FAKE_PICKER: '' },
   })

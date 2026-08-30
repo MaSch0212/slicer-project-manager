@@ -99,11 +99,11 @@
     "connectToServer": "Stattdessen mit einem Server verbinden",
     "serverUrl": "Serveradresse",
     "serverUrlHint": "Zum Beispiel https://print.example.com",
-    "serverUrlInvalid": "Geben Sie eine Adresse ein, die mit http:// oder https:// beginnt und weder Benutzernamen noch Passwort enthält.",
+    "serverUrlInvalid": "Geben Sie nur die Serveradresse ein, beginnend mit http:// oder https:// — ohne Seite oder Ordner dahinter und ohne Benutzernamen oder Passwort.",
     "connect": "Verbinden",
     "connectCancel": "Abbrechen",
-    "libraryFailed": "Dieser Ordner konnte nicht als Bibliothek geöffnet werden.",
-    "connectFailed": "Dieser Server war nicht erreichbar."
+    "libraryFailed": "Die Bibliothek konnte nicht geöffnet werden.",
+    "connectFailed": "Die Verbindung zu diesem Server konnte nicht hergestellt werden."
   },
   "slicers": {
     "lead": "Die auf diesem Computer installierten Slicer und welche Installation davon jeweils gestartet wird.",

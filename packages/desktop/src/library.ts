@@ -333,8 +333,8 @@ export type RemoteConfirmer = (options: ConfirmOptions) => Promise<boolean>
  * Which prompt a picker is being asked to answer.
  *
  * `startup` is the one the shell raises by itself, on first run or when the remembered folder has
- * gone; `user` is the header control. They are told apart because the Playwright suite answers the
- * first without a dialog (`SPM_FAKE_PICKER`, see `app.ts`) — that prompt fires on
+ * gone; `user` is the library card in settings. They are told apart because the Playwright suite
+ * answers the first without a dialog (`SPM_FAKE_PICKER`, see `app.ts`) — that prompt fires on
  * `did-finish-load` and cannot be stubbed without racing it — while a pick the *test* triggers is
  * stubbed at the dialog, deterministically, because the test is the one doing the clicking. A
  * fake that answered "the first prompt" instead of "the startup prompt" would silently swallow a
@@ -593,8 +593,8 @@ export class LibraryHost {
     reason: PromptReason | null,
     trigger: PromptTrigger = 'user',
   ): Promise<LocalLibraryDto | null> {
-    // One dialog at a time. Two quick clicks on the header control — or a click while the
-    // first-run dialog is still up, which the control has no way to know about — would otherwise
+    // One dialog at a time. Two quick clicks on the settings library card — or a click while the
+    // first-run dialog is still up, which the card has no way to know about — would otherwise
     // open two native pickers and run two `open()` calls, the second of which closes the library
     // the first just opened. The second caller waits for the first answer, which is what they
     // asked for anyway.

@@ -105,13 +105,27 @@ function parseUrlOrNull(value: string): URL | null {
  * is for making one host look like another; and this app has a real sign-in for saying who you
  * are. There is nothing an address of this shape can do here that the account cannot.
  *
+ * **An origin and nothing else, because that is what the shell accepts.** The main process's
+ * `parseRemoteOrigin` (`packages/desktop/src/remote.ts`) also refuses a query string, a fragment
+ * and any path beyond `/`, and it does so at its first statement — before the dedup check, before
+ * the native confirmation dialog and before any `fetch`. A schema that checked only the scheme and
+ * the credentials therefore let `https://print.example.com/spm` — a pasted deep link, the
+ * realistic case — through the form, into `library.connect`, and back out as a failure the user
+ * could only read as a network problem. The form has to refuse exactly what the shell refuses, or
+ * it is not telling the user anything the shell will not have to tell them worse.
+ *
+ * The two now answer identically over every address `packages/desktop/test/remote.test.ts` puts
+ * to both of them, surrounding whitespace included — which was the one place they were expected
+ * to differ and do not, because the WHATWG parser strips leading and trailing spaces before it
+ * parses and both sides go through it. Measured there rather than asserted here.
+ *
  * `new URL` rather than a `startsWith` test on purpose: a prefix test answers a question about
- * the characters, and both of these need an answer about what the parser resolves. The `try` is
+ * the characters, and all of these need an answer about what the parser resolves. The `try` is
  * not dead — `z.url()` runs first and rejects most non-URLs, but a schema is a value other code
  * composes with, and a refinement that throws instead of returning false would turn a validation
  * failure into an exception at whatever call site did the composing.
  *
- * The two checks are separate refinements so that each failure says which one it was. Both
+ * The checks are separate refinements so that each failure says which one it was. All the
  * messages are English, like every other message in this file; the one place a user reads a
  * refusal of this schema — the connect form in settings — renders its own translated string
  * rather than these (spec G C4).
@@ -126,6 +140,16 @@ export const serverUrlSchema = z
     const parsed = parseUrlOrNull(value)
     return parsed !== null && parsed.username === '' && parsed.password === ''
   }, 'the address must not carry a user name or a password')
+  .refine((value) => {
+    const parsed = parseUrlOrNull(value)
+    return parsed !== null && parsed.search === '' && parsed.hash === ''
+  }, 'the address must not carry a query string or a fragment')
+  .refine((value) => {
+    // `''` as well as `'/'`: the WHATWG parser leaves the pathname empty for a non-special
+    // scheme, and this refinement runs whatever the scheme check above decided.
+    const parsed = parseUrlOrNull(value)
+    return parsed !== null && (parsed.pathname === '' || parsed.pathname === '/')
+  }, 'the address must name a server, not a path on it')
 
 export const settingsPatchSchema = z.object({
   theme: z.enum(['light', 'dark', 'system']).optional(),

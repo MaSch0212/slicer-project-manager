@@ -308,8 +308,9 @@ test('a restart keeps the server but deliberately not the session', async () => 
  * The failure the plan names by itself: a stale `HttpApiClient` after switching to local.
  *
  * Driven through the production path a user has — the application menu, which is the only way
- * back to a folder in remote mode, because `canPickLocalFolder` is false there and the header
- * control is correctly absent.
+ * back to a folder in remote mode, because `canPickLocalFolder` is false there and the settings
+ * library card is correctly absent. (The bar is hidden as of spec G 5; the menu itself is kept,
+ * and this is what it is kept for.)
  */
 test('switching to a local folder leaves nothing of the server behind', async () => {
   const app = await launchShell(newUserDataDir(), {

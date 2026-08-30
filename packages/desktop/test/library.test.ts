@@ -887,8 +887,8 @@ test('a state file that cannot be written does not fail the open', async () => {
 })
 
 /**
- * Two clicks on the header control, or one while the first-run dialog is still up: the control
- * renders as soon as the window has loaded and cannot know a dialog is open.
+ * Two clicks on the settings library card, or one while the first-run dialog is still up: the
+ * card renders as soon as the settings page has loaded and cannot know a dialog is open.
  */
 test('a second prompt while one is open does not open a second dialog', async () => {
   const dir = folderWithProject('one-dialog', 'Widget')

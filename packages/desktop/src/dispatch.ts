@@ -861,7 +861,7 @@ export const dispatch: DispatchTable = {
    * that influence nothing — a worse answer than refusing, because it would look like it worked.
    *
    * `logout` resolves instead of refusing, because it is the one of the four the UI can actually
-   * reach: the header's sign-out button is gated on `auth.isAuthenticated()`, which is true here
+   * reach: the navigation's sign-out entry is gated on `auth.isAuthenticated()`, which is true here
    * since `account.me()` succeeds. "End the session you do not have" is a no-op, not an error.
    * (That the button is shown at all in local mode is a UI question, and task 4's.)
    *

@@ -284,8 +284,8 @@ spm-nav-list {
 
 .spm-brand-mark {
   /* The mark's own artwork is full-bleed vertically and inset ~6% horizontally, so a square box
-     gives a mark exactly as tall as the box. `flex: none` keeps it that way when the toolbar
-     squeezes the brand at narrow widths -- without it the image is a flex item and shrinks
+     gives a mark exactly as tall as the box. `flex: none` keeps it that way when the sidebar
+     head squeezes the brand at narrow widths -- without it the image is a flex item and shrinks
      before the nav does. */
   flex: none;
   width: 28px;

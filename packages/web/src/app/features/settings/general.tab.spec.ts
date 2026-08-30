@@ -6,6 +6,7 @@ import { API_CLIENT } from '../../core/api/api-client.token'
 import { CapabilitiesStore } from '../../core/capabilities.store'
 import { TranslateService } from '../../core/i18n/translate.service'
 import { NotifyService } from '../../core/notify.service'
+import { SettingsStore } from '../../core/settings.store'
 import de from '../../core/i18n/locales/de.json'
 import en from '../../core/i18n/locales/en.json'
 import { SettingsGeneralTab } from './general.tab'
@@ -94,21 +95,12 @@ async function untilTranslated(translate: TranslateService): Promise<void> {
   throw new Error('the German locale never arrived')
 }
 
-/** The `role="alert"` the convention requires, as actually rendered. */
-function alertText(fixture: Setup['fixture']): string | null {
-  fixture.detectChanges()
-  return (
-    (fixture.nativeElement as HTMLElement).querySelector('[role="alert"]')?.textContent?.trim() ??
-    null
-  )
-}
-
 describe('SettingsGeneralTab', () => {
   it('persists a theme change', async () => {
-    const { tab, api } = await setup()
+    const { tab, api, notify } = await setup()
     await tab.onPatch('theme', 'dark')
     expect(api.settings.put).toHaveBeenCalledWith({ theme: 'dark' })
-    expect(tab.saveFailed()).toBe(false)
+    expect(notify.error).not.toHaveBeenCalled()
   })
 
   // Spec G 0 defers moving this control to the projects page to segment H, so it is still here
@@ -137,42 +129,47 @@ describe('SettingsGeneralTab', () => {
     expect(translate.language()).toBe('de')
   })
 
-  // SettingsStore.patch rethrows after rolling back. The page had no try/catch at all, so a
-  // failed save silently reverted the control with no message, and onPatch handed a
-  // rejecting promise straight to a template (change) binding — an unhandled rejection.
-  it('surfaces a failed theme save in a role="alert" instead of rejecting', async () => {
-    const { fixture, tab } = await setup(vi.fn().mockRejectedValue(new Error('boom')))
+  // Spec G 9 acceptance criterion 8, both halves. `SettingsStore.patch` rethrows after rolling
+  // the key back, so the control returns to its previous value on its own; §7 makes the report
+  // a snackbar rather than the banner this page used to render, because a failed save is the
+  // result of an action the user just took and not a statement about the current state. The
+  // catch also stops the rejection escaping: `onPatch` hands its promise to a template binding.
+  it('reports a failed theme save through the snackbar and returns the control to its value', async () => {
+    const { tab, notify } = await setup(vi.fn().mockRejectedValue(new Error('boom')))
+    const settings = TestBed.inject(SettingsStore)
+    expect(settings.settings().theme).toBe(DEFAULT_SETTINGS.theme)
 
     await expect(tab.onPatch('theme', 'dark')).resolves.toBeUndefined()
 
-    expect(tab.saveFailed()).toBe(true)
-    expect(alertText(fixture)).toBeTruthy()
+    expect(notify.error).toHaveBeenCalledWith(en.errors.generic)
+    expect(settings.settings().theme).toBe(DEFAULT_SETTINGS.theme)
   })
 
-  it('surfaces a failed language save in a role="alert" and does not switch language', async () => {
-    const { fixture, tab, translate } = await setup(vi.fn().mockRejectedValue(new Error('boom')))
+  it('reports a failed language save through the snackbar and does not switch language', async () => {
+    const { tab, translate, notify } = await setup(vi.fn().mockRejectedValue(new Error('boom')))
 
     await expect(tab.onLanguage('de')).resolves.toBeUndefined()
 
-    expect(tab.saveFailed()).toBe(true)
-    expect(alertText(fixture)).toBeTruthy()
+    expect(notify.error).toHaveBeenCalledWith(en.errors.generic)
     // A language that did not persist must not appear to have been applied.
     expect(translate.language()).toBe('en')
   })
 
-  it('clears a previous failure once a save succeeds', async () => {
+  // A snackbar auto-hides on its own, so there is nothing to clear — but a *second*, successful
+  // save must not raise a second one. This is what a `save()` that reported unconditionally, or
+  // that reported the previous outcome again, would fail.
+  it('says nothing more once a save succeeds', async () => {
     const put = vi
       .fn<(patch: Partial<SettingsDto>) => Promise<SettingsDto>>()
       .mockRejectedValueOnce(new Error('boom'))
       .mockResolvedValueOnce({ ...DEFAULT_SETTINGS, theme: 'dark' })
-    const { fixture, tab } = await setup(put)
+    const { tab, notify } = await setup(put)
 
     await tab.onPatch('theme', 'dark')
-    expect(tab.saveFailed()).toBe(true)
+    expect(notify.error).toHaveBeenCalledTimes(1)
 
     await tab.onPatch('theme', 'dark')
-    expect(tab.saveFailed()).toBe(false)
-    expect(alertText(fixture)).toBeNull()
+    expect(notify.error).toHaveBeenCalledTimes(1)
   })
 
   // ---- Where the library is (spec G 6.1) ----
@@ -229,6 +226,24 @@ describe('SettingsGeneralTab', () => {
   it('refuses data: and file: addresses the same way', async () => {
     const { tab, api } = await setup()
     for (const url of ['data:text/html,x', 'file:///c:/', 'not a url']) {
+      tab.connectModel.set({ url })
+      await tab.onConnect()
+    }
+    expect(api.library.connect).not.toHaveBeenCalled()
+  })
+
+  // The realistic wrong address, and the one that used to get through: a link pasted out of a
+  // browser's address bar. The main process takes an origin and nothing else and throws before
+  // any network call, so an address the form let past came back as a failure the user could only
+  // read as their network being at fault. The call count is the assertion for the same reason it
+  // is above — "no error was rendered" is also true of a component that renders nothing.
+  it('refuses an address with a path, a query or a fragment without calling the transport', async () => {
+    const { tab, api } = await setup()
+    for (const url of [
+      'https://print.example.invalid/spm',
+      'https://print.example.invalid/?next=/projects',
+      'https://print.example.invalid/#projects',
+    ]) {
       tab.connectModel.set({ url })
       await tab.onConnect()
     }

@@ -166,8 +166,11 @@ The Electron shell runs the same Angular UI against either of two libraries (spe
 
 On first run it asks which, in a native dialog. Choosing a folder opens the system folder chooser;
 choosing a server asks for its address on a page of its own. Whichever you pick is remembered, and
-**Library → Choose library…** in the menu bar is how you change your mind later — in server mode
-the header's folder control is deliberately absent, because there is no local folder to change.
+**Settings → General → Where your library is** is how you change your mind later: it offers both a
+folder chooser and a server address. In server mode that card is deliberately absent, because
+there is no local folder to change. The menu bar keeps a **Library → Choose library…** item as
+well, and it is the recovery path for a renderer that will not start — the bar is hidden, so press
+`Alt` to see it.
 
 ### Running it
 
@@ -177,7 +180,8 @@ the header's folder control is deliberately absent, because there is no local fo
 
 `dev:desktop` builds the Angular electron bundle in its **development** configuration
 (unoptimized, with source maps) and the Electron main process, then launches it. The developer
-tools are on the **View** menu, as in any Electron app.
+tools are on the **View** menu, as in any Electron app — the menu bar is hidden
+(`autoHideMenuBar`), so press `Alt` to reveal it.
 
 `deno task build:desktop` is the same build with the renderer optimized. It produces
 `packages/desktop/dist` (the main bundle, the preload, the SQL migrations, the window icons, the
@@ -311,9 +315,10 @@ optional `metadata.json` sidecar carrying its tags, source URL and archived flag
 
 ### Upload it (recommended)
 
-Sign in, open **Import**, and drop a zip of your CuraManager library onto the page. The server
-extracts it into your own library folder, indexes it and applies every sidecar — no shell
-access needed, and it works when the library lives on a different machine from the server.
+Sign in, open **Settings → General → Import** (or go straight to `/import`), and drop a zip of
+your CuraManager library onto the page. The server extracts it into your own library folder,
+indexes it and applies every sidecar — no shell access needed, and it works when the library
+lives on a different machine from the server.
 
 Zip either the library folder or its contents: a single wrapping folder is detected and
 stripped, unless it holds only files, in which case it is one project. Files sitting loose at

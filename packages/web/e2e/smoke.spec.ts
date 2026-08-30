@@ -221,6 +221,63 @@ test.describe('the navigation', () => {
   })
 
   /**
+   * Spec G §9 acceptance criterion 2, end to end: collapse it, reload the window, find it still
+   * collapsed.
+   *
+   * Everything the criterion needs was covered *separately* — the store's round trip in
+   * `packages/core/test/account.test.ts`, the `patch` call in `app.spec.ts`, the collapse itself
+   * in the test above — and the claim followed by composing the three. Composition is where this
+   * project keeps finding defects; nothing asserted that a reload actually comes back collapsed,
+   * so a `navCollapsed` the shell wrote and never read on start-up would have passed all three.
+   *
+   * In this block and not in a spec of its own **because of the login budget**: the server allows
+   * ten `POST /api/auth/login` a minute per address (`AUTH_RATE_LIMIT`), the suite runs inside one
+   * window and already spends eight, and the eleventh login to execute fails in whichever file
+   * happens to hold it. This test reuses the block's captured `storageState` and costs nothing.
+   *
+   * The PUT is awaited before the reload rather than the click alone: `SettingsStore.patch` is
+   * optimistic, so the class lands on the element before the request does, and a reload racing it
+   * would flake in the direction that looks like a persistence bug.
+   */
+  test('a collapsed sidebar is still collapsed after the window reloads', async ({ page }) => {
+    await page.goto('/projects')
+    await expect(page.getByRole('heading', { name: 'Projects' })).toBeVisible()
+
+    const saved = page.waitForResponse(
+      (response) =>
+        response.url().includes('/api/account/settings') &&
+        response.request().method() === 'PUT' &&
+        response.ok(),
+    )
+    await page.getByRole('button', { name: NAV_TOGGLE }).click()
+    await expect(page.locator('.spm-sidebar--collapsed')).toHaveCount(1)
+    await saved
+
+    await page.reload()
+    await expect(page.getByRole('heading', { name: 'Projects' })).toBeVisible()
+
+    // The whole criterion: nothing in this window did the collapsing, so the state came back
+    // from `user_settings` over the wire.
+    await expect(page.locator('.spm-sidebar--collapsed')).toHaveCount(1)
+    await expect(page.getByRole('button', { name: NAV_TOGGLE })).toHaveAttribute(
+      'aria-expanded',
+      'false',
+    )
+
+    // Put it back, for the same reason the test above does: the setting is stored against the
+    // shared admin account and would otherwise change the layout every later test runs against.
+    const restored = page.waitForResponse(
+      (response) =>
+        response.url().includes('/api/account/settings') &&
+        response.request().method() === 'PUT' &&
+        response.ok(),
+    )
+    await page.getByRole('button', { name: NAV_TOGGLE }).click()
+    await expect(page.locator('.spm-sidebar--collapsed')).toHaveCount(0)
+    await restored
+  })
+
+  /**
    * Spec G §9 acceptance criterion 3, and the only place it can be asserted.
    *
    * `playwright.config.ts` pins no viewport, so every other spec in this suite runs at Chromium's

@@ -7,7 +7,6 @@ import { JigErrors } from '@awdlab/jig/errors'
 import { JigHint } from '@awdlab/jig/hint'
 import { JigInput } from '@awdlab/jig/input'
 import { JigInputField } from '@awdlab/jig/input-field'
-import { JigMessage } from '@awdlab/jig/message'
 import { JigSelect } from '@awdlab/jig/select'
 import { API_CLIENT } from '../../core/api/api-client.token'
 import { CapabilitiesStore } from '../../core/capabilities.store'
@@ -21,8 +20,9 @@ import { ImportPanel } from '../import/import.panel'
  *
  * It is a component of its own rather than markup inside `SettingsPage` because the page is now
  * a tab strip over a `<router-outlet />`: `/settings` has to activate a child route, and a child
- * route needs something to render. Everything here — the three controls and the optimistic-save
- * error handling — moved out of `SettingsPage` unchanged.
+ * route needs something to render. The three controls and their optimistic-save error handling
+ * moved out of `SettingsPage`; the handling has since changed surface, from a banner at the top
+ * of the page to a snackbar (spec G 7).
  *
  * **`viewMode` stays here on purpose.** Spec G 0 defers moving the grid/list control to the
  * projects page to segment H, so that removing it here and adding it there happens in one commit
@@ -56,15 +56,10 @@ import { ImportPanel } from '../import/import.panel'
     JigHint,
     JigInput,
     JigInputField,
-    JigMessage,
     JigSelect,
   ],
   template: `
     <div class="spm-stack">
-      @if (saveFailed()) {
-        <jig-message color="error" role="alert">{{ t.translations().errors.generic }}</jig-message>
-      }
-
       <div class="spm-card spm-stack">
         <jig-input-field
           class="spm-block"
@@ -215,14 +210,6 @@ export class SettingsGeneralTab {
   })
 
   /**
-   * SettingsStore.patch is optimistic and rethrows after rolling the key back. Without this
-   * the page had no error handling at all: a failed save silently reverted the control with
-   * nothing said, and `onPatch` handed a rejecting promise straight to a template binding,
-   * so the failure escaped as an unhandled rejection.
-   */
-  readonly saveFailed = signal(false)
-
-  /**
    * Whether the server address field is showing. Closed by default so the common answer — a
    * different folder on this computer — is one click, and the rarer one does not put an empty
    * text field in front of everybody who came here to change the theme.
@@ -233,10 +220,19 @@ export class SettingsGeneralTab {
 
   /**
    * The address is validated **before** the transport is called, and that ordering is the point.
-   * `serverUrlSchema` allows `http:` and `https:` and no other scheme, and refuses an address
-   * carrying credentials; `submit()` only runs its action when the form is valid, so
-   * `javascript:alert(1)` never becomes an argument to `library.connect` — it is refused here,
-   * in the renderer, rather than trusted to whatever is on the other end of the bridge.
+   * `serverUrlSchema` allows `http:` and `https:` and no other scheme, refuses an address carrying
+   * credentials, and refuses anything after the host — a path, a query or a fragment; `submit()`
+   * only runs its action when the form is valid, so `javascript:alert(1)` never becomes an
+   * argument to `library.connect` — it is refused here, in the renderer, rather than trusted to
+   * whatever is on the other end of the bridge.
+   *
+   * **The last of those exists so this form refuses what the shell refuses.** The main process's
+   * `parseRemoteOrigin` has always taken an origin and nothing else, and it throws before any
+   * network call — so while the schema checked only the scheme and the credentials, a pasted deep
+   * link such as `https://print.example.com/spm` passed here, travelled the bridge, and came back
+   * as a failure the user could only read as their network being at fault. The refusal now happens
+   * where it can say which part of the address is the problem.
+   * `packages/desktop/test/remote.test.ts` holds the two together.
    *
    * **`validate` and not `validateStandardSchema`, for one reason: the message.**
    * `validateStandardSchema` surfaces zod's own issue text, which is English in a file that has
@@ -337,16 +333,28 @@ export class SettingsGeneralTab {
     })
   }
 
-  /** Returns whether the save landed, so a caller can gate follow-up work on it. */
+  /**
+   * Returns whether the save landed, so a caller can gate follow-up work on it.
+   *
+   * **A failed save reports through the snackbar and not through a banner** (spec G 7, acceptance
+   * criterion 8). It is the result of an action the user just took — they moved a select and it
+   * moved back — which is precisely what §7 reserves the snackbar for, and the banner it replaces
+   * was the transient acknowledgement §7 names as the misuse. The rule it does *not* trip is the
+   * other one in the same section: a `jig-message` that states something persistent about the
+   * current state stays a banner, which is why `ImportPanel`'s result is still inline.
+   *
+   * `SettingsStore.patch` is optimistic and rethrows after rolling the key back, so the control
+   * has already snapped to its previous value by the time this runs; all that was ever missing
+   * was saying why. Catching at all is still load-bearing for a second reason: `onPatch` hands
+   * its promise straight to a template `(valueChange)` binding, so an uncaught rejection escapes
+   * the component entirely.
+   */
   private async save(partial: Partial<SettingsDto>): Promise<boolean> {
-    this.saveFailed.set(false)
     try {
       await this.settings.patch(partial)
       return true
     } catch {
-      // The store has already rolled the key back to its previous value, so the control
-      // snaps back on its own; all that is missing is saying why.
-      this.saveFailed.set(true)
+      this.notify.error(this.t.translations().errors.generic)
       return false
     }
   }

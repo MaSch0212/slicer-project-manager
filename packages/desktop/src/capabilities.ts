@@ -30,8 +30,8 @@ import type { Capabilities } from '@spm/contract/dtos.ts'
  * `ensureLocalUser`'s row is the second.
  *
  * `canPickLocalFolder` is true because `library.pick` opens a real native dialog and reopens the
- * library, and the header control the renderer shows for this flag reaches it through `ApiClient`
- * like every other affordance.
+ * library, and the library card the renderer shows for this flag — settings → General, spec G 6.1
+ * — reaches it through `ApiClient` like every other affordance.
  *
  * `canLaunchSlicer` and `canConfigureSlicers` are true because spec D shipped them: the shell
  * detects the slicers installed on this machine, `/settings/slicers` configures them, and both

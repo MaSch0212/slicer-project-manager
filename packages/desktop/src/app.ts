@@ -635,9 +635,9 @@ export function applyNavigationPolicy(window: BrowserWindow): void {
  * The native folder picker, and the only place in the app that opens one.
  *
  * **Parentless**, and the reason is one code path rather than a claim about modality. The same
- * call serves the header control, which has a window the user is looking at, and the first-run
- * prompt, which is a question about a window with nothing in it yet; only one of those has a
- * parent worth naming, so neither passes one.
+ * call serves the library card in settings, which has a window the user is looking at, and the
+ * first-run prompt, which is a question about a window with nothing in it yet; only one of those
+ * has a parent worth naming, so neither passes one.
  *
  * What was measured, because the first version of this comment asserted a difference instead:
  * on Electron 44.0.0 (Windows) a dialog opened *with* a parent window and one opened without both
@@ -682,8 +682,9 @@ export const FAKE_PICKER_ENV = 'SPM_FAKE_PICKER'
  *
  * **The startup prompt only, and that is the whole point of `PromptTrigger`.** A picker that
  * answered "the first prompt" was armed for the life of the process in any launch that never
- * raised a startup prompt at all — a suite that set `SPM_LIBRARY_DIR` and then clicked the header
- * control would have had that click silently cancelled instead of reaching its own dialog stub.
+ * raised a startup prompt at all — a suite that set `SPM_LIBRARY_DIR` and then clicked the
+ * library card in settings would have had that click silently cancelled instead of reaching its
+ * own dialog stub.
  * Silently cancelled is the worst thing to hand the next author to debug, so a user-triggered pick
  * always goes to the real dialog, where the suite stubs it deterministically.
  *
@@ -857,9 +858,10 @@ export function resolveModePicker(env: NodeJS.ProcessEnv = process.env): ModePic
  * It exists for two things the shell has no other surface for, and neither is decoration:
  *
  * - **Changing mode after the first run.** In remote mode `canPickLocalFolder` is false (spec
- *   2.4), so the header control the renderer offers in local mode is correctly absent — and
- *   without a menu there would be no way back to a local folder at all. A capability-gated
- *   control cannot serve here, because the whole point is that the capability says no.
+ *   2.4), so the library card the renderer offers in local mode — settings → General, spec G 6.1
+ *   — is correctly absent, and without a menu there would be no way back to a local folder at
+ *   all. A capability-gated control cannot serve here, because the whole point is that the
+ *   capability says no.
  * - **Devtools**, which is what `dev:desktop` means by "with devtools available". Electron's
  *   default menu carries them; replacing that menu without `role: 'toggleDevTools'` would take
  *   them away, which is how a custom menu usually breaks this.

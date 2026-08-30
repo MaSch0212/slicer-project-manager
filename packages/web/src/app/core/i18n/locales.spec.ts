@@ -37,8 +37,46 @@ function keyPaths(value: unknown, prefix = ''): string[] {
  * half-swept pair spec G 8 says this project has found repeatedly, and it is the only failure
  * this file can ever report.
  */
+/** The words of a string, lower-cased and stripped of punctuation, as a set. */
+function words(text: string): Set<string> {
+  return new Set(
+    text
+      .toLowerCase()
+      .split(/[^\p{L}\p{N}]+/u)
+      .filter((word) => word !== ''),
+  )
+}
+
 describe('locale files', () => {
   it('have identical key sets', () => {
     expect(keyPaths(de)).toEqual(keyPaths(en))
+  })
+
+  /**
+   * Two error strings tell the user to press the rescan button. They have to name it the way the
+   * button names itself, in both languages.
+   *
+   * They agreed once and stopped agreeing: a copy sweep rewrote `errorConflict` and
+   * `errorNotFound` from "look for installed slicers again" to "**search** for installed slicers
+   * again" and left `slicers.rescan` reading "**Look** for installed slicers", so the English
+   * copy sent the user to a control the screen did not have. Nothing caught it, because each
+   * string on its own was fine — only the pair was wrong, and no test looked at a pair.
+   *
+   * A word *set* rather than a substring, because German puts the verb last: "Nach installierten
+   * Slicern suchen" is the button and "Suchen Sie erneut nach installierten Slicern" is the
+   * error, and those share every word without sharing a substring. Vocabulary is what the user
+   * matches on; word order is not something this can police across two languages.
+   */
+  it('name the rescan button with the words the errors that point at it use', () => {
+    for (const [language, locale] of [
+      ['en', en],
+      ['de', de],
+    ] as const) {
+      const button = words(locale.slicers.rescan)
+      for (const error of [locale.slicers.errorConflict, locale.slicers.errorNotFound]) {
+        const missing = [...button].filter((word) => !words(error).has(word))
+        expect(missing, `${language}: ${error}`).toEqual([])
+      }
+    }
   })
 })

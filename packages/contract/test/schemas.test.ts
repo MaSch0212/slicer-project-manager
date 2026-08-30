@@ -80,3 +80,23 @@ test('serverUrlSchema rejects an address carrying credentials', () => {
   // The same host without them is still fine, so this rejects the credentials and not the URL.
   assert.equal(serverUrlSchema.safeParse('https://example.invalid/').success, true)
 })
+
+test('serverUrlSchema rejects a path, a query and a fragment, as the shell does', () => {
+  // These are the addresses that used to pass the form and be refused by the main process's
+  // `parseRemoteOrigin` before any transport call, which surfaced to the user as a server that
+  // "could not be reached" when nothing had been contacted. A deep link pasted out of a browser
+  // is the realistic one.
+  for (const bad of [
+    'https://print.example.invalid/spm',
+    'https://print.example.invalid/?next=/projects',
+    'https://print.example.invalid/#projects',
+    'http://192.168.1.10:8080/api/',
+  ]) {
+    assert.equal(serverUrlSchema.safeParse(bad).success, false, bad)
+  }
+  // A bare origin, and an origin with the root slash the URL parser adds, both still pass: this
+  // refuses what is *after* the host, not the host.
+  assert.equal(serverUrlSchema.safeParse('https://print.example.invalid').success, true)
+  assert.equal(serverUrlSchema.safeParse('https://print.example.invalid/').success, true)
+  assert.equal(serverUrlSchema.safeParse('http://192.168.1.10:8080/').success, true)
+})

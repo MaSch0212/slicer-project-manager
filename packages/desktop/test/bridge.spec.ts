@@ -317,9 +317,10 @@ test.describe('the IPC bridge', () => {
  *
  * The report for the first round of this task claimed the importer was unreachable in the desktop
  * shell and deferred its memory ceiling on that basis. It was reachable: `/import` is in
- * `sharedRoutes`, the header links it, and the review drove it. So the ceiling is gone instead of
- * deferred — `IpcApiClient` asks the preload to name the picked file and the main process streams
- * it off disk.
+ * `sharedRoutes`, the navigation linked it at the time, and the review drove it. (Spec G 4.4 has
+ * since taken it out of the navigation; the route still resolves and settings offers a card.) So
+ * the ceiling is gone instead of deferred — `IpcApiClient` asks the preload to name the picked
+ * file and the main process streams it off disk.
  *
  * `.spm/uploads` is the observable difference between the two arms: the bytes arm has to write
  * the archive into the library before `importCuraManagerZip` can read a path, and the path arm
@@ -381,7 +382,7 @@ test('the import page imports a picked archive without copying it into the libra
  * Local mode has no sessions, so it must not offer to end one.
  *
  * Task 2 is what made this reachable: `account.me()` now answers, `auth.isAuthenticated()` is
- * true, and the header rendered a sign-out button. Pressing it dropped the user on `/login` —
+ * true, and the shell rendered a sign-out control. Pressing it dropped the user on `/login` —
  * a page with nothing to sign in to, whose only failure message is "Username or password is not
  * correct", reached by a control that removed the navigation on the way out. The nav and the
  * button are now gated on `capabilities.requiresAuth`, which is a capability the shell publishes

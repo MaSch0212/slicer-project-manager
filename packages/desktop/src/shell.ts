@@ -235,7 +235,7 @@ export class ShellHost {
   async #askModeOnce(trigger: PromptTrigger): Promise<ModeChoice> {
     const choice = await this.#askMode(modePickerOptions(this.#language()))
     // The trigger travels with it: the folder dialog this leads to at startup is still the
-    // *shell's* prompt, not the user reaching for the header control, and the two are answered by
+    // *shell's* prompt, not the user reaching for the card in settings, and the two are answered by
     // different things in an automated run (see `resolveFolderPicker`).
     if (choice === 'local') await this.pickLocalFolder(trigger)
     if (choice === 'remote') {

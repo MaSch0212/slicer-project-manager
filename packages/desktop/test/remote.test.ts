@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import { after, before, test } from 'node:test'
 import { AppError } from '@spm/contract/errors.ts'
+import { serverUrlSchema } from '@spm/contract/schemas.ts'
 import { REMOTE_SHELL_CAPABILITIES } from '../src/capabilities.ts'
 import { API_PATH_PREFIX, UPLOAD_LENGTH_HEADER } from '../src/protocol.ts'
 import {
@@ -111,6 +112,65 @@ test('a server URL is reduced to an origin, or refused with a reason', () => {
       `must refuse ${String(raw)}`,
     )
   }
+})
+
+/**
+ * The renderer's form and this function must refuse the same addresses.
+ *
+ * They are two separate expressions of one rule, in two packages, and they drifted: the schema
+ * checked the scheme and the credentials only, so `https://print.example.com/spm` passed the
+ * connect form, reached `library.connect`, and was refused *here* — before the dedup check,
+ * before the native dialog and before any `fetch` — leaving the user with a message about a
+ * server that could not be reached when nothing had been contacted. This is the pin that keeps
+ * them together, and it lives in the desktop suite because that is the only package that can see
+ * both.
+ *
+ * The surrounding-whitespace case is in the table on purpose, because it was expected to be the
+ * one place the two differ and is not: the WHATWG URL parser strips leading and trailing spaces
+ * before it parses, and both sides reach it — `parseRemoteOrigin` through its own `trim()` and
+ * `new URL`, the schema through `z.url()`. So a padded address is accepted by both, and a padded
+ * address with a path is refused by both. Measured here rather than assumed.
+ */
+test('the connect form and parseRemoteOrigin refuse the same addresses', () => {
+  const addresses = [
+    'https://print.example.com',
+    'https://print.example.com/',
+    'http://192.168.1.10:8080',
+    'http://192.168.1.10:8080/',
+    'https://print.example.com/spm',
+    'https://print.example.com/?next=/projects',
+    'https://print.example.com/#projects',
+    'https://user:pw@print.example.com/',
+    'https://user@print.example.com/',
+    'javascript:alert(1)',
+    'data:text/html,x',
+    'file:///c:/',
+    'spm://app',
+    'print.example.com',
+    'not a url',
+    '',
+    '   ',
+    '  https://print.example.com  ',
+    '  https://print.example.com/spm  ',
+  ]
+  for (const address of addresses) {
+    let shellAccepts = true
+    try {
+      parseRemoteOrigin(address)
+    } catch {
+      shellAccepts = false
+    }
+    assert.equal(
+      serverUrlSchema.safeParse(address).success,
+      shellAccepts,
+      `the form and the shell disagree about ${address || '(empty)'}`,
+    )
+  }
+
+  // Agreeing on nothing would satisfy the loop above, so at least one address has to be one both
+  // of them take. Two, so the trailing slash the parser adds is covered as well as its absence.
+  assert.equal(serverUrlSchema.safeParse('https://print.example.com').success, true)
+  assert.equal(serverUrlSchema.safeParse('http://192.168.1.10:8080/').success, true)
 })
 
 test('plain http to another machine is warned about, and to this one is not', () => {
