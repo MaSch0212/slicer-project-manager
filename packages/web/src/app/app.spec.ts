@@ -206,8 +206,8 @@ describe('App', () => {
 
   /**
    * The four gates of spec G 4.4, each in both directions so the pair pins the expression rather
-   * than today's value of the flag. They are asserted through the sidebar; the entry list is one
-   * component, and the test below is what holds the drawer to rendering that same one.
+   * than today's value of the flag. They are asserted through the sidebar alone; what holds the
+   * drawer to the same gates is the agreement suite further down, not this one.
    */
   it('waits for a user before offering the navigation where the shell requires one', async () => {
     const { fixture } = await setup({ signedIn: false })
@@ -394,14 +394,20 @@ describe('App', () => {
   })
 
   /**
-   * One entry list, two hosts, asserted structurally (spec G 4.3, review finding 1).
+   * One renderer per host, asserted structurally (spec G 4.3, review finding 1).
    *
    * The agreement tests below compare what each host rendered. **That catches divergence, not
    * duplication** — a hand-written second list that happens to agree on the day it is written
    * passes them, which was measured on the first version of this file. This one asks the
    * question the other way round: how many navigation components are in the document, and does
-   * every rendered entry belong to one of them. A copy written into the drawer's template is not
-   * an `spm-nav-list` element, so its entries have no such ancestor however faithful they are.
+   * every rendered entry belong to one of them. The selectors are element-type selectors, so a
+   * copy written into the drawer's template is not an `spm-nav-list` however faithful its markup
+   * or its classes are.
+   *
+   * **This is a claim about renderers, not about definitions.** It does not say the entries are
+   * declared in one place: a second, correct copy of `NavEntriesStore.entries` handed to this
+   * very component through an input would satisfy it, and every other test here. See the boundary
+   * note in `core/nav-entries.ts` for why that shape is recorded rather than tested for.
    */
   it('renders one navigation component per host, and every entry inside one', async () => {
     const { fixture } = await setup({ capabilities: EVERY_ENTRY })
@@ -424,9 +430,11 @@ describe('App', () => {
    * Comparing the two hosts under one capability set proves only that they agree there, and a
    * hand-written duplicate agrees there by construction — the measured failure that produced this
    * suite. Every gate therefore gets a case in which it is closed. A copy that does not implement
-   * the gates cannot follow them, so it goes red on the first case that hides an entry; a copy
-   * that does implement them has re-derived every gate in this application, which is the defect
-   * stated out loud.
+   * the gates cannot follow them, so it goes red on the first case that hides an entry.
+   *
+   * A copy that *does* implement them survives, and that is the boundary rather than an omission:
+   * two correct definitions are behaviourally identical, so nothing behavioural can separate
+   * them. `core/nav-entries.ts` records the shape.
    *
    * Each case also pins the sidebar's own labels, so a fixture that quietly stopped hiding
    * anything would fail rather than make the comparison vacuous.

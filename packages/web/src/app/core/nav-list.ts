@@ -9,10 +9,16 @@ import { NavEntriesStore } from './nav-entries'
  *
  * **Two hosts render this component: the desktop sidebar and the mobile drawer, both in
  * `app.ts`.** That is the whole reason it is a component rather than markup in the shell. A
- * second copy of the navigation is the cross-referenced-pair defect this project keeps finding,
- * and the cheapest way not to have it is not to have a second copy — the alternative was a
- * sidebar and a drawer that agree today and disagree the first time an entry, or a gate, is
+ * second copy of the navigation is the cross-referenced-pair defect this project keeps finding —
+ * a sidebar and a drawer that agree today and disagree the first time an entry, or a gate, is
  * changed in one of them.
+ *
+ * What `app.spec.ts` holds against that is narrower than "there is one list", and
+ * `NavEntriesStore`'s docblock names the boundary: a second *correct* definition fed in through
+ * an input would pass every test in the file. What is pinned is that each host renders exactly
+ * one `spm-nav-list` element, that no entry is rendered outside one, and that the two hosts agree
+ * across every capability and auth combination — which kills any copy that has not re-implemented
+ * every gate.
  *
  * What the entries *are* lives in `NavEntriesStore` (`core/nav-entries.ts`), because the shell
  * also has to know whether there are any without rendering them. This component owns only how

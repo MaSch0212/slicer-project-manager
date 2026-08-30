@@ -127,9 +127,10 @@ import { SettingsStore } from './core/settings.store'
         <router-outlet />
       </div>
 
-      <!-- The same list component the sidebar renders, and never a second copy of the entries.
-           No collapsed input: navCollapsed has no effect on mobile, where the drawer is always
-           the full list.
+      <!-- The same list component the sidebar renders, given nothing of its own to render from:
+           no entries input, so this host cannot be handed a different list than the sidebar's.
+           No collapsed input either -- navCollapsed has no effect on mobile, where the drawer is
+           always the full list.
 
            lazy, with the entries in a #content template rather than projected between the tags:
            projected content is instantiated by *this* template regardless of the drawer's state,

@@ -124,7 +124,7 @@ jobs:
       # Spec E's /browse. The strongest case for this rule so far: this page hosts a native
       # WebContentsView loading a third-party site, so its leak into the web bundle would ship a
       # UI expecting a containment a browser tab cannot provide -- a security-shaped failure
-      # rather than a dead link. The nav entry in core/nav-list.ts is a routerLink string gated on
+      # rather than a dead link. The nav entry in core/nav-entries.ts is a routerLink string gated on
       # canBrowseModelSites, and that link is what would drag it in if the rule were ever broken.
       #
       # The exported class name, not the module path: paths become hashed chunk names during

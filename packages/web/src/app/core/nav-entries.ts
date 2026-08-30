@@ -27,8 +27,11 @@ export type NavEntry = {
 }
 
 /**
- * The navigation entries and their gates. One definition, read by everything that needs to know
- * what the navigation contains.
+ * The navigation entries and their gates: **today the application's only definition of them**,
+ * read by everything that needs to know what the navigation contains.
+ *
+ * "Today", and not "necessarily", on purpose. What the suite actually holds is narrower than
+ * "there is one definition" — see the boundary note at the foot of this docblock.
  *
  * **It is a store rather than a field on `SpmNavList` because two different things read it**, and
  * only one of them renders it. `SpmNavList` renders the entries into both of its hosts; `App`
@@ -52,10 +55,23 @@ export type NavEntry = {
  *
  * ## Why the labels are data and not markup
  *
- * The list is data so that the sidebar and the drawer cannot render different lists, and so that
- * a test can compare what each host actually rendered without reading this file. Reading
- * `t.translations()` inside the computed keeps it reactive to a language change, which markup
- * would have got for free and a plain array would have lost.
+ * The list is data so that a test can compare what each host actually rendered without reading
+ * this file, and so that the shell can ask how long it is. Reading `t.translations()` inside the
+ * computed keeps it reactive to a language change, which markup would have got for free and a
+ * plain array would have lost.
+ *
+ * ## What the tests hold, and what they do not
+ *
+ * `app.spec.ts` pins three things: exactly one `spm-nav-list` element per host and every rendered
+ * entry inside one; the two hosts agreeing across every capability and auth combination; and a
+ * *divergent* second list dying on the first combination that hides an entry.
+ *
+ * **They do not pin "the entries are defined in exactly one place."** A second, *correct* copy of
+ * this computed — held in `App` and handed to the drawer's `SpmNavList` through an input — would
+ * be behaviourally identical to this one by construction, so no behavioural test can tell them
+ * apart, and a structural assertion that `SpmNavList` has no such input would be this file pinned
+ * against its own shape. That is a latent defect, not a live one, and it is recorded here rather
+ * than tested for because the honest alternative is silence about the boundary.
  */
 @Injectable({ providedIn: 'root' })
 export class NavEntriesStore {
