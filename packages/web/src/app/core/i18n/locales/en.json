@@ -87,10 +87,10 @@
     "sortUpdated": "Recently updated",
     "sortName": "A–Z",
     "sortNewest": "Newest",
+    "general": "General",
     "slicers": "Slicers"
   },
   "slicers": {
-    "title": "Slicers",
     "lead": "Which slicers are installed on this computer, and which install of each one this app launches.",
     "windowsOnly": "Looking for installed slicers only works on Windows. Add yours by hand below — everything else on this page works the same way.",
     "rescan": "Look for installed slicers",

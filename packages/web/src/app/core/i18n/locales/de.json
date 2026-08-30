@@ -87,10 +87,10 @@
     "sortUpdated": "Zuletzt geändert",
     "sortName": "A–Z",
     "sortNewest": "Neueste",
+    "general": "Allgemein",
     "slicers": "Slicer"
   },
   "slicers": {
-    "title": "Slicer",
     "lead": "Welche Slicer auf diesem Computer installiert sind und welche Installation davon diese App startet.",
     "windowsOnly": "Die Suche nach installierten Slicern funktioniert nur unter Windows. Fügen Sie Ihren unten von Hand hinzu — alles andere auf dieser Seite funktioniert genauso.",
     "rescan": "Nach installierten Slicern suchen",

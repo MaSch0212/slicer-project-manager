@@ -210,6 +210,24 @@ function buttonNamed(fixture: Setup['fixture'], label: string): HTMLButtonElemen
 }
 
 describe('DesktopSlicersPage', () => {
+  /*
+   * Spec G 6: this is the Slicers *tab* of the settings page now, rendered into that page's
+   * `<router-outlet />`. A `<main>` here would be the page's second landmark and a `<h1>` its
+   * second top-level heading, and both are invalid — the settings page around it owns them.
+   * Asserted from this side rather than the settings page's, because the settings page's own spec
+   * renders a stub in the outlet and structurally cannot see what this template carries.
+   */
+  it('brings no landmark and no top-level heading of its own', async () => {
+    const { fixture } = await setup()
+
+    expect(host(fixture).querySelector('main')).toBeNull()
+    expect(host(fixture).querySelector('h1')).toBeNull()
+    // Not vacuous by way of an empty page: the lead it does own is still there.
+    expect(pageText(fixture)).toContain(
+      TestBed.inject(TranslateService).translations().slicers.lead,
+    )
+  })
+
   describe('two installs of one product', () => {
     // Spec 3.1's measured case. Asserted on the rendered text of the rows, not on a control
     // existing: a `<select>` with no options in it would satisfy "there is a chooser" and prove

@@ -1,173 +1,94 @@
-import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core'
-import { RouterLink } from '@angular/router'
-import type { SettingsDto } from '@spm/contract/dtos.ts'
-import { JigButton } from '@awdlab/jig/button'
-import { JigIcon } from '@awdlab/jig/icon'
-import { JigInputField } from '@awdlab/jig/input-field'
-import { JigMessage } from '@awdlab/jig/message'
-import { JigSelect } from '@awdlab/jig/select'
-import tablerPrinter from '@iconify/icons-tabler/printer'
+import { ChangeDetectionStrategy, Component, computed, inject } from '@angular/core'
+import { Router, RouterOutlet, isActive } from '@angular/router'
+import { JigTab, JigTabs } from '@awdlab/jig/tabs'
 import { CapabilitiesStore } from '../../core/capabilities.store'
 import { TranslateService } from '../../core/i18n/translate.service'
-import { SettingsStore } from '../../core/settings.store'
 
+/**
+ * The tab ids and the URL each one stands for.
+ *
+ * `GENERAL_TAB` is a word rather than the empty string its route path is: `jig-tabs` treats an
+ * empty active id as "nothing is selected" and re-asserts its first tab every render pass, which
+ * would make the General tab a permanent source of `activeTabChange` events.
+ */
+const GENERAL_TAB = 'general'
+const SLICERS_TAB = 'slicers'
+const SETTINGS_URL = '/settings'
+const SLICERS_URL = '/settings/slicers'
+
+/**
+ * The settings page: a tab strip over a `<router-outlet />` (spec G 6).
+ *
+ * **The tabs are navigation, not a component-local flag.** Each `<jig-tab>` deliberately omits
+ * its `#content` template — jig's own template renders a panel only `@if (content.template)`, so
+ * with none it renders the header row alone — and the routed child lands in the outlet below.
+ * That is what keeps `/settings/slicers` a real, deep-linkable, `authGuard`ed URL while giving it
+ * the way back the previous version of this page had none of: the strip is above the outlet and
+ * visible from the tab it took you to.
+ *
+ * `activeTab` reads the URL rather than being written by the click, so a deep link, a browser
+ * Back and a click on a header all end up in the same state.
+ *
+ * **This file imports nothing from `features/desktop/`** — spec G C2's rule and the one CI's
+ * bundle greps enforce. The Slicers tab is a capability flag plus a URL string; the route that
+ * serves it is declared only in `routes.electron.ts`, so in the web build it does not exist and
+ * `canConfigureSlicers` is false, and the header is never rendered.
+ */
 @Component({
   selector: 'app-settings-page',
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [RouterLink, JigButton, JigIcon, JigInputField, JigMessage, JigSelect],
+  imports: [RouterOutlet, JigTab, JigTabs],
   template: `
-    <main class="spm-main spm-main--narrow">
+    <main class="spm-main">
       <div class="spm-stack">
         <h1>{{ t.translations().settings.title }}</h1>
 
-        @if (saveFailed()) {
-          <jig-message color="error" role="alert">{{
-            t.translations().errors.generic
-          }}</jig-message>
-        }
+        <jig-tabs [activeTab]="activeTab()" (activeTabChange)="onTabChange($event)">
+          <jig-tab [tabId]="ids.general">
+            <ng-template #header>{{ t.translations().settings.general }}</ng-template>
+          </jig-tab>
+          @if (capabilities.capabilities().canConfigureSlicers) {
+            <jig-tab [tabId]="ids.slicers">
+              <ng-template #header>{{ t.translations().settings.slicers }}</ng-template>
+            </jig-tab>
+          }
+        </jig-tabs>
+      </div>
 
-        <div class="spm-card spm-stack">
-          <jig-input-field
-            class="spm-block"
-            inputId="settings-language"
-            [label]="t.translations().settings.language"
-          >
-            <jig-select
-              inputId="settings-language"
-              [label]="t.translations().settings.language"
-              [options]="languageOptions()"
-              [value]="settings.settings().language"
-              (valueChange)="onLanguage($event)"
-            />
-          </jig-input-field>
-
-          <jig-input-field
-            class="spm-block"
-            inputId="settings-theme"
-            [label]="t.translations().settings.theme"
-          >
-            <jig-select
-              inputId="settings-theme"
-              [label]="t.translations().settings.theme"
-              [options]="themeOptions()"
-              [value]="settings.settings().theme"
-              (valueChange)="onPatch('theme', $event)"
-            />
-          </jig-input-field>
-
-          <jig-input-field
-            class="spm-block"
-            inputId="settings-view-mode"
-            [label]="t.translations().settings.viewMode"
-          >
-            <jig-select
-              inputId="settings-view-mode"
-              [label]="t.translations().settings.viewMode"
-              [options]="viewModeOptions()"
-              [value]="settings.settings().viewMode"
-              (valueChange)="onPatch('viewMode', $event)"
-            />
-          </jig-input-field>
-        </div>
-
-        <!--
-          Spec 2.4's canConfigureSlicers, and the whole of how a desktop-only page is reached
-          from a page both builds share: a capability and a routerLink string. This file imports
-          nothing from features/desktop/ — spec 2.5's rule, and the one CI's bundle greps
-          enforce. In the browser the route is not in the bundle at all and this flag is false in
-          the server's column, so the link is never rendered; nothing here had to ask which shell
-          it was running in.
-        -->
-        @if (capabilities.capabilities().canConfigureSlicers) {
-          <div class="spm-card spm-stack">
-            <p class="spm-muted">{{ t.translations().slicers.lead }}</p>
-            <!-- In a flex row rather than loose in the stack: a stack stretches its children, and
-                 the anchor then spans the whole card and reads as a banner, not as a control. -->
-            <div class="spm-row">
-              <a jigButton kind="secondary" routerLink="/settings/slicers">
-                <jig-icon [icon]="icons.slicers" />
-                {{ t.translations().settings.slicers }}
-              </a>
-            </div>
-          </div>
-        }
+      <div class="spm-settings-panel">
+        <router-outlet />
       </div>
     </main>
   `,
 })
 export class SettingsPage {
-  protected readonly settings = inject(SettingsStore)
   protected readonly capabilities = inject(CapabilitiesStore)
   protected readonly t = inject(TranslateService)
 
-  protected readonly icons = { slicers: tablerPrinter }
+  private readonly router = inject(Router)
 
-  // Computed, not constant: the labels are translated, so they have to rebuild when the
-  // language changes — which this very page is what changes.
-  protected readonly languageOptions = computed(() => [
-    { label: 'English', value: 'en' as const },
-    { label: 'Deutsch', value: 'de' as const },
-  ])
-  protected readonly themeOptions = computed(() => {
-    const s = this.t.translations().settings
-    return [
-      { label: s.themeSystem, value: 'system' as const },
-      { label: s.themeLight, value: 'light' as const },
-      { label: s.themeDark, value: 'dark' as const },
-    ]
-  })
-  protected readonly viewModeOptions = computed(() => {
-    const s = this.t.translations().settings
-    return [
-      { label: s.viewModeGrid, value: 'grid' as const },
-      { label: s.viewModeList, value: 'list' as const },
-    ]
-  })
+  protected readonly ids = { general: GENERAL_TAB, slicers: SLICERS_TAB }
 
   /**
-   * SettingsStore.patch is optimistic and rethrows after rolling the key back. Without this
-   * the page had no error handling at all: a failed save silently reverted the control with
-   * nothing said, and `onPatch` handed a rejecting promise straight to a template binding,
-   * so the failure escaped as an unhandled rejection.
+   * `isActive` is a computed over the router's last successful navigation, so this tracks the URL
+   * without a subscription of its own and answers correctly on the first render of a deep link.
+   * The default `paths: 'subset'` asks whether the current URL contains `/settings/slicers`,
+   * which `/settings` does not.
    */
-  readonly saveFailed = signal(false)
+  private readonly slicersActive = isActive(SLICERS_URL, this.router)
 
-  // Public, like ProjectsPage.onCreate/onRescan and the auth pages' onSubmit: the specs
-  // drive these directly.
-  async onLanguage(language: SettingsDto['language'] | null): Promise<void> {
-    if (!language) return
-    if (!(await this.save({ language }))) return
-    // Reactive switch at runtime; no rebuild, no reload (spec 6.4). setLanguage is
-    // synchronous — see TranslateService — the UI updates once the translations signal
-    // is republished by the base class's own effect. Only after the PUT succeeded: a
-    // language that did not persist must not look as though it had.
-    this.t.setLanguage(language)
-  }
+  readonly activeTab = computed(() => (this.slicersActive() ? SLICERS_TAB : GENERAL_TAB))
 
-  async onPatch<K extends 'theme' | 'viewMode'>(
-    key: K,
-    value: SettingsDto[K] | null,
-  ): Promise<void> {
-    if (value === null) return
-    // TypeScript cannot narrow an object literal keyed by a generic parameter back to
-    // Partial<SettingsDto> (a known limitation around computed property types), so this
-    // cast stands in for what is, at every call site, a genuine Pick<SettingsDto, K> — the
-    // value itself was already checked against SettingsDto[K] above, so passing a mismatched
-    // key/value pair still fails to compile.
-    await this.save({ [key]: value } as Pick<SettingsDto, K>)
-  }
-
-  /** Returns whether the save landed, so a caller can gate follow-up work on it. */
-  private async save(partial: Partial<SettingsDto>): Promise<boolean> {
-    this.saveFailed.set(false)
-    try {
-      await this.settings.patch(partial)
-      return true
-    } catch {
-      // The store has already rolled the key back to its previous value, so the control
-      // snaps back on its own; all that is missing is saying why.
-      this.saveFailed.set(true)
-      return false
-    }
+  /**
+   * Navigates rather than storing the selection, which is the whole point of a tab strip in
+   * navigation mode: the URL is the state, and `activeTab` reads it back.
+   *
+   * The early return is not a micro-optimisation: what the URL already says is not a selection
+   * the user just made, and re-navigating to it would push a duplicate history entry.
+   */
+  onTabChange(tab: string): void {
+    if (tab === this.activeTab()) return
+    if (tab === SLICERS_TAB && !this.capabilities.capabilities().canConfigureSlicers) return
+    void this.router.navigateByUrl(tab === SLICERS_TAB ? SLICERS_URL : SETTINGS_URL)
   }
 }

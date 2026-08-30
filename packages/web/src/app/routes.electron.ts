@@ -3,35 +3,58 @@ import { authGuard } from './core/guards'
 import { sharedRoutes } from './routes.shared'
 
 /**
+ * `sharedRoutes` with the desktop-only Slicers tab appended to the `settings` route's children.
+ *
+ * Spec D 8.4's `/settings/slicers`, now a genuine child rather than a sibling that only spelled
+ * like one: spec G 6 turned the settings page into a tab strip over a `<router-outlet />`, and
+ * `routes.shared.ts` declares the parent and the General child so this file has somewhere to
+ * append to. It carries **no guard of its own** — `canActivate: [authGuard]` on the parent covers
+ * every child — which is what makes the two builds' guarding of this URL impossible to drift
+ * apart rather than merely equal today.
+ *
+ * The lookup throws rather than returning the list unchanged. A `.map` that matched nothing would
+ * produce a desktop build whose settings page has no Slicers tab and whose `/settings/slicers`
+ * falls through to the `**` redirect, silently, which is the shape of failure this project keeps
+ * paying for.
+ */
+function withSlicersTab(routes: Routes): Routes {
+  const settings = routes.find((route) => route.path === 'settings')
+  if (!settings) {
+    throw new Error("routes.electron: routes.shared.ts no longer declares a 'settings' route")
+  }
+  return routes.map((route) =>
+    route === settings
+      ? {
+          ...route,
+          children: [
+            ...(route.children ?? []),
+            {
+              path: 'slicers',
+              loadComponent: () =>
+                import('./features/desktop/slicers/slicers.page').then((m) => m.DesktopSlicersPage),
+            },
+          ],
+        }
+      : route,
+  )
+}
+
+/**
  * Desktop-only routes live here and are referenced from nowhere else, so the web build cannot
- * pull them in. Spec D added /settings/slicers; spec E has taken the /browse it reserved. Both
- * live under ./features/desktop/*.
+ * pull them in. Spec D added /settings/slicers, which is now a child of the shared `settings`
+ * route rather than an entry of its own; spec E has taken the /browse it reserved. Both live
+ * under ./features/desktop/*.
  *
  * `fileReplacements` swaps this file in for routes.ts, so it must import the shared list from
  * routes.shared.ts: './routes' would be replaced with this very file.
  */
 export const routes: Routes = [
-  ...sharedRoutes,
+  ...withSlicersTab(sharedRoutes),
   {
     /*
-     * Spec D 8.4. Guarded exactly as `/settings` is in routes.shared.ts, and for the reason the
+     * Spec E 7.4, guarded exactly as `/settings` is in routes.shared.ts and for the reason that
      * guard is written the way it is (`!capabilities.requiresAuth || auth.isAuthenticated()`): in
      * local mode `requiresAuth` is false and it passes on the first arm, while in remote mode an
-     * unauthenticated window has no business anywhere but /login.
-     *
-     * A child of `settings` in path only. It is a sibling here because `/settings` is a shared
-     * route with no children, and giving it some from this file would mean the two builds
-     * disagreed about the shape of a route they both have.
-     */
-    path: 'settings/slicers',
-    canActivate: [authGuard],
-    loadComponent: () =>
-      import('./features/desktop/slicers/slicers.page').then((m) => m.DesktopSlicersPage),
-  },
-  {
-    /*
-     * Spec E 7.4, guarded exactly as the entry above it is and for the same reason: in local mode
-     * `requiresAuth` is false and the guard passes on its first arm, while in remote mode an
      * unauthenticated window has no business anywhere but /login.
      *
      * **This route is never navigated to a model site.** It is an spm://app route hosting a

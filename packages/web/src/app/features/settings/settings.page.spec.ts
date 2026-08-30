@@ -1,7 +1,9 @@
+import { ChangeDetectionStrategy, Component } from '@angular/core'
 import { TestBed } from '@angular/core/testing'
-import { provideRouter } from '@angular/router'
+import { provideRouter, Router } from '@angular/router'
+import { RouterTestingHarness } from '@angular/router/testing'
 import { describe, expect, it, vi } from 'vitest'
-import { type Capabilities, DEFAULT_SETTINGS, type SettingsDto } from '@spm/contract/dtos.ts'
+import { type Capabilities, DEFAULT_SETTINGS } from '@spm/contract/dtos.ts'
 import { API_CLIENT } from '../../core/api/api-client.token'
 import { CapabilitiesStore } from '../../core/capabilities.store'
 import { TranslateService } from '../../core/i18n/translate.service'
@@ -18,147 +20,194 @@ const BROWSER_CAPABILITIES: Capabilities = {
   canBrowseModelSites: false,
 }
 
+const DESKTOP_CAPABILITIES: Capabilities = { ...BROWSER_CAPABILITIES, canConfigureSlicers: true }
+
+/**
+ * Stand-ins for the two tab components, so this spec is about the strip and the outlet rather
+ * than about what either tab renders.
+ *
+ * The Slicers stub matters more than it looks: the real one lives under `features/desktop/` and
+ * this file is shared by both builds (spec G C2), so a spec that imported it to test the tab
+ * would put the very import the rule forbids one file away from the page.
+ */
+@Component({
+  selector: 'app-general-stub',
+  changeDetection: ChangeDetectionStrategy.OnPush,
+  template: `<p>general tab</p>`,
+})
+class GeneralStub {}
+
+@Component({
+  selector: 'app-slicers-stub',
+  changeDetection: ChangeDetectionStrategy.OnPush,
+  template: `<p>slicers tab</p>`,
+})
+class SlicersStub {}
+
 type Setup = {
-  fixture: ReturnType<typeof TestBed.createComponent<SettingsPage>>
-  api: { settings: { get: ReturnType<typeof vi.fn>; put: ReturnType<typeof vi.fn> } }
-  page: SettingsPage
+  harness: RouterTestingHarness
   translate: TranslateService
 }
 
-async function setup(
-  put: ReturnType<typeof vi.fn> = vi.fn((patch: Partial<SettingsDto>) =>
-    Promise.resolve({ ...DEFAULT_SETTINGS, ...patch }),
-  ),
-  capabilities: Capabilities = BROWSER_CAPABILITIES,
-): Promise<Setup> {
+/**
+ * The route tree the settings page is designed against: a parent with an empty-path General child
+ * and, in the desktop build only, a `slicers` child appended by routes.electron.ts. Spelled out
+ * here rather than imported so the web-build half of this spec is not the one file that pulls the
+ * desktop route list in.
+ */
+async function setup(capabilities: Capabilities = BROWSER_CAPABILITIES): Promise<Setup> {
   const api = {
-    settings: { get: vi.fn().mockResolvedValue(DEFAULT_SETTINGS), put },
+    settings: { get: vi.fn().mockResolvedValue(DEFAULT_SETTINGS), put: vi.fn() },
     capabilities: vi.fn().mockResolvedValue(capabilities),
   }
   TestBed.configureTestingModule({
     providers: [
       ...provideJigForTests(),
-      // The slicer link is a routerLink, and without a router it renders no href at all — which
-      // would make the assertion below pass for the wrong reason. There is no route registered
-      // for it here on purpose: the target exists only in the electron build, and what this page
-      // owes is the address, not a page to land on.
-      provideRouter([]),
+      provideRouter([
+        {
+          path: 'settings',
+          component: SettingsPage,
+          children: [
+            { path: '', component: GeneralStub },
+            ...(capabilities.canConfigureSlicers
+              ? [{ path: 'slicers', component: SlicersStub }]
+              : []),
+          ],
+        },
+      ]),
       { provide: API_CLIENT, useValue: api },
     ],
   })
   const translate = TestBed.inject(TranslateService)
-  // Awaited *before* the component exists: TestBed auto-detects changes, so creating it
-  // first renders the template immediately, and the template reads t.translations()
-  // unguarded (legitimately — app.config.ts awaits this same promise before bootstrap).
+  // Awaited before anything renders: the template reads t.translations() unguarded, exactly as
+  // app.config.ts lets it by awaiting this same promise before bootstrap.
   await translate.ready
   await TestBed.inject(CapabilitiesStore).load()
-  const fixture = TestBed.createComponent(SettingsPage)
-  return { fixture, api, page: fixture.componentInstance, translate }
+  return { harness: await RouterTestingHarness.create(), translate }
 }
 
-/** The link to /settings/slicers, as rendered. */
-function slicerLink(fixture: Setup['fixture']): HTMLAnchorElement | null {
-  fixture.detectChanges()
-  return (fixture.nativeElement as HTMLElement).querySelector('a[href="/settings/slicers"]')
+/** The tab headers as a user meets them: `role="tab"`, in the order they are rendered. */
+function tabHeaders(harness: RouterTestingHarness): HTMLElement[] {
+  harness.detectChanges()
+  return [
+    ...(harness.fixture.nativeElement as HTMLElement).querySelectorAll('[role="tab"]'),
+  ] as HTMLElement[]
 }
 
-/** The `role="alert"` the convention requires, as actually rendered. */
-function alertText(fixture: Setup['fixture']): string | null {
-  fixture.detectChanges()
-  return (
-    (fixture.nativeElement as HTMLElement).querySelector('[role="alert"]')?.textContent?.trim() ??
-    null
-  )
+function labels(harness: RouterTestingHarness): string[] {
+  return tabHeaders(harness).map((tab) => tab.textContent?.trim() ?? '')
+}
+
+/** The label of the header the strip reports as selected, or null where none is. */
+function selectedLabel(harness: RouterTestingHarness): string | null {
+  const selected = tabHeaders(harness).find((tab) => tab.getAttribute('aria-selected') === 'true')
+  return selected?.textContent?.trim() ?? null
+}
+
+function outletText(harness: RouterTestingHarness): string {
+  harness.detectChanges()
+  return (harness.fixture.nativeElement as HTMLElement).textContent ?? ''
 }
 
 describe('SettingsPage', () => {
-  it('persists a theme change', async () => {
-    const { page, api } = await setup()
-    await page.onPatch('theme', 'dark')
-    expect(api.settings.put).toHaveBeenCalledWith({ theme: 'dark' })
-    expect(page.saveFailed()).toBe(false)
+  it('renders one landmark and one heading, both its own', async () => {
+    const { harness, translate } = await setup()
+    await harness.navigateByUrl('/settings', SettingsPage)
+    harness.detectChanges()
+
+    const host = harness.fixture.nativeElement as HTMLElement
+    // Spec G C6: the tabs put another component's template on this page, and two <main>s on one
+    // page is invalid. The tab components carry none, so this count must stay at one.
+    expect(host.querySelectorAll('main')).toHaveLength(1)
+    expect([...host.querySelectorAll('h1')].map((h) => h.textContent?.trim())).toEqual([
+      translate.translations().settings.title,
+    ])
   })
 
-  it('persists a view-mode change', async () => {
-    const { page, api } = await setup()
-    await page.onPatch('viewMode', 'list')
-    expect(api.settings.put).toHaveBeenCalledWith({ viewMode: 'list' })
-  })
+  describe('the tab strip', () => {
+    it('offers General alone where the shell cannot configure slicers', async () => {
+      const { harness, translate } = await setup()
+      await harness.navigateByUrl('/settings', SettingsPage)
 
-  it('persists a language change and switches the rendered language', async () => {
-    const { page, api, translate } = await setup()
-
-    await page.onLanguage('de')
-
-    expect(api.settings.put).toHaveBeenCalledWith({ language: 'de' })
-    expect(translate.language()).toBe('de')
-  })
-
-  // SettingsStore.patch rethrows after rolling back. The page had no try/catch at all, so a
-  // failed save silently reverted the control with no message, and onPatch handed a
-  // rejecting promise straight to a template (change) binding — an unhandled rejection.
-  it('surfaces a failed theme save in a role="alert" instead of rejecting', async () => {
-    const { fixture, page } = await setup(vi.fn().mockRejectedValue(new Error('boom')))
-
-    await expect(page.onPatch('theme', 'dark')).resolves.toBeUndefined()
-
-    expect(page.saveFailed()).toBe(true)
-    expect(alertText(fixture)).toBeTruthy()
-  })
-
-  it('surfaces a failed language save in a role="alert" and does not switch language', async () => {
-    const { fixture, page, translate } = await setup(vi.fn().mockRejectedValue(new Error('boom')))
-
-    await expect(page.onLanguage('de')).resolves.toBeUndefined()
-
-    expect(page.saveFailed()).toBe(true)
-    expect(alertText(fixture)).toBeTruthy()
-    // A language that did not persist must not appear to have been applied.
-    expect(translate.language()).toBe('en')
-  })
-
-  it('clears a previous failure once a save succeeds', async () => {
-    const put = vi
-      .fn<(patch: Partial<SettingsDto>) => Promise<SettingsDto>>()
-      .mockRejectedValueOnce(new Error('boom'))
-      .mockResolvedValueOnce({ ...DEFAULT_SETTINGS, theme: 'dark' })
-    const { fixture, page } = await setup(put)
-
-    await page.onPatch('theme', 'dark')
-    expect(page.saveFailed()).toBe(true)
-
-    await page.onPatch('theme', 'dark')
-    expect(page.saveFailed()).toBe(false)
-    expect(alertText(fixture)).toBeNull()
-  })
-
-  /*
-   * Spec 2.4's canConfigureSlicers, from the page that is shared by both builds. Asserted on the
-   * rendered anchor and its href rather than on the capability signal: the failure this pair is
-   * written against is a link that renders where there is no route to reach, and a signal cannot
-   * have that failure.
-   */
-  describe('the link to the slicer settings', () => {
-    it('is absent where the shell cannot configure slicers', async () => {
-      const { fixture, translate } = await setup()
-
-      expect(slicerLink(fixture)).toBeNull()
-      // The label too: nothing about the page should mention them where the route does not exist.
-      expect((fixture.nativeElement as HTMLElement).textContent).not.toContain(
-        translate.translations().settings.slicers,
-      )
+      expect(labels(harness)).toEqual([translate.translations().settings.general])
+      // Nothing about the page should mention slicers where the route does not exist.
+      expect(outletText(harness)).not.toContain(translate.translations().settings.slicers)
     })
 
-    it('is rendered, with its address, where it can', async () => {
-      const { fixture, translate } = await setup(undefined, {
-        ...BROWSER_CAPABILITIES,
-        canConfigureSlicers: true,
-      })
+    it('offers General and Slicers where it can', async () => {
+      const { harness, translate } = await setup(DESKTOP_CAPABILITIES)
+      await harness.navigateByUrl('/settings', SettingsPage)
 
-      const link = slicerLink(fixture)
-      expect(link).not.toBeNull()
-      expect(link?.getAttribute('href')).toBe('/settings/slicers')
-      expect(link?.textContent).toContain(translate.translations().settings.slicers)
+      expect(labels(harness)).toEqual([
+        translate.translations().settings.general,
+        translate.translations().settings.slicers,
+      ])
+    })
+  })
+
+  describe('the active tab follows the URL', () => {
+    it('activates General at /settings, and renders it in the outlet', async () => {
+      const { harness, translate } = await setup(DESKTOP_CAPABILITIES)
+      await harness.navigateByUrl('/settings', SettingsPage)
+
+      expect(selectedLabel(harness)).toBe(translate.translations().settings.general)
+      expect(outletText(harness)).toContain('general tab')
+    })
+
+    /*
+     * The deep link, which is the assertion this whole task turns on: /settings/slicers was a
+     * page of its own with no way back, and it is now a tab of the settings page — reached by
+     * URL, not by a flag the page happens to be holding.
+     */
+    it('activates Slicers at /settings/slicers, and renders it in the outlet', async () => {
+      const { harness, translate } = await setup(DESKTOP_CAPABILITIES)
+      await harness.navigateByUrl('/settings/slicers', SettingsPage)
+
+      expect(selectedLabel(harness)).toBe(translate.translations().settings.slicers)
+      expect(outletText(harness)).toContain('slicers tab')
+    })
+  })
+
+  describe('a click on a header', () => {
+    it('navigates to the tab it names, and back', async () => {
+      const { harness } = await setup(DESKTOP_CAPABILITIES)
+      const router = TestBed.inject(Router)
+      await harness.navigateByUrl('/settings', SettingsPage)
+
+      tabHeaders(harness)[1]?.click()
+      await harness.fixture.whenStable()
+      harness.detectChanges()
+      expect(router.url).toBe('/settings/slicers')
+      expect(outletText(harness)).toContain('slicers tab')
+
+      tabHeaders(harness)[0]?.click()
+      await harness.fixture.whenStable()
+      harness.detectChanges()
+      expect(router.url).toBe('/settings')
+      expect(outletText(harness)).toContain('general tab')
+    })
+
+    /*
+     * Spec G C6. The strip is the only way between the two tabs now, so a pointer-only one would
+     * take a page that was reachable by keyboard away. jig owns the mechanism — a roving tabindex
+     * over `role="tab"` headers, with Enter selecting — and this asserts it is actually wired up
+     * here rather than trusting the control from the outside.
+     */
+    it('is reachable from the keyboard: a roving tabindex, and Enter selects', async () => {
+      const { harness } = await setup(DESKTOP_CAPABILITIES)
+      const router = TestBed.inject(Router)
+      await harness.navigateByUrl('/settings', SettingsPage)
+
+      expect(tabHeaders(harness).map((tab) => tab.getAttribute('tabindex'))).toEqual(['0', '-1'])
+
+      tabHeaders(harness)[1]?.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }),
+      )
+      await harness.fixture.whenStable()
+      harness.detectChanges()
+
+      expect(router.url).toBe('/settings/slicers')
+      expect(tabHeaders(harness).map((tab) => tab.getAttribute('tabindex'))).toEqual(['-1', '0'])
     })
   })
 })

@@ -92,9 +92,13 @@ function classify(error: unknown): FailureKind {
  * **Desktop-only in the way spec 2.5 prescribes**: it lives under `features/desktop/` and is
  * referenced only from `routes.electron.ts`, so the web build physically cannot contain it — CI
  * greps both bundles for `DesktopSlicersPage` to prove it. Nothing in `features/settings/` imports
- * anything from here; the link over there is a `routerLink` string gated on `canConfigureSlicers`,
- * which is false in the browser column, so it never renders in a build where this route does not
- * exist.
+ * anything from here; the Slicers tab header over there is a capability flag and a URL string
+ * gated on `canConfigureSlicers`, which is false in the browser column, so it never renders in a
+ * build where this route does not exist.
+ *
+ * **No `<main>` and no `<h1>` of its own** (spec G 6): since that spec this is the Slicers *tab*
+ * of the settings page, rendered into that page's `<router-outlet />`, and the landmark and the
+ * heading belong to the page around it. A second `<main>` on one page is invalid.
  *
  * It injects `SHELL_CLIENT` rather than `API_CLIENT` for the same reason the connect page does:
  * `API_CLIENT` is whatever transport the *library* is on, and in remote mode that is
@@ -126,209 +130,194 @@ function classify(error: unknown): FailureKind {
     SlicerSessionsCard,
   ],
   template: `
-    <main class="spm-main spm-main--narrow">
-      <div class="spm-stack">
-        <div>
-          <h1>{{ t.translations().slicers.title }}</h1>
-          <p class="spm-muted">{{ t.translations().slicers.lead }}</p>
-        </div>
+    <div class="spm-stack">
+      <p class="spm-muted">{{ t.translations().slicers.lead }}</p>
 
-        @if (config(); as cfg) {
-          @if (cfg.detectionSupported) {
-            <div class="spm-row">
-              <button
-                jigButton
-                kind="primary"
-                type="button"
-                [disabled]="busy()"
-                (click)="onRescan()"
-              >
-                <jig-icon [icon]="icons.rescan" />
-                {{ t.translations().slicers.rescan }}
-              </button>
-              @if (busy()) {
-                <jig-spinner [size]="20" />
-              }
-            </div>
-          } @else {
-            <!-- Spec 4.6: off Windows there is no detection at all, so the page says so once and
-                 offers the mechanism that does work rather than a button that answers nothing. -->
-            <jig-message color="info">{{ t.translations().slicers.windowsOnly }}</jig-message>
-          }
+      @if (config(); as cfg) {
+        @if (cfg.detectionSupported) {
+          <div class="spm-row">
+            <button jigButton kind="primary" type="button" [disabled]="busy()" (click)="onRescan()">
+              <jig-icon [icon]="icons.rescan" />
+              {{ t.translations().slicers.rescan }}
+            </button>
+            @if (busy()) {
+              <jig-spinner [size]="20" />
+            }
+          </div>
+        } @else {
+          <!-- Spec 4.6: off Windows there is no detection at all, so the page says so once and
+               offers the mechanism that does work rather than a button that answers nothing. -->
+          <jig-message color="info">{{ t.translations().slicers.windowsOnly }}</jig-message>
         }
+      }
 
-        @if (failureMessage(); as message) {
-          <jig-message color="error" role="alert">
-            <div class="spm-stack spm-stack--tight">
-              <span>{{ message }}</span>
-              @if (offerReset()) {
-                <!-- The only way out of a slicers.json this build refuses to overwrite, and a
-                     user action by construction: nothing else in the app may throw a newer
-                     version's configuration away. -->
-                <span>
-                  <button
-                    jigButton
-                    kind="secondary"
-                    color="error"
-                    type="button"
-                    [disabled]="busy()"
-                    (click)="onReset()"
-                  >
-                    {{ t.translations().slicers.reset }}
-                  </button>
-                </span>
-              }
-            </div>
-          </jig-message>
-        }
+      @if (failureMessage(); as message) {
+        <jig-message color="error" role="alert">
+          <div class="spm-stack spm-stack--tight">
+            <span>{{ message }}</span>
+            @if (offerReset()) {
+              <!-- The only way out of a slicers.json this build refuses to overwrite, and a
+                   user action by construction: nothing else in the app may throw a newer
+                   version's configuration away. -->
+              <span>
+                <button
+                  jigButton
+                  kind="secondary"
+                  color="error"
+                  type="button"
+                  [disabled]="busy()"
+                  (click)="onReset()"
+                >
+                  {{ t.translations().slicers.reset }}
+                </button>
+              </span>
+            }
+          </div>
+        </jig-message>
+      }
 
-        @if (config(); as cfg) {
-          <div class="spm-card spm-stack">
-            <div>
-              <h2>{{ t.translations().slicers.defaultTitle }}</h2>
-              <p class="spm-muted">{{ t.translations().slicers.defaultLead }}</p>
-            </div>
-            @if (defaultOptions().length) {
-              <jig-input-field
-                class="spm-block"
+      @if (config(); as cfg) {
+        <div class="spm-card spm-stack">
+          <div>
+            <h2>{{ t.translations().slicers.defaultTitle }}</h2>
+            <p class="spm-muted">{{ t.translations().slicers.defaultLead }}</p>
+          </div>
+          @if (defaultOptions().length) {
+            <jig-input-field
+              class="spm-block"
+              inputId="slicers-default"
+              [label]="t.translations().slicers.defaultTitle"
+            >
+              <jig-select
                 inputId="slicers-default"
                 [label]="t.translations().slicers.defaultTitle"
+                [options]="defaultOptions()"
+                [placeholder]="t.translations().slicers.defaultPlaceholder"
+                [disabled]="busy()"
+                [value]="cfg.defaultSlicerId"
+                (valueChange)="onSetDefault($event)"
+              />
+            </jig-input-field>
+          } @else {
+            <p class="spm-muted">{{ t.translations().slicers.defaultNone }}</p>
+          }
+          @if (cfg.defaultSlicerId !== null) {
+            <!--
+              Outside the block above, deliberately. It used to be inside it, so unbinding the
+              last bound product took the whole select AND this button away, leaving a default
+              still set with nothing on screen to clear it — the same "no way back" shape one
+              step along from the one the nullable arm was added to remove. The launch path
+              refuses by name in that state, so it is recoverable rather than broken; it is
+              still a setting whose effect the user can see and cannot reach.
+            -->
+            <span>
+              <button
+                jigButton
+                kind="text"
+                type="button"
+                [disabled]="busy()"
+                (click)="onSetDefault(null)"
               >
-                <jig-select
-                  inputId="slicers-default"
-                  [label]="t.translations().slicers.defaultTitle"
-                  [options]="defaultOptions()"
-                  [placeholder]="t.translations().slicers.defaultPlaceholder"
-                  [disabled]="busy()"
-                  [value]="cfg.defaultSlicerId"
-                  (valueChange)="onSetDefault($event)"
-                />
-              </jig-input-field>
+                {{ t.translations().slicers.clearDefault }}
+              </button>
+            </span>
+          }
+        </div>
+
+        @for (product of products(); track product.id) {
+          <section class="spm-card spm-stack">
+            <h2>{{ product.name }}</h2>
+
+            @if (product.installs.length === 0) {
+              <p class="spm-muted">{{ t.translations().slicers.notInstalled }}</p>
             } @else {
-              <p class="spm-muted">{{ t.translations().slicers.defaultNone }}</p>
+              @if (product.mustChoose) {
+                <!-- Spec 3.1's two-Cura case. Nothing is preselected below; this says why. -->
+                <jig-message color="warning" role="status">
+                  {{
+                    t.translations().slicers.chooseWhich
+                      | interpolate: { count: product.installs.length, name: product.name }
+                  }}
+                </jig-message>
+              }
+              <!-- orientation="vertical" is not decoration: jig's radio-group root is a flex
+                   *row* until aria-orientation says otherwise, so this is what stacks the rows,
+                   as well as what puts the arrow keys on the right axis. Measured; styles.css
+                   says the same thing from the other side. -->
+              <jig-radio-group
+                orientation="vertical"
+                [label]="t.translations().slicers.chooseLabel | interpolate: { name: product.name }"
+                [disabled]="busy()"
+                [value]="product.boundId"
+                (valueChange)="onBind(product.id, $event)"
+              >
+                @for (install of product.installs; track install.id) {
+                  <div class="spm-row spm-slicer-install">
+                    <jig-radio class="spm-grow" [value]="install.id">
+                      <span class="spm-slicer-install-text">
+                        <span>{{ install.label }}</span>
+                        <span class="spm-muted">
+                          {{ install.version ?? t.translations().slicers.unknownVersion }}
+                        </span>
+                        <code class="spm-code">{{ install.path }}</code>
+                      </span>
+                    </jig-radio>
+                    @if (install.state === 'missing') {
+                      <jig-tag color="error">{{ t.translations().slicers.installMissing }}</jig-tag>
+                    }
+                    <button
+                      jigButton
+                      kind="icon"
+                      color="error"
+                      type="button"
+                      [disabled]="busy()"
+                      [attr.aria-label]="t.translations().slicers.remove + ' ' + install.label"
+                      (click)="onRemove(install.id)"
+                    >
+                      <jig-icon [icon]="icons.remove" />
+                    </button>
+                  </div>
+                }
+              </jig-radio-group>
             }
-            @if (cfg.defaultSlicerId !== null) {
-              <!--
-                Outside the block above, deliberately. It used to be inside it, so unbinding the
-                last bound product took the whole select AND this button away, leaving a default
-                still set with nothing on screen to clear it — the same "no way back" shape one
-                step along from the one the nullable arm was added to remove. The launch path
-                refuses by name in that state, so it is recoverable rather than broken; it is
-                still a setting whose effect the user can see and cannot reach.
-              -->
-              <span>
+
+            <span>
+              <button
+                jigButton
+                kind="secondary"
+                type="button"
+                [disabled]="busy()"
+                (click)="onAddManual(product.id)"
+              >
+                <jig-icon [icon]="icons.add" />
+                {{ t.translations().slicers.addManual }}
+              </button>
+              @if (product.boundId !== null) {
                 <button
                   jigButton
                   kind="text"
                   type="button"
                   [disabled]="busy()"
-                  (click)="onSetDefault(null)"
+                  (click)="onUnbind(product.id)"
                 >
-                  {{ t.translations().slicers.clearDefault }}
+                  {{ t.translations().slicers.unbind }}
                 </button>
-              </span>
-            }
-          </div>
-
-          @for (product of products(); track product.id) {
-            <section class="spm-card spm-stack">
-              <h2>{{ product.name }}</h2>
-
-              @if (product.installs.length === 0) {
-                <p class="spm-muted">{{ t.translations().slicers.notInstalled }}</p>
-              } @else {
-                @if (product.mustChoose) {
-                  <!-- Spec 3.1's two-Cura case. Nothing is preselected below; this says why. -->
-                  <jig-message color="warning" role="status">
-                    {{
-                      t.translations().slicers.chooseWhich
-                        | interpolate: { count: product.installs.length, name: product.name }
-                    }}
-                  </jig-message>
-                }
-                <!-- orientation="vertical" is not decoration: jig's radio-group root is a flex
-                     *row* until aria-orientation says otherwise, so this is what stacks the rows,
-                     as well as what puts the arrow keys on the right axis. Measured; styles.css
-                     says the same thing from the other side. -->
-                <jig-radio-group
-                  orientation="vertical"
-                  [label]="
-                    t.translations().slicers.chooseLabel | interpolate: { name: product.name }
-                  "
-                  [disabled]="busy()"
-                  [value]="product.boundId"
-                  (valueChange)="onBind(product.id, $event)"
-                >
-                  @for (install of product.installs; track install.id) {
-                    <div class="spm-row spm-slicer-install">
-                      <jig-radio class="spm-grow" [value]="install.id">
-                        <span class="spm-slicer-install-text">
-                          <span>{{ install.label }}</span>
-                          <span class="spm-muted">
-                            {{ install.version ?? t.translations().slicers.unknownVersion }}
-                          </span>
-                          <code class="spm-code">{{ install.path }}</code>
-                        </span>
-                      </jig-radio>
-                      @if (install.state === 'missing') {
-                        <jig-tag color="error">{{
-                          t.translations().slicers.installMissing
-                        }}</jig-tag>
-                      }
-                      <button
-                        jigButton
-                        kind="icon"
-                        color="error"
-                        type="button"
-                        [disabled]="busy()"
-                        [attr.aria-label]="t.translations().slicers.remove + ' ' + install.label"
-                        (click)="onRemove(install.id)"
-                      >
-                        <jig-icon [icon]="icons.remove" />
-                      </button>
-                    </div>
-                  }
-                </jig-radio-group>
               }
-
-              <span>
-                <button
-                  jigButton
-                  kind="secondary"
-                  type="button"
-                  [disabled]="busy()"
-                  (click)="onAddManual(product.id)"
-                >
-                  <jig-icon [icon]="icons.add" />
-                  {{ t.translations().slicers.addManual }}
-                </button>
-                @if (product.boundId !== null) {
-                  <button
-                    jigButton
-                    kind="text"
-                    type="button"
-                    [disabled]="busy()"
-                    (click)="onUnbind(product.id)"
-                  >
-                    {{ t.translations().slicers.unbind }}
-                  </button>
-                }
-              </span>
-            </section>
-          }
-        } @else if (!failureMessage()) {
-          <jig-spinner centered [size]="40" />
+            </span>
+          </section>
         }
+      } @else if (!failureMessage()) {
+        <jig-spinner centered [size]="40" />
+      }
 
-        <!--
-          Spec 6.3's unfinished-session list. It is on this page rather than only beside the
-          launch control because a session outlives the project page it was started from — and
-          outlives the run of the app, which is the case a settings page is the only home for.
-          No project is named here, so an orphan is asked which one it belongs to.
-        -->
-        <app-slicer-sessions />
-      </div>
-    </main>
+      <!--
+        Spec 6.3's unfinished-session list. It is on this page rather than only beside the
+        launch control because a session outlives the project page it was started from — and
+        outlives the run of the app, which is the case a settings page is the only home for.
+        No project is named here, so an orphan is asked which one it belongs to.
+      -->
+      <app-slicer-sessions />
+    </div>
   `,
 })
 export class DesktopSlicersPage {

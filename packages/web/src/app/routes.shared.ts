@@ -43,9 +43,27 @@ export const sharedRoutes: Routes = [
     loadComponent: () => import('./features/import/import.page').then((m) => m.ImportPage),
   },
   {
+    /*
+     * A parent with children, because the settings page is a tab strip over a `<router-outlet />`
+     * (spec G 6) and each tab is a real URL. Both builds have this parent and both have the
+     * General child; routes.electron.ts appends the desktop-only Slicers child to the same
+     * `children` array, so the two builds agree about the shape of the route they share instead
+     * of one declaring a leaf and the other a sibling that only looked like a child.
+     *
+     * `canActivate` sits on the parent and covers every child, which is what keeps
+     * `/settings/slicers` guarded from the file that does not declare it, and what makes a guard
+     * that drifts between the two impossible rather than merely unlikely.
+     */
     path: 'settings',
     canActivate: [authGuard],
     loadComponent: () => import('./features/settings/settings.page').then((m) => m.SettingsPage),
+    children: [
+      {
+        path: '',
+        loadComponent: () =>
+          import('./features/settings/general.tab').then((m) => m.SettingsGeneralTab),
+      },
+    ],
   },
   {
     path: 'admin/users',

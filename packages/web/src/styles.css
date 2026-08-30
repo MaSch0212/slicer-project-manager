@@ -126,6 +126,17 @@ p {
   padding: var(--jig-size-padding-xl) var(--jig-size-padding-lg);
 }
 
+/* The settings page's tabs are a navigation strip: its `jig-tab`s carry no `#content` template,
+   so jig renders the header row and no panel at all (read from the installed control's own
+   template, which renders a panel only `@if (content.template)`). The routed tab therefore lands
+   in an outlet below the strip rather than inside the padded panel the theme would have drawn,
+   and this is the gap that panel would have supplied. `.spm-main`'s own 80rem cap is the
+   "readable maximum" spec G 6.3 asks for -- the page is no longer `--narrow`, so the Slicers
+   tab's install rows get the same measure every other page has. */
+.spm-settings-panel {
+  margin-top: var(--spm-gap);
+}
+
 /* Centres the narrow, single-column pages: sign in, activate, upload. */
 .spm-main--narrow {
   display: flex;
