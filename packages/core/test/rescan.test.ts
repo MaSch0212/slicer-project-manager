@@ -1,4 +1,4 @@
-import { mkdirSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs'
+import { mkdirSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { Ctx } from '../src/ctx.ts'
 import { newId } from '../src/db/ids.ts'
@@ -503,6 +503,73 @@ test('a reclassification to the same kind leaves the preview row exactly as it w
     assert.deepEqual(classifiedBy(lib), { 'benchy.stl': CLASSIFIER_VERSION })
   })
 })
+
+/**
+ * A `.3mf` the bump pass could not open keeps its kind **and** its stamp, and is asked again.
+ *
+ * `classify3mf` answers `other` for a file it cannot open at all, which on the stat-mismatch path
+ * is self-healing — the next edit re-asks. On this branch it is not: the reclassify stamps the
+ * current version in the same statement, and nothing re-asks a row whose stamp is current until
+ * its bytes move. So one slicer holding one project open during one bump pass would move it to
+ * `other`, drop its `ready` thumbnail, and leave it there for good. A bump opens all 402 `.3mf`
+ * files in the reference library in a single pass, which is exactly when that lock is likeliest.
+ *
+ * **The lock is a rename, and that is what makes it a test rather than a story.** `onProgress`
+ * fires immediately before the file is classified, so moving the file aside from inside it
+ * produces the same thing at the same call the real lock produces: an `openSync` that fails.
+ * Moved rather than deleted so it comes back with its size and mtime intact — which is what makes
+ * the second pass take this same version-mismatch branch instead of the stat-mismatch one, and so
+ * makes "asked again" mean asked again *here*.
+ */
+test('a 3MF that could not be opened during a bump keeps its kind and its stamp', async () => {
+  await withLibrary(async (lib) => {
+    const ctx = seedUser(lib)
+    const dir = join(root(lib), 'Benchy')
+    mkdirSync(dir)
+    const project = join(dir, 'benchy.3mf')
+    curaProject(project)
+    await rescan(lib, ctx)
+    lib.db
+      .prepare("UPDATE previews SET state = 'ready', png_path = 'benchy.png', attempts = 1")
+      .run()
+    lib.db.prepare('UPDATE files SET classified_by = 0').run()
+
+    const parked = join(lib.dir, 'parked.3mf')
+    const locked = await rescan(lib, ctx, {
+      onProgress: (progress) => {
+        if (progress.filesSeen === 1) renameSync(project, parked)
+      },
+    })
+    renameSync(parked, project)
+
+    assert.equal(locked.previewsQueued, 0)
+    assert.deepEqual(classifiedBy(lib), { 'benchy.3mf': 0 })
+    assert.deepEqual(kindsAndPreviews(lib), [
+      { kind: 'slicer_project', state: 'ready', png_path: 'benchy.png', attempts: 1 },
+    ])
+
+    // And the next pass, with the file back and its stat untouched, asks the question it skipped.
+    const second = await rescan(lib, ctx)
+    assert.equal(second.previewsQueued, 0)
+    assert.deepEqual(classifiedBy(lib), { 'benchy.3mf': CLASSIFIER_VERSION })
+    assert.deepEqual(kindsAndPreviews(lib), [
+      { kind: 'slicer_project', state: 'ready', png_path: 'benchy.png', attempts: 1 },
+    ])
+  })
+})
+
+/** Every file row's kind joined to its preview row, which is what an unstamped bump would move. */
+function kindsAndPreviews(
+  lib: Library,
+): { kind: string; state: string; png_path: string | null; attempts: number }[] {
+  const rows = lib.db
+    .prepare(
+      `SELECT f.kind, p.state, p.png_path, p.attempts FROM files f
+       JOIN previews p ON p.file_id = f.id ORDER BY f.rel_path`,
+    )
+    .all() as { kind: string; state: string; png_path: string | null; attempts: number }[]
+  return rows.map((row) => ({ ...row, attempts: Number(row.attempts) }))
+}
 
 /**
  * The `insertPreview` fallback beside `resetPreview`, which is not defensive padding.

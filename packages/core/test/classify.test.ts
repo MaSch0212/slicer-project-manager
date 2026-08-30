@@ -127,11 +127,25 @@ test('classifyFile routes by extension and falls back to other', async () => {
   })
 })
 
-test('an unreadable 3MF classifies as other rather than throwing', async () => {
+/**
+ * The two ways a `.3mf` fails to classify, which are the same answer and not the same failure.
+ *
+ * Both come back `other`, and for a long time that was the whole story. `rescan` now records which
+ * version produced a row's `kind` and does not ask again until the bytes move, which splits them:
+ * "we read the file and it is not a zip" is an answer worth recording, and "we could not open the
+ * file" is a transient that must not be recorded as one. `unreadable` is the only thing here that
+ * tells them apart, and `rescan`'s version-mismatch branch is what reads it.
+ */
+test('a 3MF that is not a zip answers other; one that cannot be opened says so', async () => {
   await withDir((dir) => {
-    const path = join(dir, 'corrupt.3mf')
-    writeFileSync(path, 'PK garbage')
-    assert.deepEqual(classifyFile(path), { kind: 'other', slicer: null })
+    const corrupt = join(dir, 'corrupt.3mf')
+    writeFileSync(corrupt, 'PK garbage')
+    assert.deepEqual(classifyFile(corrupt), { kind: 'other', slicer: null })
+
+    // Not a lock — no portable way to hold one from a test — but the identical failure at the
+    // identical call: `openSync` rejects before a byte of content has been looked at.
+    const gone = join(dir, 'gone.3mf')
+    assert.deepEqual(classifyFile(gone), { kind: 'other', slicer: null, unreadable: true })
   })
 })
 
@@ -186,7 +200,7 @@ const CLASSIFIER_SNAPSHOT = {
     '.3mf/anycubic': 'slicer_project',
     '.3mf/unsliced': 'slicer_project',
     '.3mf/mesh': 'model',
-    '.3mf/unreadable': 'other',
+    '.3mf/not-a-zip': 'other',
     '.gcode': 'other',
     '.txt': 'other',
   },
@@ -215,7 +229,7 @@ test('the classifier version and every answer it gives are frozen together', asy
       ['anycubic', (path) => bambuLineageProject(path, ['X-ACNext-Client-Type'])],
       ['unsliced', (path) => unslicedBambuProject(path)],
       ['mesh', (path) => plainMesh3mf(path)],
-      ['unreadable', (path) => writeFileSync(path, 'PK not really')],
+      ['not-a-zip', (path) => writeFileSync(path, 'PK not really')],
     ]
     for (const [label, write] of threeMf) {
       const path = join(dir, `${label}.3mf`)

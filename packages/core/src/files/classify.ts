@@ -1,7 +1,25 @@
 import type { FileKind, SlicerId } from '@spm/contract/dtos.ts'
+import { isAppError } from '@spm/contract/errors.ts'
 import { findZipEntry, readZipEntries, readZipEntryText, type ZipEntry } from './zip.ts'
 
-export type Classification = { kind: FileKind; slicer: SlicerId | null }
+export type Classification = {
+  kind: FileKind
+  slicer: SlicerId | null
+  /**
+   * Set when the `kind` beside it is a **fallback for a file that could not be opened** rather
+   * than something read out of the file's bytes — a slicer holding a `.3mf` open, an `EACCES`, a
+   * path that went away between the walk and the read.
+   *
+   * It exists for `rescan`'s version-mismatch branch, which is the one place that would otherwise
+   * record such a fallback as this classifier's answer and so make a transient failure permanent.
+   * Only `classify3mf` can set it; classification by extension reads no bytes and cannot fail.
+   *
+   * **Absent rather than `false` on every answer that was actually read**, because a dozen tests
+   * pin the classifier by comparing its whole result against a two-key literal, and a third key
+   * on the ordinary answers would be a change to all of them for the sake of one.
+   */
+  unreadable?: true
+}
 
 /**
  * Order is load-bearing (spec 3.4). OrcaSlicer's slice_info header is a SUPERSET of Bambu
@@ -26,9 +44,21 @@ export function classify3mf(absPath: string): Classification {
   let entries: ZipEntry[]
   try {
     entries = readZipEntries(absPath)
-  } catch {
-    // A .3mf that is not a readable zip is not a model we can do anything with.
-    return { kind: 'other', slicer: null }
+  } catch (error) {
+    // Two failures wearing one shape, and only one of them is an answer.
+    //
+    // Every way `readZipEntries` rejects the *contents* — too small for an end-of-central-directory
+    // record, no such record, a corrupt directory — is an `AppError('Validation')` it raises
+    // itself, and it means what it says: this `.3mf` is not a readable zip and not a model we can
+    // do anything with. Anything else came out of the `openSync`/`statSync` at the top of it —
+    // `EBUSY` while a slicer holds the file, `EACCES`, `ENOENT` — and says nothing about the
+    // contents at all. `unreadable` is what keeps `rescan` from filing the second as the first.
+    //
+    // An unexpected non-`AppError` out of the parser lands in the second arm too, deliberately:
+    // the cost of that mistake is re-asking the question on the next rescan, and the cost of the
+    // other one is a `kind` that is wrong for good.
+    if (isAppError(error) && error.code === 'Validation') return { kind: 'other', slicer: null }
+    return { kind: 'other', slicer: null, unreadable: true }
   }
 
   // 1. Cura
@@ -82,11 +112,13 @@ export const MODEL_EXTENSIONS = ['.stl', '.obj', '.step', '.stp'] as const
  * snapshot in `test/classify.test.ts` is what makes forgetting it fail rather than ship.
  *
  * **What a bump costs, so the decision is priced.** One extra `classifyFile` call per indexed file
- * on the next rescan, once. For the reference library that is 2 946 calls of which 402 are `.3mf`
- * and therefore a zip read each; everything else is a string comparison. It does **not** re-hash —
- * the content hash is untouched, because nothing about the bytes changed — so it costs a normal
- * rescan's classification work and not a backfill's. Previews are re-pended only for the files
- * whose kind actually moved, so a bump made for `.step` does not re-render 1 311 STLs.
+ * on the next rescan, once — except for a `.3mf` that could not be *opened* on the bump pass,
+ * which is left unstamped on purpose and re-asked each rescan until it opens (see `unreadable`
+ * above). For the reference library that is 2 946 calls of which 402 are `.3mf` and therefore a
+ * zip read each; everything else is a string comparison. It does **not** re-hash — the content
+ * hash is untouched, because nothing about the bytes changed — so it costs a normal rescan's
+ * classification work and not a backfill's. Previews are re-pended only for the files whose kind
+ * actually moved, so a bump made for `.step` does not re-render 1 311 STLs.
  *
  * Never 0: that value means "this row predates the mechanism" and is what migration 003 backfills.
  */

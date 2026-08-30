@@ -211,6 +211,19 @@ export async function rescan(
         // everything but `.3mf`, and this runs once per version bump rather than once per tick.
         if (Number(known.classified_by) === CLASSIFIER_VERSION) continue
         const classification = classifyFile(file.absPath)
+        // An answer that only means "could not open this file" must not be stamped, because on
+        // *this* branch the stamp is what makes it permanent. `classify3mf` falls back to `other`
+        // for a `.3mf` it cannot open at all — a slicer holding it, an `EACCES` — and a version
+        // bump opens all 402 of them in a single pass, which is precisely when a lock is most
+        // likely to be met. Stamping that fallback would move a `slicer_project` to `other`, lose
+        // its `ready` preview to `resetPreview`, and then never ask again, because nothing re-asks
+        // a row whose stamp is current until its bytes move. Leaving the row exactly as it was
+        // costs one re-ask on the next rescan.
+        //
+        // This is the only `classifyFile` call in this file not paired with a `fileContentHash` of
+        // the same path: the insert and the stat-mismatch path both hash, and a file that cannot
+        // be opened throws out of the whole rescan there rather than passing quietly as `other`.
+        if (classification.unreadable) continue
         reclassifyFile.run(classification.kind, classification.slicer, CLASSIFIER_VERSION, known.id)
         // Only a kind that actually moved re-pends: a bump made for `.step` must not re-render
         // every STL in the library. The two arms are the same guard the stat-mismatch path below
