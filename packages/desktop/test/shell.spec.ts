@@ -452,6 +452,27 @@ test.describe('the desktop shell', () => {
     })
   })
 
+  test('the menu bar is hidden, and the menu it would have shown still exists', async () => {
+    // `autoHideMenuBar` is a live property of the real `BrowserWindow` `createMainWindow` returned,
+    // not an option echoed back -- reading it here is reading the window Electron is actually
+    // running, the same reasoning as the webPreferences test above. There is no seam that reports
+    // the constructor argument on its own, and building one for this would test a mock's call
+    // record rather than the window.
+    const autoHide = await app.evaluate(
+      ({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.autoHideMenuBar,
+    )
+    expect(autoHide).toBe(true)
+
+    // Hiding the bar must not have taken the menu with it: `Menu.setApplicationMenu(null)` was
+    // rejected for exactly this (spec 5) because it deletes the item `remote.spec.ts` drives by
+    // id. Resolving the id here is the same claim at rest, without clicking it -- the click is
+    // that other file's job.
+    const hasChooseLibrary = await app.evaluate(
+      ({ Menu }) => Menu.getApplicationMenu()?.getMenuItemById('spm-choose-library') != null,
+    )
+    expect(hasChooseLibrary).toBe(true)
+  })
+
   test('the preload bridge is installed on the window, and hands out nothing else', async () => {
     // A sandboxed preload that fails to load takes the whole bridge with it and says so only in
     // the renderer console. The members and not just the object: task 2 filled the bridge, and an

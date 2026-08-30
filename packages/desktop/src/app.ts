@@ -541,6 +541,10 @@ export function createMainWindow(mode: BridgeMode = 'local', path = '/'): Browse
     // Hidden until the first paint, so the window never flashes an unstyled, untranslated
     // shell. It is also what keeps the window's title honest — see APP_NAME.
     show: false,
+    // The bar, not the menu: spec 5 rejected removing the menu itself, because that takes the
+    // devtools toggle and the `Choose library…` item with it. See `buildMenu`'s docblock for what
+    // is and is not verified about this on each platform.
+    autoHideMenuBar: true,
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -862,6 +866,14 @@ export function resolveModePicker(env: NodeJS.ProcessEnv = process.env): ModePic
  *
  * Built from roles wherever a role exists, so the accelerators, the platform-specific ordering
  * and the translations are Electron's rather than this file's guesses at them.
+ *
+ * The bar this menu renders into is hidden (`autoHideMenuBar` in `createMainWindow`), because the
+ * feedback that asked for that named the *bar*, not the two things above. Deleting the menu
+ * instead — `Menu.setApplicationMenu(null)` — was the option spec 5 rejected: it would have taken
+ * both of them with it, silently turning `remote.spec.ts`'s id-driven test into one that resolves
+ * nothing rather than one that fails. Measured on Windows 11 only: `Alt` reveals the bar there.
+ * macOS and Linux are unmeasured — spec 5 records that explicitly, and this file does not repeat
+ * the platform's own documentation as if it were something run and seen here.
  */
 export function buildMenu(onChooseMode: () => void, language: PickerLanguage = 'en'): Menu {
   const strings = MENU_STRINGS[language]
