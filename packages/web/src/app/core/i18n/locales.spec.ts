@@ -20,14 +20,22 @@ function keyPaths(value: unknown, prefix = ''): string[] {
 /**
  * Spec G 8, and constraint C4 made checkable.
  *
- * `TranslateService` types its translations off `en.json` alone, so a key added to English and
- * forgotten in German still compiles: at runtime `translations()` returns the German object and
- * the binding reads `undefined`, which Angular renders as an empty string. A whole sentence
- * silently disappears for German users and nothing in the build says so.
+ * The assertion is symmetric, but only one of the two directions can ever reach it, and knowing
+ * which is the point of this note. **Both were measured.**
  *
- * The reverse — a key only German has — is the shape a *half-swept* rewrite leaves behind when
- * an English key is renamed and its German twin is not, so both directions are asserted rather
- * than only "German has everything English does".
+ * **A key English has and German lacks never gets here: the build fails first.**
+ * `translate.service.ts` declares `importDe: () => Promise<{ default: Translations }>` with
+ * `Translations = typeof en`, so the German file is type-checked *against* the English one.
+ * Deleting `nav.open` from `de.json` ends the Angular build with
+ * `TS2322 … Property '"open"' is missing`, and `test:web` never runs. The compiler already closes
+ * this direction, and nothing here improves on it.
+ *
+ * **A key only German has does compile, and is the direction this test exists for.** Nothing
+ * types `de.json` as *exactly* `Translations` — extra properties are assignable — so a key left
+ * behind by a rename that swept `en.json` and not `de.json` builds, ships, and is dead weight no
+ * binding will ever read. Adding `nav.openStale` to `de.json` is what turns this red. That is the
+ * half-swept pair spec G 8 says this project has found repeatedly, and it is the only failure
+ * this file can ever report.
  */
 describe('locale files', () => {
   it('have identical key sets', () => {

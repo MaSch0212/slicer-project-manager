@@ -509,9 +509,9 @@ describe('DesktopSlicersPage', () => {
     /*
      * `NotFound` means two different things on this page, and which one it is depends on the call
      * rather than on anything in the error. Measured against the real shell: picking a path that
-     * is not there comes back `NotFound`, and the page first said "that install is no longer
-     * listed, search for installed slicers again" — advice that cannot help, about a list the
-     * file was never in.
+     * is not there comes back `NotFound`, and the page first said "that install is not listed any
+     * more, look for installed slicers again" — advice that cannot help, about a list the file was
+     * never in.
      */
     it('says the picked file is gone, not that a list is stale, when adding by hand', async () => {
       const created = await setup(NOTHING_FOUND, {

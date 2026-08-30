@@ -65,7 +65,7 @@
   "import": {
     "title": "Import",
     "heading": "Import a CuraManager library",
-    "intro": "Zip your CuraManager library folder and drop it here. Every project folder inside becomes a project, and brings its tags, source URL and archived state with it.",
+    "intro": "Zip your CuraManager library folder and drop it here. Every project folder inside becomes a project, and brings any tags, source URL and archived state it carries with it.",
     "pick": "Choose a .zip archive",
     "start": "Import",
     "running": "Importing. Large libraries take a few minutes -- leave this page open.",
@@ -94,7 +94,7 @@
     "general": "General",
     "slicers": "Slicers",
     "libraryTitle": "Where your library is",
-    "libraryLead": "Open a folder on this computer, or connect to a Slicer Project Manager server. Switching to another library restarts the app.",
+    "libraryLead": "Open a folder on this computer, or connect to a Slicer Project Manager server. The window reloads onto the new library.",
     "chooseFolder": "Choose a folder…",
     "connectToServer": "Connect to a server instead",
     "serverUrl": "Server address",
@@ -271,6 +271,6 @@
     "serverUrl": "Server address",
     "serverUrlHint": "For example https://print.example.com",
     "connect": "Connect",
-    "connectFailed": "That address could not be used to connect"
+    "connectFailed": "That is not a usable server address"
   }
 }

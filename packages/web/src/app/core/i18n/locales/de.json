@@ -65,7 +65,7 @@
   "import": {
     "title": "Import",
     "heading": "CuraManager-Bibliothek importieren",
-    "intro": "Packen Sie Ihren CuraManager-Bibliotheksordner in ein ZIP und legen Sie es hier ab. Jeder Projektordner darin wird zu einem Projekt und bringt seine Schlagwörter, die Quell-URL und den Archiv-Status mit.",
+    "intro": "Packen Sie Ihren CuraManager-Bibliotheksordner in ein ZIP und legen Sie es hier ab. Jeder Projektordner darin wird zu einem Projekt und bringt vorhandene Schlagwörter, die Quell-URL und den Archiv-Status mit.",
     "pick": "ZIP-Archiv auswählen",
     "start": "Importieren",
     "running": "Import läuft. Große Bibliotheken dauern einige Minuten -- lassen Sie diese Seite offen.",
@@ -94,7 +94,7 @@
     "general": "Allgemein",
     "slicers": "Slicer",
     "libraryTitle": "Wo Ihre Bibliothek liegt",
-    "libraryLead": "Öffnen Sie einen Ordner auf diesem Computer oder verbinden Sie sich mit einem Slicer-Projektverwaltung-Server. Beim Wechsel zu einer anderen Bibliothek startet die App neu.",
+    "libraryLead": "Öffnen Sie einen Ordner auf diesem Computer oder verbinden Sie sich mit einem Slicer-Projektverwaltung-Server. Das Fenster wird dann mit der neuen Bibliothek neu geladen.",
     "chooseFolder": "Ordner auswählen…",
     "connectToServer": "Stattdessen mit einem Server verbinden",
     "serverUrl": "Serveradresse",
@@ -271,6 +271,6 @@
     "serverUrl": "Serveradresse",
     "serverUrlHint": "Zum Beispiel https://print.example.com",
     "connect": "Verbinden",
-    "connectFailed": "Mit dieser Adresse konnte keine Verbindung hergestellt werden"
+    "connectFailed": "Das ist keine verwendbare Serveradresse"
   }
 }
