@@ -14,8 +14,8 @@ import { EMBEDDED_HANDLER, type PreviewHandler } from './queue.ts'
  * What makes the wider claim safe *here* and not in `queue.ts`'s default is `MESH_HANDLER` behind
  * it. A handler that declines returns `null`, and `null` from the last matching handler is a
  * terminal `unsupported`. In this chain an `.stl`, `.obj`, `.step` or `.stp` — not a zip, so
- * nothing to read — declines and lands on the rasterizer, which is the answer it wanted anyway. In a list where
- * this were the only handler, the same decline would blank the file permanently.
+ * nothing to read — declines and lands on the rasterizer, which is the answer it wanted anyway.
+ * In a list where this were the only handler, the same decline would blank the file permanently.
  *
  * Spread from `EMBEDDED_HANDLER` rather than rebuilt beside it, so there is exactly one `run` and
  * one base list of kinds. This constant is also deliberately not exported: the widening is a

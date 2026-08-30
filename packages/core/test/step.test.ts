@@ -184,7 +184,8 @@ test('the mesh handler throws for a broken .stp where it still returns null for 
     // later tidy-up that turned the throw above into one would blank every unreadable STEP file in
     // a library for good — the queue re-claims only `pending`, and the only things that re-queue
     // are a content-hash change and a `CLASSIFIER_VERSION` bump that moves the file's kind, which
-    // for a `.step` already indexed as a model is neither. Pinning both outcomes in one test is what makes that change go red.
+    // for a `.step` already indexed as a model is neither. Pinning both outcomes in one test is
+    // what makes that change go red.
     const notAMesh = join(dir, 'notes.txt')
     writeFileSync(notAMesh, 'nothing to render here')
     assert.equal(await handler.run(job(notAMesh)), null)

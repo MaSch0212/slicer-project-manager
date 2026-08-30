@@ -13,12 +13,12 @@ import {
   type PreviewHandler,
   type PreviewJob,
 } from '@spm/core'
+import { binaryStl, cubeMesh } from '../../core/test/fixtures/make-mesh.ts'
 import {
   startPreviewTicker,
   type PreviewTicker,
   type PreviewTickerOptions,
 } from '../src/previews.ts'
-import { binaryStl, cubeMesh } from '../../core/test/fixtures/make-mesh.ts'
 
 /**
  * The preview ticker, against a real library on disk and with no Electron anywhere.
