@@ -220,9 +220,11 @@ export async function rescan(
         // a row whose stamp is current until its bytes move. Leaving the row exactly as it was
         // costs one re-ask on the next rescan.
         //
-        // This is the only `classifyFile` call in this file not paired with a `fileContentHash` of
-        // the same path: the insert and the stat-mismatch path both hash, and a file that cannot
-        // be opened throws out of the whole rescan there rather than passing quietly as `other`.
+        // The stat-mismatch path below carries the same guard, for a reason worth being exact
+        // about: there `fileContentHash` happens to run first and would already have thrown out
+        // of the whole rescan on a file that cannot be opened — but that is the order of two
+        // adjacent statements and nothing else pins it, so the guard is applied there rather than
+        // argued away.
         if (classification.unreadable) continue
         reclassifyFile.run(classification.kind, classification.slicer, CLASSIFIER_VERSION, known.id)
         // Only a kind that actually moved re-pends: a bump made for `.step` must not re-render
@@ -245,6 +247,17 @@ export async function rescan(
       // Cheap stat mismatch, so pay for the hash and reclassify: a saved 3MF can change slicer.
       const hash = await fileContentHash(file.absPath)
       const classification = classifyFile(file.absPath)
+      // The version-mismatch branch's guard again, and here it *removes* an invariant rather than
+      // relying on one. `fileContentHash` streams through `createReadStream`, so as these two
+      // lines stand today an `EBUSY`/`EACCES` propagates out of the whole rescan before the
+      // classify — which makes this line unreachable and is exactly why it belongs here. Swap the
+      // two statements, the natural tidy since classifying first lets you skip the hash on a file
+      // whose kind cannot change, and without this a `.3mf` whose mtime just moved because a
+      // slicer saved it, with that slicer still holding it open, is written `other` **and stamped
+      // current** — and nothing re-asks a stamped row until its bytes move again. Skipping leaves
+      // size, mtime and hash untouched too, so the next rescan sees the same stat mismatch and
+      // asks again; the cost of the guard is that one re-ask.
+      if (classification.unreadable) continue
       lib.db
         .prepare(
           'UPDATE files SET kind = ?, slicer = ?, size_bytes = ?, mtime_ms = ?, content_hash = ?, classified_by = ? WHERE id = ?',

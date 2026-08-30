@@ -12,6 +12,9 @@ export type Classification = {
    *
    * It exists for `rescan`'s version-mismatch branch, which is the one place that would otherwise
    * record such a fallback as this classifier's answer and so make a transient failure permanent.
+   * `rescan`'s stat-mismatch branch reads it too — not because it can reach it today, since the
+   * `fileContentHash` above it throws first on a file that cannot be opened, but so that nothing
+   * there depends on the order of those two statements staying as it is.
    * Only `classify3mf` can set it; classification by extension reads no bytes and cannot fail.
    *
    * **Absent rather than `false` on every answer that was actually read**, because a dozen tests
