@@ -8,6 +8,7 @@ import {
 import { provideRouter, withComponentInputBinding } from '@angular/router'
 import { provideJigControls, withAutoColorScheme } from '@awdlab/jig/api/ng'
 import { withDefaultIcons } from '@awdlab/jig/default-icons'
+import { withSnackbars } from '@awdlab/jig/snackbar'
 import { withToasts } from '@awdlab/jig/toast'
 import { nova } from '@awdlab/jig-themes/nova'
 import { AuthStore } from './core/auth.store'
@@ -28,12 +29,15 @@ export const appConfig: ApplicationConfig = {
     // rather than degrading: without withDefaultIcons() every icon slot in the library threw
     // "No icon registry provided" on first paint, which is what the console error was.
     // withAutoColorScheme() registers ColorSchemeService, which App reads/drives for the
-    // light/dark/system toggle (see app.ts).
+    // light/dark/system toggle (see app.ts). withSnackbars() backs NotifyService
+    // (core/notify.service.ts) — without it, injectSnackbarCreator() throws at render the same
+    // way an unregistered icon slot did before withDefaultIcons() was added.
     ...provideJigControls(
       { theme: { preset: nova } },
       withDefaultIcons(),
       withAutoColorScheme(),
       withToasts(),
+      withSnackbars(),
     ),
     provideAppInitializer(async () => {
       // Every inject() is resolved before the first await: inject() only works synchronously
