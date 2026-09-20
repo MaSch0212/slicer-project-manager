@@ -266,4 +266,22 @@ describe('HttpApiClient', () => {
     expect(init.method).toBe('DELETE')
     expect(init.body).toBeUndefined()
   })
+
+  /**
+   * Round-1 finding: this method had no test at all, so stubbing it to `[]` left every web test
+   * green -- the same "schema change the HTTP client never serialised" gap class task 1 shipped,
+   * caught only by a reviewer going looking. This pins both halves: the request `tags()` issues
+   * and the value it hands back, so either one drifting fails this test rather than nothing.
+   */
+  it('requests the tag list from its own route and returns what the server answers', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse(['apple', 'petg']))
+    const client = new HttpApiClient('', fetchMock)
+
+    const tags = await client.projects.tags()
+
+    const [url, init] = fetchMock.mock.calls[0]!
+    expect(url).toBe('/api/projects/tags')
+    expect(init?.method ?? 'GET').toBe('GET')
+    expect(tags).toEqual(['apple', 'petg'])
+  })
 })
