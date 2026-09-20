@@ -238,6 +238,8 @@ export class HttpApiClient implements ApiClient {
       if (query.includeArchived) params.set('includeArchived', 'true')
       if (query.sort) params.set('sort', query.sort)
       if (query.dir) params.set('dir', query.dir)
+      if (query.limit !== undefined) params.set('limit', String(query.limit))
+      if (query.offset !== undefined) params.set('offset', String(query.offset))
       const suffix = params.size > 0 ? `?${params.toString()}` : ''
       return this.request(`/api/projects${suffix}`)
     },

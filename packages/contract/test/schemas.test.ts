@@ -5,6 +5,7 @@ import {
   createUserSchema,
   fileNameSchema,
   projectPatchSchema,
+  projectQuerySchema,
   serverUrlSchema,
   usernameSchema,
 } from '../src/schemas.ts'
@@ -53,6 +54,27 @@ test('fileNameSchema rejects Windows-reserved device names but accepts look-alik
 test('projectPatchSchema allows clearing website with null but not with a bad url', () => {
   assert.equal(projectPatchSchema.safeParse({ website: null }).success, true)
   assert.equal(projectPatchSchema.safeParse({ website: 'not a url' }).success, false)
+})
+
+test('projectQuerySchema accepts a valid limit/offset pair', () => {
+  const parsed = projectQuerySchema.safeParse({ limit: 48, offset: 96 })
+  assert.equal(parsed.success, true)
+  assert.deepEqual(parsed.success ? parsed.data : undefined, { limit: 48, offset: 96 })
+})
+
+test('projectQuerySchema rejects a limit over the 200 cap, zero, negative or non-integer', () => {
+  for (const bad of [201, 0, -1, 1.5]) {
+    assert.equal(projectQuerySchema.safeParse({ limit: bad }).success, false, String(bad))
+  }
+  // The cap itself is still admitted -- only past it is refused.
+  assert.equal(projectQuerySchema.safeParse({ limit: 200 }).success, true)
+})
+
+test('projectQuerySchema rejects a negative or non-integer offset, but allows zero', () => {
+  for (const bad of [-1, 1.5]) {
+    assert.equal(projectQuerySchema.safeParse({ offset: bad }).success, false, String(bad))
+  }
+  assert.equal(projectQuerySchema.safeParse({ offset: 0 }).success, true)
 })
 
 test('serverUrlSchema accepts http and https and no other scheme', () => {

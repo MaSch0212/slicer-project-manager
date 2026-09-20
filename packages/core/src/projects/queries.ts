@@ -202,6 +202,10 @@ export function listProjects(lib: Library, ctx: Ctx, query: ProjectQuery): CoreP
   if (query.limit !== undefined) {
     sql += ' LIMIT ?'
     params.push(query.limit)
+    // `offset` is deliberately ignored when `limit` is absent, rather than rejected: a caller
+    // that builds its query object programmatically (spec 3.1: "only meaningful with limit")
+    // can send a stray `offset` on an otherwise-unpaged request without that becoming a request
+    // for zero rows or a validation error over a field it was not relying on.
     if (query.offset !== undefined) {
       sql += ' OFFSET ?'
       params.push(query.offset)

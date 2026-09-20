@@ -80,7 +80,7 @@ export type ProjectQuery = {
   dir?: 'asc' | 'desc'
   /** How many rows to return. Omitted means "all of them", which is what every caller did before. */
   limit?: number
-  /** How many rows to skip. Only meaningful with `limit`. */
+  /** How many rows to skip. Only meaningful with `limit` — ignored (not rejected) without it. */
   offset?: number
 }
 

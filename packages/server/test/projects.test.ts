@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import type { AppError } from '@spm/contract/errors.ts'
+import { parseProjectQuery } from '../src/routes/projects.ts'
 import { loginAsAdmin, withServer } from './harness.ts'
 
 Deno.test('projects require a session', async () => {
@@ -90,6 +92,66 @@ Deno.test('query parameters map onto the project query', async () => {
     ])
   })
 })
+
+Deno.test('limit and offset page the project list over HTTP', async () => {
+  await withServer(async (server) => {
+    const cookie = await loginAsAdmin(server)
+    const post = (name: string) =>
+      server.fetch('/api/projects', {
+        method: 'POST',
+        cookie,
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ name }),
+      })
+    await post('Alpha')
+    await post('Beta')
+    await post('Gamma')
+
+    const namesFor = async (query: string): Promise<string[]> =>
+      (await (await server.fetch(`/api/projects${query}`, { cookie })).json()).map(
+        (p: { name: string }) => p.name,
+      )
+
+    // sort=name&dir=asc makes the three pages predictable: Alpha, Beta, Gamma.
+    assert.deepEqual(await namesFor('?sort=name&dir=asc&limit=2&offset=0'), ['Alpha', 'Beta'])
+    assert.deepEqual(await namesFor('?sort=name&dir=asc&limit=2&offset=2'), ['Gamma'])
+    // Past the end: empty, not an error, exactly as the core-level test already pins.
+    assert.deepEqual(await namesFor('?sort=name&dir=asc&limit=2&offset=10'), [])
+  })
+})
+
+Deno.test(
+  'a malformed limit is refused with a 400, not silently answered with the whole library',
+  async () => {
+    await withServer(async (server) => {
+      const cookie = await loginAsAdmin(server)
+      await server.fetch('/api/projects', {
+        method: 'POST',
+        cookie,
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ name: 'Benchy' }),
+      })
+      await server.fetch('/api/projects', {
+        method: 'POST',
+        cookie,
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ name: 'Bracket' }),
+      })
+
+      // A non-numeric limit fails the whole query schema. Before this round it silently fell
+      // back to an empty query and answered 200 with every project, discarding the `search`
+      // alongside it -- the exact "malformed filter returns the entire unfiltered library"
+      // failure paging exists to prevent. It must now be refused outright.
+      const response = await server.fetch('/api/projects?search=bench&limit=abc', { cookie })
+      assert.equal(response.status, 400)
+
+      for (const bad of ['limit=0', 'limit=-1', 'limit=201', 'limit=1.5', 'offset=-1']) {
+        const res = await server.fetch(`/api/projects?${bad}`, { cookie })
+        assert.equal(res.status, 400, bad)
+      }
+    })
+  },
+)
 
 Deno.test('tags are added by body and removed by path', async () => {
   await withServer(async (server) => {
@@ -256,3 +318,29 @@ Deno.test('another user project is a 404, not a 403', async () => {
     assert.deepEqual(await (await server.fetch('/api/projects', { cookie: annaCookie })).json(), [])
   })
 })
+
+Deno.test(
+  'parseProjectQuery reads limit and offset, and rejects a value the schema refuses',
+  () => {
+    assert.deepEqual(parseProjectQuery(new URL('http://x/?limit=10&offset=5')), {
+      limit: 10,
+      offset: 5,
+    })
+    assert.deepEqual(parseProjectQuery(new URL('http://x/')), {})
+
+    for (const query of [
+      'limit=abc',
+      'limit=0',
+      'limit=-1',
+      'limit=201',
+      'limit=1.5',
+      'offset=-1',
+    ]) {
+      assert.throws(
+        () => parseProjectQuery(new URL(`http://x/?${query}`)),
+        (e: unknown) => (e as AppError).code === 'Validation',
+        query,
+      )
+    }
+  },
+)

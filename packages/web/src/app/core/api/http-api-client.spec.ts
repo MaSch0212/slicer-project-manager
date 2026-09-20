@@ -43,6 +43,8 @@ describe('HttpApiClient', () => {
       includeArchived: true,
       sort: 'name',
       dir: 'asc',
+      limit: 48,
+      offset: 96,
     })
 
     const url = new URL(fetchMock.mock.calls[0]![0], 'http://x')
@@ -51,6 +53,21 @@ describe('HttpApiClient', () => {
     expect(url.searchParams.get('includeArchived')).toBe('true')
     expect(url.searchParams.get('sort')).toBe('name')
     expect(url.searchParams.get('dir')).toBe('asc')
+    // Paging is otherwise unreachable over HTTP: with no query string entry for them, the
+    // server's parser has nothing to read regardless of what it accepts (round-1 finding).
+    expect(url.searchParams.get('limit')).toBe('48')
+    expect(url.searchParams.get('offset')).toBe('96')
+  })
+
+  it('omits limit and offset from the query string when the caller does not page', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse([]))
+    const client = new HttpApiClient('', fetchMock)
+
+    await client.projects.list({})
+
+    const url = new URL(fetchMock.mock.calls[0]![0], 'http://x')
+    expect(url.searchParams.has('limit')).toBe(false)
+    expect(url.searchParams.has('offset')).toBe(false)
   })
 
   /**

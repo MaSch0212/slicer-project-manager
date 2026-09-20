@@ -1,4 +1,5 @@
 import type { ProjectQuery } from '@spm/contract/dtos.ts'
+import { AppError } from '@spm/contract/errors.ts'
 import {
   createProjectSchema,
   projectPatchSchema,
@@ -20,7 +21,21 @@ import { json, noContent, parseJson } from '../json.ts'
 import { decodeURIComponentOrThrow } from '../percent.ts'
 import type { Route } from '../router.ts'
 
-/** Query strings are all text; coerce, then validate with the shared schema. */
+/**
+ * Query strings are all text; coerce, then validate with the shared schema.
+ *
+ * A query that fails validation is refused with a 400, not silently treated as an empty query.
+ * It used to be the latter, but paging added `limit`/`offset` — numeric fields a caller can
+ * produce programmatically from scroll-position arithmetic — and a single malformed value (a
+ * stray `limit=abc`, an out-of-range `limit=201`) would otherwise fail the whole `safeParse` and
+ * silently discard `search`, `tags`, `sort`, `dir` and `includeArchived` along with it, answering
+ * 200 with the caller's entire unfiltered, unpaged library: exactly the outcome paging exists to
+ * prevent. Every field now shares that fate on a bad value, `limit`/`offset` included, which
+ * matches what the desktop dispatch already does (`dispatch.ts`'s `libraryCall` throws
+ * `Validation` on the same schema) — checked against the existing server test suite for any test
+ * that sent an invalid `sort`, `dir`, `tags` or `includeArchived` and expected the unfiltered
+ * library back; none did.
+ */
 export function parseProjectQuery(url: URL): ProjectQuery {
   const raw = {
     ...(url.searchParams.get('search') ? { search: url.searchParams.get('search')! } : {}),
@@ -34,8 +49,10 @@ export function parseProjectQuery(url: URL): ProjectQuery {
     ...(url.searchParams.has('offset') ? { offset: Number(url.searchParams.get('offset')) } : {}),
   }
   const parsed = projectQuerySchema.safeParse(raw)
-  // An unparseable query is treated as no query rather than as an error page.
-  return parsed.success ? parsed.data : {}
+  if (!parsed.success) {
+    throw new AppError('Validation', 'invalid project query', { issues: parsed.error.issues })
+  }
+  return parsed.data
 }
 
 export const projectRoutes: Route[] = [

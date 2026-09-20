@@ -332,10 +332,55 @@ test('offset beyond the end returns an empty array, not an error', async () => {
 test('omitting limit still returns every row, unchanged from before paging existed', async () => {
   await withLibrary((lib) => {
     const ctx = seedUser(lib, 'marc')
+    // 3 rows would pass under almost any plausible accidental default, including the 48-row
+    // page size this very segment is about to introduce elsewhere (spec 1 fact 3). Seeding past
+    // the schema's own `limit` cap (200) means no value the schema would even accept as a
+    // default could satisfy this assertion by accident. Raw inserts, not createProject, because
+    // this only needs rows in the table, not 201 real folders on disk.
+    const total = 201
+    for (let i = 0; i < total; i++) {
+      lib.db
+        .prepare(
+          `INSERT INTO projects (id, owner_id, name, dir_name, is_archived, state, created_at, updated_at)
+           VALUES (?, ?, ?, ?, 0, 'ok', 0, 0)`,
+        )
+        .run(newId(), ctx.userId, `Project ${i}`, `dir-${i}`)
+    }
+    assert.equal(listProjects(lib, ctx, {}).length, total)
+  })
+})
+
+test('offset without limit is ignored, not treated as "skip everything"', async () => {
+  await withLibrary((lib) => {
+    const ctx = seedUser(lib, 'marc')
     createProject(lib, ctx, { name: 'One' })
     createProject(lib, ctx, { name: 'Two' })
-    createProject(lib, ctx, { name: 'Three' })
-    assert.equal(listProjects(lib, ctx, {}).length, 3)
+    // Spec 3.1: offset is "only meaningful with limit". A caller that sends offset alone (say,
+    // by building the query object programmatically) must still get the whole list back, not a
+    // list with that many rows silently skipped and no limit to bound it.
+    assert.equal(listProjects(lib, ctx, { offset: 1 }).length, 2)
+  })
+})
+
+test('the id tiebreaker is always ascending, even when dir is desc', async () => {
+  await withLibrary((lib) => {
+    const ctx = seedUser(lib, 'marc')
+    const a = createProject(lib, ctx, { name: 'Alpha' })
+    const b = createProject(lib, ctx, { name: 'Beta' })
+    lib.db.prepare('UPDATE projects SET updated_at = ? WHERE id IN (?, ?)').run(1000, a.id, b.id)
+    const [lower, higher] = [a.id, b.id].sort()
+
+    // Spec 3.2: "always ASC, never following dir" — it is there to make the order total, not to
+    // be meaningful. Asserting only set membership (as the tied-page test above does) cannot
+    // catch the tiebreaker being made to track `dir`; this checks the actual emitted order.
+    assert.deepEqual(
+      listProjects(lib, ctx, { dir: 'asc' }).map((p) => p.id),
+      [lower, higher],
+    )
+    assert.deepEqual(
+      listProjects(lib, ctx, { dir: 'desc' }).map((p) => p.id),
+      [lower, higher],
+    )
   })
 })
 
