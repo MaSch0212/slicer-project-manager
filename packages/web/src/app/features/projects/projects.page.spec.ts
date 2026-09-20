@@ -1,24 +1,45 @@
 import { TestBed } from '@angular/core/testing'
+import { provideRouter } from '@angular/router'
 import { describe, expect, it, vi } from 'vitest'
 import { provideJigControls, withAutoColorScheme } from '@awdlab/jig/api/ng'
 import { nova } from '@awdlab/jig-themes/nova'
-import { DEFAULT_SETTINGS, type SettingsDto } from '@spm/contract/dtos.ts'
+import { DEFAULT_SETTINGS, type ProjectDto, type SettingsDto } from '@spm/contract/dtos.ts'
 import { API_CLIENT } from '../../core/api/api-client.token'
+import { TranslateService } from '../../core/i18n/translate.service'
+import { NotifyService } from '../../core/notify.service'
 import { ProjectsPage } from './projects.page'
+import { PROJECTS_PAGE_SIZE } from './projects.store'
 import { provideJigForTests } from '../../../testing/jig'
+import en from '../../core/i18n/locales/en.json'
 
-function setup(
+/** A full page of rows, which is what makes the store believe more of them exist. */
+function fullPage(): ProjectDto[] {
+  return Array.from({ length: PROJECTS_PAGE_SIZE }, (_, index) => ({
+    id: `p${index}`,
+    name: `Project ${index}`,
+    isArchived: false,
+    state: 'ok' as const,
+    tags: [],
+    fileCounts: { model: 0, slicerProject: 0, other: 0 },
+    createdAt: 0,
+    updatedAt: 0,
+  }))
+}
+
+async function setup(
   overrides: {
     create?: ReturnType<typeof vi.fn>
     rescan?: ReturnType<typeof vi.fn>
     putSettings?: ReturnType<typeof vi.fn>
+    list?: ReturnType<typeof vi.fn>
   } = {},
 ) {
   const api = {
     projects: {
-      list: vi.fn().mockResolvedValue([]),
+      list: overrides.list ?? vi.fn().mockResolvedValue([]),
       create: overrides.create ?? vi.fn(),
       rescan: overrides.rescan ?? vi.fn(),
+      tags: vi.fn().mockResolvedValue([]),
     },
     settings: {
       get: vi.fn().mockResolvedValue(DEFAULT_SETTINGS),
@@ -27,6 +48,10 @@ function setup(
         vi.fn((patch: Partial<SettingsDto>) => Promise.resolve({ ...DEFAULT_SETTINGS, ...patch })),
     },
   }
+  // `NotifyService` is a double because jig's snackbar host attaches to
+  // `ApplicationRef.components[0]`, which `TestBed` never populates; `ProjectsStore` injects it
+  // to report a filter that could not be remembered and a page that could not be loaded.
+  const notify = { success: vi.fn(), error: vi.fn(), info: vi.fn() }
   TestBed.configureTestingModule({
     providers: [
       ...provideJigForTests(),
@@ -34,10 +59,18 @@ function setup(
       // the app-level provider that app.config.ts installs — TestBed builds this component
       // in isolation, so it must be supplied here too.
       ...provideJigControls({ theme: { preset: nova } }, withAutoColorScheme()),
+      // Each rendered card is a routerLink, so a spec whose fixture actually has rows needs a
+      // router. The list used to be empty in every one of them, which is why this was not here.
+      provideRouter([{ path: 'projects/:id', children: [] }]),
       { provide: API_CLIENT, useValue: api },
+      { provide: NotifyService, useValue: notify },
     ],
   })
-  return { fixture: TestBed.createComponent(ProjectsPage), api }
+  // Awaited *before* the component exists: TestBed auto-detects changes, so creating it first
+  // renders the template immediately, and the template reads t.translations() unguarded
+  // (legitimately — app.config.ts awaits this same promise before bootstrap).
+  await TestBed.inject(TranslateService).ready
+  return { fixture: TestBed.createComponent(ProjectsPage), api, notify }
 }
 
 describe('ProjectsPage', () => {
@@ -46,7 +79,7 @@ describe('ProjectsPage', () => {
   // createProjectSchema via submit() means an invalid model never reaches the network.
   it('does not call create when the model is invalid', async () => {
     const create = vi.fn()
-    const { fixture } = setup({ create })
+    const { fixture } = await setup({ create })
     fixture.componentInstance.createModel.set({ name: '   ' })
 
     await fixture.componentInstance.onCreate()
@@ -56,7 +89,7 @@ describe('ProjectsPage', () => {
 
   it('creates the project and clears the form on a valid submit', async () => {
     const create = vi.fn().mockResolvedValue({ id: 'p1', name: 'New' })
-    const { fixture } = setup({ create })
+    const { fixture } = await setup({ create })
     fixture.componentInstance.createModel.set({ name: 'New' })
 
     await fixture.componentInstance.onCreate()
@@ -72,7 +105,7 @@ describe('ProjectsPage', () => {
   // NOT cleared on failure.
   it('sets an error instead of throwing when create rejects, and keeps the typed name', async () => {
     const create = vi.fn().mockRejectedValue(new Error('boom'))
-    const { fixture } = setup({ create })
+    const { fixture } = await setup({ create })
     fixture.componentInstance.createModel.set({ name: 'New' })
 
     await expect(fixture.componentInstance.onCreate()).resolves.toBeUndefined()
@@ -90,7 +123,7 @@ describe('ProjectsPage', () => {
       previewsQueued: 7,
     }
     const rescan = vi.fn().mockResolvedValue(summary)
-    const { fixture } = setup({ rescan })
+    const { fixture } = await setup({ rescan })
 
     await fixture.componentInstance.onRescan()
 
@@ -118,7 +151,7 @@ describe('ProjectsPage', () => {
         previewsQueued: 7,
       })
       .mockRejectedValueOnce(new Error('boom'))
-    const { fixture } = setup({ rescan })
+    const { fixture } = await setup({ rescan })
 
     await fixture.componentInstance.onRescan()
     expect(fixture.componentInstance.rescanned()).not.toBeNull()
@@ -130,7 +163,7 @@ describe('ProjectsPage', () => {
   })
 
   it('persists the chosen sort', async () => {
-    const { fixture, api } = setup()
+    const { fixture, api } = await setup()
 
     await fixture.componentInstance.onSort('name:asc')
 
@@ -141,10 +174,61 @@ describe('ProjectsPage', () => {
   // onSort is bound to a template (change) handler, so a rejection from persisting the
   // preference has nowhere to go; the sort itself is already applied locally either way.
   it('surfaces a failure to persist the sort instead of rejecting', async () => {
-    const { fixture } = setup({ putSettings: vi.fn().mockRejectedValue(new Error('boom')) })
+    const { fixture } = await setup({ putSettings: vi.fn().mockRejectedValue(new Error('boom')) })
 
     await expect(fixture.componentInstance.onSort('name:asc')).resolves.toBeUndefined()
 
     expect(fixture.componentInstance.sortError()).toBe(true)
+  })
+
+  /**
+   * Spec H 7.5 and constraint C6: a keyboard-reachable control for the next page is required,
+   * not a nicety. A list that only grows on a scroll event is unreachable for anyone moving by
+   * keyboard or screen reader — focus moves without ever scrolling a container — and until the
+   * scroll trigger lands this button is also the only path to rows 49 and beyond.
+   *
+   * The assertion is on the rendered DOM rather than on a component field because what is being
+   * proved is exactly that the control EXISTS on the page: a store that knows more rows are
+   * there, with nothing rendered to ask for them, is the defect.
+   */
+  it('renders a keyboard-reachable control for the next page when more rows exist', async () => {
+    const list = vi.fn().mockResolvedValue(fullPage())
+    const { fixture, api } = await setup({ list })
+    await fixture.whenStable()
+    fixture.detectChanges()
+
+    const footer = [
+      ...(fixture.nativeElement as HTMLElement).querySelectorAll<HTMLButtonElement>(
+        '.spm-list-footer button',
+      ),
+    ]
+    expect(footer).toHaveLength(1)
+    const loadMore = footer[0]
+    expect(loadMore?.textContent?.trim()).toBe(en.projects.loadMore)
+
+    loadMore?.click()
+    await fixture.whenStable()
+
+    expect(api.projects.list).toHaveBeenLastCalledWith(
+      expect.objectContaining({ limit: PROJECTS_PAGE_SIZE, offset: PROJECTS_PAGE_SIZE }),
+    )
+  })
+
+  // The other edge of the same control: a library that fits on one page must not offer a next
+  // one, or the user is handed a button that does nothing. The fixture is deliberately a
+  // NON-empty short page — an empty one renders the empty state instead of the list, so the
+  // footer would be absent for a reason that has nothing to do with paging.
+  it('renders no next-page control when the first page is already the whole library', async () => {
+    const { fixture } = await setup({ list: vi.fn().mockResolvedValue(fullPage().slice(0, 3)) })
+    await fixture.whenStable()
+    fixture.detectChanges()
+
+    expect(
+      (fixture.nativeElement as HTMLElement).querySelectorAll('.spm-list-footer'),
+    ).toHaveLength(1)
+
+    expect(
+      (fixture.nativeElement as HTMLElement).querySelectorAll('.spm-list-footer button'),
+    ).toHaveLength(0)
   })
 })

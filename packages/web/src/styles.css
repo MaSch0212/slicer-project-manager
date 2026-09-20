@@ -466,6 +466,17 @@ spm-nav-list {
   border-bottom: none;
 }
 
+/*
+ * The floor of the project list: the spinner for a page on its way, and the control that asks
+ * for the next one. Centred and given room above so it reads as the end of the list rather than
+ * as another card, and so the button is a target that is easy to hit on a touch screen.
+ */
+.spm-list-footer {
+  display: flex;
+  justify-content: center;
+  padding-top: var(--jig-size-padding-lg);
+}
+
 .spm-project-body {
   display: flex;
   flex: 1;

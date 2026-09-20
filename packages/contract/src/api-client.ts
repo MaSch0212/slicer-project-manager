@@ -411,8 +411,9 @@ export interface ApiClient {
      * The distinct tag names in the user's library, sorted case-insensitively (spec §4).
      *
      * A resource of its own because `list`'s paging (spec §3) means "the tags on the loaded
-     * projects" is no longer "every tag" once the library has more than one page. Replaces
-     * `ProjectsStore.knownTags`, which relied on that no-longer-true equivalence.
+     * projects" is no longer "every tag" once the library has more than one page. This is what
+     * `ProjectsStore.knownTags` now builds its list from; that computed is still the filter bar's
+     * source, and what changed is that it no longer rests on the no-longer-true equivalence.
      */
     tags(): Promise<string[]>
   }

@@ -145,14 +145,14 @@ import { ProjectsStore } from './projects.store'
         <jig-message color="error" role="alert">{{ t.translations().errors.generic }}</jig-message>
       } @else if (store.projects.isLoading()) {
         <jig-spinner centered [size]="40" />
-      } @else if (store.projects.value().length === 0) {
+      } @else if (store.items().length === 0) {
         <div class="spm-empty">
           <jig-icon [icon]="icons.search" style="font-size: 2rem" />
           <p>{{ t.translations().projects.empty }}</p>
         </div>
       } @else {
         <ul class="spm-projects" [class]="settings.settings().viewMode">
-          @for (project of store.projects.value(); track project.id) {
+          @for (project of store.items(); track project.id) {
             <li class="spm-project">
               <a class="spm-project-link" [routerLink]="['/projects', project.id]">
                 <span class="spm-thumb">
@@ -193,6 +193,33 @@ import { ProjectsStore } from './projects.store'
             </li>
           }
         </ul>
+
+        <!-- The list only ever holds the pages fetched so far, so it needs a floor that says
+             whether there is more and offers a way to get it.
+
+             The button is required, not a fallback (spec 7.5, constraint C6): a list that grows
+             only on a scroll event cannot be reached by someone navigating with a keyboard or a
+             screen reader, both of which move focus without ever scrolling a container. It is
+             also the only path to rows 49 and beyond until the scroll trigger lands.
+
+             loadMore refuses a second request while one is in flight, so the disabled state here
+             is about telling the user why nothing is happening, not about preventing it. -->
+        <div class="spm-list-footer">
+          @if (store.isLoadingMore()) {
+            <jig-spinner centered [size]="32" />
+          }
+          @if (store.hasMore()) {
+            <button
+              jigButton
+              kind="secondary"
+              type="button"
+              [disabled]="store.isLoadingMore()"
+              (click)="store.loadMore()"
+            >
+              {{ t.translations().projects.loadMore }}
+            </button>
+          }
+        </div>
       }
     </main>
   `,

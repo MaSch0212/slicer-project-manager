@@ -238,9 +238,9 @@ export function listProjects(lib: Library, ctx: Ctx, query: ProjectQuery): CoreP
  * carries it (removeTag's orphan cleanup in `projects/usecases.ts` deletes the row the moment
  * that stops being true), so the table itself already *is* "the tags currently in the library."
  *
- * This replaces `ProjectsStore.knownTags`, which derived the list from whatever page of
- * projects happened to be loaded — correct only while "loaded" meant "all of them" (spec §1
- * fact 3). Both `PETG` and `petg` can never coexist here for one owner: `tags` is declared
+ * This is what `ProjectsStore.knownTags` now reads. That computed used to derive the list from
+ * whatever page of projects happened to be loaded — correct only while "loaded" meant "all of
+ * them" (spec §1 fact 3). Both `PETG` and `petg` can never coexist here for one owner: `tags` is declared
  * `UNIQUE (owner_id, name COLLATE NOCASE)` (`db/migrations/001_init.sql`), so a case collision
  * is a write-time conflict, not a read-time de-duplication concern.
  */
