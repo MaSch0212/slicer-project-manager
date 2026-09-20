@@ -435,6 +435,25 @@ describe('ProjectsStore', () => {
     expect(api.projects.list.mock.calls.length).toBeGreaterThan(before + 1)
   })
 
+  /**
+   * Fix round 2. `createProjectSchema` carries `tags`, and `createProject` applies them
+   * (`for (const tag of input.tags ?? []) addTag(...)`), so a create can put a tag in the library
+   * that was never there before — which makes the filter bar's list stale exactly as a rescan
+   * does. The input here carries a tag on purpose: it states the reason the reload exists,
+   * rather than leaving it to a comment that the code could quietly stop agreeing with.
+   */
+  it('refreshes the library tags after creating a project, which can carry tags', async () => {
+    const { store, api } = await setup()
+    await settle()
+    const before = api.projects.tags.mock.calls.length
+
+    await store.create({ name: 'New', tags: ['petg'] })
+    await settle()
+
+    expect(api.projects.create).toHaveBeenCalledWith({ name: 'New', tags: ['petg'] })
+    expect(api.projects.tags.mock.calls.length).toBe(before + 1)
+  })
+
   // A rescan adopts folders that may carry tags this library has never seen, so the filter
   // bar's list is stale the moment it finishes.
   it('refreshes the library tags after a rescan', async () => {

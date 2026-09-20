@@ -296,4 +296,27 @@ describe('ProjectsPage', () => {
       en.projects.showing.replace('{{ count }}', String(PROJECTS_PAGE_SIZE * 2)),
     )
   })
+
+  /**
+   * Fix round 2. The announcement used to be published unconditionally, so a Load more that
+   * FAILED moved the region from empty to "Showing 48 projects" while the error snackbar fired:
+   * two messages for one press, saying opposite things. Only the FIRST press showed it — after
+   * that the total is already published and re-publishing the same number changes no text — so
+   * the fixture fails the first press deliberately, which is the only press that catches it.
+   */
+  it('says nothing in the status region when the first page fails to load', async () => {
+    const list = vi.fn().mockResolvedValueOnce(fullPage()).mockRejectedValueOnce(new Error('boom'))
+    const { fixture, notify } = await setup({ list })
+    await fixture.whenStable()
+    fixture.detectChanges()
+    const region = (fixture.nativeElement as HTMLElement).querySelector(
+      '.spm-list-footer [role="status"]',
+    )
+
+    await fixture.componentInstance.onLoadMore()
+    fixture.detectChanges()
+
+    expect(region?.textContent?.trim()).toBe('')
+    expect(notify.error).toHaveBeenCalledTimes(1)
+  })
 })

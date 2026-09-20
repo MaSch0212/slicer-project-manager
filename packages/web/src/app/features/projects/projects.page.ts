@@ -267,21 +267,31 @@ export class ProjectsPage {
   }
 
   /**
-   * How many projects are on screen, published only after the user has asked for more.
+   * How many projects are on screen, published only after a press that actually loaded rows.
    *
    * `null` until then, so the status region starts empty: a live region that already holds text
-   * when the list first renders announces nothing anyway (only later changes are spoken), and
-   * an empty one cannot be mistaken for a count that was never updated. A failed page leaves the
-   * total where it was, so the region does not change and does not speak -- the error snackbar is
-   * what reports that, and two messages for one press is worse than one.
+   * when the list first renders announces nothing anyway (only later changes are spoken), and an
+   * empty one cannot be mistaken for a count that was never updated.
    */
   protected readonly shownCount = signal<number | null>(null)
 
-  // Public, like onCreate/onRescan: the page spec drives it directly. `store.loadMore` never
-  // rejects, so there is nothing to catch here -- it reports its own failure.
+  /**
+   * Public, like onCreate/onRescan: the page spec drives it directly. `store.loadMore` never
+   * rejects, so there is nothing to catch here -- it reports its own failure.
+   *
+   * **The count is compared, not just re-read.** Fix round 2: this used to publish the total
+   * unconditionally, so a Load more that FAILED still moved the region from empty to "Showing 48
+   * projects" while the error snackbar fired — two messages for one press, saying opposite
+   * things, on the very press most likely to confuse. Only the first failure did it, which is
+   * exactly the kind of defect a comment claiming otherwise keeps alive. Announcing the change
+   * rather than the state also keeps a page that arrived as pure duplicates silent, which is
+   * honest: nothing new appeared on screen.
+   */
   async onLoadMore(): Promise<void> {
+    const before = this.store.items().length
     await this.store.loadMore()
-    this.shownCount.set(this.store.items().length)
+    const after = this.store.items().length
+    if (after !== before) this.shownCount.set(after)
   }
 
   readonly rescanned = signal<RescanResultDto | null>(null)

@@ -305,14 +305,26 @@ export class ProjectsStore {
   /**
    * Creates a project and re-queries the list around it.
    *
-   * **The `tags` resource is deliberately not reloaded here, unlike in `rescan`.**
-   * `createProjectSchema` carries a name and nothing else, so a just-created project has no tags
-   * and the library's tag list cannot have changed. The day creation can attach a tag, this needs
-   * the `this.tags.reload()` that `rescan` has — the omission is a decision, not an oversight.
+   * **The tag list is reloaded unconditionally, exactly as `rescan` does.** Fix round 2: a
+   * previous version of this comment claimed a create could not change the library's tags because
+   * `createProjectSchema` carried only a name. It does not — the schema has carried
+   * `tags: z.array(tagNameSchema).optional()` all along
+   * (`packages/contract/src/schemas.ts`), and `createProject` has applied them
+   * (`for (const tag of input.tags ?? []) addTag(...)` in `packages/core/src/projects/usecases.ts`).
+   * A create can attach tags today; the only reason the filter bar did not go stale is that this
+   * application's create form happens to submit a name alone, which is a property of one call
+   * site rather than of the operation.
+   *
+   * Unconditional rather than `if (input.tags?.length)`, deliberately. The conditional version
+   * encodes an assumption about what a create does to the tag table — which is the assumption
+   * that was just found to be wrong, in a comment, where nothing could contradict it. This costs
+   * one extra request on an action a user takes a handful of times a session, and it has no
+   * premise left to falsify.
    */
   async create(input: CreateProjectInput): Promise<ProjectDto> {
     const created = await this.api.projects.create(input)
     this.reloadFirstPage()
+    this.tags.reload()
     return created
   }
 
