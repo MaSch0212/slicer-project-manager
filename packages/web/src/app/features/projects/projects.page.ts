@@ -140,6 +140,11 @@ export const SEARCH_DEBOUNCE_MS = 250
                  defaults its popover width and max-width to 1 -- meaning exactly the trigger's
                  width -- so the longest option wraps whenever the trigger is narrow.
 
+                 It is set here rather than in styles.css because jig's positioning engine writes
+                 the popup's width as an INLINE style, not because a selector cannot reach the
+                 element: the popover stays inside this component's DOM and matches selectors
+                 normally. popoverOptions is the library's documented input for this.
+
                  No backticks in this comment: the template is a JS template literal, so a
                  backtick ends it before it is ever text. -->
             <jig-input-field class="spm-sort" inputId="projects-sort">
@@ -189,6 +194,7 @@ export const SEARCH_DEBOUNCE_MS = 250
               [jigBadge]="selectedTags().length"
               [attr.aria-expanded]="tagsOpen()"
               aria-haspopup="listbox"
+              [attr.aria-controls]="tagListId"
               [jigTooltip]="t.translations().projects.tags"
               jigTooltipAutoAriaMode="label"
               (click)="tagsOpen.set(!tagsOpen())"
@@ -202,6 +208,7 @@ export const SEARCH_DEBOUNCE_MS = 250
             <jig-popover [anchor]="tagsAnchor" [(open)]="tagsOpen" [options]="tagsPopover">
               <jig-list-box
                 class="spm-tag-list"
+                [inputId]="tagListId"
                 [label]="t.translations().projects.tags"
                 [items]="tagOptions()"
                 [selectable]="true"
@@ -378,7 +385,15 @@ export class ProjectsPage {
    * "Zuletzt geändert" too. The minimum keeps it from collapsing narrower than the trigger.
    */
   protected readonly sortPopover = {
-    sizeConstraints: { width: 'max-content', minWidth: '13rem', maxWidth: '24rem' },
+    sizeConstraints: {
+      width: 'max-content',
+      // The same floor the trigger has, read from the same place rather than copied: a popup
+      // narrower than the control it hangs off looks like a rendering fault, so the two are one
+      // requirement. jig applies this as a CSS string on an element inside this component's own
+      // DOM, so the custom property resolves exactly as it does for the trigger.
+      minWidth: 'var(--spm-sort-min-width)',
+      maxWidth: '24rem',
+    },
   }
 
   /** The tag popup sizes to its content and scrolls once a library has many tags. */
@@ -388,6 +403,16 @@ export class ProjectsPage {
 
   /** Whether the tag dropdown is showing — also what the button's `aria-expanded` reports. */
   protected readonly tagsOpen = signal(false)
+
+  /**
+   * The id the tags button's `aria-controls` points at.
+   *
+   * jig-list-box puts its `inputId` on its own host, which already carries `role="listbox"`, so
+   * there is a real element to name and the button's `aria-haspopup="listbox"` now says which
+   * listbox. A constant rather than a generated id because there is exactly one of these on the
+   * page — the same reasoning the sort and view-mode selects' ids already use.
+   */
+  protected readonly tagListId = 'projects-tag-list'
 
   /** The selected tags, in the shape the multi-select both reads and reports. */
   protected readonly selectedTags = computed(() => this.store.query().tags ?? [])

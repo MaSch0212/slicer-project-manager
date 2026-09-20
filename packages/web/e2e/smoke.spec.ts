@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test'
+import { expect, test, type Page } from '@playwright/test'
 import { mkdirSync, mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -278,6 +278,143 @@ test.describe('the navigation', () => {
   })
 
   /**
+   * The filter bar's two requirements that no `ng test` assertion can reach (spec H §7.2, §7.4).
+   *
+   * **Why not a unit test.** jsdom 28 implements no part of the Popover API — `togglePopover`
+   * appears nowhere in the package — so under `ng test` the tags button opens nothing, the sort
+   * popup never renders, and jig's call lands in a `requestAnimationFrame` as an unhandled error
+   * rather than a failed assertion. jsdom also loads no CSS, so neither width criterion means
+   * anything there. Chromium has both, which makes this the only runner where any of it is
+   * observable. Fix round 1, findings 1 and 2.
+   *
+   * **In this block, so it logs in zero times.** The block's captured `storageState` is reused;
+   * the server rate-limits `/api/auth/login` to ten a minute per address and the suite already
+   * spends eight, which is the same reason the reload test above lives here.
+   *
+   * **What it composes.** Each half of the tag dropdown is covered by a unit test — the badge
+   * against a seeded selection, an option click against the store — but the composition the user
+   * actually performs (press the button, pick a tag, read the count) was covered by neither, and
+   * composition is where this project keeps finding defects. `aria-expanded` in particular was
+   * only ever asserted in its `false` state, which is the state a disclosure that never opens
+   * also reports.
+   */
+  test('the filter bar sizes its sort control and popup, and counts the tags chosen in its dropdown', async ({
+    page,
+  }) => {
+    // Self-sufficient rather than leaning on a tag some other spec's library happens to hold:
+    // `createProjectSchema` takes tags, so one request gives this test the tag it filters on.
+    const TAG = 'e2e-filter-bar'
+    const created = await page.request.post('/api/projects', {
+      data: { name: 'Filter Bar Fixture', tags: [TAG] },
+    })
+    expect(created.ok()).toBe(true)
+    const project = (await created.json()) as { id: string }
+
+    await page.goto('/projects')
+    await expect(page.getByRole('heading', { name: 'Projects' })).toBeVisible()
+
+    // §7.2, first half: "a minimum width, so the label is not cut off". What is asserted is the
+    // floor, not the absence of an ellipsis — measured, the trigger is shrink-to-fit and so
+    // reports no overflow at any width this layout produces, which would have made a
+    // `scrollWidth <= clientWidth` assertion unable to fail. The floor is what actually delivers
+    // the requirement, and it is read off the page rather than written here as a number: a
+    // throwaway element resolves `--spm-sort-min-width` to pixels, so the assertion follows the
+    // stylesheet instead of pinning a literal against a copy of itself.
+    const sort = page.getByRole('combobox', { name: 'Sort by' })
+    await expect(sort).toBeVisible()
+    const floor = await page.evaluate(() => {
+      const probe = document.createElement('div')
+      probe.style.width = 'var(--spm-sort-min-width)'
+      document.body.append(probe)
+      const width = probe.getBoundingClientRect().width
+      probe.remove()
+      return width
+    })
+    expect(floor).toBeGreaterThan(0)
+    const field = page.locator('.spm-sort')
+    expect((await field.boundingBox())!.width).toBeGreaterThanOrEqual(floor)
+
+    // §7.2, second half: "the dropdown is wrapping 'Recently updated', make the popup wide enough
+    // so all entries fit horizontally".
+    //
+    // **The short option is selected first, and that is what makes this able to fail.** jig sizes
+    // the popup to its anchor by default, and the anchor is the trigger — which, while the
+    // longest option is the selected one, is already wide enough for it. Measured: with the
+    // override removed the popup still fits, because the trigger was showing the very string
+    // being measured. Selecting "Newest" shrinks the trigger to a short label and leaves the
+    // popup to carry the long one, which is the situation the user actually reported.
+    //
+    // Height against a SHORT option rather than a hard-coded pixel count: a wrapped two-line
+    // entry is about twice the height of a one-line one, whatever the theme's line height is.
+    const sorted = settingsSaved(page)
+    await sort.click()
+    await page.getByRole('option', { name: 'Newest' }).click()
+    await sorted
+
+    await sort.click()
+    const longest = page.getByRole('option', { name: 'Recently updated' })
+    await expect(longest).toBeVisible()
+    const longestBox = await longest.boundingBox()
+    const shortestBox = await page.getByRole('option', { name: 'Newest' }).boundingBox()
+    expect(longestBox!.height).toBeLessThan(shortestBox!.height * 1.5)
+
+    // And the popup is never narrower than the control it hangs off. This is the half of
+    // `sortPopover` that a mutation can actually turn red: `width: 'max-content'` sizes the popup
+    // to its longest entry, which at this font is NARROWER than the trigger, so without the
+    // matching `minWidth` the list would sit under a wider control looking like a rendering
+    // fault. The one-line assertion above cannot distinguish the two; this can.
+    //
+    // Measured on the element the constraint is applied to — the popover itself, the one carrying
+    // the `popover` attribute while it is open — rather than on the list box inside it, which
+    // sits a border's width narrower.
+    const popupWidth = await longest.evaluate(
+      (option) => option.closest('[popover]')!.getBoundingClientRect().width,
+    )
+    expect(popupWidth).toBeGreaterThanOrEqual(floor)
+
+    // Put the sort back: it is persisted against the shared admin account, so leaving it on
+    // "Newest" would reorder the list every later test runs against.
+    const restored = settingsSaved(page)
+    await longest.click()
+    await restored
+    await expect(longest).toBeHidden()
+
+    // §7.4: the disclosure, the list box behind it, and the count.
+    const tags = page.getByRole('button', { name: 'Tags' })
+    await expect(tags).toHaveAttribute('aria-expanded', 'false')
+    await expect(tags.locator('jig-badge-indicator')).toHaveCount(0)
+
+    await tags.click()
+
+    await expect(tags).toHaveAttribute('aria-expanded', 'true')
+    const list = page.getByRole('listbox', { name: 'Tags' })
+    await expect(list).toBeVisible()
+    // The button says which list it controls, and this is where that can be followed: the id has
+    // to resolve to the element that actually opened.
+    expect(await tags.getAttribute('aria-controls')).toBe(await list.getAttribute('id'))
+
+    // The filter is persisted against the shared admin account, so both the selection and its
+    // undo are awaited — an optimistic write that had not landed before the next test navigated
+    // would leave the library filtered for everything that follows.
+    const saved = settingsSaved(page)
+    await list.getByRole('option', { name: TAG }).click()
+    await expect(tags.locator('jig-badge-indicator')).toHaveText('1')
+    await saved
+
+    // And back, which is also the other half of the assertion: the count follows the selection
+    // down as well as up, so it is a count rather than a flag that was switched on once.
+    const cleared = settingsSaved(page)
+    await list.getByRole('option', { name: TAG }).click()
+    await expect(tags.locator('jig-badge-indicator')).toHaveCount(0)
+    await cleared
+
+    await page.keyboard.press('Escape')
+    await expect(tags).toHaveAttribute('aria-expanded', 'false')
+
+    expect((await page.request.delete(`/api/projects/${project.id}`)).ok()).toBe(true)
+  })
+
+  /**
    * Spec G §9 acceptance criterion 3, and the only place it can be asserted.
    *
    * `playwright.config.ts` pins no viewport, so every other spec in this suite runs at Chromium's
@@ -352,6 +489,21 @@ test.describe('the navigation', () => {
     })
   })
 })
+
+/**
+ * Resolves when the next successful settings PUT lands.
+ *
+ * `SettingsStore.patch` is optimistic, so the UI moves before the request does; anything that
+ * navigates or reloads without waiting races a write against the shared admin account.
+ */
+function settingsSaved(page: Page): Promise<unknown> {
+  return page.waitForResponse(
+    (response) =>
+      response.url().includes('/api/account/settings') &&
+      response.request().method() === 'PUT' &&
+      response.ok(),
+  )
+}
 
 /** What a file's first four bytes say it is, so a served index.html cannot pass as an image. */
 function magicOf(body: Buffer): string {

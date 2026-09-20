@@ -19,6 +19,15 @@
 :root {
   --spm-page-max: 80rem;
   --spm-gap: var(--jig-size-padding-lg);
+
+  /*
+   * The floor under the sort control AND under its popup (spec H 7.2 asks for both). One custom
+   * property rather than the same literal in two places: the popup must never be narrower than
+   * the trigger it hangs off, so the two numbers are one requirement, and jig takes the popup's
+   * min-width as a CSS string -- which means it can take this var and read the same value the
+   * stylesheet uses instead of a copy of it.
+   */
+  --spm-sort-min-width: 13rem;
 }
 
 *,
@@ -593,7 +602,15 @@ spm-nav-list {
   align-items: flex-start;
 }
 
-/* The filter row's fields must stretch, not sit at their intrinsic width. */
+/*
+ * jig-input-field is inline by default, which makes width and max-width on it do nothing.
+ *
+ * This used to say the filter row's fields "must stretch, not sit at their intrinsic width",
+ * which the filter bar has made false: the search box stretches (`flex: 1`) but the sort and
+ * view-mode fields are deliberately pinned by `min-width` and stretch no further. What both
+ * cases actually need from this rule is the same and is narrower than the old claim -- a block
+ * box, so that the widths set below apply at all.
+ */
 .spm-filters jig-input-field,
 .spm-new-project jig-input-field {
   display: block;
@@ -627,12 +644,20 @@ spm-nav-list {
 }
 
 /*
- * A minimum width so the selected option is not clipped -- the second half of the same request
- * is the popup's own width, which is set on the control (`sortPopover`) because the popup renders
- * in the top layer and no selector here reaches it.
+ * A minimum width so the selected option is not clipped. The second half of the same request --
+ * a popup wide enough for "Recently updated" on one line -- is set on the control, in
+ * `sortPopover`, and the reason is NOT that a selector here cannot reach the popup.
+ *
+ * It can. jig's popover uses the `popover` attribute and leaves the element inside this
+ * component's DOM; nothing is teleported to <body>, and being in the top layer does not stop
+ * selectors matching. What a stylesheet loses to is that jig's positioning engine writes the
+ * popup's `width` and `max-width` as INLINE styles -- which is why `PositioningOptions` carries a
+ * `disableSettingStyles` escape hatch at all. An external rule would need `!important` to win,
+ * and `popoverOptions` is the library's own documented input for exactly this. So the override
+ * goes through the API rather than fighting it from here.
  */
 .spm-filters .spm-sort {
-  min-width: 13rem;
+  min-width: var(--spm-sort-min-width);
 }
 
 .spm-filters .spm-view-mode {

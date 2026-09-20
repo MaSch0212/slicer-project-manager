@@ -459,6 +459,13 @@ describe('ProjectsPage', () => {
     await fixture.whenStable()
     fixture.detectChanges()
 
+    // The disclosure names the thing it discloses (fix round 1, finding 5): aria-haspopup says
+    // there is a listbox, aria-controls says which one, and the assertion follows the id to a
+    // real element carrying role="listbox" rather than just comparing two strings.
+    const button = host.querySelector<HTMLButtonElement>('button[aria-haspopup="listbox"]')
+    const controlled = host.querySelector(`#${button?.getAttribute('aria-controls')}`)
+    expect(controlled?.getAttribute('role')).toBe('listbox')
+
     const options = [...host.querySelectorAll('jig-list-box [role="option"]')]
     expect(options.map((option) => option.textContent?.trim())).toEqual(['petg'])
     expect(options[0]?.getAttribute('aria-selected')).toBe('true')
