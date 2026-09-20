@@ -13,9 +13,9 @@ import { provideJigForTests } from '../../../testing/jig'
 import en from '../../core/i18n/locales/en.json'
 
 /** A full page of rows, which is what makes the store believe more of them exist. */
-function fullPage(): ProjectDto[] {
+function fullPage(prefix = 'p'): ProjectDto[] {
   return Array.from({ length: PROJECTS_PAGE_SIZE }, (_, index) => ({
-    id: `p${index}`,
+    id: `${prefix}${index}`,
     name: `Project ${index}`,
     isArchived: false,
     state: 'ok' as const,
@@ -230,5 +230,70 @@ describe('ProjectsPage', () => {
     expect(
       (fixture.nativeElement as HTMLElement).querySelectorAll('.spm-list-footer button'),
     ).toHaveLength(0)
+  })
+
+  /**
+   * Fix round 1, finding 2. Disabling the control that currently has focus drops focus to the
+   * body, so a keyboard user would pay a re-tab through every card on screen for each page — the
+   * exact cost the button exists to avoid (C6). `loadMore`'s own in-flight guard already refuses
+   * the second request, so the attribute prevented nothing and cost focus; `aria-busy` says the
+   * same thing to a screen reader and takes nothing away.
+   *
+   * The assertion is taken mid-flight, with the page deliberately left pending — after it
+   * resolves, `isLoadingMore()` is false again and a disabled binding would read as enabled.
+   */
+  it('keeps the pressed control enabled while its page loads, and marks it busy', async () => {
+    let release: (rows: ProjectDto[]) => void = () => {}
+    const list = vi
+      .fn()
+      .mockResolvedValueOnce(fullPage())
+      .mockImplementationOnce(
+        () =>
+          new Promise<ProjectDto[]>((resolve) => {
+            release = resolve
+          }),
+      )
+    const { fixture } = await setup({ list })
+    await fixture.whenStable()
+    fixture.detectChanges()
+    const button = (fixture.nativeElement as HTMLElement).querySelector<HTMLButtonElement>(
+      '.spm-list-footer button',
+    )
+
+    button?.click()
+    await Promise.resolve()
+    fixture.detectChanges()
+
+    expect(button?.disabled).toBe(false)
+    expect(button?.getAttribute('aria-busy')).toBe('true')
+
+    release([])
+    await fixture.whenStable()
+  })
+
+  /**
+   * The press has to say it did something. Its whole result is 48 more rows below the fold, which
+   * a screen-reader user has no way to notice; a polite status region is the announcement.
+   *
+   * The two pages carry different ids on purpose: identical ones would be de-duplicated away and
+   * the total would not move, so the region would have nothing to say and the test would pass
+   * against a page that never announced anything.
+   */
+  it('announces the new total once more projects have loaded', async () => {
+    const list = vi.fn().mockResolvedValueOnce(fullPage('a')).mockResolvedValueOnce(fullPage('b'))
+    const { fixture } = await setup({ list })
+    await fixture.whenStable()
+    fixture.detectChanges()
+    const region = (fixture.nativeElement as HTMLElement).querySelector(
+      '.spm-list-footer [role="status"]',
+    )
+    expect(region?.textContent?.trim()).toBe('')
+
+    await fixture.componentInstance.onLoadMore()
+    fixture.detectChanges()
+
+    expect(region?.textContent?.trim()).toBe(
+      en.projects.showing.replace('{{ count }}', String(PROJECTS_PAGE_SIZE * 2)),
+    )
   })
 })

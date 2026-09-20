@@ -202,8 +202,17 @@ import { ProjectsStore } from './projects.store'
              screen reader, both of which move focus without ever scrolling a container. It is
              also the only path to rows 49 and beyond until the scroll trigger lands.
 
-             loadMore refuses a second request while one is in flight, so the disabled state here
-             is about telling the user why nothing is happening, not about preventing it. -->
+             The button is NOT disabled while its page loads, and that is the accessibility fix
+             rather than an omission (fix round 1, finding 2): disabling the element that
+             currently has focus drops focus to the body, so the next page would cost a keyboard
+             user a re-tab through every card already on screen -- the precise cost C6 exists to
+             avoid, paid once per page. loadMore already refuses a second request while one is in
+             flight, so the attribute was preventing nothing; aria-busy says the same thing to a
+             screen reader without taking focus away.
+
+             The status region is the other half: a press whose result is 48 more rows further
+             down the page is otherwise silent. It is outside the hasMore block so it survives
+             the last page, which is when its final message is the one that matters. -->
         <div class="spm-list-footer">
           @if (store.isLoadingMore()) {
             <jig-spinner centered [size]="32" />
@@ -213,12 +222,17 @@ import { ProjectsStore } from './projects.store'
               jigButton
               kind="secondary"
               type="button"
-              [disabled]="store.isLoadingMore()"
-              (click)="store.loadMore()"
+              [attr.aria-busy]="store.isLoadingMore() ? 'true' : null"
+              (click)="onLoadMore()"
             >
               {{ t.translations().projects.loadMore }}
             </button>
           }
+          <p class="spm-sr-only" role="status">
+            @if (shownCount(); as count) {
+              {{ t.translations().projects.showing | interpolate: { count: count } }}
+            }
+          </p>
         </div>
       }
     </main>
@@ -250,6 +264,24 @@ export class ProjectsPage {
 
   onSearch(event: Event): void {
     this.store.setSearch((event.target as HTMLInputElement).value)
+  }
+
+  /**
+   * How many projects are on screen, published only after the user has asked for more.
+   *
+   * `null` until then, so the status region starts empty: a live region that already holds text
+   * when the list first renders announces nothing anyway (only later changes are spoken), and
+   * an empty one cannot be mistaken for a count that was never updated. A failed page leaves the
+   * total where it was, so the region does not change and does not speak -- the error snackbar is
+   * what reports that, and two messages for one press is worse than one.
+   */
+  protected readonly shownCount = signal<number | null>(null)
+
+  // Public, like onCreate/onRescan: the page spec drives it directly. `store.loadMore` never
+  // rejects, so there is nothing to catch here -- it reports its own failure.
+  async onLoadMore(): Promise<void> {
+    await this.store.loadMore()
+    this.shownCount.set(this.store.items().length)
   }
 
   readonly rescanned = signal<RescanResultDto | null>(null)

@@ -89,6 +89,16 @@ export class ProjectsStore {
 
   private readonly loadingMore = signal(false)
 
+  /**
+   * Which filter the accumulated pages belong to. Bumped by every reset; captured by `loadMore`
+   * before it awaits and compared after, so a page fetched for a filter the user has since
+   * changed is discarded whole — its rows *and* its offset bookkeeping.
+   *
+   * A plain field rather than a signal on purpose: nothing renders from it and nothing should
+   * recompute when it changes. It is a token, not state.
+   */
+  private generation = 0
+
   /** Whether a further page is currently being fetched — the page renders a spinner on it. */
   readonly isLoadingMore = this.loadingMore.asReadonly()
 
@@ -146,6 +156,18 @@ export class ProjectsStore {
   })
 
   /**
+   * Every tag in the user's library, asked of the library itself rather than inferred from the
+   * rows on screen (spec H 4). Reloaded after a rescan, which can adopt folders carrying tags
+   * this library has never seen.
+   */
+  readonly tags = resource<string[], void>({
+    loader: () => this.api.projects.tags(),
+    defaultValue: [],
+  })
+
+  /**
+   * The tags the filter bar renders: every tag in the library, plus whatever is selected.
+   *
    * Ruling 59: the tag filter bar must always offer a way to un-toggle an active filter. With
    * AND filtering, two tags that no single project shares in common yield an empty result set —
    * and if the rendered list were derived only from what is on screen it would go empty right
@@ -156,17 +178,12 @@ export class ProjectsStore {
    * Spec H 4 changes where the base list comes from and leaves that rule exactly as it was: the
    * union used to start from the tags of the loaded projects, which stopped being "every tag in
    * the library" the moment the list started arriving one page at a time. It now starts from the
-   * `projects.tags()` resource, which asks the library directly.
+   * `tags` resource above, which asks the library directly.
    *
    * The `status() === 'error'` guard moved along with it, for the same reason it existed: a
    * resource whose load failed throws from `value()`, and this computed is read by the filter bar
    * independently of the grid, so it must survive a failed load on its own.
    */
-  readonly tags = resource<string[], void>({
-    loader: () => this.api.projects.tags(),
-    defaultValue: [],
-  })
-
   readonly knownTags = computed(() => {
     const selected = this.query().tags ?? []
     const library = this.tags.status() === 'error' ? [] : this.tags.value()
@@ -179,10 +196,25 @@ export class ProjectsStore {
    * this only has to throw away what the *previous* filter accumulated.
    */
   private applyQuery(next: (query: ProjectQuery) => ProjectQuery): void {
+    this.resetPaging()
+    this.queryState.update(next)
+  }
+
+  /**
+   * Throws away everything paged in so far and invalidates any request still running.
+   *
+   * The invalidation is the part that is easy to leave out, and leaving it out is a real defect
+   * rather than a tidiness one: without it, a page fetched for the previous filter lands after
+   * the reset and appends the OLD filter's rows under the new filter's page zero — the exact
+   * thing spec 3.3 says a filter change must not do. It also advanced `nextOffset` past the new
+   * filter's second page, which then became unreachable until the next reset. Fix round 1,
+   * finding 1.
+   */
+  private resetPaging(): void {
+    this.generation += 1
     this.appended.set([])
     this.lastPageLength.set(null)
     this.nextOffset.set(PROJECTS_PAGE_SIZE)
-    this.queryState.update(next)
   }
 
   setSearch(term: string): void {
@@ -249,12 +281,17 @@ export class ProjectsStore {
     if (this.loadingMore() || !this.hasMore()) return
     this.loadingMore.set(true)
     const offset = this.nextOffset()
+    const generation = this.generation
     try {
       const page = await this.api.projects.list({
         ...this.queryState(),
         limit: PROJECTS_PAGE_SIZE,
         offset,
       })
+      // The filter moved while this was in flight, so these rows answer a question the user has
+      // stopped asking. Nothing here is salvageable — not the rows, which belong to the old
+      // filter, and not the offset, which counts into the old filter's result set.
+      if (generation !== this.generation) return
       this.nextOffset.set(offset + PROJECTS_PAGE_SIZE)
       this.appended.update((rows) => [...rows, ...page])
       this.lastPageLength.set(page.length)
@@ -265,6 +302,14 @@ export class ProjectsStore {
     }
   }
 
+  /**
+   * Creates a project and re-queries the list around it.
+   *
+   * **The `tags` resource is deliberately not reloaded here, unlike in `rescan`.**
+   * `createProjectSchema` carries a name and nothing else, so a just-created project has no tags
+   * and the library's tag list cannot have changed. The day creation can attach a tag, this needs
+   * the `this.tags.reload()` that `rescan` has — the omission is a decision, not an oversight.
+   */
   async create(input: CreateProjectInput): Promise<ProjectDto> {
     const created = await this.api.projects.create(input)
     this.reloadFirstPage()
@@ -288,9 +333,7 @@ export class ProjectsStore {
    * that are now in the wrong place and possibly duplicated.
    */
   private reloadFirstPage(): void {
-    this.appended.set([])
-    this.lastPageLength.set(null)
-    this.nextOffset.set(PROJECTS_PAGE_SIZE)
+    this.resetPaging()
     this.projects.reload()
   }
 

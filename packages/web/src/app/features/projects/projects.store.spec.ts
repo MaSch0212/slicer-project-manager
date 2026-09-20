@@ -323,6 +323,51 @@ describe('ProjectsStore', () => {
     expect(store.isLoadingMore()).toBe(false)
   })
 
+  /**
+   * Fix round 1, finding 1. Spec H 3.3 says a filter change replaces — and the reset alone does
+   * not achieve that, because a request already running knows nothing about it. When the old
+   * filter's page landed it appended its rows under the new filter's page zero AND advanced
+   * `nextOffset` past the new filter's second page, which then became unreachable entirely.
+   *
+   * The shape is the one that catches it and nothing weaker does: start the load, change the
+   * filter WHILE IT IS STILL PENDING, then resolve it. A test that settles the load first (the
+   * "replaces rather than appends" one above) passes against the broken code.
+   *
+   * Both consequences are asserted, because the rows alone would not have caught the offset.
+   */
+  it('discards a page that lands after the filter it was fetched for changed', async () => {
+    let release: (rows: ProjectDto[]) => void = () => {}
+    const list = vi
+      .fn()
+      .mockResolvedValueOnce(fullPage('stale'))
+      .mockImplementationOnce(
+        () =>
+          new Promise<ProjectDto[]>((resolve) => {
+            release = resolve
+          }),
+      )
+      .mockResolvedValueOnce(fullPage('fresh'))
+      .mockResolvedValue([project({ id: 'last' })])
+    const { store, api } = await setup({}, list)
+    await settle()
+
+    const pending = store.loadMore()
+    store.setSearch('boat')
+    await settle()
+    release(fullPage('late'))
+    await pending
+    await settle()
+
+    expect(store.items()).toHaveLength(PROJECTS_PAGE_SIZE)
+    expect(ids(store.items()).every((id) => id.startsWith('fresh'))).toBe(true)
+
+    await store.loadMore()
+
+    expect(api.projects.list).toHaveBeenLastCalledWith(
+      expect.objectContaining({ search: 'boat', offset: PROJECTS_PAGE_SIZE }),
+    )
+  })
+
   // Spec H 3.3: the store has no total, so it infers the end from a short page. This is what
   // decides whether the "Load more" control renders at all.
   it('reports no more rows once a page comes back short', async () => {

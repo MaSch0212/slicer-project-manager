@@ -33,6 +33,7 @@
     "rescan": "Bibliothek neu einlesen",
     "rescanned": "{{ adopted }} übernommen, {{ filesAdded }} Dateien ergänzt",
     "empty": "Noch keine Projekte",
+    "showing": "{{ count }} Projekte werden angezeigt",
     "loadMore": "Mehr laden",
     "loadMoreFailed": "Weitere Projekte konnten nicht geladen werden. Bitte versuchen Sie es erneut.",
     "filterNotRemembered": "Ihr Filter ist angewendet, konnte aber nicht für das nächste Mal gespeichert werden.",

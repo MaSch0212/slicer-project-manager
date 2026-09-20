@@ -477,6 +477,21 @@ spm-nav-list {
   padding-top: var(--jig-size-padding-lg);
 }
 
+/*
+ * Read but not seen. The same clip pattern the collapsed sidebar uses for its brand name and its
+ * entry labels, for the same reason: `display: none` and `visibility: hidden` remove the element
+ * from the accessibility tree along with the picture, and a live region that is not in the tree
+ * announces nothing. This one renders, is still read, and occupies a pixel nobody can see.
+ */
+.spm-sr-only {
+  position: absolute;
+  overflow: hidden;
+  width: 1px;
+  height: 1px;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
 .spm-project-body {
   display: flex;
   flex: 1;

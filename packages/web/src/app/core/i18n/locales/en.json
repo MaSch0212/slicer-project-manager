@@ -33,6 +33,7 @@
     "rescan": "Rescan library",
     "rescanned": "Adopted {{ adopted }}, {{ filesAdded }} files added",
     "empty": "No projects yet",
+    "showing": "Showing {{ count }} projects",
     "loadMore": "Load more",
     "loadMoreFailed": "More projects could not be loaded. Please try again.",
     "filterNotRemembered": "Your filter is applied, but it could not be saved for next time.",
