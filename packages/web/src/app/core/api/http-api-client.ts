@@ -256,6 +256,7 @@ export class HttpApiClient implements ApiClient {
       this.request(`/api/projects/${id}/tags/${encodeURIComponent(name)}`, { method: 'DELETE' }),
     rescan: (): Promise<RescanResultDto> =>
       this.request('/api/projects/rescan', { method: 'POST' }),
+    tags: (): Promise<string[]> => this.request('/api/projects/tags'),
   }
 
   readonly importer = {

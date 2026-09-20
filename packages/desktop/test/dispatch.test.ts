@@ -332,6 +332,7 @@ function exerciseAll(client: ApiClient): Record<ApiPath, () => Promise<unknown>>
     'projects.addTag': () => client.projects.addTag('id', 'tag'),
     'projects.removeTag': () => client.projects.removeTag('id', 'tag'),
     'projects.rescan': () => client.projects.rescan(),
+    'projects.tags': () => client.projects.tags(),
     'importer.curaManagerZip': () => client.importer.curaManagerZip({ blob: new Blob([bytes]) }),
     'files.upload': () => client.files.upload('id', 'a.stl', { blob: new Blob([bytes]) }),
     'files.rename': () => client.files.rename('id', 'b.stl'),
@@ -817,6 +818,22 @@ test('a project can be created, found, tagged, listed, updated and deleted', asy
 
   await call('projects.delete', [created.id, { deleteFiles: true }])
   assert.equal((await rejection(call('projects.get', [created.id]))).code, 'NotFound')
+})
+
+test("projects.tags returns the library's distinct tags, sorted case-insensitively", async () => {
+  const a = (await call('projects.create', [{ name: 'Tagged A', tags: ['Zebra'] }])) as {
+    id: string
+  }
+  const b = (await call('projects.create', [{ name: 'Tagged B', tags: ['apple'] }])) as {
+    id: string
+  }
+
+  // 'Zebra' sorts before 'apple' under plain ordering ('Z' is 90, 'a' is 97), so this only
+  // passes with case-insensitive sorting genuinely applied, not by accident.
+  assert.deepEqual(await call('projects.tags'), ['apple', 'Zebra'])
+
+  await call('projects.delete', [a.id, { deleteFiles: true }])
+  await call('projects.delete', [b.id, { deleteFiles: true }])
 })
 
 test('files upload, rename and delete, and their URLs point at the reserved spm:// path', async () => {

@@ -257,6 +257,72 @@ Deno.test(
   },
 )
 
+Deno.test('GET /api/projects/tags returns the tag list, sorted case-insensitively', async () => {
+  await withServer(async (server) => {
+    const cookie = await loginAsAdmin(server)
+    const post = (name: string, tags: string[]) =>
+      server.fetch('/api/projects', {
+        method: 'POST',
+        cookie,
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ name, tags }),
+      })
+    await post('Benchy', ['Zebra'])
+    await post('Bracket', ['apple', 'functional'])
+
+    const response = await server.fetch('/api/projects/tags', { cookie })
+    // Also proves this hits the tag list and not /api/projects/:id, which would answer 404 for
+    // an id of "tags" -- exactly the collision the literal-path-first ordering exists to avoid.
+    assert.equal(response.status, 200)
+    // 'Zebra' sorts before 'apple' under plain ordering ('Z' is 90, 'a' is 97), so this only
+    // passes with case-insensitive sorting genuinely applied.
+    assert.deepEqual(await response.json(), ['apple', 'functional', 'Zebra'])
+  })
+})
+
+Deno.test('another user tags are not returned by GET /api/projects/tags', async () => {
+  await withServer(async (server) => {
+    const adminCookie = await loginAsAdmin(server)
+    const created = await (
+      await server.fetch('/api/users', {
+        method: 'POST',
+        cookie: adminCookie,
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ username: 'anna', displayName: 'Anna' }),
+      })
+    ).json()
+    const token = created.activationUrl.split('#')[1]
+    const annaCookie = (
+      await server.fetch(`/api/auth/activation/${token}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          password: 'another long password',
+          confirm: 'another long password',
+        }),
+      })
+    ).headers
+      .get('set-cookie')!
+      .split(';')[0]!
+
+    await server.fetch('/api/projects', {
+      method: 'POST',
+      cookie: adminCookie,
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: 'Mine', tags: ['petg'] }),
+    })
+
+    assert.deepEqual(
+      await (await server.fetch('/api/projects/tags', { cookie: annaCookie })).json(),
+      [],
+    )
+    assert.deepEqual(
+      await (await server.fetch('/api/projects/tags', { cookie: adminCookie })).json(),
+      ['petg'],
+    )
+  })
+})
+
 Deno.test('rescan adopts folders and reports what it did', async () => {
   await withServer(async (server) => {
     const cookie = await loginAsAdmin(server)

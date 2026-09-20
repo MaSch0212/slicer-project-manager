@@ -229,6 +229,28 @@ export function listProjects(lib: Library, ctx: Ctx, query: ProjectQuery): CoreP
   )
 }
 
+/**
+ * The distinct tag names in the user's library, sorted case-insensitively (spec §4).
+ *
+ * Scoped by ctx.userId exactly as listProjects is above: there is no unscoped variant to call
+ * by mistake. Reads the `tags` table directly rather than joining through `project_tags` and
+ * `projects` — a tag row only exists for an owner while at least one of their projects still
+ * carries it (removeTag's orphan cleanup in `projects/usecases.ts` deletes the row the moment
+ * that stops being true), so the table itself already *is* "the tags currently in the library."
+ *
+ * This replaces `ProjectsStore.knownTags`, which derived the list from whatever page of
+ * projects happened to be loaded — correct only while "loaded" meant "all of them" (spec §1
+ * fact 3). Both `PETG` and `petg` can never coexist here for one owner: `tags` is declared
+ * `UNIQUE (owner_id, name COLLATE NOCASE)` (`db/migrations/001_init.sql`), so a case collision
+ * is a write-time conflict, not a read-time de-duplication concern.
+ */
+export function listTags(lib: Library, ctx: Ctx): string[] {
+  const rows = lib.db
+    .prepare('SELECT name FROM tags WHERE owner_id = ? ORDER BY name COLLATE NOCASE')
+    .all(ctx.userId) as { name: string }[]
+  return rows.map((row) => row.name)
+}
+
 export function getProject(lib: Library, ctx: Ctx, id: string): CoreProjectDetailDto {
   const row = requireProjectRow(lib, ctx, id)
   const tags = tagsByProject(lib.db, [id]).get(id) ?? []

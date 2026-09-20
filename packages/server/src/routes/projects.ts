@@ -12,6 +12,7 @@ import {
   deleteProject,
   getProject,
   listProjects,
+  listTags,
   removeTag,
   rescan,
   updateProject,
@@ -78,6 +79,13 @@ export const projectRoutes: Route[] = [
     path: '/api/projects/rescan',
     auth: 'session',
     handler: async ({ env, ctx }) => json(await rescan(env.lib, ctx)),
+  },
+  // Must precede /api/projects/:id so "tags" is never read as an id (spec §4).
+  {
+    method: 'GET',
+    path: '/api/projects/tags',
+    auth: 'session',
+    handler: ({ env, ctx }) => json(listTags(env.lib, ctx)),
   },
   {
     method: 'GET',

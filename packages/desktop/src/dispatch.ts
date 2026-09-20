@@ -49,6 +49,7 @@ import {
   getSettings,
   importCuraManagerZip,
   listProjects,
+  listTags,
   listUsers,
   me,
   putSettings,
@@ -984,6 +985,7 @@ export const dispatch: DispatchTable = {
   'projects.rescan': libraryCall('projects.rescan', z.tuple([]), ({ lib, ctx }) =>
     rescan(lib, ctx),
   ),
+  'projects.tags': libraryCall('projects.tags', z.tuple([]), ({ lib, ctx }) => listTags(lib, ctx)),
 
   'importer.curaManagerZip': libraryCall(
     'importer.curaManagerZip',

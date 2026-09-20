@@ -40,7 +40,7 @@ export {
 } from './users/admin.ts'
 export { diskUsageBytes, diskUsageByUser } from './users/usage.ts'
 
-export { getProject, listProjects } from './projects/queries.ts'
+export { getProject, listProjects, listTags } from './projects/queries.ts'
 export {
   addTag,
   createProject,

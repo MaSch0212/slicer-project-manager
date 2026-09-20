@@ -346,6 +346,7 @@ export class IpcApiClient implements ApiClient {
     removeTag: (id: string, name: string): Promise<void> =>
       this.invoke('projects.removeTag', [id, name]),
     rescan: (): Promise<RescanResultDto> => this.invoke('projects.rescan'),
+    tags: (): Promise<string[]> => this.invoke('projects.tags'),
   }
 
   readonly importer = {

@@ -4,7 +4,7 @@ import type { AppError } from '@spm/contract/errors.ts'
 import type { Ctx } from '../src/ctx.ts'
 import { newId } from '../src/db/ids.ts'
 import type { Library } from '../src/db/open.ts'
-import { getProject, listProjects } from '../src/projects/queries.ts'
+import { getProject, listProjects, listTags } from '../src/projects/queries.ts'
 import {
   addTag,
   createProject,
@@ -399,6 +399,29 @@ test('file counts and the cover file id come back on the list DTO', async () => 
 
     const modelReady = seedFile(lib, project.id, 'a-model.stl', 'model', 'ready')
     assert.equal(listProjects(lib, ctx, {})[0]!.coverFileId, modelReady)
+  })
+})
+
+test("listTags returns the owner's distinct tags, sorted case-insensitively", async () => {
+  await withLibrary((lib) => {
+    const ctx = seedUser(lib, 'marc')
+    createProject(lib, ctx, { name: 'A', tags: ['Zebra'] })
+    createProject(lib, ctx, { name: 'B', tags: ['apple', 'functional'] })
+
+    // 'Zebra' sorts before 'apple' under plain (case-sensitive) ordering -- 'Z' is 90, 'a' is
+    // 97 -- so this only passes with COLLATE NOCASE actually applied, not by accident.
+    assert.deepEqual(listTags(lib, ctx), ['apple', 'functional', 'Zebra'])
+  })
+})
+
+test("listTags does not return another user's tags", async () => {
+  await withLibrary((lib) => {
+    const marc = seedUser(lib, 'marc')
+    const anna = seedUser(lib, 'anna')
+    createProject(lib, marc, { name: 'Mine', tags: ['petg'] })
+
+    assert.deepEqual(listTags(lib, anna), [])
+    assert.deepEqual(listTags(lib, marc), ['petg'])
   })
 })
 

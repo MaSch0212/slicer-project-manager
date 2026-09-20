@@ -140,6 +140,7 @@ const SERVER_ROUTES = [
   'GET /api/files/:id/thumb',
   'GET /api/projects',
   'GET /api/projects/:id',
+  'GET /api/projects/tags',
   'GET /api/users',
   'PATCH /api/account',
   'PATCH /api/files/:id',

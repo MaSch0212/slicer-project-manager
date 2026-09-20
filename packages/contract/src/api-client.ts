@@ -406,6 +406,15 @@ export interface ApiClient {
     addTag(id: string, name: string): Promise<void>
     removeTag(id: string, name: string): Promise<void>
     rescan(): Promise<RescanResultDto>
+
+    /**
+     * The distinct tag names in the user's library, sorted case-insensitively (spec §4).
+     *
+     * A resource of its own because `list`'s paging (spec §3) means "the tags on the loaded
+     * projects" is no longer "every tag" once the library has more than one page. Replaces
+     * `ProjectsStore.knownTags`, which relied on that no-longer-true equivalence.
+     */
+    tags(): Promise<string[]>
   }
 
   importer: {
