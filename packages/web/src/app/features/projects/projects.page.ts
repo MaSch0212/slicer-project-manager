@@ -1,27 +1,49 @@
-import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core'
+import {
+  ChangeDetectionStrategy,
+  Component,
+  DestroyRef,
+  computed,
+  inject,
+  signal,
+} from '@angular/core'
 import { RouterLink } from '@angular/router'
 import { FormField, form, submit, validateStandardSchema } from '@angular/forms/signals'
 import { InterpolatePipe } from '@ngneers/signal-translate'
-import { createProjectSchema } from '@spm/contract/schemas.ts'
-import type { RescanResultDto } from '@spm/contract/dtos.ts'
+import { SEARCH_MAX_LENGTH, createProjectSchema } from '@spm/contract/schemas.ts'
+import type { RescanResultDto, SettingsDto } from '@spm/contract/dtos.ts'
+import { JigBadge } from '@awdlab/jig/badge'
 import { JigButton } from '@awdlab/jig/button'
-import { JigCheckbox } from '@awdlab/jig/checkbox'
 import { JigErrors } from '@awdlab/jig/errors'
 import { JigHint } from '@awdlab/jig/hint'
 import { JigIcon } from '@awdlab/jig/icon'
 import { JigInput } from '@awdlab/jig/input'
 import { JigInputField } from '@awdlab/jig/input-field'
+import { JigListBox } from '@awdlab/jig/list-box'
 import { JigMessage } from '@awdlab/jig/message'
+import { JigPopover } from '@awdlab/jig/popover'
 import { JigSelect } from '@awdlab/jig/select'
 import { JigSpinner } from '@awdlab/jig/spinner'
 import { JigTag } from '@awdlab/jig/tag'
-import { JigToggleButton } from '@awdlab/jig/toggle-button'
+import { JigTooltip } from '@awdlab/jig/tooltip'
+import tablerArchive from '@iconify/icons-tabler/archive'
+import tablerArchiveOff from '@iconify/icons-tabler/archive-off'
+import tablerArrowsSort from '@iconify/icons-tabler/arrows-sort'
+import tablerLayoutGrid from '@iconify/icons-tabler/layout-grid'
 import tablerPlus from '@iconify/icons-tabler/plus'
 import tablerRefresh from '@iconify/icons-tabler/refresh'
 import tablerSearch from '@iconify/icons-tabler/search'
+import tablerTag from '@iconify/icons-tabler/tag'
+import { NotifyService } from '../../core/notify.service'
 import { SettingsStore } from '../../core/settings.store'
 import { TranslateService } from '../../core/i18n/translate.service'
 import { ProjectsStore } from './projects.store'
+
+/**
+ * How long the search box waits after the last keystroke before it queries (spec 7.1).
+ *
+ * Exported so the page spec waits on the same number this uses rather than a copy of it.
+ */
+export const SEARCH_DEBOUNCE_MS = 250
 
 @Component({
   selector: 'spm-projects-page',
@@ -29,18 +51,20 @@ import { ProjectsStore } from './projects.store'
     RouterLink,
     FormField,
     InterpolatePipe,
+    JigBadge,
     JigButton,
-    JigCheckbox,
     JigErrors,
     JigHint,
     JigIcon,
     JigInput,
     JigInputField,
+    JigListBox,
     JigMessage,
+    JigPopover,
     JigSelect,
     JigSpinner,
     JigTag,
-    JigToggleButton,
+    JigTooltip,
   ],
   providers: [ProjectsStore],
   changeDetection: ChangeDetectionStrategy.OnPush,
@@ -68,54 +92,140 @@ import { ProjectsStore } from './projects.store'
         </jig-message>
       }
 
+      <!-- One row: the search box leads, and the four controls that narrow or reshape the result
+           set follow it. They are icon-first because the row has to survive a narrow window;
+           every one of them still carries a name a screen reader can read, which is what
+           constraint C6 asks of an icon-only control.
+
+           No labelKind="on" anywhere in here any more. A visible label above each control is
+           what made this a two-storey block rather than a row, and the user asked for the row. -->
       <section class="spm-card spm-stack spm-filters">
-        <div class="spm-row">
-          <jig-input-field
-            class="spm-grow"
-            [label]="t.translations().projects.search"
-            labelKind="on"
-          >
+        <div class="spm-filter-bar">
+          <!-- A placeholder is not an accessible name: it is announced as a hint, it is
+               translated by the browser's own heuristics rather than ours, and it disappears the
+               moment anything is typed. So the visible label goes and an aria-label stays.
+
+               maxlength is half of a pair. projectQuerySchema caps the term at
+               SEARCH_MAX_LENGTH and parseProjectQuery answers a query that fails validation with
+               a 400, so a pasted 201st character would turn a search into a hard failure. This
+               stops the typing case; ProjectsStore.setSearch truncates, which covers the paste
+               and every caller that is not this box.
+
+               No [value] binding back from the store, and that is deliberate now that the term
+               is debounced: the store holds the term trimmed and truncated, so binding it back
+               would rewrite the box a quarter of a second after typing stopped and eat a
+               trailing space the user had just typed. Nothing else in the application writes the
+               search term -- it is the one filter the store pointedly does not restore on a
+               revisit -- so there is no state for the box to fall out of step with. -->
+          <jig-input-field class="spm-search">
             <jig-icon [icon]="icons.search" />
-            <input jigInput [value]="store.query().search ?? ''" (input)="onSearch($event)" />
-          </jig-input-field>
-
-          <jig-input-field
-            inputId="projects-sort"
-            [label]="t.translations().settings.sort"
-            labelKind="on"
-          >
-            <jig-select
-              inputId="projects-sort"
-              [label]="t.translations().settings.sort"
-              [options]="sortOptions()"
-              [value]="sortValue()"
-              (valueChange)="onSort($event)"
+            <input
+              jigInput
+              type="search"
+              [attr.aria-label]="t.translations().projects.search"
+              [placeholder]="t.translations().projects.search"
+              [attr.maxlength]="searchMaxLength"
+              (input)="onSearch($event)"
             />
           </jig-input-field>
 
-          <span class="spm-check">
-            <jig-checkbox
-              #archivedBox
-              [value]="store.query().includeArchived === true"
-              (valueChange)="store.setIncludeArchived($event === true)"
-            />
-            <label [for]="archivedBox.inputId()">
-              {{ t.translations().projects.includeArchived }}
-            </label>
-          </span>
-        </div>
+          <div class="spm-filter-actions">
+            <!-- The icon is projected into jig-input-field ahead of the select, which is how the
+                 field takes a prefix adornment; measured against @awdlab/jig 0.0.5, the field
+                 skips icons when it looks for the control it wraps, so the select is still the
+                 thing the field is wired to. The select's own label input becomes its aria-label,
+                 so dropping the visible label costs nothing in the accessibility tree.
 
-        @if (store.knownTags().length > 0) {
-          <div class="spm-row spm-tags">
-            @for (tag of store.knownTags(); track tag) {
-              <jig-toggle-button
-                [label]="tag"
-                [value]="activeTags().has(tag)"
-                (valueChange)="store.toggleTag(tag)"
+                 sortPopover is what stops the popup wrapping "Recently updated". jig-select
+                 defaults its popover width and max-width to 1 -- meaning exactly the trigger's
+                 width -- so the longest option wraps whenever the trigger is narrow.
+
+                 No backticks in this comment: the template is a JS template literal, so a
+                 backtick ends it before it is ever text. -->
+            <jig-input-field class="spm-sort" inputId="projects-sort">
+              <jig-icon [icon]="icons.sort" />
+              <jig-select
+                inputId="projects-sort"
+                [label]="t.translations().settings.sort"
+                [options]="sortOptions()"
+                [value]="sortValue()"
+                [popoverOptions]="sortPopover"
+                (valueChange)="onSort($event)"
               />
-            }
+            </jig-input-field>
+
+            <!-- One control with a state, not two controls. The icon flips; the name does not,
+                 because a name that flips is announced as a different control each press, which
+                 is the job aria-pressed already does. The name comes from the tooltip rather
+                 than an aria-label of our own: JigTooltip's autoAria writes aria-label in
+                 "label" mode and removes any aria-label it did not write itself.
+
+                 A plain button rather than jig-toggle-button, and the reason is the attribute
+                 the spec asks for. Measured against @awdlab/jig 0.0.5: jig-toggle-button renders
+                 role="switch" with aria-checked and offers no way to emit aria-pressed, so it
+                 announces a switch rather than a pressed button. Its iconOn/iconOff pair is
+                 exactly what this needs otherwise -- but a control that says the wrong thing to
+                 a screen reader is not a saving. -->
+            <button
+              jigButton
+              kind="icon"
+              type="button"
+              [attr.aria-pressed]="archivedShown()"
+              [jigTooltip]="t.translations().projects.includeArchived"
+              jigTooltipAutoAriaMode="label"
+              (click)="onToggleArchived()"
+            >
+              <jig-icon [icon]="archivedShown() ? icons.archive : icons.archiveOff" />
+            </button>
+
+            <!-- The badge is bound to the count and nothing else: jigBadge renders nothing at 0
+                 unless jigBadgeShowZero is set, so "no badge when nothing is selected" is the
+                 directive's own behaviour rather than an @if wrapped round it. -->
+            <button
+              #tagsAnchor
+              jigButton
+              kind="icon"
+              type="button"
+              [jigBadge]="selectedTags().length"
+              [attr.aria-expanded]="tagsOpen()"
+              aria-haspopup="listbox"
+              [jigTooltip]="t.translations().projects.tags"
+              jigTooltipAutoAriaMode="label"
+              (click)="tagsOpen.set(!tagsOpen())"
+            >
+              <jig-icon [icon]="icons.tags" />
+            </button>
+            <!-- jig-list-box with selectable + multiple: checkboxes, roving keyboard navigation
+                 and aria-selected per option come with it, so the dropdown is operable without a
+                 pointer. AND semantics are core's and are untouched -- this only reports which
+                 tags are selected. -->
+            <jig-popover [anchor]="tagsAnchor" [(open)]="tagsOpen" [options]="tagsPopover">
+              <jig-list-box
+                class="spm-tag-list"
+                [label]="t.translations().projects.tags"
+                [items]="tagOptions()"
+                [selectable]="true"
+                [multiple]="true"
+                [value]="selectedTags()"
+                (valueChange)="onTags($event)"
+              />
+            </jig-popover>
+
+            <!-- Moved here from the settings General tab (spec H 6). It is the control that
+                 moved, not the setting: this still writes settings.viewMode through
+                 SettingsStore.patch, and the list below still reads it from there. -->
+            <jig-input-field class="spm-view-mode" inputId="projects-view-mode">
+              <jig-icon [icon]="icons.viewMode" />
+              <jig-select
+                inputId="projects-view-mode"
+                [label]="t.translations().projects.viewMode"
+                [options]="viewModeOptions()"
+                [value]="settings.settings().viewMode"
+                (valueChange)="onViewMode($event)"
+              />
+            </jig-input-field>
           </div>
-        }
+        </div>
         @if (sortError()) {
           <jig-message color="error" role="alert">{{
             t.translations().errors.generic
@@ -242,12 +352,61 @@ export class ProjectsPage {
   protected readonly store = inject(ProjectsStore)
   protected readonly settings = inject(SettingsStore)
   protected readonly t = inject(TranslateService)
+  private readonly notify = inject(NotifyService)
 
-  protected readonly icons = { rescan: tablerRefresh, add: tablerPlus, search: tablerSearch }
+  protected readonly icons = {
+    rescan: tablerRefresh,
+    add: tablerPlus,
+    search: tablerSearch,
+    sort: tablerArrowsSort,
+    archive: tablerArchive,
+    archiveOff: tablerArchiveOff,
+    tags: tablerTag,
+    viewMode: tablerLayoutGrid,
+  }
 
-  // A Set rather than `.includes()` in the template: with N tags rendered and N in the
-  // filter that binding is O(N²) re-evaluated on every change detection pass.
-  protected readonly activeTags = computed(() => new Set(this.store.query().tags ?? []))
+  /** The cap the search box wears, from the schema that would otherwise refuse the query. */
+  protected readonly searchMaxLength = SEARCH_MAX_LENGTH
+
+  /**
+   * What the sort popup is allowed to be, overriding jig-select's own defaults.
+   *
+   * Measured against @awdlab/jig 0.0.5: the select merges the caller's options over
+   * `{ width: 1, maxWidth: 1 }`, and those two mean "exactly the width of the trigger" — which
+   * is why "Recently updated" wrapped. `max-content` sizes the popup to its longest option
+   * instead, and it is the longest *translated* option that decides, so this holds for
+   * "Zuletzt geändert" too. The minimum keeps it from collapsing narrower than the trigger.
+   */
+  protected readonly sortPopover = {
+    sizeConstraints: { width: 'max-content', minWidth: '13rem', maxWidth: '24rem' },
+  }
+
+  /** The tag popup sizes to its content and scrolls once a library has many tags. */
+  protected readonly tagsPopover = {
+    sizeConstraints: { width: 'max-content', minWidth: '14rem', maxHeight: '20rem' },
+  }
+
+  /** Whether the tag dropdown is showing — also what the button's `aria-expanded` reports. */
+  protected readonly tagsOpen = signal(false)
+
+  /** The selected tags, in the shape the multi-select both reads and reports. */
+  protected readonly selectedTags = computed(() => this.store.query().tags ?? [])
+
+  /** Every tag the library knows, as list-box options. */
+  protected readonly tagOptions = computed(() =>
+    this.store.knownTags().map((tag) => ({ label: tag, value: tag })),
+  )
+
+  /** Whether archived projects are in the list — the toggle's pressed state. */
+  protected readonly archivedShown = computed(() => this.store.query().includeArchived === true)
+
+  protected readonly viewModeOptions = computed(() => {
+    const p = this.t.translations().projects
+    return [
+      { label: p.viewModeGrid, value: 'grid' as const },
+      { label: p.viewModeList, value: 'list' as const },
+    ]
+  })
 
   protected readonly sortOptions = computed(() => {
     const s = this.t.translations().settings
@@ -262,8 +421,69 @@ export class ProjectsPage {
     () => `${this.store.query().sort}:${this.store.query().dir}`,
   )
 
+  /**
+   * Applies the typed term once the typing stops (spec 7.1).
+   *
+   * Every keystroke used to re-query. Under paging that is worse than it was: each one also
+   * throws away every page accumulated so far and starts again at offset zero, so typing eight
+   * characters costs eight requests whose results are all discarded but the last.
+   *
+   * Public, like onCreate/onRescan: the spec drives it directly.
+   */
   onSearch(event: Event): void {
-    this.store.setSearch((event.target as HTMLInputElement).value)
+    const term = (event.target as HTMLInputElement).value
+    if (this.searchTimer !== null) clearTimeout(this.searchTimer)
+    this.searchTimer = setTimeout(() => {
+      this.searchTimer = null
+      this.store.setSearch(term)
+    }, SEARCH_DEBOUNCE_MS)
+  }
+
+  private searchTimer: ReturnType<typeof setTimeout> | null = null
+
+  constructor() {
+    // A pending keystroke must not re-query a store that is being torn down with the page.
+    inject(DestroyRef).onDestroy(() => {
+      if (this.searchTimer !== null) clearTimeout(this.searchTimer)
+    })
+  }
+
+  /**
+   * Shows or hides archived projects. `setIncludeArchived` never rejects — it reports a
+   * preference it could not save through the snackbar itself — so there is nothing to catch,
+   * and `void` says the click handler is not waiting for it.
+   */
+  onToggleArchived(): void {
+    void this.store.setIncludeArchived(!this.archivedShown())
+  }
+
+  /**
+   * Takes the whole selection the multi-select reports. `null` is what the control emits when
+   * nothing is left selected, which is an empty filter rather than no change.
+   *
+   * Never rejects, for the same reason as the archived toggle.
+   */
+  onTags(tags: readonly string[] | null): void {
+    void this.store.setTags(tags ?? [])
+  }
+
+  /**
+   * Writes `settings.viewMode` — the same key the settings General tab used to write, through
+   * the same optimistic `SettingsStore.patch` (spec H 6: the control moved, the setting did not).
+   *
+   * `patch` rolls its own key back before rethrowing, so by the time this catches, the select
+   * has already snapped back to the previous mode and all that was missing was saying why. A
+   * snackbar rather than a banner: it is the result of an action the user just took (spec G 7).
+   * Catching at all is load-bearing besides — this is handed straight to a template
+   * `(valueChange)` binding, where a rejection escapes the component.
+   */
+  async onViewMode(mode: SettingsDto['viewMode'] | null): Promise<void> {
+    if (mode === null) return
+    try {
+      await this.settings.patch({ viewMode: mode })
+    } catch {
+      this.notify.error(this.t.translations().errors.generic)
+    }
   }
 
   /**

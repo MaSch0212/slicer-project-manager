@@ -103,21 +103,18 @@ describe('SettingsGeneralTab', () => {
     expect(notify.error).not.toHaveBeenCalled()
   })
 
-  // Spec G 0 defers moving this control to the projects page to segment H, so it is still here
-  // and this is still the assertion that says so.
-  it('persists a view-mode change', async () => {
-    const { tab, api } = await setup()
-    await tab.onPatch('viewMode', 'list')
-    expect(api.settings.put).toHaveBeenCalledWith({ viewMode: 'list' })
-  })
-
-  it('renders all three controls', async () => {
+  /**
+   * Spec H 6 moved the grid/list control to the projects page, so this card is down to two
+   * selects and the assertion is the one that says the third is gone. `ProjectsPage`'s own spec
+   * holds the other half — that it arrived there and still writes `settings.viewMode`.
+   */
+  it('renders the two remaining controls and no view-mode control', async () => {
     const { fixture } = await setup()
     fixture.detectChanges()
     const ids = [...(fixture.nativeElement as HTMLElement).querySelectorAll('jig-select')].map(
       (select) => select.getAttribute('inputid'),
     )
-    expect(ids).toEqual(['settings-language', 'settings-theme', 'settings-view-mode'])
+    expect(ids).toEqual(['settings-language', 'settings-theme'])
   })
 
   it('persists a language change and switches the rendered language', async () => {

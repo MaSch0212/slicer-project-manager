@@ -20,13 +20,10 @@ import { ImportPanel } from '../import/import.panel'
  *
  * It is a component of its own rather than markup inside `SettingsPage` because the page is now
  * a tab strip over a `<router-outlet />`: `/settings` has to activate a child route, and a child
- * route needs something to render. The three controls and their optimistic-save error handling
- * moved out of `SettingsPage`; the handling has since changed surface, from a banner at the top
- * of the page to a snackbar (spec G 7).
- *
- * **`viewMode` stays here on purpose.** Spec G 0 defers moving the grid/list control to the
- * projects page to segment H, so that removing it here and adding it there happens in one commit
- * and the application is never without it.
+ * route needs something to render. The preference controls and their optimistic-save error
+ * handling moved out of `SettingsPage`; the handling has since changed surface, from a banner at
+ * the top of the page to a snackbar (spec G 7), and the card is down to language and theme since
+ * spec H 6 moved the grid/list control to the projects page's own filter bar.
  *
  * Two further cards live here, both from user feedback (spec G 6.1 and 6.2):
  *
@@ -86,20 +83,6 @@ import { ImportPanel } from '../import/import.panel'
             [options]="themeOptions()"
             [value]="settings.settings().theme"
             (valueChange)="onPatch('theme', $event)"
-          />
-        </jig-input-field>
-
-        <jig-input-field
-          class="spm-block"
-          inputId="settings-view-mode"
-          [label]="t.translations().settings.viewMode"
-        >
-          <jig-select
-            inputId="settings-view-mode"
-            [label]="t.translations().settings.viewMode"
-            [options]="viewModeOptions()"
-            [value]="settings.settings().viewMode"
-            (valueChange)="onPatch('viewMode', $event)"
           />
         </jig-input-field>
       </div>
@@ -201,13 +184,6 @@ export class SettingsGeneralTab {
       { label: s.themeDark, value: 'dark' as const },
     ]
   })
-  protected readonly viewModeOptions = computed(() => {
-    const s = this.t.translations().settings
-    return [
-      { label: s.viewModeGrid, value: 'grid' as const },
-      { label: s.viewModeList, value: 'list' as const },
-    ]
-  })
 
   /**
    * Whether the server address field is showing. Closed by default so the common answer — a
@@ -261,10 +237,10 @@ export class SettingsGeneralTab {
     this.t.setLanguage(language)
   }
 
-  async onPatch<K extends 'theme' | 'viewMode'>(
-    key: K,
-    value: SettingsDto[K] | null,
-  ): Promise<void> {
+  // Still generic, though `viewMode` moved to the projects page and `theme` is the only key
+  // left: the shape is what keeps the key and the value checked against each other, and the
+  // next setting that belongs on this card is a one-word change rather than a rewrite.
+  async onPatch<K extends 'theme'>(key: K, value: SettingsDto[K] | null): Promise<void> {
     if (value === null) return
     // TypeScript cannot narrow an object literal keyed by a generic parameter back to
     // Partial<SettingsDto> (a known limitation around computed property types), so this

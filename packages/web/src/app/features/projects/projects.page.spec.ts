@@ -7,8 +7,8 @@ import { DEFAULT_SETTINGS, type ProjectDto, type SettingsDto } from '@spm/contra
 import { API_CLIENT } from '../../core/api/api-client.token'
 import { TranslateService } from '../../core/i18n/translate.service'
 import { NotifyService } from '../../core/notify.service'
-import { ProjectsPage } from './projects.page'
-import { PROJECTS_PAGE_SIZE } from './projects.store'
+import { ProjectsPage, SEARCH_DEBOUNCE_MS } from './projects.page'
+import { PROJECTS_PAGE_SIZE, ProjectsStore } from './projects.store'
 import { provideJigForTests } from '../../../testing/jig'
 import en from '../../core/i18n/locales/en.json'
 
@@ -24,6 +24,11 @@ function fullPage(prefix = 'p'): ProjectDto[] {
     createdAt: 0,
     updatedAt: 0,
   }))
+}
+
+/** Longer than the debounce, so the search the test typed has actually been applied. */
+function afterDebounce(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, SEARCH_DEBOUNCE_MS + 20))
 }
 
 async function setup(
@@ -304,6 +309,257 @@ describe('ProjectsPage', () => {
    * that the total is already published and re-publishing the same number changes no text — so
    * the fixture fails the first press deliberately, which is the only press that catches it.
    */
+  /**
+   * Spec H 7.1-7.4 and constraint C6. Every control in the filter bar lost its visible label to
+   * the user's request for one row, so each one has to carry its name some other way -- and the
+   * way differs per control: the search box sets aria-label itself, the two selects get theirs
+   * from jig-select's label input, and the two icon buttons from JigTooltip's autoAria, which
+   * writes aria-label and removes any it did not write.
+   *
+   * The second half is what keeps the first half honest: an assertion that five names exist
+   * would also pass against a bar that had kept its five visible labels and changed nothing.
+   */
+  it('names every filter control without a visible label on any of them', async () => {
+    const { fixture } = await setup()
+    await fixture.whenStable()
+    fixture.detectChanges()
+    const bar = (fixture.nativeElement as HTMLElement).querySelector('.spm-filter-bar')
+
+    // Addressed by what each control IS rather than by the name it carries: a search for the
+    // name alone would answer with whatever happened to hold it, and the tag list box inside
+    // the dropdown carries the same string as the button that opens it.
+    const named: [string, string][] = [
+      ['input[type="search"]', en.projects.search],
+      ['jig-select[inputid="projects-sort"] [role="combobox"]', en.settings.sort],
+      ['button[aria-pressed]', en.projects.includeArchived],
+      ['button[aria-haspopup="listbox"]', en.projects.tags],
+      ['jig-select[inputid="projects-view-mode"] [role="combobox"]', en.projects.viewMode],
+    ]
+    for (const [selector, name] of named) {
+      const matches = bar?.querySelectorAll(selector)
+      expect(matches).toHaveLength(1)
+      expect(matches?.[0]?.getAttribute('aria-label')).toBe(name)
+    }
+
+    expect(bar?.querySelectorAll('label')).toHaveLength(0)
+  })
+
+  /**
+   * The sort select keeps its name AND gains the icon the user asked for inside the control.
+   * jig-input-field discovers the control it wraps and skips icons while doing so, so the icon
+   * is a prefix adornment rather than something that shadows the select -- this asserts both
+   * halves, because an icon that displaced the select would leave the field wired to nothing.
+   */
+  it('renders a sort icon inside the field, beside a select that keeps its name', async () => {
+    const { fixture } = await setup()
+    await fixture.whenStable()
+    fixture.detectChanges()
+    const field = (fixture.nativeElement as HTMLElement).querySelector('.spm-sort')
+
+    // Only the adornment: jig-select renders a dropdown chevron of its own inside the field, so
+    // an unfiltered count of jig-icon elements here is 1 whether or not the sort icon was added.
+    const adornments = [...(field?.querySelectorAll('jig-icon') ?? [])].filter(
+      (icon) => icon.closest('jig-select') === null,
+    )
+    expect(adornments).toHaveLength(1)
+    const select = field?.querySelector('jig-select')
+    expect(select).not.toBeNull()
+    expect(select?.querySelector('[role="combobox"]')?.getAttribute('aria-label')).toBe(
+      en.settings.sort,
+    )
+  })
+
+  /**
+   * Spec H 7.3. One control with a state, not two controls: the icon flips, aria-pressed follows
+   * the filter, and the accessible name is the same string in both states.
+   *
+   * Asserting the name in both states is the half that catches the usual mistake -- a control
+   * whose name flips between "Show archived" and "Hide archived" is announced as a different
+   * control on every press, which is exactly what aria-pressed exists to say instead.
+   */
+  it('tracks the archived filter with aria-pressed and keeps one name in both states', async () => {
+    const { fixture } = await setup()
+    await fixture.whenStable()
+    fixture.detectChanges()
+    const button = (fixture.nativeElement as HTMLElement).querySelector<HTMLButtonElement>(
+      `.spm-filter-bar button[aria-label="${en.projects.includeArchived}"]`,
+    )
+    expect(button?.getAttribute('aria-pressed')).toBe('false')
+
+    button?.click()
+    await fixture.whenStable()
+    fixture.detectChanges()
+
+    expect(button?.getAttribute('aria-pressed')).toBe('true')
+    expect(button?.getAttribute('aria-label')).toBe(en.projects.includeArchived)
+
+    button?.click()
+    await fixture.whenStable()
+    fixture.detectChanges()
+
+    expect(button?.getAttribute('aria-pressed')).toBe('false')
+    expect(button?.getAttribute('aria-label')).toBe(en.projects.includeArchived)
+  })
+
+  /**
+   * Spec H 7.4: a count badge when tags are selected, and none at zero.
+   *
+   * The zero case alone is unfalsifiable -- it passes just as well against a badge that never
+   * renders at all -- so the same test drives the count up afterwards and reads the number back.
+   * The badge element is jigBadge's own, and jigBadge renders nothing at 0 unless told to.
+   */
+  it('shows no tag badge at zero selected, and the count above it', async () => {
+    const { fixture } = await setup()
+    await fixture.whenStable()
+    fixture.detectChanges()
+    const button = (fixture.nativeElement as HTMLElement).querySelector<HTMLButtonElement>(
+      `.spm-filter-bar button[aria-label="${en.projects.tags}"]`,
+    )
+    const store = fixture.debugElement.injector.get(ProjectsStore)
+    expect(button?.getAttribute('aria-expanded')).toBe('false')
+    expect(button?.querySelector('jig-badge-indicator')).toBeNull()
+
+    await store.setTags(['petg'])
+    await fixture.whenStable()
+    fixture.detectChanges()
+    expect(button?.querySelector('jig-badge-indicator')?.textContent?.trim()).toBe('1')
+
+    await store.setTags(['petg', 'boat'])
+    await fixture.whenStable()
+    fixture.detectChanges()
+    expect(button?.querySelector('jig-badge-indicator')?.textContent?.trim()).toBe('2')
+  })
+
+  /**
+   * Spec H 7.4 and constraint C6. The dropdown has to list the library's tags as selectable
+   * options and report a choice back — a badge and an `aria-expanded` attribute over a list box
+   * that never rendered would satisfy every other test here.
+   *
+   * The options are read by their ARIA role rather than by a class, because `role="option"` with
+   * `aria-selected` is what makes the list keyboard- and screen-reader-operable in the first
+   * place; both are jig-list-box's own, given `selectable` and `multiple`.
+   *
+   * **The popover is deliberately not opened, and that is a limit of the runner rather than a
+   * choice.** jig's popover calls `togglePopover`, and jsdom 28 implements no part of the Popover
+   * API, so the call throws inside a `requestAnimationFrame` where it lands as an unhandled
+   * error rather than a failed assertion. The list box is projected eagerly, so it is in the DOM
+   * either way and every wire this test cares about is reachable without the native call.
+   *
+   * The tag is seeded through the filter rather than through the tags resource: `knownTags`
+   * folds the selected tags into the library's own list (ruling 59), so this stays a test of the
+   * dropdown rather than of how the tag list is fetched.
+   */
+  it('offers each tag as a selectable option, and applies the one that is chosen', async () => {
+    const { fixture } = await setup()
+    await fixture.whenStable()
+    fixture.detectChanges()
+    const host = fixture.nativeElement as HTMLElement
+    const store = fixture.debugElement.injector.get(ProjectsStore)
+    await store.setTags(['petg'])
+    await fixture.whenStable()
+    fixture.detectChanges()
+
+    const options = [...host.querySelectorAll('jig-list-box [role="option"]')]
+    expect(options.map((option) => option.textContent?.trim())).toEqual(['petg'])
+    expect(options[0]?.getAttribute('aria-selected')).toBe('true')
+
+    options[0]?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await fixture.whenStable()
+    fixture.detectChanges()
+
+    expect(store.query().tags).toBeUndefined()
+  })
+
+  /**
+   * Spec H 6: the control moved to this page; the setting did not move anywhere. The assertion
+   * is on the key that reaches the transport, because that is the whole claim -- a view-mode
+   * control here that wrote something else would render identically.
+   */
+  it('writes settings.viewMode from the control now on this page', async () => {
+    const { fixture, api } = await setup()
+    await fixture.whenStable()
+    fixture.detectChanges()
+    expect(
+      (fixture.nativeElement as HTMLElement).querySelectorAll(
+        '.spm-filter-bar jig-select[inputid="projects-view-mode"]',
+      ),
+    ).toHaveLength(1)
+
+    await fixture.componentInstance.onViewMode('list')
+
+    expect(api.settings.put).toHaveBeenCalledWith({ viewMode: 'list' })
+  })
+
+  // onViewMode is handed straight to a template (valueChange) binding, so a rejected save has
+  // nowhere to go; SettingsStore.patch has already rolled the control back by then, and all
+  // that was missing was saying why.
+  it('reports a view mode that could not be saved instead of rejecting', async () => {
+    const { fixture, notify } = await setup({
+      putSettings: vi.fn().mockRejectedValue(new Error('boom')),
+    })
+
+    await expect(fixture.componentInstance.onViewMode('list')).resolves.toBeUndefined()
+
+    expect(notify.error).toHaveBeenCalledWith(en.errors.generic)
+  })
+
+  /**
+   * Ruling H-6. parseProjectQuery answers a query that fails validation with a 400, and
+   * projectQuerySchema caps the search term at 200 characters -- so a 201-character paste would
+   * turn a search into a hard failure rather than a narrower result set. The box carries the cap
+   * as maxlength and the store truncates; this is the end-to-end half, asserting that what
+   * actually reaches the transport is a term the schema accepts.
+   */
+  it('never sends a search term longer than the query schema accepts', async () => {
+    const { fixture, api } = await setup()
+    await fixture.whenStable()
+    fixture.detectChanges()
+    const input = (fixture.nativeElement as HTMLElement).querySelector<HTMLInputElement>(
+      'input[type="search"]',
+    )
+    expect(input?.getAttribute('maxlength')).toBe('200')
+
+    input!.value = 'x'.repeat(201)
+    input!.dispatchEvent(new Event('input'))
+    await afterDebounce()
+    await fixture.whenStable()
+
+    const sent = api.projects.list.mock.calls.at(-1)?.[0] as { search?: string }
+    expect(sent.search).toHaveLength(200)
+  })
+
+  /**
+   * Spec H 7.1. Every keystroke used to re-query, and under paging each one also throws away
+   * every page accumulated so far. Three keystrokes in quick succession must cost one request.
+   *
+   * The count is taken as a delta from the page-zero load rather than absolutely, so the test
+   * says what it means: how many requests the typing caused.
+   */
+  it('queries once for a burst of keystrokes rather than once per keystroke', async () => {
+    const { fixture, api } = await setup()
+    await fixture.whenStable()
+    fixture.detectChanges()
+    const input = (fixture.nativeElement as HTMLElement).querySelector<HTMLInputElement>(
+      'input[type="search"]',
+    )
+    const before = api.projects.list.mock.calls.length
+
+    // A pause between the keystrokes, shorter than the debounce. Dispatching all three
+    // synchronously would not prove anything: three writes to the query signal inside one tick
+    // are coalesced into a single resource load whether or not anything debounced them.
+    for (const term of ['b', 'be', 'ben']) {
+      input!.value = term
+      input!.dispatchEvent(new Event('input'))
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      await fixture.whenStable()
+    }
+    await afterDebounce()
+    await fixture.whenStable()
+
+    expect(api.projects.list.mock.calls.length - before).toBe(1)
+    expect(api.projects.list.mock.calls.at(-1)?.[0]).toMatchObject({ search: 'ben' })
+  })
+
   it('says nothing in the status region when the first page fails to load', async () => {
     const list = vi.fn().mockResolvedValueOnce(fullPage()).mockRejectedValueOnce(new Error('boom'))
     const { fixture, notify } = await setup({ list })

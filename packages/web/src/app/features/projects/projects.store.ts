@@ -1,6 +1,7 @@
 import { Injectable, computed, inject, resource, signal } from '@angular/core'
 import type { ProjectDto, ProjectQuery, RescanResultDto, SettingsDto } from '@spm/contract/dtos.ts'
 import type { CreateProjectInput } from '@spm/contract/schemas.ts'
+import { SEARCH_MAX_LENGTH } from '@spm/contract/schemas.ts'
 import { API_CLIENT } from '../../core/api/api-client.token'
 import { TranslateService } from '../../core/i18n/translate.service'
 import { NotifyService } from '../../core/notify.service'
@@ -217,8 +218,21 @@ export class ProjectsStore {
     this.nextOffset.set(PROJECTS_PAGE_SIZE)
   }
 
+  /**
+   * Narrows the list to a search term, **truncated to what the query schema accepts**.
+   *
+   * The truncation is not tidiness. `parseProjectQuery` refuses a query that fails validation
+   * with a 400 — correct for `limit=abc`, which a caller produces from arithmetic — but
+   * `projectQuerySchema` caps `search` at `SEARCH_MAX_LENGTH`, so a pasted 201-character term
+   * would leave the box and come back as a hard failure rather than as a narrower result set.
+   * Neither refusing the paste nor dropping the search silently is acceptable, so the term is
+   * cut to the longest one that can be answered.
+   *
+   * The input carries the same cap as `maxlength`, which stops the typing case; this is the
+   * half that covers a paste, a browser that ignores the attribute, and every non-DOM caller.
+   */
   setSearch(term: string): void {
-    const trimmed = term.trim()
+    const trimmed = term.trim().slice(0, SEARCH_MAX_LENGTH)
     this.applyQuery(({ search: _dropped, ...rest }) =>
       trimmed ? { ...rest, search: trimmed } : rest,
     )
@@ -236,7 +250,22 @@ export class ProjectsStore {
    */
   async toggleTag(name: string): Promise<void> {
     const current = this.queryState().tags ?? []
-    const next = current.includes(name) ? current.filter((tag) => tag !== name) : [...current, name]
+    await this.setTags(
+      current.includes(name) ? current.filter((tag) => tag !== name) : [...current, name],
+    )
+  }
+
+  /**
+   * Replaces the whole tag selection at once, which is what a multi-select reports.
+   *
+   * `toggleTag` delegates here rather than the other way round: the filter bar's list box hands
+   * back the selection it now holds, not the item that changed, and turning that back into a
+   * sequence of toggles would mean one settings write per differing tag.
+   *
+   * Same contract as `toggleTag` — it never rejects, for the reason written there.
+   */
+  async setTags(names: readonly string[]): Promise<void> {
+    const next = [...names]
     // Destructuring `tags` out of the parameter (rather than a local `const { tags: _dropped,
     // ...rest } = query`) keeps every binding used, since eslint's `no-unused-vars` only
     // exempts `_`-prefixed *function arguments*, not local destructured variables.

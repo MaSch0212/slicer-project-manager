@@ -171,8 +171,18 @@ export const settingsPatchSchema = z.object({
   filterTags: filterTagsSchema.optional(),
 })
 
+/**
+ * The longest search term the project query accepts.
+ *
+ * Exported rather than left inline because the UI has to cap the box at the same number. A
+ * query that fails this schema is refused with a 400 (`parseProjectQuery`), so a search term
+ * the box let the user type but the schema refuses would turn a paste into a hard failure
+ * instead of a narrower result set. One constant, so the two cannot drift apart.
+ */
+export const SEARCH_MAX_LENGTH = 200
+
 export const projectQuerySchema = z.object({
-  search: z.string().max(200).optional(),
+  search: z.string().max(SEARCH_MAX_LENGTH).optional(),
   tags: z.array(tagNameSchema).optional(),
   includeArchived: z.boolean().optional(),
   sort: z.enum(['name', 'createdAt', 'updatedAt']).optional(),

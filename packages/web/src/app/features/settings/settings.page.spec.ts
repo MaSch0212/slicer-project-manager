@@ -270,12 +270,13 @@ describe("the web build's /settings", () => {
 
     expect(page).toBeInstanceOf(SettingsPage)
     expect(TestBed.inject(Router).url).toBe('/settings')
-    // The General tab really rendered into the outlet -- its three controls are the proof that the
+    // The General tab really rendered into the outlet -- its selects are the proof that the
     // empty-path child resolved rather than the parent rendering an empty page. Queried on the
     // whole host rather than through the panel's role, so this test answers for the route and
-    // nothing else.
+    // nothing else. Two, not three, since spec H 6 moved the view-mode select to the projects
+    // page.
     const host = harness.fixture.nativeElement as HTMLElement
-    expect(host.querySelectorAll('jig-select')).toHaveLength(3)
+    expect(host.querySelectorAll('jig-select')).toHaveLength(2)
     // And the Slicers tab is not on offer here: the child does not exist in this list.
     expect(labels(harness)).toEqual([translate.translations().settings.general])
   })

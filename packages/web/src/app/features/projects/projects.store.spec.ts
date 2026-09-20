@@ -2,6 +2,7 @@ import { ApplicationRef } from '@angular/core'
 import { TestBed } from '@angular/core/testing'
 import { describe, expect, it, vi } from 'vitest'
 import { DEFAULT_SETTINGS, type ProjectDto, type SettingsDto } from '@spm/contract/dtos.ts'
+import { SEARCH_MAX_LENGTH, projectQuerySchema } from '@spm/contract/schemas.ts'
 import { API_CLIENT } from '../../core/api/api-client.token'
 import { TranslateService } from '../../core/i18n/translate.service'
 import { NotifyService } from '../../core/notify.service'
@@ -158,6 +159,39 @@ describe('ProjectsStore', () => {
     store.setSearch('bench')
     store.setSearch('   ')
     expect(store.query().search).toBeUndefined()
+  })
+
+  /**
+   * Ruling H-6. `parseProjectQuery` refuses a query that fails validation with a 400 -- right for
+   * `limit=abc`, which a caller builds from arithmetic -- but `projectQuerySchema` caps `search`
+   * at `SEARCH_MAX_LENGTH`, so a pasted 201st character used to turn a search into a hard
+   * failure. Truncating is the only answer that is neither a refusal nor a silent drop: the
+   * assertion is that the term survives, shortened, rather than that it is gone.
+   */
+  it('truncates an over-long search term rather than dropping or sending it whole', async () => {
+    const { store } = await setup()
+
+    store.setSearch('x'.repeat(SEARCH_MAX_LENGTH + 1))
+
+    expect(store.query().search).toHaveLength(SEARCH_MAX_LENGTH)
+    expect(projectQuerySchema.safeParse(store.query()).success).toBe(true)
+  })
+
+  /**
+   * `setTags` is what the filter bar's multi-select reports through -- it hands back the whole
+   * selection it now holds, not the item that changed. The second half is the point: it
+   * *replaces*, so a tag that is no longer in the array is no longer in the filter.
+   */
+  it('replaces the whole tag selection and remembers it', async () => {
+    const { store, api } = await setup()
+
+    await store.setTags(['petg', 'boat'])
+    expect(store.query().tags).toEqual(['petg', 'boat'])
+
+    await store.setTags(['boat'])
+
+    expect(store.query().tags).toEqual(['boat'])
+    expect(api.settings.put).toHaveBeenLastCalledWith({ filterTags: ['boat'] })
   })
 
   it('toggles a tag on and off', async () => {

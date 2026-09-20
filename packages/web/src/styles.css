@@ -395,7 +395,8 @@ spm-nav-list {
   list-style: none;
 }
 
-/* The two view modes the settings page persists (spec 4.2). */
+/* The two view modes. The control that chooses between them sits in the projects page's own
+   filter bar (spec H 6); the choice is still persisted as `settings.viewMode`. */
 .spm-projects.grid {
   grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr));
 }
@@ -596,6 +597,53 @@ spm-nav-list {
 .spm-filters jig-input-field,
 .spm-new-project jig-input-field {
   display: block;
+}
+
+/*
+ * The filter bar (spec H 7): search on the left, everything that reshapes the result set on the
+ * right. One row that wraps, rather than a grid, so the trailing group stays together and drops
+ * under the search box whole when the window is too narrow for both.
+ */
+.spm-filter-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--jig-size-padding-md);
+}
+
+.spm-filter-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--jig-size-padding-sm);
+}
+
+/* The width the user asked for, and a floor so it is still a search box on a narrow window. */
+.spm-filters .spm-search {
+  flex: 1;
+  min-width: 12rem;
+  max-width: 350px;
+}
+
+/*
+ * A minimum width so the selected option is not clipped -- the second half of the same request
+ * is the popup's own width, which is set on the control (`sortPopover`) because the popup renders
+ * in the top layer and no selector here reaches it.
+ */
+.spm-filters .spm-sort {
+  min-width: 13rem;
+}
+
+.spm-filters .spm-view-mode {
+  min-width: 9rem;
+}
+
+/* The tag list scrolls inside the popover rather than growing it past the viewport. */
+.spm-tag-list {
+  display: block;
+  overflow: auto;
+  max-height: 18rem;
 }
 
 .spm-new-user {

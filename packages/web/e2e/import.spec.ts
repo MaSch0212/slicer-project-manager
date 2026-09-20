@@ -112,5 +112,10 @@ test('a zipped CuraManager library is uploaded, imported and shows up as project
   await expect(page.getByRole('heading', { name: 'Zip Import Beta' })).toBeVisible()
   // The sidecar's tag came across with it, which is the whole point of importing rather
   // than just copying folders in.
-  await expect(page.getByText('zip-imported').first()).toBeVisible()
+  //
+  // Scoped to a project card rather than to the page. Spec H 7.4 turned the tag filter from a
+  // row of buttons into a dropdown, so the library's tag names are now also in the page's markup
+  // inside a closed popover, where they are hidden — and an unscoped `.first()` picks whichever
+  // comes first in the document, which is that hidden copy.
+  await expect(page.locator('li.spm-project').getByText('zip-imported').first()).toBeVisible()
 })
