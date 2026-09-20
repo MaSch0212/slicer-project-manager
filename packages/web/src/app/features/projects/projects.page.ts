@@ -349,8 +349,10 @@ function nearestScroller(element: HTMLElement): HTMLElement | undefined {
 
              The button is required, not a fallback (spec 7.5, constraint C6): a list that grows
              only on a scroll event cannot be reached by someone navigating with a keyboard or a
-             screen reader, both of which move focus without ever scrolling a container. It is
-             also the only path to rows 49 and beyond until the scroll trigger lands.
+             screen reader, both of which move focus without ever scrolling a container. The
+             scroll trigger on this page's main element is the other half, not a replacement, and
+             it is switched off entirely when no scrolling ancestor can be found -- so this is
+             also the only path to rows 49 and beyond whenever that happens.
 
              The button is NOT disabled while its page loads, and that is the accessibility fix
              rather than an omission (fix round 1, finding 2): disabling the element that
@@ -370,9 +372,13 @@ function nearestScroller(element: HTMLElement): HTMLElement | undefined {
           <!-- A message here rather than the snackbar this used to be, and the scroll trigger is
                the whole reason. endReached re-arms every time the user leaves the threshold zone
                and comes back, so at a broken-network boundary a snackbar per attempt becomes a
-               stream of identical messages about something nobody pressed. This renders once
-               however many times the store sets it, and it sits beside the button the user would
-               retry with instead of in a corner of the window. -->
+               stream of identical messages about something nobody pressed. This one sits beside
+               the button the user would retry with instead of in a corner of the window.
+
+               The store deliberately leaves the flag SET across a repeated failure rather than
+               clearing it per attempt, and that is what keeps this block in the DOM instead of
+               being torn out and re-inserted -- which for a role="alert" is a fresh announcement
+               each time, i.e. the same stream moved into the live region. See loadMoreError. -->
           @if (store.loadMoreFailed()) {
             <jig-message color="error" role="alert">
               {{ t.translations().projects.loadMoreFailed }}
@@ -545,15 +551,27 @@ export class ProjectsPage {
   private searchTimer: ReturnType<typeof setTimeout> | null = null
 
   constructor() {
+    const destroyRef = inject(DestroyRef)
     // A pending keystroke must not re-query a store that is being torn down with the page.
-    inject(DestroyRef).onDestroy(() => {
+    destroyRef.onDestroy(() => {
       if (this.searchTimer !== null) clearTimeout(this.searchTimer)
     })
 
     // After the first render, because the answer is a computed style and this component's host
     // is only in the document once the router has placed it. A signal rather than a template
-    // expression so the walk runs once instead of once per change detection.
-    afterNextRender(() => this.scroller.set(nearestScroller(this.host.nativeElement)))
+    // expression so the walk runs on a resize instead of once per change detection.
+    //
+    // **And again on every resize** (fix round 1, finding 6). The answer is a computed style read
+    // at one instant, and a media query can move the scrollport to a different ancestor -- at
+    // which point a cached element is either the wrong one or, worse, detached, and the trigger
+    // goes quiet with nothing saying so. A resize is what every such change arrives with, and the
+    // walk is a handful of `getComputedStyle` reads up a short chain, so re-running it there costs
+    // nothing worth measuring. `onEndReached` reads the signal, so a new answer takes effect at
+    // once.
+    const resolve = (): void => this.scroller.set(nearestScroller(this.host.nativeElement))
+    afterNextRender(resolve)
+    window.addEventListener('resize', resolve)
+    destroyRef.onDestroy(() => window.removeEventListener('resize', resolve))
   }
 
   /**

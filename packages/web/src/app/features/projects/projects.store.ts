@@ -96,12 +96,17 @@ export class ProjectsStore {
    * A signal rather than the snackbar this used to be, and the reason is the scroll trigger
    * (spec 7.5). `endReached` re-arms every time the user leaves the threshold zone and comes
    * back, so at a broken-network boundary a snackbar-per-attempt becomes a stream of identical
-   * messages for something the user never pressed. A state renders once however many times it is
-   * set, and it belongs beside the control the user would retry with rather than in a corner of
-   * the window.
+   * messages for something the user never pressed. This is one message, in one place, beside the
+   * control the user would retry with rather than in a corner of the window.
    *
-   * Cleared by the next attempt and by `resetPaging`, so a filter change does not carry the
-   * previous filter's failure into a list it says nothing about.
+   * **Set on failure and left alone until something actually changes it** -- a page that lands, or
+   * `resetPaging`. Fix round 1, finding 4: it used to be cleared at the top of every attempt too,
+   * which looks harmless and is not. `@if` removes the block from the DOM and re-inserts it, and
+   * re-inserting a `role="alert"` is a fresh announcement, so a screen-reader user crossing a dead
+   * threshold repeatedly heard one announcement per attempt -- the very stream the snackbar was
+   * replaced to stop, moved into the live region. Leaving it set means the node stays put and a
+   * failure that is still true is still only said once. The page spec pins the node's identity
+   * across two failures, which is the only way to observe the difference.
    */
   private readonly loadMoreError = signal(false)
 
@@ -331,7 +336,6 @@ export class ProjectsStore {
   async loadMore(): Promise<void> {
     if (this.loadingMore() || !this.hasMore()) return
     this.loadingMore.set(true)
-    this.loadMoreError.set(false)
     const offset = this.nextOffset()
     const generation = this.generation
     try {
@@ -344,6 +348,10 @@ export class ProjectsStore {
       // stopped asking. Nothing here is salvageable — not the rows, which belong to the old
       // filter, and not the offset, which counts into the old filter's result set.
       if (generation !== this.generation) return
+      // Here rather than before the request: see `loadMoreError`. A page that landed is what makes
+      // a recorded failure untrue, and clearing it up front would have retracted and restated the
+      // message on every attempt that failed again.
+      this.loadMoreError.set(false)
       this.nextOffset.set(offset + PROJECTS_PAGE_SIZE)
       this.appended.update((rows) => [...rows, ...page])
       this.lastPageLength.set(page.length)

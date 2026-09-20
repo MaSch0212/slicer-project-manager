@@ -573,6 +573,119 @@ describe('ProjectsPage', () => {
    * also asserts the message that replaced it — and that `NotifyService` was left alone, which
    * is what a page keeping both would fail on.
    */
+  /**
+   * Fix round 1, finding 4: the message must not be RE-announced once per failed attempt.
+   *
+   * `role="alert"` is a live region, and removing its node and putting a new one back is a fresh
+   * announcement even when the text is identical. `loadMore` used to clear the failure at the top
+   * of every attempt, so two failures across an `await` tore the `@if` block out and re-inserted
+   * it — which is the snackbar stream this whole change exists to stop, moved into assistive tech
+   * where it is harder to notice. The store now leaves the flag set until a page lands or the
+   * filter changes.
+   *
+   * **Node identity is the assertion, because nothing else can see the difference.** The text is
+   * the same either way, the signal reads `true` either way, and a count of alerts is 1 either
+   * way. Only "is this the same element the browser was already showing" separates a message that
+   * stayed from a message that was retracted and restated. Proven against the old behaviour:
+   * restoring the clear makes this fail on `toBe`.
+   */
+  /**
+   * Fix round 1, finding 6: the scrolling ancestor is re-resolved, not cached for the page's life.
+   *
+   * `nearestScroller` reads a computed style at one instant. A media query can move the scrollport
+   * to a different ancestor, at which point a cached element is the wrong one — or detached — and
+   * the scroll trigger goes quiet with nothing anywhere saying so. The page re-runs the walk on
+   * every window resize, which is what any such change arrives with.
+   *
+   * **Observable in jsdom only because `getComputedStyle` is a function.** jsdom lays nothing out
+   * and answers `overflow-y: visible` for every element, so the walk genuinely finds nothing to
+   * begin with — which is the honest starting state here, not a contrivance. Stubbing one
+   * element's answer is how "a scrollport appeared" is expressed; everything else still gets the
+   * real value, because jig's controls call this too.
+   *
+   * Asserted through behaviour rather than through the signal: what matters is that `onEndReached`
+   * stops being a no-op, and the request it then makes is the thing a user would notice.
+   */
+  it('re-resolves the scrolling ancestor when the window resizes', async () => {
+    const { fixture, api } = await setup({ list: vi.fn().mockResolvedValue(fullPage()) })
+    await fixture.whenStable()
+    fixture.detectChanges()
+    const pagedCalls = (): number =>
+      api.projects.list.mock.calls.filter(
+        (call: unknown[]) => (call[0] as { offset?: number } | undefined)?.offset !== undefined,
+      ).length
+
+    // No scrollport yet, so the trigger is off and a fire changes nothing.
+    fixture.componentInstance.onEndReached()
+    await fixture.whenStable()
+    expect(pagedCalls()).toBe(0)
+
+    const host = fixture.nativeElement as HTMLElement
+    const scrollport = host.parentElement
+    expect(scrollport).not.toBeNull()
+    const real = window.getComputedStyle.bind(window)
+    window.getComputedStyle = ((element: Element, pseudo?: string | null) =>
+      element === scrollport
+        ? ({ overflowY: 'auto' } as CSSStyleDeclaration)
+        : real(element, pseudo)) as typeof window.getComputedStyle
+    try {
+      window.dispatchEvent(new Event('resize'))
+
+      fixture.componentInstance.onEndReached()
+      await fixture.whenStable()
+
+      expect(pagedCalls()).toBe(1)
+    } finally {
+      window.getComputedStyle = real
+    }
+  })
+
+  it('does not replace the failure message when a second attempt fails too', async () => {
+    let rejectSecond: (error: Error) => void = () => {}
+    const list = vi
+      .fn()
+      .mockResolvedValueOnce(fullPage())
+      .mockRejectedValueOnce(new Error('boom'))
+      .mockImplementationOnce(
+        () =>
+          new Promise<ProjectDto[]>((_resolve, reject) => {
+            rejectSecond = reject
+          }),
+      )
+    const { fixture } = await setup({ list })
+    await fixture.whenStable()
+    fixture.detectChanges()
+    const footer = (fixture.nativeElement as HTMLElement).querySelector('.spm-list-footer')
+
+    await fixture.componentInstance.onLoadMore()
+    fixture.detectChanges()
+    const first = footer?.querySelector('[role="alert"]')
+    expect(first).not.toBeNull()
+
+    // **The second attempt is left in flight while change detection runs, and that is the whole
+    // construction.** A test that simply awaits the retry cannot see this defect at all: the
+    // clear and the re-set happen either side of one `await`, so with no render between them the
+    // block never observes `false` and the node survives even when the store is wrong. Measured —
+    // a first version of this test passed with the defect restored. A real browser renders many
+    // times across a network request, which is what this reproduces deliberately.
+    const pending = fixture.componentInstance.onLoadMore()
+    await Promise.resolve()
+    fixture.detectChanges()
+
+    // Mid-flight, and this is the assertion the defect fails: a retry that has not answered yet
+    // is no reason to retract a failure that is still the last thing known.
+    expect(footer?.querySelector('[role="alert"]')).toBe(first)
+
+    rejectSecond(new Error('boom again'))
+    await pending
+    fixture.detectChanges()
+
+    expect(footer?.querySelectorAll('[role="alert"]')).toHaveLength(1)
+    // Same element, still where it was: not a new one carrying the same words.
+    expect(footer?.querySelector('[role="alert"]')).toBe(first)
+    expect(first?.isConnected).toBe(true)
+  })
+
   it('shows the failure in the footer and says nothing in the status region', async () => {
     const list = vi.fn().mockResolvedValueOnce(fullPage()).mockRejectedValueOnce(new Error('boom'))
     const { fixture, notify } = await setup({ list })

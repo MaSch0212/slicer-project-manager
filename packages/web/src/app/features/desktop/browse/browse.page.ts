@@ -1181,9 +1181,22 @@ export class DesktopBrowsePage {
     // is a registration only `#close` can undo, and `#close` has already been and gone.
     if (this.#destroyed) return
     window.addEventListener('resize', this.#onWindowChange)
+    // **Capture, and that is what makes this fire at all.** The shell scrolls an element -- the
+    // `overflow-y: auto` content column beside the sidebar (`styles.css`, `.spm-shell-body`) --
+    // and a `scroll` event fired at an element has `bubbles: false`, so it never reaches a
+    // bubble-phase listener on `window`. Measured in Chromium: one element scroll ran a `window`
+    // bubble listener ZERO times and a `window` capture listener once. A non-bubbling event still
+    // walks its ancestors in the capture phase, and `window` is an ancestor of every connected
+    // element, so this one listener sees the page scroll wherever the scrollport is -- including
+    // the viewport, which fires at `document` and captures through `window` just the same.
+    //
+    // Deliberately not "resolve the scrollport and listen on it": a resolved element is a cached
+    // answer to a computed style, and it goes stale the moment a media query or a shell change
+    // moves the scrollport. This cannot go stale because it never resolves anything.
+    //
     // Passive: this only reads a rectangle, and a scroll listener that can call `preventDefault`
     // is a scroll listener Chromium has to wait for.
-    window.addEventListener('scroll', this.#onWindowChange, { passive: true })
+    window.addEventListener('scroll', this.#onWindowChange, { capture: true, passive: true })
     const element = this.viewport()?.nativeElement
     // Guarded because jsdom has no `ResizeObserver`, and because the two window events above are
     // the coarse half of the same report: an element that changes size without the window doing
@@ -1212,7 +1225,9 @@ export class DesktopBrowsePage {
     this.#observer?.disconnect()
     this.#observer = null
     window.removeEventListener('resize', this.#onWindowChange)
-    window.removeEventListener('scroll', this.#onWindowChange)
+    // `capture` has to match the registration above: `removeEventListener` treats the flag as
+    // part of the listener's identity, so a mismatched call removes nothing at all.
+    window.removeEventListener('scroll', this.#onWindowChange, { capture: true })
     void this.shell.browse.detach().catch((error: unknown) => {
       console.error('browse: detaching the view failed', error)
     })

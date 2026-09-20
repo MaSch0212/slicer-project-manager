@@ -280,11 +280,26 @@ describe('DesktopBrowsePage', () => {
 
     /*
      * Spec 4.2: the renderer owns the intent and reports it on element resize, window resize and
-     * its own scroll. jsdom's `getBoundingClientRect` answers all zeros, so the element is given a
-     * rectangle of its own — otherwise every report would be the same zero rect and the
-     * de-duplication below would swallow the second one for the wrong reason.
+     * the scroll of whatever the page is scrolling inside. jsdom's `getBoundingClientRect` answers
+     * all zeros, so the element is given a rectangle of its own — otherwise every report would be
+     * the same zero rect and the de-duplication below would swallow the second one for the wrong
+     * reason.
+     *
+     * **The scroll is dispatched at an ELEMENT, and that is the whole point of this test.** Task 6
+     * gave the shell an `overflow-y: auto` content column, so the page no longer scrolls the
+     * viewport — it scrolls an element. A `scroll` event fired at an element has `bubbles: false`,
+     * so it never reaches a bubble-phase listener on `window`; measured in Chromium, an element
+     * scroll ran a `window` bubble listener zero times and a `window` CAPTURE listener once. The
+     * previous version of this test dispatched at `window` itself, where a bubble-phase listener
+     * is the target rather than an ancestor, so it stayed green against a listener that could no
+     * longer fire in any real browser. This dispatch is the shape the browser actually produces.
+     *
+     * `document.body` stands in for the scrollport: under jsdom nothing has layout, so no element
+     * is really scrollable, and what is being asserted is the propagation path — window is an
+     * ancestor of every connected element, so a capture listener there sees it wherever the
+     * scrollport turns out to be.
      */
-    it('reports the placeholder rectangle on a window resize and on a scroll', async () => {
+    it('reports the placeholder rectangle on a window resize and on an element scroll', async () => {
       const { fixture, page, browse } = await setup()
       const placeholder = host(fixture).querySelector('[data-browse-viewport]') as HTMLElement
       expect(placeholder).not.toBeNull()
@@ -299,21 +314,29 @@ describe('DesktopBrowsePage', () => {
         height: 600,
       })
 
+      // Exactly what a scrolling element emits: no bubbling, and the target is not `window`.
+      const elementScroll = (): void => {
+        document.body.dispatchEvent(new Event('scroll', { bubbles: false }))
+      }
+
       const afterResize = browse.setBounds.mock.calls.length
       // The same rectangle again is not news, and a scroll fires on every wheel notch.
-      window.dispatchEvent(new Event('scroll'))
+      elementScroll()
       expect(browse.setBounds).toHaveBeenCalledTimes(afterResize)
 
       rect = { x: 0, y: 40, width: 900, height: 600 }
-      window.dispatchEvent(new Event('scroll'))
+      elementScroll()
       expect(browse.setBounds).toHaveBeenLastCalledWith({ x: 0, y: 40, width: 900, height: 600 })
 
       // And the listeners come off with the component, or a destroyed page goes on driving the
-      // shell's view from a route it is no longer on.
+      // shell's view from a route it is no longer on. Both of them: a `removeEventListener` whose
+      // `capture` flag does not match the `addEventListener` that registered it removes nothing,
+      // which is a leak this assertion is the only thing standing in front of.
       const beforeDestroy = browse.setBounds.mock.calls.length
       fixture.destroy()
       rect = { x: 0, y: 0, width: 10, height: 10 }
       window.dispatchEvent(new Event('resize'))
+      elementScroll()
       expect(browse.setBounds).toHaveBeenCalledTimes(beforeDestroy)
       void page
     })

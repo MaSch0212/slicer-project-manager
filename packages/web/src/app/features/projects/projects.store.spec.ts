@@ -452,6 +452,31 @@ describe('ProjectsStore', () => {
   })
 
   /**
+   * A page that lands is the other thing that makes a recorded failure untrue.
+   *
+   * It has its own test because the clear moved (fix round 1, finding 4): it used to happen at the
+   * top of every attempt, where a single line covered both the retry case and — accidentally and
+   * harmfully — the failure-after-failure case. It now sits in the success path, so nothing else
+   * exercises it.
+   */
+  it('clears a recorded failure once a page finally lands', async () => {
+    const list = vi
+      .fn()
+      .mockResolvedValueOnce(fullPage('a'))
+      .mockRejectedValueOnce(new Error('boom'))
+      .mockResolvedValueOnce(fullPage('b'))
+    const { store } = await setup({}, list)
+    await settle()
+    await store.loadMore()
+    expect(store.loadMoreFailed()).toBe(true)
+
+    await store.loadMore()
+
+    expect(store.loadMoreFailed()).toBe(false)
+    expect(store.items()).toHaveLength(PROJECTS_PAGE_SIZE * 2)
+  })
+
+  /**
    * The other half of the same state: it is about the attempt that failed, not a mode the store
    * stays in. A filter change replaces the whole result set, so a failure recorded against the
    * previous one has nothing left to describe, and leaving it set would put an error under a
