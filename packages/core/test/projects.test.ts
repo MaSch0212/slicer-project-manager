@@ -260,6 +260,85 @@ test('sort and direction are honoured', async () => {
   })
 })
 
+test('a tied updated_at still yields both projects across two single-row pages', async () => {
+  await withLibrary((lib) => {
+    const ctx = seedUser(lib, 'marc')
+    const a = createProject(lib, ctx, { name: 'Alpha' })
+    const b = createProject(lib, ctx, { name: 'Beta' })
+
+    // Two createProject calls can already land on the same millisecond by accident, which
+    // would make this test pass for the wrong reason. Setting updated_at explicitly is the
+    // only way to be sure the tie is genuine rather than incidental.
+    lib.db.prepare('UPDATE projects SET updated_at = ? WHERE id IN (?, ?)').run(1000, a.id, b.id)
+
+    const page0 = listProjects(lib, ctx, { limit: 1, offset: 0 })
+
+    // A read-only rerun of the identical query, on an untouched table, is deterministic with
+    // or without a tiebreaker — SQLite has no reason to reorder ties it was never asked to
+    // reorder. The defect this guards against only shows up once the table is written to
+    // between two page fetches, exactly as fact 2 describes: a rescan stamps many rows with
+    // the same updated_at, and a later write can move a tied row to a different physical spot
+    // in the table. Reproduce that by deleting and reinserting `a`'s row verbatim: same id,
+    // same (still tied) updated_at, but a fresh position.
+    const row = lib.db.prepare('SELECT * FROM projects WHERE id = ?').get(a.id) as {
+      id: string
+      owner_id: string
+      name: string
+      dir_name: string
+      website: string | null
+      notes: string | null
+      is_archived: number
+      state: string
+      created_at: number
+      updated_at: number
+    }
+    lib.db.prepare('DELETE FROM projects WHERE id = ?').run(a.id)
+    lib.db
+      .prepare(
+        `INSERT INTO projects (id, owner_id, name, dir_name, website, notes, is_archived, state, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        row.id,
+        row.owner_id,
+        row.name,
+        row.dir_name,
+        row.website,
+        row.notes,
+        row.is_archived,
+        row.state,
+        row.created_at,
+        row.updated_at,
+      )
+
+    const page1 = listProjects(lib, ctx, { limit: 1, offset: 1 })
+
+    assert.equal(page0.length, 1)
+    assert.equal(page1.length, 1)
+    // Not one project twice, and not one of them missing: p.id ASC as a final tiebreaker is
+    // what makes the two pages agree on a total order over the tied rows even after that write.
+    assert.deepEqual([page0[0]!.id, page1[0]!.id].sort(), [a.id, b.id].sort())
+  })
+})
+
+test('offset beyond the end returns an empty array, not an error', async () => {
+  await withLibrary((lib) => {
+    const ctx = seedUser(lib, 'marc')
+    createProject(lib, ctx, { name: 'Solo' })
+    assert.deepEqual(listProjects(lib, ctx, { limit: 10, offset: 50 }), [])
+  })
+})
+
+test('omitting limit still returns every row, unchanged from before paging existed', async () => {
+  await withLibrary((lib) => {
+    const ctx = seedUser(lib, 'marc')
+    createProject(lib, ctx, { name: 'One' })
+    createProject(lib, ctx, { name: 'Two' })
+    createProject(lib, ctx, { name: 'Three' })
+    assert.equal(listProjects(lib, ctx, {}).length, 3)
+  })
+})
+
 test('file counts and the cover file id come back on the list DTO', async () => {
   await withLibrary((lib) => {
     const ctx = seedUser(lib, 'marc')

@@ -30,6 +30,8 @@ export function parseProjectQuery(url: URL): ProjectQuery {
       : {}),
     ...(url.searchParams.get('sort') ? { sort: url.searchParams.get('sort')! } : {}),
     ...(url.searchParams.get('dir') ? { dir: url.searchParams.get('dir')! } : {}),
+    ...(url.searchParams.has('limit') ? { limit: Number(url.searchParams.get('limit')) } : {}),
+    ...(url.searchParams.has('offset') ? { offset: Number(url.searchParams.get('offset')) } : {}),
   }
   const parsed = projectQuerySchema.safeParse(raw)
   // An unparseable query is treated as no query rather than as an error page.

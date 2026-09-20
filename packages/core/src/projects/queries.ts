@@ -192,11 +192,23 @@ export function listProjects(lib: Library, ctx: Ctx, query: ProjectQuery): CoreP
   const column = SORT_COLUMNS[query.sort ?? 'updatedAt']
   const direction = query.dir === 'asc' ? 'ASC' : 'DESC'
 
-  const rows = lib.db
-    .prepare(
-      `SELECT p.* FROM projects p WHERE ${where.join(' AND ')} ORDER BY ${column} ${direction}`,
-    )
-    .all(...params) as ProjectRow[]
+  // None of SORT_COLUMNS is unique (a rescan stamps many rows with the same updated_at), so
+  // paging over ties without a tiebreaker lets SQLite order them differently between two
+  // queries: a row can then land on both pages or on neither. p.id is the primary key, so
+  // appending it makes the order total and reproducible across offsets. It is always ASC,
+  // independent of `dir` — it exists only to break ties, not to be meaningful on its own.
+  let sql = `SELECT p.* FROM projects p WHERE ${where.join(' AND ')} ORDER BY ${column} ${direction}, p.id ASC`
+  // `limit` omitted must return every row unchanged: every existing caller relies on that.
+  if (query.limit !== undefined) {
+    sql += ' LIMIT ?'
+    params.push(query.limit)
+    if (query.offset !== undefined) {
+      sql += ' OFFSET ?'
+      params.push(query.offset)
+    }
+  }
+
+  const rows = lib.db.prepare(sql).all(...params) as ProjectRow[]
 
   const ids = rows.map((row) => row.id)
   const tagMap = tagsByProject(lib.db, ids)

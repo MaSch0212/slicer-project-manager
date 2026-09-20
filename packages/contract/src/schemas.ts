@@ -166,6 +166,8 @@ export const projectQuerySchema = z.object({
   includeArchived: z.boolean().optional(),
   sort: z.enum(['name', 'createdAt', 'updatedAt']).optional(),
   dir: z.enum(['asc', 'desc']).optional(),
+  limit: z.number().int().positive().max(200).optional(),
+  offset: z.number().int().nonnegative().optional(),
 })
 
 export type LoginInput = z.infer<typeof loginSchema>

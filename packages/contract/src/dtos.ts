@@ -78,6 +78,10 @@ export type ProjectQuery = {
   includeArchived?: boolean
   sort?: 'name' | 'createdAt' | 'updatedAt'
   dir?: 'asc' | 'desc'
+  /** How many rows to return. Omitted means "all of them", which is what every caller did before. */
+  limit?: number
+  /** How many rows to skip. Only meaningful with `limit`. */
+  offset?: number
 }
 
 export type RescanResultDto = {
