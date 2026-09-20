@@ -1,5 +1,6 @@
 import { DEFAULT_SETTINGS, type SettingsDto, type UserDto } from '@spm/contract/dtos.ts'
 import { AppError } from '@spm/contract/errors.ts'
+import { filterTagsSchema } from '@spm/contract/schemas.ts'
 import type { Ctx } from '../ctx.ts'
 import type { Library } from '../db/open.ts'
 import { hashPassword, verifyPassword } from '../auth/password.ts'
@@ -94,10 +95,10 @@ type Validator<T> = {
 /**
  * Stores any value `schema` accepts as JSON text. Decode returns `undefined` for either
  * malformed JSON or JSON that parses but fails `schema`, the same "reject, don't corrupt"
- * guarantee `enumCodec` and `booleanCodec` give their keys. No key in this subsystem uses this
- * codec yet — segments H and I need list-valued settings (a remembered tag filter, browser
- * shortcuts) and will each wire it to a key of their own. It is specified and unit-tested here,
- * against nothing but its own encode/decode, so neither segment has to invent it.
+ * guarantee `enumCodec` and `booleanCodec` give their keys. `filterTags` below is its first
+ * production caller (spec H §5, the remembered tag filter); segment I's browser shortcuts are
+ * expected to be the second. It was specified and unit-tested here, against nothing but its own
+ * encode/decode, before either segment had a key to wire it to.
  */
 export function jsonCodec<T>(schema: Validator<T>): SettingCodec<T> {
   return {
@@ -128,6 +129,12 @@ const SETTING_CODECS: { [K in keyof SettingsDto]: SettingCodec<SettingsDto[K]> }
   sort: enumCodec(['name', 'createdAt', 'updatedAt']),
   dir: enumCodec(['asc', 'desc']),
   navCollapsed: booleanCodec,
+  includeArchived: booleanCodec,
+  // jsonCodec's first production use (spec H §5): `filterTagsSchema` is the contract package's
+  // own `z.array(tagNameSchema).max(50)`, imported rather than rebuilt here, because this
+  // file's lint rule keeps packages/core free of npm imports other than occt-import-js and so
+  // cannot call `z` itself.
+  filterTags: jsonCodec(filterTagsSchema),
 }
 
 const SETTING_KEYS = Object.keys(SETTING_CODECS) as (keyof SettingsDto)[]

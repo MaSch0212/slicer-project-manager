@@ -225,11 +225,74 @@ test('a navCollapsed row holding garbage falls back to the default', async () =>
   })
 })
 
-// jsonCodec has no production caller in this subsystem (segments H and I wire it up), so these
-// exercise the codec directly rather than through getSettings/putSettings. Three separate tests,
-// not one sequential fixture: a regression in the malformed-JSON guard throws before a later
-// assertion in the same test body would run, which would silently shadow the schema-rejection
-// case behind it.
+test('includeArchived round-trips true and false through putSettings/getSettings', async () => {
+  await withLibrary(async (lib) => {
+    const boot = await ensureBootstrapAdmin(lib)
+    const { user } = await activateAccount(lib, boot!.token, 'a good long password', null)
+    const ctx = { userId: user.id, isAdmin: true }
+
+    assert.equal(getSettings(lib, ctx).includeArchived, false)
+    assert.equal(putSettings(lib, ctx, { includeArchived: true }).includeArchived, true)
+    assert.equal(getSettings(lib, ctx).includeArchived, true)
+    assert.equal(putSettings(lib, ctx, { includeArchived: false }).includeArchived, false)
+    assert.equal(getSettings(lib, ctx).includeArchived, false)
+  })
+})
+
+test('filterTags round-trips a list through putSettings/getSettings', async () => {
+  await withLibrary(async (lib) => {
+    const boot = await ensureBootstrapAdmin(lib)
+    const { user } = await activateAccount(lib, boot!.token, 'a good long password', null)
+    const ctx = { userId: user.id, isAdmin: true }
+
+    assert.deepEqual(getSettings(lib, ctx).filterTags, [])
+    const patched = putSettings(lib, ctx, { filterTags: ['petg', 'functional'] })
+    assert.deepEqual(patched.filterTags, ['petg', 'functional'])
+    assert.deepEqual(getSettings(lib, ctx).filterTags, ['petg', 'functional'])
+  })
+})
+
+// Spec H §5: a stored filterTags value that fails `z.array(tagNameSchema).max(50)` decodes to
+// undefined and DEFAULT_SETTINGS.filterTags (an empty list) stands, exactly as a stored theme
+// the enum no longer accepts falls back above. `'["a", 1]'` is valid JSON — it parses as an
+// array — but its second element is a number, which tagNameSchema (a string schema) rejects.
+test('a stored filterTags value that fails the schema falls back to the default', async () => {
+  await withLibrary(async (lib) => {
+    const boot = await ensureBootstrapAdmin(lib)
+    const { user } = await activateAccount(lib, boot!.token, 'a good long password', null)
+    const ctx = { userId: user.id, isAdmin: true }
+
+    lib.db
+      .prepare('INSERT INTO user_settings (user_id, key, value) VALUES (?, ?, ?)')
+      .run(user.id, 'filterTags', '["a", 1]')
+
+    assert.deepEqual(getSettings(lib, ctx).filterTags, [])
+  })
+})
+
+// A stored filterTags value that is not JSON at all takes the same fallback path as the test
+// above, but through jsonCodec's JSON.parse guard rather than its schema.safeParse guard — the
+// two are separate branches and a regression could break either without the other.
+test('a stored filterTags value that is not JSON at all falls back to the default', async () => {
+  await withLibrary(async (lib) => {
+    const boot = await ensureBootstrapAdmin(lib)
+    const { user } = await activateAccount(lib, boot!.token, 'a good long password', null)
+    const ctx = { userId: user.id, isAdmin: true }
+
+    lib.db
+      .prepare('INSERT INTO user_settings (user_id, key, value) VALUES (?, ?, ?)')
+      .run(user.id, 'filterTags', 'not json at all')
+
+    assert.deepEqual(getSettings(lib, ctx).filterTags, [])
+  })
+})
+
+// These exercise jsonCodec directly, against an ad hoc schema, rather than through
+// getSettings/putSettings: they pin the codec's own contract independently of which key uses
+// it. `filterTags` below is the production caller, tested against its real schema and through
+// the real merge path. Three separate tests, not one sequential fixture: a regression in the
+// malformed-JSON guard throws before a later assertion in the same test body would run, which
+// would silently shadow the schema-rejection case behind it.
 test('jsonCodec round-trips a payload the schema accepts', () => {
   const codec = jsonCodec(z.object({ tags: z.array(z.string()) }))
   const encoded = codec.encode({ tags: ['petg', 'functional'] })

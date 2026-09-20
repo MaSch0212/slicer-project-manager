@@ -114,6 +114,10 @@ export type SettingsDto = {
   dir: 'asc' | 'desc'
   /** Whether the navigation sidebar is collapsed to icons. Desktop layout only; see §4. */
   navCollapsed: boolean
+  /** Whether the projects page's filter includes archived projects. Spec H §5. */
+  includeArchived: boolean
+  /** The tag names the projects page's filter is narrowed to. Spec H §5. */
+  filterTags: string[]
 }
 
 export const DEFAULT_SETTINGS: SettingsDto = {
@@ -123,6 +127,8 @@ export const DEFAULT_SETTINGS: SettingsDto = {
   sort: 'updatedAt',
   dir: 'desc',
   navCollapsed: false,
+  includeArchived: false,
+  filterTags: [],
 }
 
 /**

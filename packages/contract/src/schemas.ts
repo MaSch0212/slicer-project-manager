@@ -46,6 +46,15 @@ export const tagNameSchema = z.string().trim().min(1).max(60)
 
 export const tagBodySchema = z.object({ name: tagNameSchema })
 
+/**
+ * The remembered projects-page tag filter (spec H §5). Built here, not inline where
+ * `packages/core/src/users/account.ts` wires it into `jsonCodec`: that file's own lint rule
+ * keeps `packages/core` free of npm imports other than `occt-import-js`, so it cannot call `z`
+ * itself — only receive an already-built validator through `@spm/contract`, which carries no
+ * such restriction.
+ */
+export const filterTagsSchema = z.array(tagNameSchema).max(50)
+
 export const createProjectSchema = z.object({
   name: z.string().trim().min(1).max(200),
   website: z.url().nullable().optional(),
@@ -158,6 +167,8 @@ export const settingsPatchSchema = z.object({
   sort: z.enum(['name', 'createdAt', 'updatedAt']).optional(),
   dir: z.enum(['asc', 'desc']).optional(),
   navCollapsed: z.boolean().optional(),
+  includeArchived: z.boolean().optional(),
+  filterTags: filterTagsSchema.optional(),
 })
 
 export const projectQuerySchema = z.object({

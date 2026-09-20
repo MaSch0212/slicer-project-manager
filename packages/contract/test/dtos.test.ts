@@ -22,5 +22,7 @@ test('DEFAULT_SETTINGS matches the shipped defaults exactly', () => {
     sort: 'updatedAt',
     dir: 'desc',
     navCollapsed: false,
+    includeArchived: false,
+    filterTags: [],
   })
 })
