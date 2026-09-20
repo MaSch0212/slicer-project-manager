@@ -270,6 +270,44 @@ test('a stored filterTags value that fails the schema falls back to the default'
   })
 })
 
+// The array-length half of the schema, `.max(50)`, is a separate clause from the per-element
+// `tagNameSchema` check the test above pins: every one of 51 generated names is individually
+// valid, so this only fails because the array itself is one element over the bound. Without a
+// test that puts more than a handful of tags in a stored value, a regression deleting `.max(50)`
+// would go unnoticed.
+test('a stored filterTags value of 51 tags exceeds the bound and falls back to the default', async () => {
+  await withLibrary(async (lib) => {
+    const boot = await ensureBootstrapAdmin(lib)
+    const { user } = await activateAccount(lib, boot!.token, 'a good long password', null)
+    const ctx = { userId: user.id, isAdmin: true }
+
+    const tooMany = Array.from({ length: 51 }, (_, i) => `tag${i}`)
+    lib.db
+      .prepare('INSERT INTO user_settings (user_id, key, value) VALUES (?, ?, ?)')
+      .run(user.id, 'filterTags', JSON.stringify(tooMany))
+
+    assert.deepEqual(getSettings(lib, ctx).filterTags, [])
+  })
+})
+
+// The bound's other side: exactly 50 is still within `.max(50)`, so this pins the limit at 50
+// rather than merely "somewhere below 51" — an off-by-one that tightened the bound to 49 would
+// turn this test red while leaving the 51-tag test above green.
+test('a stored filterTags value of exactly 50 tags is within the bound and round-trips', async () => {
+  await withLibrary(async (lib) => {
+    const boot = await ensureBootstrapAdmin(lib)
+    const { user } = await activateAccount(lib, boot!.token, 'a good long password', null)
+    const ctx = { userId: user.id, isAdmin: true }
+
+    const atLimit = Array.from({ length: 50 }, (_, i) => `tag${i}`)
+    lib.db
+      .prepare('INSERT INTO user_settings (user_id, key, value) VALUES (?, ?, ?)')
+      .run(user.id, 'filterTags', JSON.stringify(atLimit))
+
+    assert.deepEqual(getSettings(lib, ctx).filterTags, atLimit)
+  })
+})
+
 // A stored filterTags value that is not JSON at all takes the same fallback path as the test
 // above, but through jsonCodec's JSON.parse guard rather than its schema.safeParse guard — the
 // two are separate branches and a regression could break either without the other.
