@@ -2,6 +2,8 @@ import {
   ChangeDetectionStrategy,
   Component,
   DestroyRef,
+  ElementRef,
+  afterNextRender,
   computed,
   inject,
   signal,
@@ -13,6 +15,7 @@ import { SEARCH_MAX_LENGTH, createProjectSchema } from '@spm/contract/schemas.ts
 import type { RescanResultDto, SettingsDto } from '@spm/contract/dtos.ts'
 import { JigBadge } from '@awdlab/jig/badge'
 import { JigButton } from '@awdlab/jig/button'
+import { JigScrollAmount } from '@awdlab/jig/directives'
 import { JigErrors } from '@awdlab/jig/errors'
 import { JigHint } from '@awdlab/jig/hint'
 import { JigIcon } from '@awdlab/jig/icon'
@@ -45,6 +48,25 @@ import { ProjectsStore } from './projects.store'
  */
 export const SEARCH_DEBOUNCE_MS = 250
 
+/**
+ * The nearest ancestor of `element` that can actually scroll, or `undefined`.
+ *
+ * Asked of the computed style rather than of a class name, so the page needs to know nothing
+ * about how the shell around it is built — only that something above it scrolls. `overflow-y`
+ * is the axis the list grows along; `auto` and `scroll` are the two values that produce a
+ * scrollport, and `hidden` deliberately is not (it clips without ever moving).
+ *
+ * Under jsdom, which computes no styles and lays nothing out, this answers `undefined` — which
+ * is the honest answer there and is why the caller treats it as "no scroll trigger".
+ */
+function nearestScroller(element: HTMLElement): HTMLElement | undefined {
+  for (let node = element.parentElement; node; node = node.parentElement) {
+    const overflowY = getComputedStyle(node).overflowY
+    if (overflowY === 'auto' || overflowY === 'scroll') return node
+  }
+  return undefined
+}
+
 @Component({
   selector: 'spm-projects-page',
   imports: [
@@ -61,6 +83,7 @@ export const SEARCH_DEBOUNCE_MS = 250
     JigListBox,
     JigMessage,
     JigPopover,
+    JigScrollAmount,
     JigSelect,
     JigSpinner,
     JigTag,
@@ -69,7 +92,17 @@ export const SEARCH_DEBOUNCE_MS = 250
   providers: [ProjectsStore],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
-    <main class="spm-main">
+    <!-- The scroll trigger (spec 7.5). The directive is here rather than on the list because the
+         list is not what scrolls and never was: the whole page moves, inside the shell's content
+         column. scroller() is the element that column resolves to, measured rather than assumed --
+         see the field for what was measured and why the container input is needed at all. -->
+    <main
+      class="spm-main"
+      jigScrollAmount
+      [jigScrollAmountContainer]="scroller()"
+      [jigScrollAmountEndThreshold]="endThreshold"
+      (endReached)="onEndReached()"
+    >
       <div class="spm-page-head">
         <h1>{{ t.translations().projects.title }}</h1>
         <button jigButton kind="secondary" type="button" (click)="onRescan()">
@@ -334,6 +367,17 @@ export const SEARCH_DEBOUNCE_MS = 250
           @if (store.isLoadingMore()) {
             <jig-spinner centered [size]="32" />
           }
+          <!-- A message here rather than the snackbar this used to be, and the scroll trigger is
+               the whole reason. endReached re-arms every time the user leaves the threshold zone
+               and comes back, so at a broken-network boundary a snackbar per attempt becomes a
+               stream of identical messages about something nobody pressed. This renders once
+               however many times the store sets it, and it sits beside the button the user would
+               retry with instead of in a corner of the window. -->
+          @if (store.loadMoreFailed()) {
+            <jig-message color="error" role="alert">
+              {{ t.translations().projects.loadMoreFailed }}
+            </jig-message>
+          }
           @if (store.hasMore()) {
             <button
               jigButton
@@ -374,6 +418,40 @@ export class ProjectsPage {
 
   /** The cap the search box wears, from the schema that would otherwise refuse the query. */
   protected readonly searchMaxLength = SEARCH_MAX_LENGTH
+
+  /**
+   * How far above the floor the next page starts loading (spec 7.5 asks for a non-zero value).
+   *
+   * Roughly one card tall at this grid's sizing, so the request is already out while the last
+   * row is still on screen. Larger would prefetch a page the user may never scroll to; zero
+   * would start the request only once there is nothing left to look at.
+   */
+  protected readonly endThreshold = 400
+
+  /**
+   * The element the page actually scrolls inside, or `undefined` when nothing does.
+   *
+   * **Measured, not assumed, and the reason the container input is needed at all.** Two facts,
+   * both measured in Chromium rather than reasoned about:
+   *
+   * 1. Nothing inside this page scrolls. The grid, the footer and this component's own `main`
+   *    all have visible overflow, so their `scrollHeight` equals their `clientHeight` and
+   *    `distanceFromEnd` would sit at zero forever — the directive would fire once on mount and
+   *    never again. The scrolling element is the shell's content column, an ancestor.
+   * 2. It cannot be the viewport either. A viewport scroll is fired at `document` and bubbles
+   *    only to `window`; `document.documentElement` is not on that path, so a listener attached
+   *    to it never runs — measured at zero calls while `document` and `window` each got one.
+   *    `jigScrollAmount` listens on the element it is given, so pointing it at the document's
+   *    scrolling element would have read a `scrollTop` that never moved. That is what `styles.css`
+   *    giving the shell's content column its own `overflow-y` is for.
+   *
+   * So this looks for the nearest ancestor that genuinely scrolls rather than naming one, which
+   * is also what keeps it honest: if no ancestor does, the answer is `undefined` and the scroll
+   * trigger stays off rather than firing against geometry that measures nothing.
+   */
+  protected readonly scroller = signal<HTMLElement | undefined>(undefined)
+
+  private readonly host = inject<ElementRef<HTMLElement>>(ElementRef)
 
   /**
    * What the sort popup is allowed to be, overriding jig-select's own defaults.
@@ -471,6 +549,11 @@ export class ProjectsPage {
     inject(DestroyRef).onDestroy(() => {
       if (this.searchTimer !== null) clearTimeout(this.searchTimer)
     })
+
+    // After the first render, because the answer is a computed style and this component's host
+    // is only in the document once the router has placed it. A signal rather than a template
+    // expression so the walk runs once instead of once per change detection.
+    afterNextRender(() => this.scroller.set(nearestScroller(this.host.nativeElement)))
   }
 
   /**
@@ -526,7 +609,7 @@ export class ProjectsPage {
    *
    * **The count is compared, not just re-read.** Fix round 2: this used to publish the total
    * unconditionally, so a Load more that FAILED still moved the region from empty to "Showing 48
-   * projects" while the error snackbar fired — two messages for one press, saying opposite
+   * projects" while the failure was reported alongside it — two messages for one press, opposite
    * things, on the very press most likely to confuse. Only the first failure did it, which is
    * exactly the kind of defect a comment claiming otherwise keeps alive. Announcing the change
    * rather than the state also keeps a page that arrived as pure duplicates silent, which is
@@ -537,6 +620,29 @@ export class ProjectsPage {
     await this.store.loadMore()
     const after = this.store.items().length
     if (after !== before) this.shownCount.set(after)
+  }
+
+  /**
+   * The scroll trigger's end of the same request the button makes (spec 7.5).
+   *
+   * **No in-flight guard here, deliberately.** `ProjectsStore.loadMore` already refuses a second
+   * request while one is running and already discards a page whose filter has since changed, and
+   * jig's own documentation is explicit that edge-triggering removes repeated fires but not a
+   * request in flight while the user crosses the threshold back and forth. A guard here would be
+   * a second copy of a mechanism that works — and the copy is what goes stale.
+   *
+   * What it does refuse is a fire with no measured scroller behind it: see `scroller`. Without
+   * one the directive is reading an element with no overflow, where `distanceFromEnd` is zero
+   * from the first render, and acting on that would page the library in on mount. The button is
+   * the fallback in that case, which is exactly what spec 7.5 says it is for.
+   *
+   * It goes through `onLoadMore` rather than straight to the store so a page that arrived by
+   * scrolling is announced in the status region too — the rows are just as invisible to a screen
+   * reader either way.
+   */
+  onEndReached(): void {
+    if (!this.scroller()) return
+    void this.onLoadMore()
   }
 
   readonly rescanned = signal<RescanResultDto | null>(null)

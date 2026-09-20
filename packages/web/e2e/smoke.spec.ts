@@ -310,108 +310,236 @@ test.describe('the navigation', () => {
     expect(created.ok()).toBe(true)
     const project = (await created.json()) as { id: string }
 
-    await page.goto('/projects')
-    await expect(page.getByRole('heading', { name: 'Projects' })).toBeVisible()
+    // Everything below writes `sort` and `filterTags` on the SHARED admin account, and both are
+    // restored through the UI further down as the other half of their own assertions. The
+    // try/finally is what makes that survive a failure: an assertion that throws in between skips
+    // every line after it, and `playwright.config.ts` runs one worker with `fullyParallel: false`
+    // -- so a tag filter left set would hide the fixtures of every spec that runs after this one
+    // and fail them for a reason nothing in their own file explains.
+    try {
+      await page.goto('/projects')
+      await expect(page.getByRole('heading', { name: 'Projects' })).toBeVisible()
 
-    // §7.2, first half: "a minimum width, so the label is not cut off". What is asserted is the
-    // floor, not the absence of an ellipsis — measured, the trigger is shrink-to-fit and so
-    // reports no overflow at any width this layout produces, which would have made a
-    // `scrollWidth <= clientWidth` assertion unable to fail. The floor is what actually delivers
-    // the requirement, and it is read off the page rather than written here as a number: a
-    // throwaway element resolves `--spm-sort-min-width` to pixels, so the assertion follows the
-    // stylesheet instead of pinning a literal against a copy of itself.
-    const sort = page.getByRole('combobox', { name: 'Sort by' })
-    await expect(sort).toBeVisible()
-    const floor = await page.evaluate(() => {
-      const probe = document.createElement('div')
-      probe.style.width = 'var(--spm-sort-min-width)'
-      document.body.append(probe)
-      const width = probe.getBoundingClientRect().width
-      probe.remove()
-      return width
-    })
-    expect(floor).toBeGreaterThan(0)
-    const field = page.locator('.spm-sort')
-    expect((await field.boundingBox())!.width).toBeGreaterThanOrEqual(floor)
+      // §7.2, first half: "a minimum width, so the label is not cut off". What is asserted is the
+      // floor, not the absence of an ellipsis — measured, the trigger is shrink-to-fit and so
+      // reports no overflow at any width this layout produces, which would have made a
+      // `scrollWidth <= clientWidth` assertion unable to fail. The floor is what actually delivers
+      // the requirement, and it is read off the page rather than written here as a number: a
+      // throwaway element resolves `--spm-sort-min-width` to pixels, so the assertion follows the
+      // stylesheet instead of pinning a literal against a copy of itself.
+      const sort = page.getByRole('combobox', { name: 'Sort by' })
+      await expect(sort).toBeVisible()
+      const floor = await page.evaluate(() => {
+        const probe = document.createElement('div')
+        probe.style.width = 'var(--spm-sort-min-width)'
+        document.body.append(probe)
+        const width = probe.getBoundingClientRect().width
+        probe.remove()
+        return width
+      })
+      expect(floor).toBeGreaterThan(0)
+      const field = page.locator('.spm-sort')
+      expect((await field.boundingBox())!.width).toBeGreaterThanOrEqual(floor)
 
-    // §7.2, second half: "the dropdown is wrapping 'Recently updated', make the popup wide enough
-    // so all entries fit horizontally".
-    //
-    // **The short option is selected first, and that is what makes this able to fail.** jig sizes
-    // the popup to its anchor by default, and the anchor is the trigger — which, while the
-    // longest option is the selected one, is already wide enough for it. Measured: with the
-    // override removed the popup still fits, because the trigger was showing the very string
-    // being measured. Selecting "Newest" shrinks the trigger to a short label and leaves the
-    // popup to carry the long one, which is the situation the user actually reported.
-    //
-    // Height against a SHORT option rather than a hard-coded pixel count: a wrapped two-line
-    // entry is about twice the height of a one-line one, whatever the theme's line height is.
-    const sorted = settingsSaved(page)
-    await sort.click()
-    await page.getByRole('option', { name: 'Newest' }).click()
-    await sorted
+      // §7.2, second half: "the dropdown is wrapping 'Recently updated', make the popup wide enough
+      // so all entries fit horizontally".
+      //
+      // **The short option is selected first, and that is what makes this able to fail.** jig sizes
+      // the popup to its anchor by default, and the anchor is the trigger — which, while the
+      // longest option is the selected one, is already wide enough for it. Measured: with the
+      // override removed the popup still fits, because the trigger was showing the very string
+      // being measured. Selecting "Newest" shrinks the trigger to a short label and leaves the
+      // popup to carry the long one, which is the situation the user actually reported.
+      //
+      // Height against a SHORT option rather than a hard-coded pixel count: a wrapped two-line
+      // entry is about twice the height of a one-line one, whatever the theme's line height is.
+      const sorted = settingsSaved(page)
+      await sort.click()
+      await page.getByRole('option', { name: 'Newest' }).click()
+      await sorted
 
-    await sort.click()
-    const longest = page.getByRole('option', { name: 'Recently updated' })
-    await expect(longest).toBeVisible()
-    const longestBox = await longest.boundingBox()
-    const shortestBox = await page.getByRole('option', { name: 'Newest' }).boundingBox()
-    expect(longestBox!.height).toBeLessThan(shortestBox!.height * 1.5)
+      await sort.click()
+      const longest = page.getByRole('option', { name: 'Recently updated' })
+      await expect(longest).toBeVisible()
+      const longestBox = await longest.boundingBox()
+      const shortestBox = await page.getByRole('option', { name: 'Newest' }).boundingBox()
+      expect(longestBox!.height).toBeLessThan(shortestBox!.height * 1.5)
 
-    // And the popup is never narrower than the control it hangs off. This is the half of
-    // `sortPopover` that a mutation can actually turn red: `width: 'max-content'` sizes the popup
-    // to its longest entry, which at this font is NARROWER than the trigger, so without the
-    // matching `minWidth` the list would sit under a wider control looking like a rendering
-    // fault. The one-line assertion above cannot distinguish the two; this can.
-    //
-    // Measured on the element the constraint is applied to — the popover itself, the one carrying
-    // the `popover` attribute while it is open — rather than on the list box inside it, which
-    // sits a border's width narrower.
-    const popupWidth = await longest.evaluate(
-      (option) => option.closest('[popover]')!.getBoundingClientRect().width,
-    )
-    expect(popupWidth).toBeGreaterThanOrEqual(floor)
+      // And the popup is never narrower than the control it hangs off. This is the half of
+      // `sortPopover` that a mutation can actually turn red: `width: 'max-content'` sizes the popup
+      // to its longest entry, which at this font is NARROWER than the trigger, so without the
+      // matching `minWidth` the list would sit under a wider control looking like a rendering
+      // fault. The one-line assertion above cannot distinguish the two; this can.
+      //
+      // Measured on the element the constraint is applied to — the popover itself, the one carrying
+      // the `popover` attribute while it is open — rather than on the list box inside it, which
+      // sits a border's width narrower.
+      const popupWidth = await longest.evaluate(
+        (option) => option.closest('[popover]')!.getBoundingClientRect().width,
+      )
+      expect(popupWidth).toBeGreaterThanOrEqual(floor)
 
-    // Put the sort back: it is persisted against the shared admin account, so leaving it on
-    // "Newest" would reorder the list every later test runs against.
-    const restored = settingsSaved(page)
-    await longest.click()
-    await restored
-    await expect(longest).toBeHidden()
+      // Put the sort back: it is persisted against the shared admin account, so leaving it on
+      // "Newest" would reorder the list every later test runs against.
+      const restored = settingsSaved(page)
+      await longest.click()
+      await restored
+      await expect(longest).toBeHidden()
 
-    // §7.4: the disclosure, the list box behind it, and the count.
-    const tags = page.getByRole('button', { name: 'Tags' })
-    await expect(tags).toHaveAttribute('aria-expanded', 'false')
-    await expect(tags.locator('jig-badge-indicator')).toHaveCount(0)
+      // §7.4: the disclosure, the list box behind it, and the count.
+      const tags = page.getByRole('button', { name: 'Tags' })
+      await expect(tags).toHaveAttribute('aria-expanded', 'false')
+      await expect(tags.locator('jig-badge-indicator')).toHaveCount(0)
 
-    await tags.click()
+      await tags.click()
 
-    await expect(tags).toHaveAttribute('aria-expanded', 'true')
-    const list = page.getByRole('listbox', { name: 'Tags' })
-    await expect(list).toBeVisible()
-    // The button says which list it controls, and this is where that can be followed: the id has
-    // to resolve to the element that actually opened.
-    expect(await tags.getAttribute('aria-controls')).toBe(await list.getAttribute('id'))
+      await expect(tags).toHaveAttribute('aria-expanded', 'true')
+      const list = page.getByRole('listbox', { name: 'Tags' })
+      await expect(list).toBeVisible()
+      // The button says which list it controls, and this is where that can be followed: the id has
+      // to resolve to the element that actually opened.
+      expect(await tags.getAttribute('aria-controls')).toBe(await list.getAttribute('id'))
 
-    // The filter is persisted against the shared admin account, so both the selection and its
-    // undo are awaited — an optimistic write that had not landed before the next test navigated
-    // would leave the library filtered for everything that follows.
-    const saved = settingsSaved(page)
-    await list.getByRole('option', { name: TAG }).click()
-    await expect(tags.locator('jig-badge-indicator')).toHaveText('1')
-    await saved
+      // The filter is persisted against the shared admin account, so both the selection and its
+      // undo are awaited — an optimistic write that had not landed before the next test navigated
+      // would leave the library filtered for everything that follows.
+      const saved = settingsSaved(page)
+      await list.getByRole('option', { name: TAG }).click()
+      await expect(tags.locator('jig-badge-indicator')).toHaveText('1')
+      await saved
 
-    // And back, which is also the other half of the assertion: the count follows the selection
-    // down as well as up, so it is a count rather than a flag that was switched on once.
-    const cleared = settingsSaved(page)
-    await list.getByRole('option', { name: TAG }).click()
-    await expect(tags.locator('jig-badge-indicator')).toHaveCount(0)
-    await cleared
+      // And back, which is also the other half of the assertion: the count follows the selection
+      // down as well as up, so it is a count rather than a flag that was switched on once.
+      const cleared = settingsSaved(page)
+      await list.getByRole('option', { name: TAG }).click()
+      await expect(tags.locator('jig-badge-indicator')).toHaveCount(0)
+      await cleared
 
-    await page.keyboard.press('Escape')
-    await expect(tags).toHaveAttribute('aria-expanded', 'false')
+      await page.keyboard.press('Escape')
+      await expect(tags).toHaveAttribute('aria-expanded', 'false')
+    } finally {
+      // The defaults, written straight to the API rather than through the controls: a restore
+      // that has to drive the UI cannot run when the UI is the thing that just failed. The
+      // fixture goes the same way -- a project left behind carrying `e2e-filter-bar` is the other
+      // thing a later spec would trip over. Both are idempotent and assert nothing: a failure
+      // here would replace the real diagnosis with its own.
+      await page.request.put('/api/account/settings', {
+        data: { sort: 'updatedAt', dir: 'desc', filterTags: [] },
+      })
+      await page.request.delete(`/api/projects/${project.id}?deleteFiles=true`)
+    }
+  })
 
-    expect((await page.request.delete(`/api/projects/${project.id}`)).ok()).toBe(true)
+  /**
+   * Spec H §7.5 and acceptance criterion 2: a library larger than one page grows as it is
+   * scrolled, with no press of the button that does the same thing.
+   *
+   * **Only a browser can answer this.** The trigger is a distance in pixels between a scroll
+   * position and a content height, and jsdom has neither -- every geometry it reports is zero,
+   * which makes "at the end of the list" indistinguishable from "at the start of an empty one".
+   * The page therefore switches the trigger off when it cannot find a scrolling ancestor, so
+   * under `ng test` there is nothing to observe at all.
+   *
+   * **In this block, so it logs in zero times** (constraint C8) -- the same login budget the
+   * tests above it live here for.
+   *
+   * **What keeps it able to fail.** Three things, each of which a scroll-blind version of this
+   * test would pass without:
+   *   1. The fixture is deliberately just over one page, and the count before scrolling is
+   *      asserted to be UNDER the total. A list that was already whole would reach the final
+   *      count without the trigger ever mattering.
+   *   2. The foot of the list is asserted to be below the fold first, so there is genuinely
+   *      something to scroll. Measured: 48 cards do not fit 720px.
+   *   3. The search box is what narrows the list to this fixture. It is the one filter the store
+   *      does not persist, so unlike the sort or the tags it leaves nothing behind for the specs
+   *      that run after this one.
+   */
+  test('scrolling to the foot of the list loads the next page', async ({ page }) => {
+    // Just over `PROJECTS_PAGE_SIZE`, which is 48 (`projects.store.ts`). Not imported: that
+    // module is an Angular injectable and pulling it into a Playwright spec drags the framework
+    // in with it. The count below is what catches a page size that outgrows this number -- it
+    // asserts the first page is SHORTER than the fixture, so a size of 50 or more fails here
+    // rather than passing with the trigger doing nothing.
+    const TOTAL = 50
+    const PREFIX = 'e2e-scroll-'
+    const created: string[] = []
+    try {
+      for (let index = 0; index < TOTAL; index += 1) {
+        const response = await page.request.post('/api/projects', {
+          data: { name: `${PREFIX}${String(index).padStart(2, '0')}` },
+        })
+        expect(response.ok()).toBe(true)
+        created.push(((await response.json()) as { id: string }).id)
+      }
+
+      await page.goto('/projects')
+      await expect(page.getByRole('heading', { name: 'Projects' })).toBeVisible()
+      // Armed before the keystroke, because the answer can be back before the next line runs.
+      const searched = page.waitForResponse(
+        (response) =>
+          response.url().includes('/api/projects?') &&
+          response.url().includes('search=') &&
+          response.ok(),
+      )
+      await page.getByRole('searchbox', { name: 'Search' }).fill(PREFIX)
+      await searched
+
+      // **Wait for the SEARCH to have landed, not merely for a full page** -- and this is the
+      // second version of that wait, because the first one was itself the bug.
+      //
+      // The box is debounced, so for a quarter of a second after the last keystroke the grid is
+      // still the whole library, which also holds more than one page: the button and a 48-card
+      // count are already true of the wrong list. Scrolling there starts a page for the old query,
+      // the debounce fires mid-flight, and the store discards it exactly as it is supposed to --
+      // leaving the list at 48 for a reason that has nothing to do with the trigger. Measured: it
+      // failed that way in the full suite while passing on its own.
+      //
+      // "No card lacks the prefix" looked like the condition and is NOT: while the store is
+      // loading, the template renders a spinner INSTEAD of the grid, so there are no cards, so
+      // nothing lacks anything and the assertion passes on an empty page. It has to be a single
+      // observation that the list is non-empty AND entirely ours, which is why this reads every
+      // title in one call rather than composing two locators that can be true at different
+      // instants.
+      const cards = page.locator('.spm-project')
+      await expect
+        .poll(async () => {
+          const titles = await page.locator('.spm-project-title').allTextContents()
+          return titles.length > 0 && titles.every((title) => title.includes(PREFIX))
+        })
+        .toBe(true)
+
+      // The button's presence IS the store saying a further page exists.
+      const loadMore = page.getByRole('button', { name: 'Load more' })
+      await expect(loadMore).toBeVisible()
+
+      const firstPage = await cards.count()
+      expect(firstPage).toBeGreaterThan(0)
+      expect(firstPage).toBeLessThan(TOTAL)
+
+      const footer = page.locator('.spm-list-footer')
+      const box = await footer.boundingBox()
+      expect(box!.y).toBeGreaterThan(page.viewportSize()!.height)
+
+      // The scroll itself, and the only thing this test does to the page. Nothing presses the
+      // button: `scrollIntoViewIfNeeded` moves whichever ancestor has to move and clicks nothing.
+      await footer.scrollIntoViewIfNeeded()
+
+      await expect(cards).toHaveCount(TOTAL)
+      // Still only ours: the second page answers the same query the first one did, rather than
+      // the library at an offset into a list nobody asked for.
+      await expect(cards.filter({ hasNotText: PREFIX })).toHaveCount(0)
+      // And the floor knows it is the floor now, rather than offering a page that is not there.
+      await expect(loadMore).toBeHidden()
+    } finally {
+      // `deleteFiles`, so the folders each create put in the library go with them: a rescan in a
+      // later run would otherwise adopt fifty of them. In a `finally` because an assertion above
+      // that throws would otherwise leave the library fifty projects heavier for every spec that
+      // follows -- `playwright.config.ts` runs one worker with `fullyParallel: false`, so
+      // "later" means every test after this one.
+      for (const id of created) {
+        await page.request.delete(`/api/projects/${id}?deleteFiles=true`)
+      }
+    }
   })
 
   /**

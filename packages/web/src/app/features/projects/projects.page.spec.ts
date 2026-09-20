@@ -55,7 +55,9 @@ async function setup(
   }
   // `NotifyService` is a double because jig's snackbar host attaches to
   // `ApplicationRef.components[0]`, which `TestBed` never populates; `ProjectsStore` injects it
-  // to report a filter that could not be remembered and a page that could not be loaded.
+  // to report a filter that could not be remembered. A page that could not be LOADED no longer
+  // goes through it (spec H 7.5): that is a signal the footer renders, and two tests below assert
+  // this double stays untouched.
   const notify = { success: vi.fn(), error: vi.fn(), info: vi.fn() }
   TestBed.configureTestingModule({
     providers: [
@@ -302,13 +304,6 @@ describe('ProjectsPage', () => {
     )
   })
 
-  /**
-   * Fix round 2. The announcement used to be published unconditionally, so a Load more that
-   * FAILED moved the region from empty to "Showing 48 projects" while the error snackbar fired:
-   * two messages for one press, saying opposite things. Only the FIRST press showed it — after
-   * that the total is already published and re-publishing the same number changes no text — so
-   * the fixture fails the first press deliberately, which is the only press that catches it.
-   */
   /**
    * Spec H 7.1-7.4 and constraint C6. Every control in the filter bar lost its visible label to
    * the user's request for one row, so each one has to carry its name some other way -- and the
@@ -567,19 +562,36 @@ describe('ProjectsPage', () => {
     expect(api.projects.list.mock.calls.at(-1)?.[0]).toMatchObject({ search: 'ben' })
   })
 
-  it('says nothing in the status region when the first page fails to load', async () => {
+  /**
+   * Fix round 2. The announcement used to be published unconditionally, so a Load more that
+   * FAILED moved the region from empty to "Showing 48 projects" while an error was reported:
+   * two messages for one press, saying opposite things. Only the FIRST press showed it — after
+   * that the total is already published and re-publishing the same number changes no text — so
+   * the fixture fails the first press deliberately, which is the only press that catches it.
+   *
+   * The failure now renders in the footer instead of firing a snackbar (spec H 7.5), so this
+   * also asserts the message that replaced it — and that `NotifyService` was left alone, which
+   * is what a page keeping both would fail on.
+   */
+  it('shows the failure in the footer and says nothing in the status region', async () => {
     const list = vi.fn().mockResolvedValueOnce(fullPage()).mockRejectedValueOnce(new Error('boom'))
     const { fixture, notify } = await setup({ list })
     await fixture.whenStable()
     fixture.detectChanges()
-    const region = (fixture.nativeElement as HTMLElement).querySelector(
-      '.spm-list-footer [role="status"]',
-    )
+    const footer = (fixture.nativeElement as HTMLElement).querySelector('.spm-list-footer')
+    const region = footer?.querySelector('[role="status"]')
+    expect(footer?.querySelectorAll('[role="alert"]')).toHaveLength(0)
 
     await fixture.componentInstance.onLoadMore()
     fixture.detectChanges()
 
+    const alerts = [...(footer?.querySelectorAll('[role="alert"]') ?? [])]
+    expect(alerts).toHaveLength(1)
+    expect(alerts[0]?.textContent?.trim()).toBe(en.projects.loadMoreFailed)
+    // The button is still there beside it: a failed page is not the end of the library, and the
+    // message is only useful next to the control it asks the user to press again.
+    expect(footer?.querySelectorAll('button')).toHaveLength(1)
     expect(region?.textContent?.trim()).toBe('')
-    expect(notify.error).toHaveBeenCalledTimes(1)
+    expect(notify.error).not.toHaveBeenCalled()
   })
 })

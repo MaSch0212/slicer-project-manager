@@ -91,6 +91,21 @@ export class ProjectsStore {
   private readonly loadingMore = signal(false)
 
   /**
+   * Whether the last attempt at a further page failed, and has not been superseded.
+   *
+   * A signal rather than the snackbar this used to be, and the reason is the scroll trigger
+   * (spec 7.5). `endReached` re-arms every time the user leaves the threshold zone and comes
+   * back, so at a broken-network boundary a snackbar-per-attempt becomes a stream of identical
+   * messages for something the user never pressed. A state renders once however many times it is
+   * set, and it belongs beside the control the user would retry with rather than in a corner of
+   * the window.
+   *
+   * Cleared by the next attempt and by `resetPaging`, so a filter change does not carry the
+   * previous filter's failure into a list it says nothing about.
+   */
+  private readonly loadMoreError = signal(false)
+
+  /**
    * Which filter the accumulated pages belong to. Bumped by every reset; captured by `loadMore`
    * before it awaits and compared after, so a page fetched for a filter the user has since
    * changed is discarded whole — its rows *and* its offset bookkeeping.
@@ -102,6 +117,9 @@ export class ProjectsStore {
 
   /** Whether a further page is currently being fetched — the page renders a spinner on it. */
   readonly isLoadingMore = this.loadingMore.asReadonly()
+
+  /** Whether the last attempt at a further page failed — the page renders a message on it. */
+  readonly loadMoreFailed = this.loadMoreError.asReadonly()
 
   /**
    * `Resource.value()` only substitutes `defaultValue` before any load has ever completed
@@ -216,6 +234,7 @@ export class ProjectsStore {
     this.appended.set([])
     this.lastPageLength.set(null)
     this.nextOffset.set(PROJECTS_PAGE_SIZE)
+    this.loadMoreError.set(false)
   }
 
   /**
@@ -305,10 +324,14 @@ export class ProjectsStore {
    * Like `toggleTag`, this never rejects: it is bound to both a click and a scroll output.
    * `lastPageLength` is left untouched on failure so `hasMore` stays true and the control the
    * user just pressed is still there to press again.
+   *
+   * A failure sets `loadMoreFailed` instead of firing a snackbar. See that signal for why the
+   * scroll trigger is what makes the difference.
    */
   async loadMore(): Promise<void> {
     if (this.loadingMore() || !this.hasMore()) return
     this.loadingMore.set(true)
+    this.loadMoreError.set(false)
     const offset = this.nextOffset()
     const generation = this.generation
     try {
@@ -325,7 +348,7 @@ export class ProjectsStore {
       this.appended.update((rows) => [...rows, ...page])
       this.lastPageLength.set(page.length)
     } catch {
-      this.notify.error(this.t.translations().projects.loadMoreFailed)
+      this.loadMoreError.set(true)
     } finally {
       this.loadingMore.set(false)
     }

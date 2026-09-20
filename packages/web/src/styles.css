@@ -80,18 +80,41 @@ p {
 
 /* Two columns above the breakpoint: the sidebar and everything else. Below it the sidebar is
    `display: none` and this is a one-column layout again, which is why nothing here changes
-   direction -- a row with one item in it is a column. */
+   direction -- a row with one item in it is a column.
+
+   `height` and not `min-height`, so the column beside it has a scrollport of its own. See
+   `.spm-shell-body`: the pages are unchanged by this, but where the scrollbar LIVES is not. */
 .spm-shell {
   display: flex;
-  min-height: 100dvh;
+  height: 100dvh;
   align-items: stretch;
 }
 
+/*
+ * The content column, and the element every page scrolls inside.
+ *
+ * ## Why an element scrolls rather than the window
+ *
+ * Spec H 7.5 asks for infinite scroll, and the control it names -- `jigScrollAmount` -- reads
+ * `scrollTop` off an element and listens for that element's `scroll` event. The window cannot be
+ * that element: a viewport scroll is fired at `document` and bubbles only to `window`, and
+ * `document.documentElement` is not on that path, so a listener attached to it never runs at all.
+ * Measured in Chromium: `documentElement` got zero calls for a scroll that `document` and
+ * `window` each got one of. So the page's scroll had to become an element's scroll or the trigger
+ * could not be wired to anything.
+ *
+ * What the user sees is unchanged. The shell fills the window either way and this column already
+ * reached the window's right edge, so the scrollbar is in the same pixels it was; the sidebar,
+ * which used to be a `position: sticky` box the page scrolled past, is now simply outside the
+ * scrollport and stays put for the same reason it did before.
+ *
+ * `min-width: 0` and not `overflow: hidden`: a flex item's automatic minimum size is its
+ * content, so without this a wide table or a long unbroken path inside a page pushes the
+ * column wider than the viewport and takes the sidebar off screen with it.
+ */
 .spm-shell-body {
   display: flex;
-  /* `min-width: 0` and not `overflow: hidden`: a flex item's automatic minimum size is its
-     content, so without this a wide table or a long unbroken path inside a page pushes the
-     column wider than the viewport and takes the sidebar off screen with it. */
+  overflow-y: auto;
   min-width: 0;
   flex: 1;
   flex-direction: column;
@@ -100,24 +123,22 @@ p {
 /*
  * The navigation sidebar (spec G 4.2).
  *
- * `align-self: flex-start` is what makes `position: sticky` mean anything here. The shell is a
- * stretch flex container, so without it the sidebar is already as tall as the whole scrolling
- * page and has nothing to stick inside; with it the element is its own 100dvh box and the
- * viewport scrolls past it.
+ * It used to be `position: sticky` inside a shell the whole page scrolled through. It is not any
+ * more, and nothing was lost: the shell is now exactly the window's height and the scrollport is
+ * `.spm-shell-body` beside this element, so the sidebar is outside what scrolls and stays where
+ * it is without being told to. A `sticky` box in a container that never scrolls is inert, and an
+ * inert rule is one a later reader has to disprove.
  *
  * `overflow-y: auto` for the case the entry list outgrows a short window -- the foot control
  * must stay reachable rather than being pushed below the fold of an element that does not
  * scroll.
  */
 .spm-sidebar {
-  position: sticky;
-  top: 0;
   display: flex;
   overflow-y: auto;
   width: 240px;
   height: 100dvh;
   flex: none;
-  align-self: flex-start;
   flex-direction: column;
   gap: var(--jig-size-padding-md);
   border-right: 1px solid var(--jig-color-border);
@@ -327,12 +348,20 @@ spm-nav-list {
   margin-top: var(--spm-gap);
 }
 
-/* Centres the narrow, single-column pages: sign in, activate, upload. */
+/* Centres the narrow, single-column pages: sign in, activate, upload.
+
+   `safe center` and not plain `center`, and that is this element's half of the shell now having
+   a scrollport (see `.spm-shell-body`). Inside a column whose height is the window's, content
+   taller than the window overflows a centred flex container at BOTH ends -- and the half above
+   the top edge is unreachable, because the scroll range starts at this element's own top. `safe`
+   makes the browser fall back to start alignment exactly when that would happen. A browser that
+   does not know the keyword drops the declaration and gets start alignment outright, which is
+   the same answer in the case that matters. */
 .spm-main--narrow {
   display: flex;
   max-width: 30rem;
   flex-direction: column;
-  justify-content: center;
+  justify-content: safe center;
 }
 
 /* ------------------------------------------------------------------ pieces */

@@ -424,21 +424,57 @@ describe('ProjectsStore', () => {
     expect(store.hasMore()).toBe(false)
   })
 
-  // The control the user just pressed has to still be there to press again, so a failed page
-  // must not be mistaken for the end of the library.
-  it('keeps offering more and reports an error when a page fails to load', async () => {
+  /**
+   * The control the user just pressed has to still be there to press again, so a failed page
+   * must not be mistaken for the end of the library.
+   *
+   * The failure is a signal and no longer a snackbar (spec H 7.5): `endReached` re-arms every
+   * time the user leaves the threshold zone and comes back, so one snackbar per attempt is a
+   * stream of them at a broken-network boundary. `notify.error` is asserted NOT to have fired,
+   * which is the half a state-only assertion would not catch — a store that set the signal and
+   * kept the snackbar would pass on the signal alone.
+   */
+  it('keeps offering more and records the failure when a page fails to load', async () => {
     const list = vi
       .fn()
       .mockResolvedValueOnce(fullPage('a'))
       .mockRejectedValueOnce(new Error('boom'))
     const { store, notify } = await setup({}, list)
     await settle()
+    expect(store.loadMoreFailed()).toBe(false)
 
     await expect(store.loadMore()).resolves.toBeUndefined()
 
-    expect(notify.error).toHaveBeenCalled()
+    expect(store.loadMoreFailed()).toBe(true)
+    expect(notify.error).not.toHaveBeenCalled()
     expect(store.hasMore()).toBe(true)
     expect(store.items()).toHaveLength(PROJECTS_PAGE_SIZE)
+  })
+
+  /**
+   * The other half of the same state: it is about the attempt that failed, not a mode the store
+   * stays in. A filter change replaces the whole result set, so a failure recorded against the
+   * previous one has nothing left to describe, and leaving it set would put an error under a
+   * list that had just loaded correctly.
+   *
+   * `setSearch` rather than a retry, because a retry clears it through the same line the first
+   * attempt does; a reset going through `resetPaging` is the path that is easy to miss.
+   */
+  it('clears a recorded failure when the filter changes', async () => {
+    const list = vi
+      .fn()
+      .mockResolvedValueOnce(fullPage('a'))
+      .mockRejectedValueOnce(new Error('boom'))
+      .mockResolvedValue([project({ id: 'b0' })])
+    const { store } = await setup({}, list)
+    await settle()
+    await store.loadMore()
+    expect(store.loadMoreFailed()).toBe(true)
+
+    store.setSearch('benchy')
+    await settle()
+
+    expect(store.loadMoreFailed()).toBe(false)
   })
 
   // Spec H 4: the filter bar's tag list comes from the library, not from the rows on screen —
