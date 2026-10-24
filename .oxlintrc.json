@@ -2,5 +2,11 @@
   "$schema": "./node_modules/oxlint/configuration_schema.json",
   "plugins": ["typescript", "unicorn", "oxc"],
   "categories": { "correctness": "error" },
-  "ignorePatterns": ["legacy/**", "target/**", "**/dist/**", "**/node_modules/**"]
+  "ignorePatterns": [
+    "legacy/**",
+    "packages/web/src/api/generated/**",
+    "target/**",
+    "**/dist/**",
+    "**/node_modules/**"
+  ]
 }

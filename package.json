@@ -8,6 +8,7 @@
     "typecheck": "pnpm -r --if-present typecheck",
     "test": "pnpm -r --if-present test",
     "test:rust": "cargo test --workspace",
+    "gen:types": "cargo run -p spm-core --example gen_ts",
     "lint:rust": "cargo clippy --workspace --all-targets -- -D warnings && cargo fmt --all --check",
     "verify": "pnpm lint && pnpm fmt:check && pnpm typecheck && pnpm test && pnpm test:rust && pnpm lint:rust"
   },

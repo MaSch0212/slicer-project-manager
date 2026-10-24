@@ -6,6 +6,7 @@
   "trailingComma": "all",
   "ignorePatterns": [
     "legacy/**",
+    "packages/web/src/api/generated/**",
     "target/**",
     "**/dist/**",
     "pnpm-lock.yaml",

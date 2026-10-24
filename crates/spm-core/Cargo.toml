@@ -5,5 +5,30 @@ edition.workspace = true
 license.workspace = true
 publish.workspace = true
 
+[features]
+# Test support (`spm_core::testing`): temp libraries and seed helpers shared with the other crates'
+# tests. Never enabled in a release build.
+testing = ["dep:tempfile"]
+
+[dependencies]
+base64 = "0.23"
+getrandom = "0.4"
+pbkdf2 = "0.13"
+rusqlite = { version = "0.41", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.11"
+subtle = "2.6"
+tempfile = { version = "3", optional = true }
+time = { version = "0.3", features = ["formatting"] }
+ts-rs = { version = "12", features = ["serde-compat", "no-serde-warnings"] }
+unicode-normalization = "0.1"
+url = "2"
+uuid = { version = "1", features = ["v4"] }
+
+[dev-dependencies]
+spm-core = { path = ".", features = ["testing"] }
+tempfile = "3"
+
 [lints]
 workspace = true
