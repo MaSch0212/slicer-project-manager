@@ -3,6 +3,7 @@ use std::time::{Duration, Instant};
 use rusqlite::{Connection, params};
 use spm_core::db::migrate::{SCHEMA_VERSION, run_migrations};
 use spm_core::db::{BUSY_TIMEOUT_MS, DB_FILE, Library, OpenOptions, SPM_DIR};
+use spm_core::files::classify::CLASSIFIER_VERSION;
 use spm_core::new_id;
 use spm_core::testing::TempLibrary;
 
@@ -69,8 +70,9 @@ fn run_migrations_is_idempotent() {
 
 /// Migration 003 backfills a sentinel *below* the shipping classifier version, and that is the
 /// mechanism: every row that predates it must read `classified_by = 0`, or a classifier bump finds
-/// nothing stale. The other half of the legacy test, `0 < CLASSIFIER_VERSION`, needs the
-/// classifier, which arrives with part 2 of the port; it is deferred there.
+/// nothing stale. The second assertion is the other half: the sentinel is strictly below the
+/// shipping classifier version, so every pre-existing row reads as stale. It is not pinned to
+/// today's value, so it survives a bump (the classifier snapshot test is the one built to break).
 #[test]
 fn migration_003_marks_every_pre_existing_row_as_predating_the_classifier() {
     let dir = tempfile::tempdir().unwrap();
@@ -103,6 +105,7 @@ fn migration_003_marks_every_pre_existing_row_as_predating_the_classifier() {
         .collect::<Result<_, _>>()
         .unwrap();
     assert_eq!(marks, [0, 0]);
+    assert!(marks.iter().all(|&mark| mark < CLASSIFIER_VERSION));
 }
 
 #[test]
