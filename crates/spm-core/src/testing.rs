@@ -152,3 +152,52 @@ pub fn seed_user(lib: &Library, username: &str) -> Ctx {
         is_admin: false,
     }
 }
+
+/// An active, non-admin user whose files live in `library_dir` (`.` for a flat, local-style
+/// library), optionally with a storage quota. The folder is created unless it is the library root.
+pub fn seed_user_in(
+    lib: &Library,
+    username: &str,
+    library_dir: &str,
+    quota_bytes: Option<i64>,
+) -> Ctx {
+    let user_id = new_id();
+    lib.db()
+        .execute(
+            "INSERT INTO users (id, username, display_name, library_dir, is_admin, status, quota_bytes, created_at)
+             VALUES (?, ?, ?, ?, 0, 'active', ?, 0)",
+            params![user_id, username, username, library_dir, quota_bytes],
+        )
+        .expect("a user row inserts");
+    if library_dir != "." {
+        fs::create_dir_all(lib.dir().join(library_dir)).expect("the user folder is created");
+    }
+    Ctx {
+        user_id,
+        is_admin: false,
+    }
+}
+
+/// Inserts a `files` row (100 bytes, never classified) and its `previews` row in `preview_state`,
+/// standing in for a rescan, and returns the file's id. Nothing is written to disk.
+pub fn seed_file_row(
+    lib: &Library,
+    project_id: &str,
+    rel_path: &str,
+    kind: &str,
+    preview_state: &str,
+) -> String {
+    let id = new_id();
+    let conn = lib.db();
+    conn.execute(
+        "INSERT INTO files (id, project_id, rel_path, kind, size_bytes, mtime_ms) VALUES (?, ?, ?, ?, 100, 0)",
+        params![id, project_id, rel_path, kind],
+    )
+    .expect("a file row inserts");
+    conn.execute(
+        "INSERT INTO previews (file_id, state, updated_at) VALUES (?, ?, 0)",
+        params![id, preview_state],
+    )
+    .expect("a preview row inserts");
+    id
+}

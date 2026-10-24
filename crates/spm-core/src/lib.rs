@@ -28,6 +28,7 @@ pub mod error;
 pub mod files;
 pub mod log;
 pub mod match_key;
+pub mod projects;
 pub mod tsgen;
 pub mod users;
 pub mod validate;
@@ -40,7 +41,18 @@ pub use ctx::Ctx;
 pub use db::ids::new_id;
 pub use db::{Library, OpenOptions};
 pub use error::{AppError, AppErrorCode, Result};
+pub use files::usecases::{
+    ResolvedFile, assert_within_quota, content_type_for, delete_file, rename_file,
+    resolve_file_path, resolve_preview_path, upload_file,
+};
 pub use log::{LogLevel, LogLevelSetting, Logger};
+pub use projects::import_curamanager::{
+    CuraManagerImport, ImportProgress, import_curamanager_library,
+};
+pub use projects::import_zip::import_curamanager_zip;
+pub use projects::queries::{get_project, list_projects, list_tags};
+pub use projects::rescan::{RescanProgress, rescan};
+pub use projects::usecases::{add_tag, create_project, delete_project, remove_tag, update_project};
 pub use users::account::{change_password, me, update_profile};
 pub use users::admin::{
     CreatedUser, create_user, delete_user, list_users, reissue_invite, require_admin, update_user,
