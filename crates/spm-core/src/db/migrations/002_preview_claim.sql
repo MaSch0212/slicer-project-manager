@@ -1,0 +1,12 @@
+-- The preview queue used to hand out rows without marking them: `WHERE state = 'pending'`
+-- selected, and state was written only after the handler resolved. With main.ts firing the
+-- queue on a fixed interval and no in-flight guard, any batch that outlives one interval
+-- (subsystem B's rasterizer against a 54 MB 3MF, spec 7.1) was re-selected wholesale by the
+-- next tick and redone, compounding every tick.
+--
+-- claimed_at is the lease: set when a row is handed to a handler, cleared when the handler
+-- reaches a terminal state. A row with a live lease is invisible to every other run; a lease
+-- older than PREVIEW_LEASE_MS is reclaimable, so a crashed process does not strand the row.
+-- attempts moves at claim time, so a hang or a crash still counts against the retry budget
+-- spec 7.3 exists to bound.
+ALTER TABLE previews ADD COLUMN claimed_at INTEGER;

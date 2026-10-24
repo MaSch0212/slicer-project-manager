@@ -19,18 +19,34 @@
 
 #![deny(clippy::print_stdout, clippy::print_stderr)]
 
+pub mod auth;
 pub mod clock;
 pub mod ctx;
+pub mod db;
 pub mod dto;
 pub mod error;
+pub mod files;
 pub mod log;
 pub mod match_key;
 pub mod tsgen;
+pub mod users;
 pub mod validate;
 
+#[cfg(feature = "testing")]
+pub mod testing;
+
+pub use auth::login::{LoginResult, activate_account, login};
 pub use ctx::Ctx;
+pub use db::ids::new_id;
+pub use db::{Library, OpenOptions};
 pub use error::{AppError, AppErrorCode, Result};
 pub use log::{LogLevel, LogLevelSetting, Logger};
+pub use users::account::{change_password, me, update_profile};
+pub use users::admin::{
+    CreatedUser, create_user, delete_user, list_users, reissue_invite, require_admin, update_user,
+};
+pub use users::bootstrap::{BootstrapAdmin, ensure_bootstrap_admin, ensure_local_user};
+pub use users::settings::{get_settings, put_settings};
 
 /// The application's display name.
 pub fn app_name() -> &'static str {

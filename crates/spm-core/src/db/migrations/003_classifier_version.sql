@@ -1,0 +1,34 @@
+-- Which version of `classifyFile` produced a row's `kind`, so `rescan` can tell a row it has
+-- already answered from one it has not. Without it a change to the classifier reaches only files
+-- the library has never seen: the stat-match path short-circuits on size and mtime, and a file
+-- whose bytes never move is never asked again. That is the shape the ten existing STEP files in
+-- the reference library are in — indexed as `other`, bytes unchanged since, and blank for ever.
+--
+-- `DEFAULT 0` IS THE WHOLE MECHANISM, AND THE WRONG DEFAULT IS A SILENT NO-OP. 0 is a value
+-- CLASSIFIER_VERSION can never take, which makes "this row predates the mechanism" expressible
+-- rather than inferred. Backfilling the shipping constant instead would leave nothing stale,
+-- reclassify nothing and produce a feature that is simply absent — with no error, no log line and
+-- no row anywhere to notice it by. `test/db.test.ts` asserts both halves: every migrated row is 0,
+-- and 0 is strictly below CLASSIFIER_VERSION.
+--
+-- NOT NULL DEFAULT 0 is also what makes the column readable with no null branch, and SQLite's
+-- ADD COLUMN accepts it precisely because the default is a constant — the same shape as 002's
+-- `ALTER TABLE previews ADD COLUMN claimed_at INTEGER`, the only precedent this repository has.
+--
+-- THE DOWNGRADE IS BENIGN WHERE AN OLDER BUILD *ADDS* A ROW, AND THE REASON IS THE DEFAULT. An
+-- older build opening a database this one has migrated finds user_version = 3; `runMigrations`
+-- skips every migration whose version is <= user_version, so it runs nothing and does not fail.
+-- Its eight-column INSERT into `files` omits classified_by, which takes this DEFAULT — so rows
+-- the older build inserts come back marked as predating the mechanism, which is exactly what they
+-- are, and the newer build reclassifies them on its next rescan.
+--
+-- ITS STAT-MISMATCH UPDATE IS THE ONE PATH THAT IS NOT. `UPDATE files SET kind = ?, slicer = ?,
+-- size_bytes = ?, mtime_ms = ?, content_hash = ? WHERE id = ?` rewrites kind and leaves
+-- classified_by exactly as it found it — which, on a row this build has already stamped, is the
+-- current version. So: upgrade, downgrade, edit a .step under the older build, upgrade again, and
+-- the row holds a v0 answer while claiming v1. `rescan`'s version check short-circuits on it and
+-- that file stays `other`. Narrow — it needs both a downgrade and an edit — and the remedy is
+-- another edit: moving the bytes again under the new build takes the same stat-mismatch path,
+-- which reclassifies and re-stamps together. Nothing here can prevent it, because a column an
+-- older build does not know about is a column it cannot maintain.
+ALTER TABLE files ADD COLUMN classified_by INTEGER NOT NULL DEFAULT 0;
