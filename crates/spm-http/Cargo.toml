@@ -1,0 +1,17 @@
+[package]
+name = "spm-http"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+spm-core.workspace = true
+axum.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true
+tower.workspace = true

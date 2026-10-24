@@ -1,0 +1,28 @@
+[workspace]
+resolver = "3"
+members = ["crates/spm-core", "crates/spm-http", "crates/spm-server"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+
+[workspace.dependencies]
+spm-core = { path = "crates/spm-core" }
+spm-http = { path = "crates/spm-http" }
+axum = "0.8.9"
+tokio = { version = "1.54.1", features = ["macros", "rt-multi-thread", "net"] }
+tower = { version = "0.5", features = ["util"] }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"

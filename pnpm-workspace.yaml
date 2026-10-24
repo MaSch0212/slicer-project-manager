@@ -1,0 +1,6 @@
+packages:
+  - 'packages/*'
+  - 'apps/*'
+
+# Refuse package versions published less than two days ago (the value is minutes).
+minimumReleaseAge: 2880

@@ -1,0 +1,17 @@
+{
+  "$schema": "./node_modules/oxfmt/configuration_schema.json",
+  "semi": false,
+  "singleQuote": true,
+  "printWidth": 100,
+  "trailingComma": "all",
+  "ignorePatterns": [
+    "legacy/**",
+    "target/**",
+    "**/dist/**",
+    "pnpm-lock.yaml",
+    "Cargo.lock",
+    "docs/**",
+    "README.md",
+    "THIRD-PARTY-NOTICES.md"
+  ]
+}
