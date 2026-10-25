@@ -22,7 +22,8 @@ export default defineConfig({
   timeout: 45_000,
   expect: { timeout: 10_000 },
   forbidOnly: !!process.env['CI'],
-  reporter: [['list']],
+  // CI also writes the HTML report (with traces of failures) the workflow uploads.
+  reporter: process.env['CI'] ? [['list'], ['html', { open: 'never' }]] : [['list']],
   use: {
     baseURL: ORIGIN,
     headless: true,
