@@ -216,3 +216,37 @@ async fn an_upload_refused_for_quota_is_still_answered_while_the_body_is_in_flig
         assert_eq!(body["error"]["code"], "QuotaExceeded");
     }
 }
+
+/// The zip import route has the same shape as the upload: it refuses before reading a byte (no
+/// declared length, here) while the client is still sending, and a server that closes with the body
+/// unread makes the client's operating system reset the connection. The 411 has to arrive.
+#[tokio::test]
+async fn an_import_refused_before_reading_is_still_answered_while_the_body_is_in_flight() {
+    let server = TestServer::new();
+    let cookie = server.login_as_admin().await;
+    let address = serve(server.router.clone()).await;
+
+    // 1.5 MiB in 64 KiB frames and no content-length, so the client sends it chunked.
+    const FRAME: usize = 64 * 1024;
+    const FRAMES: usize = 24;
+    for _ in 0..5 {
+        let frames =
+            (0..FRAMES).map(|_| Ok::<_, std::convert::Infallible>(Bytes::from(vec![7u8; FRAME])));
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri(format!("http://{address}/api/import/curamanager"))
+            .header("cookie", &cookie)
+            .body(Body::from_stream(stream::iter(frames)))
+            .unwrap();
+        let response = client_from(None)
+            .request(request)
+            .await
+            .expect("the 411 arrives instead of a reset connection");
+        assert_eq!(response.status(), 411);
+        let body = axum::body::to_bytes(Body::new(response.into_body()), usize::MAX)
+            .await
+            .unwrap();
+        let body: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(body["error"]["code"], "LengthRequired");
+    }
+}

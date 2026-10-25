@@ -49,7 +49,7 @@ pub(crate) fn body_reader(body: Body) -> impl Read + Send + 'static {
 /// reset the connection, and the refusal never arrives: a browser reports a network error instead of
 /// "over quota". Taking the rest off the socket first lets the answer through. Bounded by
 /// [`DRAIN_LIMIT`]; past it (or when the client stops sending) the connection is dropped as before.
-fn drain(reader: &mut impl Read) {
+pub(crate) fn drain(reader: &mut impl Read) {
     let _ = std::io::copy(&mut reader.take(DRAIN_LIMIT), &mut std::io::sink());
 }
 
