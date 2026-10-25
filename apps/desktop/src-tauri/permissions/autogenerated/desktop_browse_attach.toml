@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-desktop-browse-attach"
+description = "Enables the desktop_browse_attach command without any pre-configured scope."
+commands.allow = ["desktop_browse_attach"]
+
+[[permission]]
+identifier = "deny-desktop-browse-attach"
+description = "Denies the desktop_browse_attach command without any pre-configured scope."
+commands.deny = ["desktop_browse_attach"]

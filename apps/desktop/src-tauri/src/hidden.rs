@@ -199,6 +199,9 @@ fn main_probe_js(launch: bool) -> String {
 #[derive(Clone, Default)]
 pub struct Probes {
     titles: Arc<Mutex<HashMap<String, Value>>>,
+    /// Every probe title, in order: a page that reports several steps (the model browser's)
+    /// is read by step name, where `titles` keeps only the latest per window.
+    steps: Arc<Mutex<Vec<(String, Value)>>>,
 }
 
 impl Probes {
@@ -209,16 +212,49 @@ impl Probes {
 
     pub fn sink(&self) -> TitleSink {
         let titles = Arc::clone(&self.titles);
+        let steps = Arc::clone(&self.steps);
         Arc::new(move |label, title| {
             if let Some(json) = title.strip_prefix("PROBE:")
                 && let Ok(value) = serde_json::from_str::<Value>(json)
             {
+                steps
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .push((label.to_owned(), value.clone()));
                 titles
                     .lock()
                     .unwrap_or_else(|e| e.into_inner())
                     .insert(label.to_owned(), value);
             }
         })
+    }
+
+    /// The latest probe title from `label`.
+    pub fn latest(&self, label: &str) -> Option<Value> {
+        self.titles
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(label)
+            .cloned()
+    }
+
+    /// The first report of `step` from `label`, waiting up to `timeout` for it.
+    pub async fn wait_step(&self, label: &str, step: &str, timeout: Duration) -> Option<Value> {
+        let started = std::time::Instant::now();
+        while started.elapsed() < timeout {
+            let found = self
+                .steps
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .iter()
+                .find(|(from, value)| from == label && value["step"] == step)
+                .map(|(_, value)| value.clone());
+            if found.is_some() {
+                return found;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        None
     }
 
     async fn wait_for(&self, label: &str) -> Option<Value> {
@@ -289,7 +325,7 @@ async fn close_everything_and_let_tauri_exit<R: Runtime>(
     app: &AppHandle<R>,
     main: &WebviewWindow<R>,
 ) {
-    for label in ["probe-same-origin", "probe-other-port"] {
+    for label in ["probe-same-origin", "probe-other-port", "probe-storage"] {
         if let Some(window) = app.get_webview_window(label) {
             let _ = window.destroy();
         }
@@ -325,7 +361,7 @@ async fn serve_probe_page() -> std::io::Result<u16> {
     Ok(port)
 }
 
-fn hidden_window<R: Runtime>(
+pub(crate) fn hidden_window<R: Runtime>(
     app: &AppHandle<R>,
     label: &str,
     url: &str,
@@ -463,7 +499,7 @@ async fn write_report<R: Runtime>(
             app,
             "probe-other-port",
             &format!("http://127.0.0.1:{port}/"),
-            data_dir,
+            data_dir.clone(),
             probes.sink(),
         )
         .map(|_| port),
@@ -630,6 +666,13 @@ async fn write_report<R: Runtime>(
             other_port.as_ref().map_or(0, |port| *port)
         ),
     );
+
+    if let Some(fixture) = env_value(crate::SMOKE_BROWSE_ENV) {
+        let opener = |label: &str, url: &str| {
+            hidden_window(app, label, url, data_dir.clone(), probes.sink()).is_ok()
+        };
+        crate::hidden_browse::run(&mut report, app, main, handle, probes, &fixture, &opener).await;
+    }
 
     report.ok = report.checks.iter().all(|check| check.ok);
     let value = serde_json::to_value(&report).unwrap_or_default();

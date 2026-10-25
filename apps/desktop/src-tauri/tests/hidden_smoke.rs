@@ -62,6 +62,7 @@ const LAUNCH_CHECK: &str = "slicers: a stub launch through the bridge hands a me
 
 struct Run {
     status: ExitStatus,
+    stderr: String,
     ready: Value,
     report: Value,
 }
@@ -80,7 +81,7 @@ fn run_hidden(root: &Path, extra_env: &[(&str, &str)]) -> Run {
         .env_remove("SPM_DEV_UI_ORIGIN")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stderr(std::fs::File::create(root.join("stderr.txt")).unwrap())
         .creation_flags(CREATE_NO_WINDOW);
     for (name, value) in extra_env {
         command.env(name, value);
@@ -91,10 +92,14 @@ fn run_hidden(root: &Path, extra_env: &[(&str, &str)]) -> Run {
         if let Some(status) = child.try_wait().unwrap() {
             break status;
         }
-        if started.elapsed() > Duration::from_secs(180) {
+        if started.elapsed() > Duration::from_secs(400) {
             let _ = child.kill();
             let _ = child.wait();
-            panic!("the hidden run did not finish in 180 s");
+            let stderr = std::fs::read_to_string(root.join("stderr.txt")).unwrap_or_default();
+            panic!(
+                "the hidden run did not finish in 400 s; it said:
+{stderr}"
+            );
         }
         std::thread::sleep(Duration::from_millis(100));
     };
@@ -106,6 +111,7 @@ fn run_hidden(root: &Path, extra_env: &[(&str, &str)]) -> Run {
             .unwrap()
         };
     Run {
+        stderr: std::fs::read_to_string(root.join("stderr.txt")).unwrap_or_default(),
         status,
         ready: read(&ready_file),
         report: read(&report_file),
@@ -119,7 +125,12 @@ fn assert_green(run: &Run) {
         .filter(|check| check["ok"] != true)
         .map(|check| format!("{}: {}", check["name"], check["detail"]))
         .collect();
-    assert!(failed.is_empty(), "failed checks:\n{}", failed.join("\n"));
+    assert!(
+        failed.is_empty(),
+        "failed checks:\n{}\nthe app said:\n{}",
+        failed.join("\n"),
+        run.stderr
+    );
     assert_eq!(run.report["ok"], true);
     for name in REQUIRED_CHECKS {
         assert!(
@@ -343,4 +354,96 @@ endsolid cube
             .unwrap()
             .starts_with("local:")
     );
+}
+
+#[path = "support/browse_fixture.rs"]
+mod browse_fixture;
+
+/// What the model browser's part of the run must report, by name.
+const BROWSE_CHECKS: &[&str] = &[
+    "browse: a whole-window request is intersected below the chrome, never over it",
+    "browse: a 1x1 request is not honoured as a rectangle",
+    "browse: a real request is positioned by the shell (set_bounds on the child)",
+    "browse: the commands reach the view through the real bridge and refuse what they must",
+    "browse: the policy is on the view's own webview (a custom scheme, a redirect into one, a file: and an unparseable URL are refused; a redirect to a page is followed)",
+    "browse: a target=_blank link navigates the view itself and opens no window",
+    "browse: a blob: download through <a download>, location.href and window.open, and an attachment, are each staged and verifiable",
+    "browse: a download is attributed to the page the view was on, not to the blob: URL",
+    "browse: discard removes a staged download",
+    "browse: a page is matched to the project whose website has its key, and nothing else matches (the honest answer)",
+    "browse: landing refuses an unsafe name and an id it never staged, then lands through the loopback API with the bytes in the project and the staging directory gone",
+    "browse: detach destroys the view, a second attach remembers the last page, and clearing forgets it",
+    "browse security: an invoke from the browse webview is refused (an app command, a browse command, a plugin command), though the bridge object is there",
+    "browse security: the loopback API refuses the browse webview (no launch secret, so no request passed the gate), while the main webview's identical request does",
+    "browse security: a permission request from the browse webview is denied",
+    "browse security: its storage is isolated from the main webview's profile, both ways (same origin, different data directory)",
+    "browse: the view has a persistent profile directory of its own beside the main webview's",
+    "browse: the view is gone when the route is (no browse webview is left)",
+];
+
+/// **The model browser, hidden, against a fixture site.** The real child webview is created inside
+/// the real (invisible) main window, driven through the real bridge for every command, and then
+/// from its own side for the security properties: an `invoke` from it is refused, the loopback
+/// listener never sees it past the gate, its storage is its own, and it is denied geolocation. A
+/// download goes through `blob:` by three DOM idioms and as an attachment, is staged in the app's
+/// own directory (never the user's Downloads), and lands in a project through the loopback API.
+#[test]
+fn the_model_browser_the_real_child_webview_against_a_fixture_site_hidden() {
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let fixture = runtime.block_on(browse_fixture::Fixture::start());
+    let root = tempfile::tempdir().unwrap();
+    let library = root.path().join("library");
+    std::fs::create_dir_all(&library).unwrap();
+
+    let run = run_hidden(
+        root.path(),
+        &[
+            ("SPM_LIBRARY_DIR", library.to_str().unwrap()),
+            ("SPM_DESKTOP_SMOKE_BROWSE", &fixture.origin()),
+            ("SPM_DESKTOP_BROWSE_TEST_HOSTS", &fixture.as_a_site()),
+        ],
+    );
+    assert_green(&run);
+    let checks = run.report["checks"].as_array().unwrap();
+    for name in BROWSE_CHECKS {
+        let found = checks.iter().find(|check| check["name"] == *name);
+        assert!(
+            found.is_some_and(|check| check["ok"] == true),
+            "browse check {name:?}: {found:?}"
+        );
+    }
+
+    // The landed file is in the project folder, byte for byte (4096 bytes of 7).
+    let landed = library.join("Landing Project").join("model-files.bin");
+    assert_eq!(std::fs::read(&landed).unwrap(), vec![7u8; 4096]);
+    // Nothing is left staged, and nothing went to the user's own Downloads folder.
+    let staging = root.path().join("data").join("model-downloads");
+    assert!(
+        !staging.exists() || std::fs::read_dir(&staging).unwrap().next().is_none(),
+        "the staging directory still holds {:?}",
+        std::fs::read_dir(&staging).map(|d| d.count())
+    );
+    if let Some(profile) = std::env::var_os("USERPROFILE") {
+        let downloads = Path::new(&profile).join("Downloads");
+        for name in ["anchor.bin", "served.bin", "model-files.bin"] {
+            assert!(
+                !downloads.join(name).exists(),
+                "{name} reached the user's Downloads"
+            );
+        }
+    }
+    // The view's profile is the app's own directory, and the last page it was on is remembered in
+    // a file beside it (cleared once by the page, then written again by the later navigations).
+    assert!(root.path().join("data").join("browse-profile").is_dir());
+    let remembered: Value = serde_json::from_str(
+        &std::fs::read_to_string(root.path().join("data").join("browse.json")).unwrap(),
+    )
+    .unwrap();
+    assert!(
+        remembered["lastUrl"]
+            .as_str()
+            .is_some_and(|url| url.starts_with("http://127.0.0.1:")),
+        "{remembered}"
+    );
+    drop(fixture);
 }

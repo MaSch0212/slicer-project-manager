@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-desktop-browse-clear-last-page"
+description = "Enables the desktop_browse_clear_last_page command without any pre-configured scope."
+commands.allow = ["desktop_browse_clear_last_page"]
+
+[[permission]]
+identifier = "deny-desktop-browse-clear-last-page"
+description = "Denies the desktop_browse_clear_last_page command without any pre-configured scope."
+commands.deny = ["desktop_browse_clear_last_page"]

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-desktop-browse-notices"
+description = "Enables the desktop_browse_notices command without any pre-configured scope."
+commands.allow = ["desktop_browse_notices"]
+
+[[permission]]
+identifier = "deny-desktop-browse-notices"
+description = "Denies the desktop_browse_notices command without any pre-configured scope."
+commands.deny = ["desktop_browse_notices"]

@@ -227,3 +227,60 @@ fn the_build_generated_a_permission_for_every_app_command_and_for_nothing_else()
         app["default_permission"]
     );
 }
+
+#[test]
+fn the_browse_webview_is_named_by_no_capability_and_its_source_grants_it_nothing() {
+    use spm_desktop::browse::BROWSE_WEBVIEW;
+    assert_eq!(BROWSE_WEBVIEW, "browse");
+    assert_ne!(BROWSE_WEBVIEW, MAIN_WEBVIEW);
+    let capability = main_capability("http://127.0.0.1:41234");
+    // Not by webview, not by window (a window-scoped capability would reach every webview the
+    // window hosts, the child included), and its origin is nobody's `remote.urls`.
+    for key in ["webviews", "windows"] {
+        assert!(
+            !strings(&capability[key])
+                .iter()
+                .any(|label| label == BROWSE_WEBVIEW),
+            "{key}"
+        );
+    }
+    assert!(capability["windows"].as_array().unwrap().is_empty());
+    // The only capability the app ever adds is the one `main_capability` builds.
+    let lib = read("src/lib.rs");
+    assert_eq!(lib.matches("add_capability(").count(), 1);
+    // The glue that builds the child gives it no bridge of its own, no script, no capability and
+    // no command: the ACL by label is the whole containment, and it is asserted from inside the
+    // child by the hidden smoke run.
+    let browse = read("src/browse.rs");
+    for banned in [
+        "initialization_script",
+        "add_capability",
+        "dangerous",
+        "remote_domain",
+        "invoke_handler",
+        "tauri::ipc",
+    ] {
+        assert!(!browse.contains(banned), "{banned} in src/browse.rs");
+    }
+    // And every permission the capability does grant is an app command's, none of which names the
+    // browse webview.
+    for permission in strings(&capability["permissions"]) {
+        assert!(permission.starts_with("allow-desktop-"), "{permission}");
+    }
+}
+
+#[test]
+fn a_release_build_does_not_read_the_fixture_site_variable() {
+    // The registry accepts a stand-in host only under `debug_assertions`.
+    let lib = read("src/lib.rs");
+    let at = lib
+        .find("BROWSE_TEST_HOSTS_ENV)")
+        .expect("the variable is read");
+    let before = &lib[..at];
+    assert!(
+        before
+            .rfind("#[cfg(debug_assertions)]")
+            .is_some_and(|gate| at - gate < 120),
+        "the test hosts are read outside a debug-only block"
+    );
+}

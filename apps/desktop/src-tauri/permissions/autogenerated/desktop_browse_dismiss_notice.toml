@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-desktop-browse-dismiss-notice"
+description = "Enables the desktop_browse_dismiss_notice command without any pre-configured scope."
+commands.allow = ["desktop_browse_dismiss_notice"]
+
+[[permission]]
+identifier = "deny-desktop-browse-dismiss-notice"
+description = "Denies the desktop_browse_dismiss_notice command without any pre-configured scope."
+commands.deny = ["desktop_browse_dismiss_notice"]

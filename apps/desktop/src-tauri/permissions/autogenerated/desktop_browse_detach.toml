@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-desktop-browse-detach"
+description = "Enables the desktop_browse_detach command without any pre-configured scope."
+commands.allow = ["desktop_browse_detach"]
+
+[[permission]]
+identifier = "deny-desktop-browse-detach"
+description = "Denies the desktop_browse_detach command without any pre-configured scope."
+commands.deny = ["desktop_browse_detach"]
