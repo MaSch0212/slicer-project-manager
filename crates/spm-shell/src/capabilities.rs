@@ -21,16 +21,17 @@ use spm_core::dto::Capabilities;
 /// `requires_auth: false` is what spec 2.6 says local mode is. `can_pick_local_folder` is true
 /// because the shell opens a real native dialog and reopens the library.
 ///
-/// **`can_launch_slicer`, `can_configure_slicers` and `can_browse_model_sites` are false for now.**
-/// Desktop part 2 (slicers) and part 3 (the model browser) light them, by flipping the flag here
-/// and in [`REMOTE_SHELL_CAPABILITIES`] together: a flag flipped in one column only lights up in
-/// one mode, which is why `tests/capabilities.rs` asserts both columns whole.
+/// **`can_launch_slicer` and `can_configure_slicers` are true** (desktop part 2: the slicers),
+/// flipped here and in [`REMOTE_SHELL_CAPABILITIES`] together: a flag flipped in one column only
+/// lights up in one mode, which is why `tests/capabilities.rs` asserts both columns whole.
+/// **`can_browse_model_sites` is still false**: desktop part 3 (the model browser) lights it, in
+/// both columns.
 pub const LOCAL_SHELL_CAPABILITIES: Capabilities = Capabilities {
     requires_auth: false,
     can_manage_users: false,
     can_pick_local_folder: true,
-    can_launch_slicer: false,
-    can_configure_slicers: false,
+    can_launch_slicer: true,
+    can_configure_slicers: true,
     can_browse_model_sites: false,
 };
 
@@ -42,15 +43,15 @@ pub const LOCAL_SHELL_CAPABILITIES: Capabilities = Capabilities {
 /// belongs to the server, and a "change library folder" control beside it would swap the whole app
 /// to somebody else's library while the page around it still showed remote data.
 ///
-/// The slicer and model-browser flags will be true here as well as locally once parts 2 and 3
-/// land: the machine this process runs on has the slicers on it whatever library is open, and a
-/// server that cannot launch a slicer must not be able to switch off a shell that can.
+/// The slicer flags are true here as well as locally: the machine this process runs on has the
+/// slicers on it whatever library is open, and a server that cannot launch a slicer must not be
+/// able to switch off a shell that can. (The model-browser flag joins them in part 3.)
 pub const REMOTE_SHELL_CAPABILITIES: Capabilities = Capabilities {
     requires_auth: false,
     can_manage_users: false,
     can_pick_local_folder: false,
-    can_launch_slicer: false,
-    can_configure_slicers: false,
+    can_launch_slicer: true,
+    can_configure_slicers: true,
     can_browse_model_sites: false,
 };
 

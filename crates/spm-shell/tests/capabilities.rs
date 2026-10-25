@@ -30,16 +30,17 @@ fn caps(
 
 #[test]
 fn the_shell_columns_are_exactly_what_spec_2_4_says_the_shell_contributes() {
-    // Whole, flag by flag. The slicer and browser flags are false until desktop parts 2 and 3 land
-    // and flip them in *both* columns; `canPickLocalFolder` is the one flag that differs, because
+    // Whole, flag by flag. The two slicer flags are true in *both* columns (desktop part 2: the
+    // machine has the slicers whichever library is open); the browser flag stays false until
+    // desktop part 3 flips it in both; `canPickLocalFolder` is the one flag that differs, because
     // it is a property of the mode and not of the shell.
     assert_eq!(
         LOCAL_SHELL_CAPABILITIES,
-        caps(false, false, true, false, false, false)
+        caps(false, false, true, true, true, false)
     );
     assert_eq!(
         REMOTE_SHELL_CAPABILITIES,
-        caps(false, false, false, false, false, false)
+        caps(false, false, false, true, true, false)
     );
     let mut local = LOCAL_SHELL_CAPABILITIES;
     local.can_pick_local_folder = false;
@@ -71,8 +72,8 @@ async fn local_mode_answers_the_shell_column_alone_with_no_backend_to_union_with
             "requiresAuth": false,
             "canManageUsers": false,
             "canPickLocalFolder": true,
-            "canLaunchSlicer": false,
-            "canConfigureSlicers": false,
+            "canLaunchSlicer": true,
+            "canConfigureSlicers": true,
             "canBrowseModelSites": false,
         })
     );

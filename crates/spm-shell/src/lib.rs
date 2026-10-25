@@ -22,6 +22,7 @@ pub mod permissions;
 pub mod remote;
 pub mod server;
 pub mod shell;
+pub mod slicers;
 pub mod smoke;
 pub mod state;
 pub mod sync;

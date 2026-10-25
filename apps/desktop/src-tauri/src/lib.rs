@@ -29,9 +29,13 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock};
 
 use spm_http::{DevProxy, resolve_dev_ui_origin};
-use spm_shell::library::{PromptTrigger, picker_language};
+use spm_shell::library::{PickerLanguage, PromptTrigger, picker_language};
 use spm_shell::server::{DesktopServer, Ui};
 use spm_shell::shell::{Shell, ShellOptions, StartOutcome};
+use spm_shell::slicers::api::SlicerCommands;
+use spm_shell::slicers::host::ExecutablePicker;
+use spm_shell::slicers::registry::slicer;
+use spm_shell::slicers::service::SlicerServices;
 use spm_shell::state::STATE_FILE_NAME;
 use spm_shell::web::EmbeddedAssets;
 use tauri::{Manager, RunEvent};
@@ -79,6 +83,17 @@ pub fn run() {
             commands::desktop_library_pick,
             commands::desktop_library_connect,
             commands::desktop_library_choose,
+            commands::desktop_slicers_get,
+            commands::desktop_slicers_scan,
+            commands::desktop_slicers_add_manual,
+            commands::desktop_slicers_remove,
+            commands::desktop_slicers_bind,
+            commands::desktop_slicers_set_default,
+            commands::desktop_slicers_reset_config,
+            commands::desktop_slicers_open,
+            commands::desktop_slicers_sessions,
+            commands::desktop_slicers_resolve_session,
+            commands::desktop_slicers_discard_sessions,
         ])
         .setup(setup)
         .build(context)
@@ -90,6 +105,41 @@ pub fn run() {
     });
 }
 
+/// The native dialog that asks for a slicer's program (the one path on the whole slicer surface).
+///
+/// In a hidden run (tests, smoke checks) there is no dialog: it answers "cancelled", so nothing can
+/// ever put a window on a screen from a command.
+fn executable_picker<R: tauri::Runtime>(
+    handle: &tauri::AppHandle<R>,
+    hidden: bool,
+    language: PickerLanguage,
+) -> ExecutablePicker {
+    let handle = handle.clone();
+    Arc::new(move |slicer_id| {
+        if hidden {
+            return None;
+        }
+        let name = slicer(slicer_id).display_name;
+        let title = match language {
+            PickerLanguage::De => format!("Programm von {name} auswählen"),
+            PickerLanguage::En => format!("Choose the program for {name}"),
+        };
+        let mut dialog = handle.dialog().file().set_title(&title);
+        if cfg!(windows) {
+            let programs = match language {
+                PickerLanguage::De => "Programme",
+                PickerLanguage::En => "Programs",
+            };
+            dialog = dialog.add_filter(programs, &["exe"]);
+        }
+        if let Some(parent) = handle.get_webview_window(security::MAIN_WEBVIEW) {
+            dialog = dialog.set_parent(&parent);
+        }
+        let picked = dialog.blocking_pick_file()?.into_path().ok()?;
+        Some(picked.to_string_lossy().into_owned())
+    })
+}
+
 fn shutdown<R: tauri::Runtime>(handle: &tauri::AppHandle<R>) {
     if let Some(slot) = handle.try_state::<ServerSlot>()
         && let Some(server) = slot.0.lock().unwrap_or_else(|e| e.into_inner()).take()
@@ -97,6 +147,9 @@ fn shutdown<R: tauri::Runtime>(handle: &tauri::AppHandle<R>) {
         tauri::async_runtime::block_on(server.stop());
     }
     if let Some(ctx) = handle.try_state::<AppCtx>() {
+        // Every slicer watcher and timer goes. Nothing of a launch is deleted by this: a session
+        // outlives the run of the app (that is what the sweep at next start surfaces).
+        ctx.slicers.close();
         // A render that is mid-way cannot be interrupted and the process is exiting anyway.
         ctx.shell.shutdown(std::time::Duration::from_secs(3));
     }
@@ -160,8 +213,19 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
 
     // The one grant: this exact origin, this one webview, the app's own commands. See `security`.
     app.add_capability(security::main_capability(&origin).to_string())?;
+    let slicers = SlicerServices::for_shell(
+        &shell,
+        user_data.clone(),
+        tauri::async_runtime::handle().inner().clone(),
+        executable_picker(&handle, hidden, language),
+    );
+    // What a previous run left under `slicer-sessions/` is surfaced, and nothing that holds a file
+    // is deleted: the slicer may well still have it open.
+    slicers.sweep_at_start();
     app.manage(AppCtx {
         shell: Arc::clone(&shell),
+        slicer_commands: Arc::new(SlicerCommands::new(slicers.clone())),
+        slicers,
     });
 
     let probes = hidden::Probes::from_env();

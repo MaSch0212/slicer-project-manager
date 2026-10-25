@@ -164,6 +164,15 @@ pub struct SlicerSessionDto {
     pub entry_diff: Option<EntryDiff>,
 }
 
+/// What discarding several sessions at once reports: how many were found and removed. A session
+/// that had already gone is not a failure and is not counted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct DiscardedSessionsDto {
+    #[ts(type = "number")]
+    pub discarded: u32,
+}
+
 /// One row of the model-site registry, as the renderer sees it (spec 4.4).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]

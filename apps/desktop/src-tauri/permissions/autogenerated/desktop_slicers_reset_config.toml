@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-desktop-slicers-reset-config"
+description = "Enables the desktop_slicers_reset_config command without any pre-configured scope."
+commands.allow = ["desktop_slicers_reset_config"]
+
+[[permission]]
+identifier = "deny-desktop-slicers-reset-config"
+description = "Denies the desktop_slicers_reset_config command without any pre-configured scope."
+commands.deny = ["desktop_slicers_reset_config"]

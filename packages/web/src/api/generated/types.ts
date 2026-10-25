@@ -322,6 +322,12 @@ returnedAs?: SlicerId | null | null, sourceSizeBytes?: number, returnedSizeBytes
 entryDiff?: EntryDiff, };
 
 /**
+ * What discarding several sessions at once reports: how many were found and removed. A session
+ * that had already gone is not a failure and is not counted.
+ */
+export type DiscardedSessionsDto = { discarded: number, };
+
+/**
  * One row of the model-site registry, as the renderer sees it (spec 4.4).
  */
 export type ModelSiteDto = { id: string, displayName: string, homeUrl: string, };

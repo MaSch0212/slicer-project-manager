@@ -4,6 +4,10 @@
 #![allow(dead_code)]
 
 pub mod fixtures;
+pub mod slicers;
+pub mod stub;
+#[path = "../../../spm-core/tests/it/fixtures.rs"]
+pub mod threemf;
 
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};

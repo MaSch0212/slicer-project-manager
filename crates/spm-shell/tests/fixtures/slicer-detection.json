@@ -1,0 +1,54 @@
+{
+  "registry": [
+    {
+      "hive": "HKLM",
+      "key": "AnycubicSlicerNext",
+      "displayName": "AnycubicSlicerNext 1.4.1.2",
+      "displayVersion": "1.4.1.2",
+      "displayIcon": "C:\\Program Files\\AnycubicSlicerNext\\AnycubicSlicerNext.exe"
+    },
+    {
+      "hive": "HKLM",
+      "key": "Bambu Studio",
+      "displayName": "Bambu Studio",
+      "displayVersion": "02.08.02.61",
+      "displayIcon": "C:\\Program Files\\Bambu Studio\\bambu-studio.exe"
+    },
+    {
+      "hive": "HKLM",
+      "key": "PrusaSlicer_is1",
+      "displayName": "PrusaSlicer",
+      "displayVersion": "2.9.6",
+      "displayIcon": "C:\\Program Files\\Prusa3D\\PrusaSlicer\\prusa-slicer.exe"
+    },
+    {
+      "hive": "HKCU",
+      "key": "Fork",
+      "displayName": "Fork\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000",
+      "displayVersion": "2.21.0\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000\u0000",
+      "displayIcon": "C:\\Users\\masch\\AppData\\Local\\Fork\\current\\Fork.exe"
+    },
+    {
+      "hive": "HKLM\\WOW6432Node",
+      "key": "UltiMaker Cura 5.12.0-5.12.0",
+      "displayName": "UltiMaker Cura 5.12.0",
+      "displayVersion": "5.12.0",
+      "displayIcon": "C:\\Program Files\\UltiMaker Cura 5.12.0\\UltiMaker-Cura.exe"
+    },
+    {
+      "hive": "HKLM\\WOW6432Node",
+      "key": "UltiMaker Cura 5.13.0-5.13.0",
+      "displayName": "UltiMaker Cura 5.13.0",
+      "displayVersion": "5.13.0",
+      "displayIcon": "C:\\Program Files\\UltiMaker Cura 5.13.0\\UltiMaker-Cura.exe"
+    }
+  ],
+  "msix": [
+    {
+      "packageFamily": "OrcaSlicer.OrcaSlicer_3qd7h69xpne0g",
+      "packageFullName": "OrcaSlicer.OrcaSlicer_2.4.3.0_x64__3qd7h69xpne0g",
+      "version": "2.4.3.0",
+      "installLocation": "C:\\Program Files\\WindowsApps\\OrcaSlicer.OrcaSlicer_2.4.3.0_x64__3qd7h69xpne0g"
+    }
+  ]
+}

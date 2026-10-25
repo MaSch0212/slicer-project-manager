@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-desktop-slicers-set-default"
+description = "Enables the desktop_slicers_set_default command without any pre-configured scope."
+commands.allow = ["desktop_slicers_set_default"]
+
+[[permission]]
+identifier = "deny-desktop-slicers-set-default"
+description = "Denies the desktop_slicers_set_default command without any pre-configured scope."
+commands.deny = ["desktop_slicers_set_default"]

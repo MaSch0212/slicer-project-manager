@@ -13,4 +13,16 @@ pub const APP_COMMANDS: &[&str] = &[
     "desktop_library_pick",
     "desktop_library_connect",
     "desktop_library_choose",
+    // Slicers (desktop part 2): configuration, launching, and the sessions a launch leaves.
+    "desktop_slicers_get",
+    "desktop_slicers_scan",
+    "desktop_slicers_add_manual",
+    "desktop_slicers_remove",
+    "desktop_slicers_bind",
+    "desktop_slicers_set_default",
+    "desktop_slicers_reset_config",
+    "desktop_slicers_open",
+    "desktop_slicers_sessions",
+    "desktop_slicers_resolve_session",
+    "desktop_slicers_discard_sessions",
 ];

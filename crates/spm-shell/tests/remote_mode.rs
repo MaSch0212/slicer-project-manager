@@ -144,14 +144,14 @@ async fn the_capability_set_in_remote_mode_is_the_union_and_the_page_keys_off_it
         "the library on screen is the server's"
     );
     // The flags parts 2 and 3 light are the shell's to add: absent from the server, present here
-    // once the shell has them. Today both columns say false.
-    for flag in [
-        "canLaunchSlicer",
-        "canConfigureSlicers",
-        "canBrowseModelSites",
-    ] {
-        assert_eq!(caps[flag], false, "{flag}");
+    // once the shell has them. The slicer flags are lit (part 2); the browser flag is part 3's.
+    for flag in ["canLaunchSlicer", "canConfigureSlicers"] {
+        assert_eq!(
+            caps[flag], true,
+            "{flag}: the shell's, whatever the server says"
+        );
     }
+    assert_eq!(caps["canBrowseModelSites"], false);
 }
 
 #[tokio::test]
