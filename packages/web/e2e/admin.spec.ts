@@ -301,3 +301,27 @@ test('a user is deleted only after the confirmation', async ({ page }) => {
   await dialog.getByRole('button', { name: 'Yes, delete' }).click()
   await expect(row(page, 'delete.me')).toHaveCount(0)
 })
+
+// A table wider than a phone scrolls inside its own frame; the page must not scroll sideways with
+// it. (It did once: a visually hidden header cell is absolutely positioned, and without a
+// positioned frame around the table it escaped the frame's clipping and widened the document.)
+test.describe('on a phone', () => {
+  test.use({ viewport: { width: 390, height: 844 } })
+
+  test('the user table scrolls inside its frame and the page stays as wide as the screen', async ({
+    page,
+  }) => {
+    await usersPage(page)
+    const widths = () =>
+      page.evaluate(() => ({
+        document: document.documentElement.scrollWidth,
+        window: window.innerWidth,
+        frame: document.querySelector('table')!.parentElement!.scrollWidth,
+        frameBox: document.querySelector('table')!.parentElement!.clientWidth,
+      }))
+    const measured = await widths()
+    expect(measured.document).toBe(measured.window)
+    // The table really is wider than the screen, so this proves the frame is doing the scrolling.
+    expect(measured.frame).toBeGreaterThan(measured.frameBox)
+  })
+})

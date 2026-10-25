@@ -2,7 +2,7 @@ import { useNavigate } from '@solidjs/router'
 import type { JSX } from 'solid-js'
 import { t } from '../core/i18n'
 import { capabilities } from '../core/stores'
-import { PageHeader, TabPanel, Tabs } from '../ui'
+import { cx, PageHeader, TabPanel, Tabs } from '../ui'
 
 export type SettingsTab = 'general' | 'slicers'
 
@@ -20,7 +20,12 @@ const PATHS: Record<SettingsTab, string> = {
  * is guarded by the same flag in `routes.tsx`. Add a tab by adding a `SettingsTab` value, its path
  * and its capability test below, then wrap the new page in `SettingsLayout`.
  */
-export function SettingsLayout(props: { active: SettingsTab; children: JSX.Element }) {
+export function SettingsLayout(props: {
+  active: SettingsTab
+  /** `narrow` keeps the header, tabs and content to a readable measure; `full` uses the page. */
+  width?: 'narrow' | 'full'
+  children: JSX.Element
+}) {
   const navigate = useNavigate()
   const items = () => [
     { value: 'general', label: t('settings.general') },
@@ -29,7 +34,7 @@ export function SettingsLayout(props: { active: SettingsTab; children: JSX.Eleme
       : []),
   ]
   return (
-    <div class="flex flex-col gap-6">
+    <div class={cx('flex flex-col gap-6', props.width === 'narrow' && 'max-w-3xl')}>
       <PageHeader title={t('settings.title')} />
       <Tabs
         label={t('settings.tabs')}

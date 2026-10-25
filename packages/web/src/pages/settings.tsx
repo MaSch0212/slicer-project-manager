@@ -3,7 +3,7 @@ import { SettingsLayout } from './settings-layout'
 
 export default function SettingsPage() {
   return (
-    <SettingsLayout active="general">
+    <SettingsLayout active="general" width="narrow">
       <SettingsGeneral />
     </SettingsLayout>
   )

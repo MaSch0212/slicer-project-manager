@@ -5,7 +5,7 @@ import { cx } from './cx'
 export function Table(props: ComponentProps<'table'>) {
   const [local, rest] = splitProps(props, ['class'])
   return (
-    <div class="overflow-x-auto rounded-card border border-border bg-surface shadow-card">
+    <div class="relative overflow-x-auto rounded-card border border-border bg-surface shadow-card">
       <table {...rest} class={cx('w-full border-collapse text-left text-sm', local.class)} />
     </div>
   )
