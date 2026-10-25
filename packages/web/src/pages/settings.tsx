@@ -1,7 +1,10 @@
-import { t } from '../core/i18n'
-import { Settings } from '../ui'
-import { StubPage } from './stub'
+import { SettingsGeneral } from './settings-general'
+import { SettingsLayout } from './settings-layout'
 
 export default function SettingsPage() {
-  return <StubPage title={t('settings.title')} icon={Settings} />
+  return (
+    <SettingsLayout active="general">
+      <SettingsGeneral />
+    </SettingsLayout>
+  )
 }

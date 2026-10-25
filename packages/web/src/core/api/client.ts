@@ -22,6 +22,13 @@ export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>
 /** A body for the two upload routes: a `Blob` (a `File` is one) sent as-is. */
 export type UploadBody = Blob
 
+/**
+ * `UpdateUserInput` as the server really takes it: `quotaBytes: null` removes the quota. The
+ * generated type says `number` only (its `type = "number"` override drops the null), so the
+ * client states the truth here until the Rust attribute says it too.
+ */
+export type UserPatch = Omit<UpdateUserInput, 'quotaBytes'> & { quotaBytes?: number | null }
+
 export type ActivationCheck = { valid: boolean; username?: string }
 
 const jsonInit = (method: string, body: unknown): RequestInit => ({
@@ -98,7 +105,7 @@ export function createApiClient(fetchFn: FetchLike = (input, init) => fetch(inpu
         request<{ user: UserDto; activationUrl: string }>('/api/users', jsonInit('POST', input)),
       reissueInvite: (id: string) =>
         request<{ activationUrl: string }>(`/api/users/${seg(id)}/invite`, { method: 'POST' }),
-      update: (id: string, patch: UpdateUserInput) =>
+      update: (id: string, patch: UserPatch) =>
         request<UserDto>(`/api/users/${seg(id)}`, jsonInit('PATCH', patch)),
       delete: (id: string) => request<void>(`/api/users/${seg(id)}`, { method: 'DELETE' }),
     },

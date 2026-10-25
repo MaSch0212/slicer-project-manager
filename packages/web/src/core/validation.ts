@@ -86,3 +86,68 @@ export function validateFileName(name: string): string | undefined {
   }
   return undefined
 }
+
+export const DISPLAY_NAME_MAX = 100
+
+/** The profile form: a display name of 1 to 100 characters once trimmed. */
+export function validateProfile(input: { displayName: string }): FieldErrors<'displayName'> {
+  const errors: FieldErrors<'displayName'> = {}
+  const name = input.displayName.trim()
+  if (name === '') errors.displayName = t('common.required')
+  else if (name.length > DISPLAY_NAME_MAX) errors.displayName = t('errors.generic')
+  return errors
+}
+
+/**
+ * The change-password form. The new password gets the same 10 to 200 floor and ceiling as an
+ * activation; the current one only has to be there (the server judges it, and a wrong one is its
+ * answer, not ours).
+ */
+export function validatePasswordChange(input: {
+  current: string
+  next: string
+  confirm: string
+}): FieldErrors<'current' | 'next' | 'confirm'> {
+  const errors: FieldErrors<'current' | 'next' | 'confirm'> = {}
+  if (input.current === '') errors.current = t('common.required')
+  if (input.next.length < PASSWORD_MIN) errors.next = t('common.tooShort', { min: PASSWORD_MIN })
+  else if (input.next.length > PASSWORD_MAX) errors.next = t('errors.generic')
+  if (input.confirm !== input.next) errors.confirm = t('auth.passwordMismatch')
+  return errors
+}
+
+export type CreateUserErrors = FieldErrors<'username' | 'displayName' | 'quota'>
+
+/** Same rule as `spm-core`: 2 to 32 of letters, digits, dot, dash, underscore, starting alphanumeric. */
+const USERNAME_RULE = /^[A-Za-z0-9][A-Za-z0-9._-]{1,31}$/
+
+export function validateNewUser(input: {
+  username: string
+  displayName: string
+  quotaMib: string
+}): CreateUserErrors {
+  const errors: CreateUserErrors = {}
+  const username = input.username.trim()
+  if (username === '') errors.username = t('common.required')
+  else if (!USERNAME_RULE.test(username)) errors.username = t('admin.usernameRule')
+  const displayName = input.displayName.trim()
+  if (displayName === '') errors.displayName = t('common.required')
+  else if (displayName.length > DISPLAY_NAME_MAX) errors.displayName = t('errors.generic')
+  if (parseQuotaMib(input.quotaMib) === 'invalid') errors.quota = t('admin.invalidQuota')
+  return errors
+}
+
+const MIB = 1024 * 1024
+
+/**
+ * What an admin typed into a quota field, in bytes: empty means no limit (`null`), a positive whole
+ * number of MiB is that many bytes, and anything else is refused rather than reinterpreted (a
+ * typed 0 must never silently become "unlimited").
+ */
+export function parseQuotaMib(text: string): number | null | 'invalid' {
+  const trimmed = text.trim()
+  if (trimmed === '') return null
+  if (!/^\d+$/.test(trimmed)) return 'invalid'
+  const bytes = Number(trimmed) * MIB
+  return Number.isSafeInteger(bytes) && bytes > 0 ? bytes : 'invalid'
+}

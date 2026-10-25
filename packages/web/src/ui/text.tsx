@@ -99,3 +99,19 @@ export function Alert(props: {
     </div>
   )
 }
+
+/**
+ * Who or what a row is about: a name with a smaller second line under it (a username, an id) and
+ * an optional badge beside the name. For table cells and list rows.
+ */
+export function Identity(props: { title: string; subtitle?: string; badge?: JSX.Element }) {
+  return (
+    <div class="flex flex-col">
+      <span class="flex items-center gap-2 text-sm font-medium text-fg">
+        {props.title}
+        {props.badge}
+      </span>
+      {props.subtitle ? <span class="text-xs text-fg-muted">{props.subtitle}</span> : null}
+    </div>
+  )
+}

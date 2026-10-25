@@ -21,6 +21,12 @@ export function errorMessage(error: unknown): string {
       })
     case 'NotFound':
       return t('errors.notFound')
+    case 'LastActiveAdmin':
+      return t('admin.lastAdmin')
+    case 'Forbidden':
+      return t('errors.forbidden')
+    case 'Conflict':
+      return t('errors.conflict')
     default:
       return t('errors.generic')
   }

@@ -5,13 +5,16 @@ import { notify } from '../core/notify'
 import {
   Button,
   Checkbox,
+  CopyField,
   Dialog,
   FormField,
   IconButton,
   Input,
   MultiSelect,
   Plus,
+  SectionCard,
   Select,
+  SettingRow,
   Switch,
   Tag,
   TagInput,
@@ -142,6 +145,70 @@ describe('Checkbox and Switch', () => {
     fireEvent.click(screen.getByRole('switch', { name: 'Collapse' }))
     expect(onCheck).toHaveBeenCalledWith(true)
     expect(onSwitch).toHaveBeenCalledWith(true)
+  })
+})
+
+describe('Switch with a hidden label', () => {
+  it('is still named by it, and the label is not drawn', () => {
+    render(() => <Switch label="Collapse" labelHidden />)
+    const control = screen.getByRole('switch', { name: 'Collapse' })
+    expect(control).toBeTruthy()
+    expect(screen.getByText('Collapse').className).toContain('sr-only')
+  })
+})
+
+describe('SectionCard and SettingRow', () => {
+  it('give a titled section whose rows say what they are', () => {
+    render(() => (
+      <SectionCard title="Appearance" description="How it looks.">
+        <SettingRow label="Theme" hint="Pick one.">
+          <Button>Change</Button>
+        </SettingRow>
+      </SectionCard>
+    ))
+    expect(screen.getByRole('heading', { name: 'Appearance', level: 2 })).toBeTruthy()
+    expect(screen.getByText('How it looks.')).toBeTruthy()
+    expect(screen.getByText('Theme')).toBeTruthy()
+    expect(screen.getByText('Pick one.')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Change' })).toBeTruthy()
+  })
+})
+
+describe('CopyField', () => {
+  const field = (extra: Partial<Parameters<typeof CopyField>[0]> = {}) =>
+    render(() => (
+      <CopyField
+        value="http://x/activate#tok"
+        label="Link address"
+        copyLabel="Copy"
+        copiedLabel="Copied"
+        {...extra}
+      />
+    ))
+
+  it('shows the value read-only and copies it, saying so', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    Object.assign(navigator, { clipboard: { writeText } })
+    const onCopied = vi.fn()
+    field({ onCopied })
+    const input = screen.getByRole('textbox', { name: 'Link address' }) as HTMLInputElement
+    expect(input.readOnly).toBe(true)
+    expect(input.value).toBe('http://x/activate#tok')
+    fireEvent.click(screen.getByRole('button', { name: 'Copy' }))
+    await screen.findByRole('button', { name: 'Copied' })
+    expect(writeText).toHaveBeenCalledWith('http://x/activate#tok')
+    expect(onCopied).toHaveBeenCalled()
+  })
+
+  it('reports a refused clipboard and keeps saying "copy"', async () => {
+    Object.assign(navigator, {
+      clipboard: { writeText: vi.fn().mockRejectedValue(new Error('denied')) },
+    })
+    const onFailed = vi.fn()
+    field({ onFailed })
+    fireEvent.click(screen.getByRole('button', { name: 'Copy' }))
+    await waitFor(() => expect(onFailed).toHaveBeenCalled())
+    expect(screen.getByRole('button', { name: 'Copy' })).toBeTruthy()
   })
 })
 

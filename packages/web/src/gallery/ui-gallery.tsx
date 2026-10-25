@@ -11,6 +11,9 @@ import {
   Badge,
   Button,
   Card,
+  CopyField,
+  SectionCard,
+  SettingRow,
   Checkbox,
   ConfirmDialog,
   Dialog,
@@ -383,6 +386,20 @@ export default function UiGallery() {
             <Text>An interactive card, lifted on hover.</Text>
           </Card>
         </div>
+        <SectionCard title="Section card" description="A titled block of a settings-style page.">
+          <SettingRow label="A setting" hint="Its control sits on the right.">
+            <Switch label="A setting" labelHidden checked={on()} onChange={setOn} />
+          </SettingRow>
+          <SettingRow label="Another setting">
+            <Button size="sm">Change</Button>
+          </SettingRow>
+        </SectionCard>
+        <CopyField
+          value="http://127.0.0.1:3000/activate#example-token"
+          label="Activation link"
+          copyLabel="Copy link"
+          copiedLabel="Copied"
+        />
       </Section>
 
       <Section title="Tabs">

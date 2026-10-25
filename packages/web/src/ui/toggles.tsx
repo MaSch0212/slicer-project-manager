@@ -9,6 +9,8 @@ const focusRing =
 
 type ToggleProps = {
   label: JSX.Element
+  /** Keeps the label as the accessible name but does not draw it (the row around it says it). */
+  labelHidden?: boolean
   checked?: boolean
   defaultChecked?: boolean
   onChange?: (checked: boolean) => void
@@ -65,7 +67,12 @@ export function Switch(props: ToggleProps) {
       >
         <KSwitch.Thumb class="size-3.5 rounded-full bg-surface shadow-card transition-transform data-[checked]:translate-x-4 data-[checked]:bg-accent-fg" />
       </KSwitch.Control>
-      <KSwitch.Label class="text-sm text-fg group-data-[disabled]:opacity-50">
+      <KSwitch.Label
+        class={cx(
+          'text-sm text-fg group-data-[disabled]:opacity-50',
+          props.labelHidden && 'sr-only',
+        )}
+      >
         {props.label}
       </KSwitch.Label>
     </KSwitch>
