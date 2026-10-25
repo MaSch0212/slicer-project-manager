@@ -15,6 +15,7 @@ import type {
   ZipImportResultDto,
 } from '../../api/generated'
 import { ApiError, errorFromResponse } from './error'
+import { uploadWithProgress } from './upload-xhr'
 
 export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>
 
@@ -141,6 +142,17 @@ export function createApiClient(fetchFn: FetchLike = (input, init) => fetch(inpu
       upload: (projectId: string, name: string, body: UploadBody) =>
         upload<FileDto>(`/api/projects/${seg(projectId)}/files`, body, {
           'x-spm-file-name': seg(name),
+        }),
+      /** Same call as `upload`, over XHR so the page can show how much has been sent. */
+      uploadWithProgress: (
+        projectId: string,
+        name: string,
+        body: UploadBody,
+        onProgress: (fraction: number) => void,
+      ) =>
+        uploadWithProgress<FileDto>(`/api/projects/${seg(projectId)}/files`, body, {
+          headers: { 'x-spm-file-name': seg(name) },
+          onProgress,
         }),
       rename: (id: string, name: string) =>
         request<FileDto>(`/api/files/${seg(id)}`, jsonInit('PATCH', { name })),
