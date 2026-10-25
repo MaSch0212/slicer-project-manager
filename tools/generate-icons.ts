@@ -8,18 +8,18 @@ import { pngSize } from './png.ts'
 /**
  * Rasterises `assets/icons/*.svg` into every derived icon the web app and the desktop shell ship.
  *
- * Run it by hand with `deno task icons`, after changing one of the three SVGs, and commit what it
- * writes. **The build does not run it and must not**: `deno task build:ui`, `build:desktop` and
- * every CI job stay free of a browser download, and the derived files are tracked in git like any
- * other source. `tools/icons.test.ts` is what keeps them honest — it is in `deno task verify`, and
- * it re-decodes every file this script writes.
+ * Run it by hand with `pnpm icons` (Node 24 runs the TypeScript directly; it needs the Playwright
+ * Chromium that `pnpm exec playwright install chromium` fetches), after changing one of the three
+ * SVGs, and commit what it writes. **The build does not run it and must not**: `pnpm build:desktop`,
+ * the web build and every CI job stay free of a browser download, and the derived files are
+ * tracked in git like any other source. `tools/icons.test.ts` is what keeps them honest — it is in
+ * `pnpm verify`, and it re-decodes every file this script writes.
  *
  * ## Why Chromium, and why this way
  *
  * There is no image library in this repo and adding one would mean a native dependency (`sharp`,
- * ImageMagick) on a Deno + Node toolchain that has none. `@playwright/test` is already a
- * dependency of three packages and its Chromium is already installed for the e2e and desktop
- * suites, so the renderer is free. `page.setContent()` with the SVG inlined and an explicit
+ * ImageMagick) on a toolchain that has none. `@playwright/test` is already a dependency (the web
+ * e2e suite uses it) and its Chromium is already installed for that, so the renderer is free. `page.setContent()` with the SVG inlined and an explicit
  * `width`/`height` on the element, then `locator.screenshot({ omitBackground: true })`, is what
  * preserves the transparent background — a page screenshot would composite the artwork onto
  * Chromium's white default and every "transparent" icon would ship with a white square behind it.
@@ -73,17 +73,14 @@ const desktopIcons = join(repoRoot, 'apps', 'desktop', 'src-tauri', 'icons')
  * being generous costs a few KB and saves a blurry title bar.
  *
  * **`icon.png` — 512, and `32x32.png`, `128x128.png`, `128x128@2x.png`.** The window icon of the
- * Tauri app and the PNGs its `bundle.icon` list names beside the `.ico`. (Linux is where the Electron
- * build needed a PNG: `BrowserWindow`'s `icon` takes an image rather than an icon
- * container and the window manager scales it down. macOS is not here: it ignores
- * `BrowserWindow.icon` entirely and takes the dock icon from the bundle's `.icns`, which
- * `package-app.ts` does not build (see its Scope note).
+ * Tauri app and the PNGs its `bundle.icon` list names beside the `.ico`. (macOS is not here: the
+ * bundler would need an `.icns`, and the desktop app is Windows-only for now.)
  */
 const FAVICON_ICO_SIZES = [16, 32, 48]
 const WINDOW_ICO_SIZES = [16, 24, 32, 48, 64, 128, 256]
 const HOME_SCREEN_SIZES = [192, 512]
 const APPLE_TOUCH_SIZE = 180
-const LINUX_WINDOW_SIZE = 512
+const WINDOW_PNG_SIZE = 512
 /** The PNGs Tauri's `bundle.icon` list names beside the `.ico`, by file name. */
 const TAURI_PNG_SIZES: readonly (readonly [number, string])[] = [
   [32, '32x32.png'],
@@ -182,7 +179,7 @@ const appSvg = await readFile(join(sourceDir, 'app.svg'), 'utf8')
 const desktopSvg = await readFile(join(sourceDir, 'desktop.svg'), 'utf8')
 
 // The browser gets the SVG itself, byte for byte. Copied rather than referenced across packages
-// because `packages/web/public` is what the Angular build copies to the site root, and a build
+// because `packages/web/public` is what the Vite build copies to the site root, and a build
 // that reached up into `assets/` would be a second way for these to disagree.
 await emit(
   join(webPublic, 'favicon.svg'),
@@ -195,7 +192,7 @@ for (const size of HOME_SCREEN_SIZES) {
 }
 await emit(join(webPublic, 'apple-touch-icon.png'), await rasterise(page, appSvg, APPLE_TOUCH_SIZE))
 
-await emit(join(desktopIcons, 'icon.png'), await rasterise(page, desktopSvg, LINUX_WINDOW_SIZE))
+await emit(join(desktopIcons, 'icon.png'), await rasterise(page, desktopSvg, WINDOW_PNG_SIZE))
 for (const [size, name] of TAURI_PNG_SIZES) {
   await emit(join(desktopIcons, name), await rasterise(page, desktopSvg, size))
 }

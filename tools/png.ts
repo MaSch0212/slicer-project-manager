@@ -7,7 +7,7 @@ import { inflateSync } from 'node:zlib'
  * report. `pngSize` reads IHDR and tells you what the file *claims*; `decodePng` inflates the
  * pixel data and checks it is the size those dimensions require. A truncated write, a corrupt
  * IDAT, an .ico directory entry pointing four bytes off — all of them leave IHDR intact and all
- * of them are broken images. `deno task icons` writes ten of these files and nobody looks at most
+ * of them are broken images. `pnpm icons` writes ten of these files and nobody looks at most
  * of them, so "it has a PNG header" is not a standard worth holding them to.
  *
  * `node:zlib` and no dependency: PNG's compression *is* zlib, so the decode that matters is one

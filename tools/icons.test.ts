@@ -7,7 +7,7 @@ import { decodeIco, encodeIco } from './ico.ts'
 import { decodePng, pngSize } from './png.ts'
 
 /**
- * What `deno task icons` produced, checked against what the app claims about it.
+ * What `pnpm icons` produced, checked against what the app claims about it.
  *
  * These files are generated, committed, and then never opened by anyone. That is the whole risk:
  * a regenerate that half-wrote a file, a manifest edited to name an icon nobody made, an .ico
@@ -20,15 +20,15 @@ import { decodePng, pngSize } from './png.ts'
  * header — and checked to be exactly the size it was declared to be. The two `.ico` files are
  * taken apart entry by entry and every payload inside them is decoded the same way.
  *
- * `deno task verify` runs this. `deno task icons` does not need to have been run first: its
- * output is tracked in git.
+ * `pnpm verify` runs this (`pnpm test:tools`). `pnpm icons` does not need to have been run first:
+ * its output is tracked in git.
  */
 
 const repoRoot = fileURLToPath(new URL('..', import.meta.url))
 const sourceDir = join(repoRoot, 'assets', 'icons')
 const webPublic = join(repoRoot, 'packages', 'web', 'public')
 const desktopIcons = join(repoRoot, 'apps', 'desktop', 'src-tauri', 'icons')
-const indexHtml = readFileSync(join(repoRoot, 'packages', 'web', 'src', 'index.html'), 'utf8')
+const indexHtml = readFileSync(join(repoRoot, 'packages', 'web', 'index.html'), 'utf8')
 
 type ManifestIcon = { src: string; sizes: string; type: string; purpose?: string }
 type Manifest = {
@@ -107,16 +107,17 @@ describe('the generated icons', () => {
     )
   })
 
-  test('index.html and the manifest agree, and name only files that exist and decode', () => {
+  test('index.html names the manifest and icons, and the manifest agrees, and name only files that exist and decode', () => {
     const manifest = readManifest()
-    // One brand colour in two files. They drift the moment someone edits one of them, and the
-    // symptom — an Android address bar that does not match the splash screen — is invisible on
-    // every desktop browser.
-    const themeColour = /<meta name="theme-color" content="([^"]+)"/.exec(indexHtml)?.[1]
-    assert.equal(themeColour, manifest.theme_color)
+    // The manifest's two colours are one brand colour: the dark stop of the gradient in
+    // `assets/icons/app.svg`, which is what the home-screen icon is drawn on. They drift the
+    // moment someone edits one of them, and the symptom - a splash screen that does not match
+    // the icon - is invisible on every desktop browser. (The page itself carries no
+    // `theme-color` meta: the UI follows `prefers-color-scheme`, and one fixed colour would
+    // be wrong for one of the two schemes.)
     assert.equal(manifest.background_color, manifest.theme_color)
-    // The gradient stops in `assets/icons/app.svg`, which is where this colour comes from.
     assert.equal(manifest.theme_color, '#0229bf')
+    assert.ok(!indexHtml.includes('name="theme-color"'), 'a fixed theme-color meta was added')
 
     assert.deepEqual(linkHrefs('manifest'), ['manifest.webmanifest'])
     // The .ico first and the SVG second: a browser that ignores `type="image/svg+xml"` has to
@@ -134,7 +135,7 @@ describe('the generated icons', () => {
 
   test('favicon.svg in the build root is the source SVG, byte for byte', () => {
     // `packages/web/public/favicon.svg` is a copy, and a copy is a chance to disagree. This is
-    // what makes `assets/icons/favicon.svg` the single source: change it, run `deno task icons`,
+    // what makes `assets/icons/favicon.svg` the single source: change it, run `pnpm icons`,
     // or this fails.
     assert.deepEqual(
       readFileSync(join(webPublic, 'favicon.svg')),

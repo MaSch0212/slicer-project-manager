@@ -10,7 +10,7 @@
  * **Every payload here is a PNG, not a BMP.** The original ICO format carried DIBs, and a
  * PNG-in-ICO is the Vista-era extension. That is a real constraint and it was checked rather than
  * assumed — the three decoders these files actually meet all accept it: Chromium (the browser
- * favicon and the `<img>` decode in `icons.test.ts`), Electron's `nativeImage` (the Windows window
+ * favicon and the `<img>` decode in `icons.test.ts`), Tauri's bundler and window (the Windows window
  * icon), and the Windows shell, which has read PNG-compressed icon entries since Vista. If a
  * consumer that predates that ever matters, this module is where a BMP branch would go, and it
  * would be a much larger file.

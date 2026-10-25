@@ -7,6 +7,7 @@
     "fmt:check": "oxfmt --check",
     "typecheck": "pnpm -r --if-present typecheck",
     "test": "pnpm -r --if-present test",
+    "test:tools": "node --test tools/icons.test.ts",
     "test:rust": "cargo test --workspace --all-features",
     "dev:server": "node tools/dev-server.mjs",
     "dev:web": "pnpm --filter @spm/web dev",
@@ -14,10 +15,12 @@
     "build:desktop": "pnpm --filter @spm/desktop build",
     "e2e": "pnpm --filter @spm/web build && cargo build -p spm-server && pnpm --filter @spm/web test:e2e",
     "gen:types": "cargo run -p spm-core --example gen_ts",
+    "icons": "node tools/generate-icons.ts",
     "lint:rust": "cargo clippy --workspace --all-targets --all-features -- -D warnings && cargo clippy -p spm-core -- -D warnings && cargo fmt --all --check",
-    "verify": "pnpm lint && pnpm fmt:check && pnpm typecheck && pnpm test && pnpm test:rust && pnpm lint:rust"
+    "verify": "pnpm lint && pnpm fmt:check && pnpm typecheck && pnpm test && pnpm test:tools && pnpm test:rust && pnpm lint:rust"
   },
   "devDependencies": {
+    "@playwright/test": "^1.64.1",
     "oxfmt": "0.74.0",
     "oxlint": "1.89.0",
     "typescript": "^7.0.2"
