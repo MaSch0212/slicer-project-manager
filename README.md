@@ -121,9 +121,11 @@ A 3MF with the same 20 000-triangle mesh peaks at 1.33 MiB whether its document 
 a 321 MiB comment: the cost follows the mesh, not the file. The default test scale (about 60 MB per
 fixture) is what `pnpm verify` runs.
 
-In the container (the Docker image above), the server measured **2.56 MiB idle**; over a library of **24 large files at concurrency 1** its peak
-was **73.6 MB of anonymous memory**; and all **24 of 24 previews completed within
-`docker run --memory=64m`**.
+In the container (the Docker image above), the server measured **2.56 MiB idle**. Rendering a
+library of **24 large files** (twelve ~50 MB STLs, six 100 MB STLs, six ~720k-triangle 3MFs) at
+concurrency 1, its anonymous memory peaked at **73.6 MB with no limit set**. The same library under
+`docker run --memory=64m` still completed **24 of 24 previews**, peaking at 65.9 MB (62.8 MiB): with
+less headroom the allocator returned memory sooner, so the peak stayed under the limit.
 
 Two variables set the ceiling, and they multiply: `SPM_MAX_MESH_MB` is the biggest single mesh, and
 `SPM_PREVIEW_CONCURRENCY` is how many can be in memory at once. As a rule of thumb, budget the
