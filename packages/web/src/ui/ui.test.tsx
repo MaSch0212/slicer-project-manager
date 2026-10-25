@@ -334,6 +334,18 @@ describe('Dialog', () => {
     await waitFor(() => expect(dialog.contains(document.activeElement)).toBe(true))
   })
 
+  it('gives focus back to whatever had it when the dialog was opened', async () => {
+    render(() => <Harness />)
+    const opener = screen.getByText('Open')
+    opener.focus()
+    fireEvent.click(opener)
+    const dialog = await screen.findByRole('dialog')
+    await waitFor(() => expect(dialog.contains(document.activeElement)).toBe(true))
+    fireEvent.click(screen.getByRole('button', { name: 'Close dialog' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    await waitFor(() => expect(document.activeElement).toBe(opener))
+  })
+
   it('traps focus: Tab from the last control wraps to the first, and Shift+Tab stays inside', async () => {
     render(() => <Harness />)
     fireEvent.click(screen.getByText('Open'))

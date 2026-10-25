@@ -38,6 +38,7 @@ function renderAt(path: string) {
       <Route path="/projects" component={() => <p>projects page</p>} />
     </MemoryRouter>
   ))
+  return history
 }
 
 beforeEach(() => {
@@ -94,6 +95,18 @@ describe('ActivatePage', () => {
     expect(await screen.findByLabelText('Password')).toBeTruthy()
     expect(api.auth.checkToken).toHaveBeenCalledWith('sometoken')
     expect(screen.getByText('anna')).toBeTruthy()
+  })
+
+  it('checks a newer link pasted over an older one in the same tab', async () => {
+    api.auth.checkToken.mockImplementation((token: string) =>
+      Promise.resolve(token === 'fresh' ? { valid: true, username: 'anna' } : { valid: false }),
+    )
+    const history = renderAt('/activate#stale')
+    expect((await screen.findByRole('alert')).textContent).toContain('not valid or has expired')
+    // Only the fragment changes, so the page is not reloaded and nothing remounts.
+    history.set({ value: '/activate#fresh' })
+    expect(await screen.findByLabelText('Password')).toBeTruthy()
+    expect(api.auth.checkToken).toHaveBeenLastCalledWith('fresh')
   })
 
   it('reports an expired link as invalid', async () => {

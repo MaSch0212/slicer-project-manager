@@ -36,6 +36,12 @@
   --color-border: light-dark(#e3e4e7, #23262b);
   --color-border-input: light-dark(#8c919a, #6a707a);
   --color-overlay: light-dark(rgb(17 18 20 / 0.4), rgb(0 0 0 / 0.6));
+  /*
+   * The 3D stage, dark in both schemes. A WebGL material cannot follow a CSS theme, and the model's
+   * warm tones need a dark ground to read against: on the light surface the lit face measured 1.4:1
+   * and the shadowed one 2.5:1, on this one 10.4:1 and 5.9:1 (the e2e viewer spec asserts both).
+   */
+  --color-stage: #1c1f23;
 
   /* Text */
   --color-fg: light-dark(#111214, #e7e7ea);

@@ -1,5 +1,5 @@
 import { useLocation, useNavigate } from '@solidjs/router'
-import { createSignal, Match, onMount, Show, Switch } from 'solid-js'
+import { createEffect, createSignal, Match, on, Show, Switch } from 'solid-js'
 import { api } from '../core/api/client'
 import { isApiError } from '../core/api/error'
 import { t } from '../core/i18n'
@@ -29,17 +29,26 @@ export default function ActivatePage() {
   const [failed, setFailed] = createSignal(false)
   const [busy, setBusy] = createSignal(false)
 
-  onMount(async () => {
-    if (token() === '') return setPhase('invalid')
-    try {
-      const check = await api.auth.checkToken(token())
-      if (!check.valid) return setPhase('invalid')
-      setUsername(check.username)
-      setPhase('ready')
-    } catch {
-      setPhase('invalid')
-    }
-  })
+  // The link is checked whenever the fragment changes, not only once: pasting a newer link over an
+  // older one in the same tab changes the hash and nothing else, so the page is not reloaded.
+  let checking = 0
+  createEffect(
+    on(token, async (current) => {
+      const mine = ++checking
+      setPhase('checking')
+      setFailed(false)
+      if (current === '') return setPhase('invalid')
+      try {
+        const check = await api.auth.checkToken(current)
+        if (mine !== checking) return
+        if (!check.valid) return setPhase('invalid')
+        setUsername(check.username)
+        setPhase('ready')
+      } catch {
+        if (mine === checking) setPhase('invalid')
+      }
+    }),
+  )
 
   async function submit(event: SubmitEvent) {
     event.preventDefault()

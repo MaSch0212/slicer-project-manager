@@ -3,7 +3,7 @@ import { Tooltip as KTooltip } from '@kobalte/core/tooltip'
 import { A } from '@solidjs/router'
 import { Show, type JSX } from 'solid-js'
 import { Dynamic, Portal } from 'solid-js/web'
-import { overlayClass } from './dialog'
+import { createFocusReturn, overlayClass } from './dialog'
 import { cx } from './cx'
 import { Layers, X, type IconComponent } from './icons'
 import { tooltipClass } from './tooltip'
@@ -152,11 +152,15 @@ export function Drawer(props: {
   closeLabel: string
   children: JSX.Element
 }) {
+  const returnFocus = createFocusReturn(() => props.open)
   return (
     <KDialog open={props.open} onOpenChange={props.onOpenChange} modal>
       <KDialog.Portal>
         <KDialog.Overlay class={overlayClass} />
-        <KDialog.Content class="fixed inset-y-0 left-0 z-50 flex w-72 max-w-[85vw] flex-col gap-4 border-r border-border bg-surface p-3 text-fg shadow-popover">
+        <KDialog.Content
+          onCloseAutoFocus={returnFocus}
+          class="fixed inset-y-0 left-0 z-50 flex w-72 max-w-[85vw] flex-col gap-4 border-r border-border bg-surface p-3 text-fg shadow-popover"
+        >
           <div class="flex items-center justify-between">
             <KDialog.Title class="px-1.5 text-sm font-semibold tracking-tight">
               {props.title}

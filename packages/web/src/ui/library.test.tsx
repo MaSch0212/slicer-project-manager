@@ -1,6 +1,6 @@
 import { createMemoryHistory, MemoryRouter, Route } from '@solidjs/router'
 import { fireEvent, render, screen } from '@solidjs/testing-library'
-import { createSignal } from 'solid-js'
+import { createSignal, Show } from 'solid-js'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   Archive,
@@ -394,5 +394,29 @@ describe('StatList and Stage', () => {
     expect(screen.getByText('Loading the model')).toBeTruthy()
     fireEvent.keyDown(screen.getByRole('img'), { key: 'ArrowLeft' })
     expect(onKeyDown).toHaveBeenCalledOnce()
+  })
+
+  // The overlay layer covers the whole stage; if it took the pointer, the model under it could not
+  // be dragged. (This shipped once: an empty layer sat over the canvas of a ready model.)
+  it('lets the pointer through the overlay layer, and takes it back for what is drawn on it', () => {
+    render(() => <Stage label="view" overlay={<p>Loading the model</p>} />)
+    const layer = screen.getByText('Loading the model').closest('.pointer-events-none')
+    expect(layer).toBeTruthy()
+    expect(screen.getByText('Loading the model').closest('.pointer-events-auto')).toBeTruthy()
+  })
+
+  it('draws no overlay layer at all while its overlay renders nothing', () => {
+    const { container } = render(() => (
+      <Stage
+        label="view"
+        overlay={
+          <Show when={false}>
+            <p>Loading the model</p>
+          </Show>
+        }
+      />
+    ))
+    expect(container.querySelector('.pointer-events-none')).toBeNull()
+    expect(container.querySelector('.pointer-events-auto')).toBeNull()
   })
 })
