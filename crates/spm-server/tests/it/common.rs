@@ -22,6 +22,7 @@ pub fn env_for(dir: &Path, interval_ms: u64) -> ServerEnv {
         library_dir: dir.to_string_lossy().into_owned(),
         level: LogLevelSetting::Silent,
         port: 8000,
+        host: None,
         preview_interval_ms: interval_ms,
         preview_concurrency: 1,
         max_mesh_bytes: DEFAULT_MAX_MESH_MB * 1_000_000,

@@ -242,13 +242,12 @@ pub async fn shutdown_signal() {
 ///
 /// Every failure that is the operator's to fix comes back as one line for `main` to print.
 pub async fn serve_from_env(env: ServerEnv) -> Result<(), String> {
-    // All interfaces: the container's published port reaches the process through its own address.
-    serve_on(
-        env,
-        std::net::Ipv4Addr::UNSPECIFIED.into(),
-        shutdown_signal(),
-    )
-    .await
+    // All interfaces unless SPM_HOST says otherwise: the container's published port reaches the
+    // process through its own address.
+    let bind = env
+        .host
+        .unwrap_or_else(|| std::net::Ipv4Addr::UNSPECIFIED.into());
+    serve_on(env, bind, shutdown_signal()).await
 }
 
 /// [`serve_from_env`] on a chosen address and with a chosen shutdown trigger, so a test can run

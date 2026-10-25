@@ -13,6 +13,7 @@
 //! refused: a leftover line in somebody's compose file must not stop the server, and there is no
 //! value for it to be validated against. `main` logs a warning when it is set.
 
+use std::net::IpAddr;
 use std::path::PathBuf;
 
 use spm_core::log::{DEFAULT_LOG_LEVEL, LogLevelSetting, parse_log_level};
@@ -66,6 +67,21 @@ fn require_whole_number(name: &str, raw: &str, wanted: &str, max: u64) -> Result
         return Err(validation(format!("{name}=\"{raw}\" is not {wanted}")));
     }
     Ok(value)
+}
+
+/// The address to bind: `None` (unset) keeps the default of every interface, which is what a
+/// container's published port needs. An IP literal narrows it, mostly to `127.0.0.1` so a local
+/// run does not raise a firewall prompt. A host *name* is refused: resolving one at startup would
+/// make the bind depend on DNS, and `localhost` can resolve to either family.
+pub fn resolve_host(raw: Option<&str>) -> Result<Option<IpAddr>, AppError> {
+    let Some(raw) = raw else {
+        return Ok(None);
+    };
+    raw.parse::<IpAddr>().map(Some).map_err(|_| {
+        validation(format!(
+            "SPM_HOST=\"{raw}\" is not an address. Expected an IP literal such as 127.0.0.1 or ::1"
+        ))
+    })
 }
 
 /// The library root. Required: there is no sensible default, and guessing one would have the
@@ -179,6 +195,8 @@ pub struct ServerEnv {
     pub library_dir: String,
     pub level: LogLevelSetting,
     pub port: u16,
+    /// `None` binds every interface.
+    pub host: Option<IpAddr>,
     pub preview_interval_ms: u64,
     pub preview_concurrency: usize,
     pub max_mesh_bytes: u64,
@@ -196,6 +214,7 @@ pub fn read_server_env(get: &dyn Fn(&str) -> Option<String>) -> Result<ServerEnv
         library_dir: resolve_library_dir(var("SPM_LIBRARY_DIR").as_deref())?,
         level: resolve_log_level(var("SPM_LOG_LEVEL").as_deref())?,
         port: resolve_port(var("SPM_PORT").as_deref())?,
+        host: resolve_host(var("SPM_HOST").as_deref())?,
         preview_interval_ms: resolve_preview_interval_ms(
             var("SPM_PREVIEW_INTERVAL_MS").as_deref(),
         )?,
@@ -311,6 +330,28 @@ mod tests {
         // And so large it does not fit any integer type.
         let huge = "9".repeat(40);
         refuses("SPM_PORT", &huge, resolve_port(Some(&huge)));
+    }
+
+    #[test]
+    fn spm_host_is_an_ip_literal_and_unset_keeps_every_interface() {
+        assert_eq!(resolve_host(None).unwrap(), None);
+        assert_eq!(
+            resolve_host(Some("127.0.0.1")).unwrap(),
+            Some(IpAddr::from([127, 0, 0, 1]))
+        );
+        assert_eq!(
+            resolve_host(Some("0.0.0.0")).unwrap(),
+            Some(IpAddr::from([0, 0, 0, 0]))
+        );
+        assert_eq!(
+            resolve_host(Some("::1")).unwrap(),
+            Some("::1".parse::<IpAddr>().unwrap())
+        );
+
+        // A name needs DNS, and a stray space is a typo worth showing.
+        for raw in ["", "localhost", " 127.0.0.1", "127.0.0.1:8000", "256.0.0.1"] {
+            refuses("SPM_HOST", raw, resolve_host(Some(raw)));
+        }
     }
 
     #[test]
@@ -473,6 +514,7 @@ mod tests {
                 library_dir: "/srv/library".into(),
                 level: LogLevelSetting::Info,
                 port: DEFAULT_PORT,
+                host: None,
                 preview_interval_ms: DEFAULT_PREVIEW_INTERVAL_MS,
                 preview_concurrency: DEFAULT_CONCURRENCY,
                 max_mesh_bytes: DEFAULT_MAX_MESH_MB * 1_000_000,
@@ -486,6 +528,7 @@ mod tests {
             ("SPM_LIBRARY_DIR", "/srv/library"),
             ("SPM_LOG_LEVEL", "debug"),
             ("SPM_PORT", "9001"),
+            ("SPM_HOST", "127.0.0.1"),
             ("SPM_PREVIEW_INTERVAL_MS", "250"),
             ("SPM_PREVIEW_CONCURRENCY", "4"),
             ("SPM_MAX_MESH_MB", "512"),
@@ -507,6 +550,7 @@ mod tests {
                 library_dir: "/srv/library".into(),
                 level: LogLevelSetting::Debug,
                 port: 9001,
+                host: Some(IpAddr::from([127, 0, 0, 1])),
                 preview_interval_ms: 250,
                 preview_concurrency: 4,
                 max_mesh_bytes: 512_000_000,
