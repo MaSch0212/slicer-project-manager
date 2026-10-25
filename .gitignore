@@ -3,6 +3,8 @@
 
 # Rust
 target/
+# Written by `tauri-build` on every build: the resolved permission schemas.
+apps/desktop/src-tauri/gen/
 
 node_modules/
 dist/

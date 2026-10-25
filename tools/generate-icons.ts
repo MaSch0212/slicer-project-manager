@@ -49,7 +49,7 @@ const here = dirname(fileURLToPath(import.meta.url))
 const repoRoot = resolve(here, '..')
 const sourceDir = join(repoRoot, 'assets', 'icons')
 const webPublic = join(repoRoot, 'packages', 'web', 'public')
-const desktopIcons = join(repoRoot, 'packages', 'desktop', 'icons')
+const desktopIcons = join(repoRoot, 'apps', 'desktop', 'src-tauri', 'icons')
 
 /**
  * The sizes, and the reason for each one. None of these is "the usual set" copied from somewhere.
@@ -72,7 +72,9 @@ const desktopIcons = join(repoRoot, 'packages', 'desktop', 'icons')
  * a frame does not fail — Windows scales the nearest one, badly — so this is the one list where
  * being generous costs a few KB and saves a blurry title bar.
  *
- * **`icon.png` — 512.** Linux, where `BrowserWindow`'s `icon` takes an image rather than an icon
+ * **`icon.png` — 512, and `32x32.png`, `128x128.png`, `128x128@2x.png`.** The window icon of the
+ * Tauri app and the PNGs its `bundle.icon` list names beside the `.ico`. (Linux is where the Electron
+ * build needed a PNG: `BrowserWindow`'s `icon` takes an image rather than an icon
  * container and the window manager scales it down. macOS is not here: it ignores
  * `BrowserWindow.icon` entirely and takes the dock icon from the bundle's `.icns`, which
  * `package-app.ts` does not build (see its Scope note).
@@ -82,6 +84,12 @@ const WINDOW_ICO_SIZES = [16, 24, 32, 48, 64, 128, 256]
 const HOME_SCREEN_SIZES = [192, 512]
 const APPLE_TOUCH_SIZE = 180
 const LINUX_WINDOW_SIZE = 512
+/** The PNGs Tauri's `bundle.icon` list names beside the `.ico`, by file name. */
+const TAURI_PNG_SIZES: readonly (readonly [number, string])[] = [
+  [32, '32x32.png'],
+  [128, '128x128.png'],
+  [256, '128x128@2x.png'],
+]
 
 /** The largest thing rendered, so the element always fits without the page scrolling. */
 const VIEWPORT = 600
@@ -188,6 +196,9 @@ for (const size of HOME_SCREEN_SIZES) {
 await emit(join(webPublic, 'apple-touch-icon.png'), await rasterise(page, appSvg, APPLE_TOUCH_SIZE))
 
 await emit(join(desktopIcons, 'icon.png'), await rasterise(page, desktopSvg, LINUX_WINDOW_SIZE))
+for (const [size, name] of TAURI_PNG_SIZES) {
+  await emit(join(desktopIcons, name), await rasterise(page, desktopSvg, size))
+}
 await emit(join(desktopIcons, 'icon.ico'), await icoFrom(page, desktopSvg, WINDOW_ICO_SIZES))
 
 // Every PNG this run produced, put back through Chromium's decoder from the bytes on disk rather

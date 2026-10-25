@@ -27,7 +27,7 @@ import { decodePng, pngSize } from './png.ts'
 const repoRoot = fileURLToPath(new URL('..', import.meta.url))
 const sourceDir = join(repoRoot, 'assets', 'icons')
 const webPublic = join(repoRoot, 'packages', 'web', 'public')
-const desktopIcons = join(repoRoot, 'packages', 'desktop', 'icons')
+const desktopIcons = join(repoRoot, 'apps', 'desktop', 'src-tauri', 'icons')
 const indexHtml = readFileSync(join(repoRoot, 'packages', 'web', 'src', 'index.html'), 'utf8')
 
 type ManifestIcon = { src: string; sizes: string; type: string; purpose?: string }
@@ -175,6 +175,18 @@ describe('the generated icons', () => {
       decodePng(new Uint8Array(readFileSync(join(desktopIcons, 'icon.png')))).header.width,
       512,
     )
+    // The PNGs the Tauri bundler's icon list names beside the .ico.
+    for (const [name, size] of [
+      ['32x32.png', 32],
+      ['128x128.png', 128],
+      ['128x128@2x.png', 256],
+    ] as const) {
+      assert.equal(
+        decodePng(new Uint8Array(readFileSync(join(desktopIcons, name)))).header.width,
+        size,
+        name,
+      )
+    }
   })
 })
 

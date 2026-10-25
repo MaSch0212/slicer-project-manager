@@ -10,6 +10,8 @@
     "test:rust": "cargo test --workspace --all-features",
     "dev:server": "node tools/dev-server.mjs",
     "dev:web": "pnpm --filter @spm/web dev",
+    "dev:desktop": "pnpm --filter @spm/desktop dev",
+    "build:desktop": "pnpm --filter @spm/desktop build",
     "e2e": "pnpm --filter @spm/web build && cargo build -p spm-server && pnpm --filter @spm/web test:e2e",
     "gen:types": "cargo run -p spm-core --example gen_ts",
     "lint:rust": "cargo clippy --workspace --all-targets --all-features -- -D warnings && cargo clippy -p spm-core -- -D warnings && cargo fmt --all --check",

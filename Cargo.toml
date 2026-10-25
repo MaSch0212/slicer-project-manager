@@ -1,6 +1,12 @@
 [workspace]
 resolver = "3"
-members = ["crates/spm-core", "crates/spm-http", "crates/spm-server"]
+members = [
+  "crates/spm-core",
+  "crates/spm-http",
+  "crates/spm-server",
+  "crates/spm-shell",
+  "apps/desktop/src-tauri",
+]
 
 [workspace.package]
 version = "0.1.0"
@@ -11,6 +17,7 @@ publish = false
 [workspace.dependencies]
 spm-core = { path = "crates/spm-core" }
 spm-http = { path = "crates/spm-http" }
+spm-shell = { path = "crates/spm-shell" }
 axum = "0.8.9"
 tokio = { version = "1.54.1", features = [
   "macros",
