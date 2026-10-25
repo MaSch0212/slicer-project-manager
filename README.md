@@ -199,7 +199,7 @@ installer for the current user (no elevation) in `target/release/bundle/nsis/`, 
 `apps/desktop/scripts/verify-bundle.mjs` checks the result: the installer exists and has a sane size,
 the executable is named for the app, `LICENSE` and `THIRD-PARTY-NOTICES.md` were put beside it (in
 `third-party/`) and are the repository's own, and no browser-engine files travelled with it. The
-installer measures **about 5 MiB** (4.9 MiB; the executable is 18.7 MiB). It uses the WebView2
+installer measures **about 5 MiB** (5.4 MiB; the executable is 20.8 MiB). It uses the WebView2
 runtime Windows provides and does not install one. Installers are unsigned, and there is no
 auto-update.
 
