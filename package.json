@@ -8,6 +8,8 @@
     "typecheck": "pnpm -r --if-present typecheck",
     "test": "pnpm -r --if-present test",
     "test:rust": "cargo test --workspace --all-features",
+    "dev:server": "node tools/dev-server.mjs",
+    "dev:web": "pnpm --filter @spm/web dev",
     "gen:types": "cargo run -p spm-core --example gen_ts",
     "lint:rust": "cargo clippy --workspace --all-targets --all-features -- -D warnings && cargo clippy -p spm-core -- -D warnings && cargo fmt --all --check",
     "verify": "pnpm lint && pnpm fmt:check && pnpm typecheck && pnpm test && pnpm test:rust && pnpm lint:rust"

@@ -11,6 +11,8 @@ coverage/
 *.tsbuildinfo
 .spm/
 test-tmp/
+# Local development library and other scratch (pnpm dev:server).
+.dev/
 # Playwright's own output directories.
 test-results/
 playwright-report/
