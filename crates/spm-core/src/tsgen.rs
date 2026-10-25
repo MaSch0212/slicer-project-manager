@@ -23,12 +23,12 @@ use ts_rs::{Config, TS};
 use crate::dto::{
     BrowseBounds, BrowseDownloadDto, BrowseDownloadState, BrowseNoticeDto, BrowseNoticeKind,
     BrowseStateDto, Capabilities, CoreFileDto, CoreProjectDetailDto, CoreProjectDto,
-    DEFAULT_SETTINGS, EntryDiff, FileCounts, FileDto, FileKind, FileState, Language,
-    LocalLibraryDto, ModelSiteDto, PreviewState, ProjectDetailDto, ProjectDto, ProjectQuery,
-    ProjectState, RemoteLibraryDto, RescanResultDto, SettingsDto, SettingsPatch, SlicerConfigDto,
-    SlicerId, SlicerInstallDto, SlicerInstallOrigin, SlicerInstallState, SlicerLaunchDto,
-    SlicerLaunchMode, SlicerLaunchOptions, SlicerSessionDto, SortDir, SortKey, Theme, UserDto,
-    UserStatus, ViewMode, ZipImportResultDto,
+    DEFAULT_SETTINGS, EntryDiff, FileCounts, FileDto, FileKind, FileState, Language, LibraryMode,
+    LibraryStateDto, LocalLibraryDto, ModelSiteDto, PreviewState, ProjectDetailDto, ProjectDto,
+    ProjectQuery, ProjectState, RemoteLibraryDto, RescanResultDto, SettingsDto, SettingsPatch,
+    SlicerConfigDto, SlicerId, SlicerInstallDto, SlicerInstallOrigin, SlicerInstallState,
+    SlicerLaunchDto, SlicerLaunchMode, SlicerLaunchOptions, SlicerSessionDto, SortDir, SortKey,
+    Theme, UserDto, UserStatus, ViewMode, ZipImportResultDto,
 };
 use crate::error::{
     AppErrorCode, DETECTION_FAILED, ErrorBody, ErrorEnvelope, QuotaExceededDetails,
@@ -73,6 +73,8 @@ fn types_ts() -> String {
         Capabilities,
         LocalLibraryDto,
         RemoteLibraryDto,
+        LibraryMode,
+        LibraryStateDto,
         // users
         UserStatus,
         UserDto,

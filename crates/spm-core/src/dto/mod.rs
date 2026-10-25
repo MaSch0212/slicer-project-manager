@@ -50,6 +50,28 @@ pub struct LocalLibraryDto {
     pub dir: String,
 }
 
+/// Which library the desktop shell is looking at right now: the answer to "where is my library?".
+///
+/// `unset` is first run, or the moment after the user left a server for the connect page: nothing
+/// is open and the web app shows the page that asks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "lowercase")]
+pub enum LibraryMode {
+    Unset,
+    Local,
+    Remote,
+}
+
+/// What the desktop shell reports about its library: the mode, and the folder or the server
+/// origin that goes with it (the other is `null`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct LibraryStateDto {
+    pub mode: LibraryMode,
+    pub dir: Option<String>,
+    pub origin: Option<String>,
+}
+
 /// The remote server a shell is pointed at (spec 2.6's other mode): the origin and nothing else.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]

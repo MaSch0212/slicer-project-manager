@@ -34,6 +34,20 @@ export type LocalLibraryDto = { dir: string, };
  */
 export type RemoteLibraryDto = { origin: string, };
 
+/**
+ * Which library the desktop shell is looking at right now: the answer to "where is my library?".
+ *
+ * `unset` is first run, or the moment after the user left a server for the connect page: nothing
+ * is open and the web app shows the page that asks.
+ */
+export type LibraryMode = "unset" | "local" | "remote";
+
+/**
+ * What the desktop shell reports about its library: the mode, and the folder or the server
+ * origin that goes with it (the other is `null`).
+ */
+export type LibraryStateDto = { mode: LibraryMode, dir: string | null, origin: string | null, };
+
 export type UserStatus = "pending" | "active" | "disabled";
 
 export type UserDto = { id: string, username: string, displayName: string, isAdmin: boolean, status: UserStatus, diskUsageBytes: number, 
