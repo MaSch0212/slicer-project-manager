@@ -8,9 +8,11 @@
 // environment variable it inherited, its process id, and whether its stdin was already at end of
 // file (a detached child has no console input).
 //
-// How long it lives is read from `<exe>.mode` beside it: absent or `exit` means "write the record
-// and exit at once"; `sleep=<milliseconds>` means "write the record and stay alive that long", so a
-// test can observe a slicer that is still running.
+// What else it does is read from `<exe>.mode` beside it, one setting per line: absent means "write
+// the record and exit at once"; `sleep=<milliseconds>` means "stay alive that long", so a test can
+// observe a slicer that is still running; `copy` means "also keep a copy of the file you were
+// handed, as `<exe>.arg-copy.<its extension>`", so a test can look at exactly what the slicer was
+// given even after the app has swept it.
 
 use std::io::Read;
 
@@ -63,7 +65,21 @@ fn main() {
     std::fs::rename(&temp, sidecar(".record.json")).expect("the record is in place");
 
     let mode = std::fs::read_to_string(sidecar(".mode")).unwrap_or_default();
-    if let Some(ms) = mode.trim().strip_prefix("sleep=").and_then(|ms| ms.parse::<u64>().ok()) {
+    let wants = |setting: &str| mode.lines().any(|line| line.trim() == setting);
+    if wants("copy")
+        && let Some(first) = args.first()
+    {
+        let extension = std::path::Path::new(first)
+            .extension()
+            .map(|extension| extension.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let _ = std::fs::copy(first, sidecar(&format!(".arg-copy.{extension}")));
+    }
+    let sleep = mode
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("sleep="))
+        .and_then(|ms| ms.parse::<u64>().ok());
+    if let Some(ms) = sleep {
         std::thread::sleep(std::time::Duration::from_millis(ms));
     }
 }

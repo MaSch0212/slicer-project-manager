@@ -3564,6 +3564,7 @@ name = "spm-desktop"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "flate2",
  "open",
  "serde",
  "serde_json",

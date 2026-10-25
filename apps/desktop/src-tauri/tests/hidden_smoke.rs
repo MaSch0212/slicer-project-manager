@@ -20,6 +20,13 @@ use spm_core::ensure_bootstrap_admin;
 use spm_core::testing::TempLibrary;
 use spm_http::{AppState, AuthMode, HttpOptions, router};
 
+// The stand-in slicer (compiled on demand, opens no window) and the archive builders are the shell
+// crate's own test support, shared rather than copied.
+#[path = "../../../../crates/spm-shell/tests/support/stub.rs"]
+mod stub;
+#[path = "../../../../crates/spm-core/tests/it/fixtures.rs"]
+mod threemf;
+
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 /// The checks a complete report has. A check that stops being made is a failure, not a pass.
@@ -43,9 +50,15 @@ const REQUIRED_CHECKS: &[&str] = &[
     "the page logged no console error or warning and threw nothing",
     "navigation policy: file: and about: are refused and window.open is denied",
     "permission requests are denied: geolocation and notifications",
+    "slicers: the main webview reads the configuration through the bridge",
+    "slicers: null crosses the bridge as a value (unbind, and no default)",
+    "slicers: a bad argument is a Validation rejection the page can map, not a bare string",
     "ACL: a webview at the same origin with another label is refused the app command",
     "ACL: a webview on another loopback port is refused the app command",
 ];
+
+/// The extra check a run that starts a stand-in slicer through the bridge makes.
+const LAUNCH_CHECK: &str = "slicers: a stub launch through the bridge hands a mesh over in place and a 3MF stripped, and refuses an unbound product by name";
 
 struct Run {
     status: ExitStatus,
@@ -207,5 +220,127 @@ fn a_remote_server_the_built_app_hidden_through_the_proxy() {
     assert!(
         !root.path().join("data").join("state.json").exists(),
         "SPM_REMOTE_URL is for one launch"
+    );
+}
+
+/// **A stand-in slicer, started through the real bridge by the built app, hidden.** The page's own
+/// `invoke` hands a mesh and a Cura-authored 3MF to the stand-in (which opens no window and writes
+/// down what it was given); the test then reads what the stand-in saw: the mesh in place, the 3MF
+/// as a stripped copy in a launch directory under the app's data directory, a working directory the
+/// app chose, and none of the app's own variables.
+#[test]
+fn a_stub_slicer_is_started_through_the_bridge_by_the_built_app_hidden() {
+    let root = tempfile::tempdir().unwrap();
+    let data = root.path().join("data");
+    let library = root.path().join("library");
+    let project = library.join("Launch Project");
+    std::fs::create_dir_all(&project).unwrap();
+    std::fs::write(
+        project.join("cube.stl"),
+        "solid cube
+endsolid cube
+",
+    )
+    .unwrap();
+    threemf::cura_project(&project.join("bracket.3mf"), None);
+
+    // The user's Orca, added by hand (which is how a portable install is): the stand-in.
+    let exe = stub::build_stub(&root.path().join("stub"), "stub-orca");
+    stub::keep_a_copy_of_the_argument(&exe);
+    std::fs::create_dir_all(&data).unwrap();
+    std::fs::write(
+        data.join("slicers.json"),
+        serde_json::json!({
+            "version": 1,
+            "installs": [{
+                "id": "manual:stub",
+                "slicerId": "orca",
+                "label": "OrcaSlicer (the stand-in)",
+                "origin": { "kind": "manual", "id": "stub" },
+                "version": null,
+                "pathHint": exe.to_string_lossy(),
+                "addedAt": 1,
+            }],
+            "bindings": { "orca": "manual:stub" },
+            "defaultSlicerId": "orca",
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let run = run_hidden(
+        root.path(),
+        &[
+            ("SPM_LIBRARY_DIR", library.to_str().unwrap()),
+            ("SPM_DESKTOP_SMOKE_LAUNCH", "1"),
+            // A variable of the app's own that must never reach a slicer.
+            ("SPM_REMOTE_URL_FOR_THE_TEST", "http://secret.invalid"),
+        ],
+    );
+    assert_green(&run);
+    assert!(
+        run.report["checks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|check| check["name"] == LAUNCH_CHECK && check["ok"] == true),
+        "the report has no passing {LAUNCH_CHECK:?}"
+    );
+
+    // What the stand-in was handed by the *second* launch (the 3MF): a copy in a launch directory
+    // under the data directory, stripped of the slicer configuration it came with.
+    let record = stub::record_of(&exe);
+    let handed = std::path::PathBuf::from(record["args"][0].as_str().unwrap());
+    let sessions = data.join("slicer-sessions");
+    assert_eq!(handed.file_name().unwrap(), "bracket.3mf");
+    let launch_directory = handed.parent().unwrap();
+    assert_eq!(
+        std::fs::canonicalize(launch_directory.parent().unwrap()).unwrap(),
+        std::fs::canonicalize(&sessions).unwrap()
+    );
+    assert_eq!(
+        std::fs::canonicalize(record["cwd"].as_str().unwrap()).unwrap(),
+        std::fs::canonicalize(launch_directory).unwrap()
+    );
+    let copy = std::path::PathBuf::from(format!("{}.arg-copy.3mf", exe.display()));
+    assert!(
+        copy.is_file(),
+        "the stand-in kept no copy of what it was handed"
+    );
+    assert_eq!(
+        spm_core::files::classify::classify_file(&copy).kind,
+        spm_core::dto::FileKind::Model,
+        "what the slicer was handed still carries a slicer configuration"
+    );
+    // The user's own file in the library is untouched: still a Cura project.
+    assert_eq!(
+        spm_core::files::classify::classify_file(&project.join("bracket.3mf")).kind,
+        spm_core::dto::FileKind::SlicerProject
+    );
+    // The mesh went in place, so the scratch directory was the stand-in's working directory then;
+    // it exists because the launcher made it.
+    assert!(data.join("slicer-cwd").is_dir());
+    // Nothing of the app's own configuration reached the child.
+    let names: Vec<String> = record["env"]
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(|name| name.to_ascii_uppercase())
+        .collect();
+    assert!(
+        !names.iter().any(|name| name.starts_with("SPM_")),
+        "the child inherited {names:?}"
+    );
+    assert_eq!(record["stdinEof"], true);
+    // And the launch record names the library it came from.
+    let launch_record: Value = serde_json::from_str(
+        &std::fs::read_to_string(launch_directory.join("launch.json")).unwrap(),
+    )
+    .unwrap();
+    assert!(
+        launch_record["library"]
+            .as_str()
+            .unwrap()
+            .starts_with("local:")
     );
 }

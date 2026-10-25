@@ -36,7 +36,7 @@ pub fn build_stub(dir: &Path, name: &str) -> PathBuf {
     let output = std::process::Command::new(rustc())
         .args([
             "--edition",
-            "2021",
+            "2024",
             "-C",
             "opt-level=0",
             "-C",
@@ -59,7 +59,12 @@ pub fn build_stub(dir: &Path, name: &str) -> PathBuf {
 
 /// Tells the stub to stay alive for `ms` after writing its record.
 pub fn keep_alive(exe: &Path, ms: u64) {
-    std::fs::write(sidecar(exe, ".mode"), format!("sleep={ms}")).unwrap();
+    std::fs::write(sidecar(exe, ".mode"), format!("sleep={ms}\n")).unwrap();
+}
+
+/// Tells the stub to keep a copy of the file it is handed (see `stub_slicer.rs`).
+pub fn keep_a_copy_of_the_argument(exe: &Path) {
+    std::fs::write(sidecar(exe, ".mode"), "copy\n").unwrap();
 }
 
 pub fn sidecar(exe: &Path, suffix: &str) -> PathBuf {

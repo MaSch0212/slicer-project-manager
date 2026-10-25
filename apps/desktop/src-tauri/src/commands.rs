@@ -177,28 +177,31 @@ pub async fn desktop_slicers_remove(
 }
 
 /// Points a product at one of its installs; `null` unbinds it.
+///
+/// `install_id` is a plain `Value` and not an `Option`: a JSON `null` deserialises to `None` for an
+/// optional parameter, which would make "unbind" indistinguishable from an argument that was left
+/// out, and those two must not be the same request. The cost is that a *missing* key is refused by
+/// the framework before this runs, and the page always sends the key.
 #[tauri::command]
 pub async fn desktop_slicers_bind(
     ctx: State<'_, AppCtx>,
     slicer_id: Option<Value>,
-    install_id: Option<Value>,
+    install_id: Value,
 ) -> Result<SlicerConfigDto, CommandError> {
     slicers(&ctx, move |commands| {
-        commands.bind(slicer_id.as_ref(), install_id.as_ref())
+        commands.bind(slicer_id.as_ref(), Some(&install_id))
     })
     .await
 }
 
-/// The product a file that names no slicer is opened with; `null` clears it.
+/// The product a file that names no slicer is opened with; `null` clears it. A plain `Value` for
+/// the reason `desktop_slicers_bind` gives.
 #[tauri::command]
 pub async fn desktop_slicers_set_default(
     ctx: State<'_, AppCtx>,
-    slicer_id: Option<Value>,
+    slicer_id: Value,
 ) -> Result<SlicerConfigDto, CommandError> {
-    slicers(&ctx, move |commands| {
-        commands.set_default(slicer_id.as_ref())
-    })
-    .await
+    slicers(&ctx, move |commands| commands.set_default(Some(&slicer_id))).await
 }
 
 /// Throws the slicer configuration away: the only way out of one this build cannot read.

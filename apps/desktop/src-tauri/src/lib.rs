@@ -5,13 +5,19 @@
 //! in the `spm-shell` crate, which has no GUI in it and is tested without one; this crate is the
 //! glue that turns it into windows, menus and `invoke` commands.
 //!
-//! # Where parts 2 and 3 plug in
+//! # Slicers (part 2), and where part 3 plugs in
+//!
+//! The slicer subsystem is `spm_shell::slicers` (registry, detection, the machine-local store,
+//! launching, sessions); here it is eleven `desktop_slicers_*` commands in [`commands`], each a
+//! line over `SlicerCommands` (which validates every argument), an executable dialog, and the sweep
+//! at start and the close at exit in [`run`]. Both slicer capability flags are lit in both shell
+//! columns.
 //!
 //! - **Commands:** write the function in a module beside [`commands`], list its name in
 //!   [`app_commands::APP_COMMANDS`] (which is what gives it a permission and what the main
 //!   webview's capability grants), and add it to `generate_handler!` in [`run`].
-//! - **Capability flags:** flip `can_launch_slicer`, `can_configure_slicers` and
-//!   `can_browse_model_sites` in `spm_shell::capabilities`, in both shell columns.
+//! - **Capability flag:** flip `can_browse_model_sites` in `spm_shell::capabilities`, in both
+//!   shell columns.
 //! - **The model browser's child webview:** `window::create_main_window` returns the main
 //!   `WebviewWindow`; its `.as_ref().window()` is the `Window` that `add_child` (Cargo feature
 //!   `unstable`, already on) attaches to. Give the child its own label (`browse`), its own
@@ -56,6 +62,8 @@ pub const HIDDEN_ENV: &str = "SPM_DESKTOP_HIDDEN";
 pub const READY_FILE_ENV: &str = "SPM_DESKTOP_READY_FILE";
 /// Run the smoke checks, write their report here, and exit. See [`hidden`].
 pub const SMOKE_REPORT_ENV: &str = "SPM_DESKTOP_SMOKE_REPORT";
+/// With `1`, the smoke run also starts a stand-in slicer through the bridge. See [`hidden`].
+pub const SMOKE_LAUNCH_ENV: &str = "SPM_DESKTOP_SMOKE_LAUNCH";
 /// The Vite dev server to serve the UI from, instead of the embedded bundle.
 pub const DEV_UI_ENV: &str = "SPM_DEV_UI_ORIGIN";
 

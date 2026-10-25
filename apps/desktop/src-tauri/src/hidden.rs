@@ -48,7 +48,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
 use crate::window::TitleSink;
-use crate::{READY_FILE_ENV, SMOKE_REPORT_ENV, env_value, is_hidden};
+use crate::{READY_FILE_ENV, SMOKE_LAUNCH_ENV, SMOKE_REPORT_ENV, env_value, is_hidden};
 
 /// How long the run waits for the webview to ask for its capabilities, and for each probe.
 const WAIT: Duration = Duration::from_secs(30);
@@ -63,12 +63,13 @@ const PROBE_JS: &str = r#"
     try {
       return { ok: true, value: await window.__TAURI_INTERNALS__.invoke(command, args) };
     } catch (error) {
-      return { ok: false, error: String(error) };
+      return { ok: false, error: typeof error === 'string' ? error : JSON.stringify(error) };
     }
   };
   const result = {
     bridge: typeof window.__TAURI_INTERNALS__,
     state: await call('desktop_library_state'),
+    slicers: await call('desktop_slicers_get'),
     outside: await call('plugin:app|version'),
     missing: await call('no_such_command'),
   };
@@ -106,7 +107,7 @@ const MAIN_PROBE_JS: &str = r#"
     try {
       return { ok: true, value: await window.__TAURI_INTERNALS__.invoke(command, args) };
     } catch (error) {
-      return { ok: false, error: String(error) };
+      return { ok: false, error: typeof error === 'string' ? error : JSON.stringify(error) };
     }
   };
   for (let i = 0; i < 100 && !document.querySelector('h1'); i++) await sleep(100);
@@ -119,6 +120,17 @@ const MAIN_PROBE_JS: &str = r#"
     path: location.pathname,
     heading: document.querySelector('h1')?.textContent ?? null,
   };
+  // The slicer commands through the real bridge. `null` is "unbind" and "no default", and it has
+  // to arrive as a value: an absent argument is a different (refused) request.
+  result.slicers = await call('desktop_slicers_get');
+  /*LAUNCH*/
+  result.unbind = await call('desktop_slicers_bind', { slicerId: 'cura', installId: null });
+  result.noDefault = await call('desktop_slicers_set_default', { slicerId: null });
+  result.badProduct = await call('desktop_slicers_add_manual', { slicerId: 'superslicer' });
+  result.badOptions = await call('desktop_slicers_open', {
+    fileId: 'f', projectId: 'p', opts: { mode: 'as-is', localPath: 'C:/Windows/win.ini' },
+  });
+  result.sessions = await call('desktop_slicers_sessions');
   const home = location.href;
   location.assign('file:///C:/Windows/win.ini');
   await sleep(500);
@@ -141,6 +153,47 @@ const MAIN_PROBE_JS: &str = r#"
   document.title = 'PROBE:' + JSON.stringify(result);
 })();
 "#;
+
+/// The part of the main probe that starts a stub slicer through the bridge. Only in a run that
+/// asked for it (`SPM_DESKTOP_SMOKE_LAUNCH=1`): the seeded library has a project with a mesh and a
+/// Cura-authored 3MF in it, and the machine's `slicers.json` names a stand-in that opens no window.
+const LAUNCH_PROBE_JS: &str = r#"
+  result.launches = [];
+  let project = null;
+  for (let i = 0; i < 150 && !project; i++) {
+    const list = await (await fetch('/api/projects')).json();
+    project = list.find((entry) => entry.name === 'Launch Project') ?? null;
+    if (!project) await sleep(200);
+  }
+  if (project) {
+    const detail = await (await fetch('/api/projects/' + project.id)).json();
+    const named = (name) => detail.files.find((entry) => entry.name === name);
+    for (const name of ['cube.stl', 'bracket.3mf']) {
+      const file = named(name);
+      const answer = file
+        ? await call('desktop_slicers_open', {
+            fileId: file.id,
+            projectId: project.id,
+            opts: { mode: 'new-project' },
+          })
+        : { ok: false, error: 'the seeded file is missing' };
+      result.launches.push({ name, ...answer });
+      // The stand-in records itself beside its own executable, so the next launch waits for this
+      // one's record to be written rather than overwriting it.
+      await sleep(1500);
+    }
+    // Cura is not bound on this machine, so opening a Cura project as it is is refused by name.
+    result.asIsCura = await call('desktop_slicers_open', {
+      fileId: named('bracket.3mf').id,
+      projectId: project.id,
+      opts: { mode: 'as-is' },
+    });
+  }
+"#;
+
+fn main_probe_js(launch: bool) -> String {
+    MAIN_PROBE_JS.replace("/*LAUNCH*/", if launch { LAUNCH_PROBE_JS } else { "" })
+}
 
 /// What the probes reported, by window label.
 #[derive(Clone, Default)]
@@ -387,7 +440,8 @@ async fn write_report<R: Runtime>(
     }
 
     // The probes, from inside real webviews.
-    let _ = main.eval(MAIN_PROBE_JS);
+    let launch = env_value(SMOKE_LAUNCH_ENV).is_some_and(|value| value == "1");
+    let _ = main.eval(main_probe_js(launch));
     let data_dir = std::env::var_os(crate::USER_DATA_ENV)
         .map(|dir| Path::new(&dir).join("webview"))
         .or_else(|| {
@@ -485,6 +539,60 @@ async fn write_report<R: Runtime>(
         ),
     );
 
+    check(
+        &mut report,
+        "slicers: the main webview reads the configuration through the bridge",
+        main_probe.as_ref().is_some_and(|probe| {
+            probe["slicers"]["ok"] == true
+                && probe["slicers"]["value"]["installs"].is_array()
+                && probe["slicers"]["value"]["detectionSupported"].is_boolean()
+                && probe["sessions"]["ok"] == true
+                && probe["sessions"]["value"].is_array()
+        }),
+        describe(&main_probe),
+    );
+    check(
+        &mut report,
+        "slicers: null crosses the bridge as a value (unbind, and no default)",
+        main_probe
+            .as_ref()
+            .is_some_and(|probe| probe["unbind"]["ok"] == true && probe["noDefault"]["ok"] == true),
+        describe(&main_probe),
+    );
+    // A rejection that is a string is what the ACL says; one that is `{code, message}` is the
+    // shell's own, and the page maps the code to a message.
+    check(
+        &mut report,
+        "slicers: a bad argument is a Validation rejection the page can map, not a bare string",
+        main_probe.as_ref().is_some_and(|probe| {
+            ["badProduct", "badOptions"].iter().all(|key| {
+                probe[key]["ok"] == false
+                    && probe[key]["error"]
+                        .as_str()
+                        .is_some_and(|error| error.contains("\"code\":\"Validation\""))
+            })
+        }),
+        describe(&main_probe),
+    );
+    if launch {
+        check(
+            &mut report,
+            "slicers: a stub launch through the bridge hands a mesh over in place and a 3MF stripped, and refuses an unbound product by name",
+            main_probe.as_ref().is_some_and(|probe| {
+                let launches = probe["launches"].as_array().cloned().unwrap_or_default();
+                launches.len() == 2
+                    && launches.iter().all(|launch| launch["ok"] == true)
+                    && launches[0]["value"]["stripped"] == false
+                    && launches[1]["value"]["stripped"] == true
+                    && probe["asIsCura"]["ok"] == false
+                    && probe["asIsCura"]["error"]
+                        .as_str()
+                        .is_some_and(|error| error.contains("\"code\":\"NotFound\""))
+            }),
+            describe(&main_probe),
+        );
+    }
+
     let same_probe = if same_origin.is_ok() {
         probes.wait_for("probe-same-origin").await
     } else {
@@ -494,7 +602,10 @@ async fn write_report<R: Runtime>(
         &mut report,
         "ACL: a webview at the same origin with another label is refused the app command",
         same_probe.as_ref().is_some_and(|probe| {
-            probe["bridge"] == "object" && refused(probe, "state") && refused(probe, "outside")
+            probe["bridge"] == "object"
+                && refused(probe, "state")
+                && refused(probe, "slicers")
+                && refused(probe, "outside")
         }),
         format!("{} (origin {origin})", describe(&same_probe)),
     );
@@ -508,7 +619,10 @@ async fn write_report<R: Runtime>(
         &mut report,
         "ACL: a webview on another loopback port is refused the app command",
         other_probe.as_ref().is_some_and(|probe| {
-            probe["bridge"] == "object" && refused(probe, "state") && refused(probe, "outside")
+            probe["bridge"] == "object"
+                && refused(probe, "state")
+                && refused(probe, "slicers")
+                && refused(probe, "outside")
         }),
         format!(
             "{} (port {})",
