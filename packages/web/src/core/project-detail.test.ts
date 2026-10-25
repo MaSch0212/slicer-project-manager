@@ -10,7 +10,7 @@ import {
   webLink,
 } from './project-detail'
 
-// Ported from legacy features/projects/project-detail.page.spec.ts: the load, the error branches,
+// Ported from the former Angular features/projects/project-detail.page.spec.ts: the load, the error branches,
 // the tag, edit, rename and delete mutations. The Angular spec drove a component; the behaviour
 // lives in `createProjectDetail`, so the same cases run against it directly. What stayed in the
 // page (the dialogs, the archive button) is covered by pages/project-detail.test.tsx.

@@ -1,4 +1,4 @@
-//! Ported from `legacy/server/test/projects.test.ts`. `parseProjectQuery` is `parse_project_query_
+//! Ported from the former TypeScript server test `projects.test.ts`. `parseProjectQuery` is `parse_project_query_
 //! string` in `src/routes/projects.rs`, tested there.
 
 use std::fs;

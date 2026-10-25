@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { ApiError } from './api/error'
 import { createUploadQueue } from './upload-queue'
 
-// Ported from legacy project-detail.page.spec.ts: "uploads the File itself as a Blob" and "renders a
+// Ported from the former Angular project-detail.page.spec.ts: "uploads the File itself as a Blob" and "renders a
 // quota failure with the actual numbers". The queue is new (several files, progress, retry); the two
 // legacy assertions are kept as the first two cases.
 

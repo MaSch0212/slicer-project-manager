@@ -1,4 +1,4 @@
-//! Ported from `legacy/server/test/rate-limit.test.ts`. The unit-level flood test lives beside the
+//! Ported from the former TypeScript server test `rate-limit.test.ts`. The unit-level flood test lives beside the
 //! limiter itself (`src/rate_limit.rs`); the peer-address tests over a real socket are in
 //! `wire.rs`.
 

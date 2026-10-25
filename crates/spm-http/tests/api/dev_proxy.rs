@@ -1,4 +1,4 @@
-//! Ported from `legacy/server/test/dev-proxy.test.ts` (the two origin-resolution cases are unit
+//! Ported from the former TypeScript server test `dev-proxy.test.ts` (the two origin-resolution cases are unit
 //! tests in `src/dev_proxy.rs`).
 //!
 //! The legacy suite injected `fetch` and fake sockets. Here the upstream is a real listener the

@@ -21,7 +21,7 @@ import {
 } from './model-kind'
 import { fitDistance } from './scene'
 
-// Ported from legacy features/viewer/viewer.page.spec.ts where the assertion is about logic and
+// Ported from the former Angular features/viewer/viewer.page.spec.ts where the assertion is about logic and
 // still applies: the format table and its size gate, the loader per extension, the empty and
 // unparseable cases, the download (progress, 404, bodyless, short and long bodies), the framing
 // maths. Dropped, with the reason: everything that drove the Angular component through a fake

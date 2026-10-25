@@ -1,4 +1,4 @@
-//! Ported from `legacy/server/test/import.test.ts`.
+//! Ported from the former TypeScript server test `import.test.ts`.
 
 use std::fs;
 

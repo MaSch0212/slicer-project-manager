@@ -1,4 +1,4 @@
-//! Ported from `legacy/server/test/logging.test.ts`.
+//! Ported from the former TypeScript server test `logging.test.ts`.
 
 use axum::body::Body;
 use axum::http::Request;

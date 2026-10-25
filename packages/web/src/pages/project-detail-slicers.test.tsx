@@ -11,7 +11,7 @@ import {
 } from '../api/generated'
 import { ApiError } from '../core/api/error'
 
-// Ported from the legacy project-detail.page.spec.ts "handing a file to a slicer" cases: the launch
+// Ported from the former Angular project-detail.page.spec.ts "handing a file to a slicer" cases: the launch
 // controls, the Cura warning, and what the page says about a launch. The launch logic has its own
 // unit tests (core/slicer-launch.test.ts); these drive the real page over a fake API and a fake
 // shell.

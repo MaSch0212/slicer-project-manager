@@ -15,7 +15,7 @@ import {
   sortValueOf,
 } from './projects-store'
 
-// Ported from legacy features/projects/projects.store.spec.ts. The Angular specs drove `resource()`
+// Ported from the former Angular features/projects/projects.store.spec.ts. The Angular specs drove `resource()`
 // and settled the application; this store is plain signals and promises, so the same cases run by
 // awaiting the store's own calls.
 

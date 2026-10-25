@@ -1,4 +1,4 @@
-//! Ported from `legacy/server/test/users.test.ts`. The `activationUrl` / `normalizePublicOrigin`
+//! Ported from the former TypeScript server test `users.test.ts`. The `activationUrl` / `normalizePublicOrigin`
 //! unit tests are in `src/origin.rs`.
 
 use serde_json::{Value, json};

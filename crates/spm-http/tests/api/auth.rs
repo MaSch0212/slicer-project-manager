@@ -1,4 +1,4 @@
-//! Ported from `legacy/server/test/auth.test.ts`.
+//! Ported from the former TypeScript server test `auth.test.ts`.
 
 use serde_json::json;
 

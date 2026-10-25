@@ -313,7 +313,7 @@ fn legacy_settings_rows_read_back() {
 fn the_migration_files_are_the_legacy_ones_byte_for_byte() {
     // Pinned by length and a content fingerprint so an accidental edit (or a CRLF rewrite) of a
     // frozen migration is caught here rather than on a user's database. The files are the repo
-    // versions of legacy/core/src/db/migrations/00{1,2,3}_*.sql.
+    // versions of the former TypeScript implementation's three migration files.
     let files = [
         include_str!("../../src/db/migrations/001_init.sql"),
         include_str!("../../src/db/migrations/002_preview_claim.sql"),

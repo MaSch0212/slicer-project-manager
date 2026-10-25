@@ -1,4 +1,4 @@
-//! The static half of `legacy/server/test/static.test.ts` that goes through the router
+//! The static half of the former TypeScript server test `static.test.ts` that goes through the router
 //! (`makeHandler serves non-API requests from the web root it was given`). The file-level cases
 //! (`serveStatic`, `staticFilePath`, icon types) are unit tests in `src/static_files.rs`; the
 //! default-web-root cases are in `spm-server` (`web.rs`, `env.rs`), where the default now lives.

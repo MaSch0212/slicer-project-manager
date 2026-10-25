@@ -2,7 +2,6 @@
 .git
 .github
 .superpowers
-legacy
 target
 node_modules
 **/node_modules

@@ -9,7 +9,7 @@ import {
 } from '../api/generated'
 import { ApiError } from '../core/api/error'
 
-// Ported from legacy projects.page.spec.ts and project-detail.page.spec.ts, import.page.spec.ts:
+// Ported from the former Angular projects.page.spec.ts and project-detail.page.spec.ts, import.page.spec.ts:
 // what the user sees and can do. The store and mutation logic have their own specs
 // (core/projects-store.test.ts, core/project-detail.test.ts); these drive the real pages and stores
 // over a fake API.

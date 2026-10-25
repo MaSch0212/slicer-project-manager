@@ -3,7 +3,6 @@
   "plugins": ["typescript", "unicorn", "oxc"],
   "categories": { "correctness": "error" },
   "ignorePatterns": [
-    "legacy/**",
     "packages/web/src/api/generated/**",
     "target/**",
     "**/dist/**",

@@ -9,7 +9,7 @@ import {
   summarizeImport,
 } from './import-archive'
 
-// Ported from legacy features/import/import.panel.spec.ts. The panel's upload-control handle
+// Ported from the former Angular features/import/import.panel.spec.ts. The panel's upload-control handle
 // (markDone/markFailed) has no counterpart: the drop zone reports files and the state is ours.
 
 const RESULT: ZipImportResultDto = {
