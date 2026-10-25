@@ -397,3 +397,16 @@ export type BrowseNoticeKind = "refused" | "completed";
  * `file_name` and `detail` are rendered as text only.
  */
 export type BrowseNoticeDto = { id: string, kind: BrowseNoticeKind, fileName: string, detail: string, at: number, };
+
+/**
+ * One project a browsed page may be the source of.
+ */
+export type BrowseMatchProjectDto = { id: string, name: string, };
+
+/**
+ * The honest answer to "which of my projects is this page?". `projects` is empty when nothing
+ * matches, which is the common case (a first download matches nothing, by definition); it is a
+ * suggestion for the user to confirm, never something applied silently. `key` is the match key
+ * of `url`, or `null` when there was no `http(s)` page to key.
+ */
+export type BrowseMatchDto = { url: string | null, key: string | null, projects: Array<BrowseMatchProjectDto>, };

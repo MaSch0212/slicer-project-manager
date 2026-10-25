@@ -24,15 +24,15 @@ use spm_core::dto::Capabilities;
 /// **`can_launch_slicer` and `can_configure_slicers` are true** (desktop part 2: the slicers),
 /// flipped here and in [`REMOTE_SHELL_CAPABILITIES`] together: a flag flipped in one column only
 /// lights up in one mode, which is why `tests/capabilities.rs` asserts both columns whole.
-/// **`can_browse_model_sites` is still false**: desktop part 3 (the model browser) lights it, in
-/// both columns.
+/// **`can_browse_model_sites` is true too** (desktop part 3: the model browser), in
+/// both columns, because browsing is a property of the machine and not of the library.
 pub const LOCAL_SHELL_CAPABILITIES: Capabilities = Capabilities {
     requires_auth: false,
     can_manage_users: false,
     can_pick_local_folder: true,
     can_launch_slicer: true,
     can_configure_slicers: true,
-    can_browse_model_sites: false,
+    can_browse_model_sites: true,
 };
 
 /// The shell's column in **remote server** mode (spec 2.4, third column, shell half).
@@ -45,14 +45,14 @@ pub const LOCAL_SHELL_CAPABILITIES: Capabilities = Capabilities {
 ///
 /// The slicer flags are true here as well as locally: the machine this process runs on has the
 /// slicers on it whatever library is open, and a server that cannot launch a slicer must not be
-/// able to switch off a shell that can. (The model-browser flag joins them in part 3.)
+/// able to switch off a shell that can. (The model-browser flag is true here too: the machine has a browser whatever library is open.)
 pub const REMOTE_SHELL_CAPABILITIES: Capabilities = Capabilities {
     requires_auth: false,
     can_manage_users: false,
     can_pick_local_folder: false,
     can_launch_slicer: true,
     can_configure_slicers: true,
-    can_browse_model_sites: false,
+    can_browse_model_sites: true,
 };
 
 /// What the web app is told before any library is open: the shell's local column, and nothing

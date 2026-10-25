@@ -12,6 +12,7 @@
 
 #![deny(clippy::print_stdout)]
 
+pub mod browse;
 pub mod capabilities;
 pub mod diag;
 pub mod gate;

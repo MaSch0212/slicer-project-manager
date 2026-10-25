@@ -21,14 +21,15 @@ use serde_json::to_string_pretty;
 use ts_rs::{Config, TS};
 
 use crate::dto::{
-    BrowseBounds, BrowseDownloadDto, BrowseDownloadState, BrowseNoticeDto, BrowseNoticeKind,
-    BrowseStateDto, Capabilities, CoreFileDto, CoreProjectDetailDto, CoreProjectDto,
-    DEFAULT_SETTINGS, DiscardedSessionsDto, EntryDiff, FileCounts, FileDto, FileKind, FileState,
-    Language, LibraryMode, LibraryStateDto, LocalLibraryDto, ModelSiteDto, PreviewState,
-    ProjectDetailDto, ProjectDto, ProjectQuery, ProjectState, RemoteLibraryDto, RescanResultDto,
-    SettingsDto, SettingsPatch, SlicerConfigDto, SlicerId, SlicerInstallDto, SlicerInstallOrigin,
-    SlicerInstallState, SlicerLaunchDto, SlicerLaunchMode, SlicerLaunchOptions, SlicerSessionDto,
-    SortDir, SortKey, Theme, UserDto, UserStatus, ViewMode, ZipImportResultDto,
+    BrowseBounds, BrowseDownloadDto, BrowseDownloadState, BrowseMatchDto, BrowseMatchProjectDto,
+    BrowseNoticeDto, BrowseNoticeKind, BrowseStateDto, Capabilities, CoreFileDto,
+    CoreProjectDetailDto, CoreProjectDto, DEFAULT_SETTINGS, DiscardedSessionsDto, EntryDiff,
+    FileCounts, FileDto, FileKind, FileState, Language, LibraryMode, LibraryStateDto,
+    LocalLibraryDto, ModelSiteDto, PreviewState, ProjectDetailDto, ProjectDto, ProjectQuery,
+    ProjectState, RemoteLibraryDto, RescanResultDto, SettingsDto, SettingsPatch, SlicerConfigDto,
+    SlicerId, SlicerInstallDto, SlicerInstallOrigin, SlicerInstallState, SlicerLaunchDto,
+    SlicerLaunchMode, SlicerLaunchOptions, SlicerSessionDto, SortDir, SortKey, Theme, UserDto,
+    UserStatus, ViewMode, ZipImportResultDto,
 };
 use crate::error::{
     AppErrorCode, DETECTION_FAILED, ErrorBody, ErrorEnvelope, QuotaExceededDetails,
@@ -131,6 +132,8 @@ fn types_ts() -> String {
         BrowseDownloadDto,
         BrowseNoticeKind,
         BrowseNoticeDto,
+        BrowseMatchProjectDto,
+        BrowseMatchDto,
     );
     format!("{HEADER}\n{}\n", declarations.join("\n\n"))
 }

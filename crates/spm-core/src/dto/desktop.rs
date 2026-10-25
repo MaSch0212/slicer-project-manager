@@ -273,3 +273,23 @@ pub struct BrowseNoticeDto {
     #[ts(type = "number")]
     pub at: i64,
 }
+
+/// One project a browsed page may be the source of.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct BrowseMatchProjectDto {
+    pub id: String,
+    pub name: String,
+}
+
+/// The honest answer to "which of my projects is this page?". `projects` is empty when nothing
+/// matches, which is the common case (a first download matches nothing, by definition); it is a
+/// suggestion for the user to confirm, never something applied silently. `key` is the match key
+/// of `url`, or `null` when there was no `http(s)` page to key.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct BrowseMatchDto {
+    pub url: Option<String>,
+    pub key: Option<String>,
+    pub projects: Vec<BrowseMatchProjectDto>,
+}
