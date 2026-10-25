@@ -1,7 +1,8 @@
 # Slicer Project Manager — Migration to Rust, SolidJS and Tauri
 
 - **Date:** 2026-10-25
-- **Status:** Draft, pending user approval
+- **Status:** Approved and implemented; see "Implementation notes" at the end for where the build
+  deliberately differs
 - **Supersedes, for the _how_:** the Package layout, runtime, contract, frontend, desktop and
   tooling sections of
   [`2026-08-22-slicer-project-manager-design.md`](2026-08-22-slicer-project-manager-design.md)
@@ -236,12 +237,16 @@ Three.js stays for the interactive viewer, lazy-loaded. i18n keeps the existing 
   `blob:` download and Printables' zip download are both intercepted and redirected without
   touching the user's Downloads folder, storage is isolated per data directory and survives a
   restart. So E carries over; E §1.2 (never bypass a challenge) still binds.
-- **Bridge containment (from the spike):** Tauri injects `window.__TAURI_INTERNALS__` into
-  remote pages too; the capability ACL refused `invoke` from the site, by origin (no `remote.urls`)
-  even when a capability covered the whole window. So: capabilities name **webviews** by label
-  (`webviews: [...]`, not `windows`) and never include the site webview, no `remote.urls`,
-  app commands restricted via an app manifest, and a test asserts `invoke` from the browse window
-  is refused.
+- **Bridge containment (from the spike):** Tauri injects `window.__TAURI_INTERNALS__` into remote
+  pages too, so the bridge is always present and only the capability ACL decides whether a call
+  succeeds. What was built (`apps/desktop/src-tauri/src/security.rs`): no static capability file
+  (`capabilities/` is empty); **one runtime capability**, created once the listener has bound,
+  whose `remote.urls` names the main webview's **exact loopback origin** (`http://127.0.0.1:<port>/*`
+  — not `127.0.0.1:*`, not `localhost`, not a wildcard) with `local: false`; scoped **by webview
+  label** (`webviews: ["main"]`, `windows: []`), so a child webview in the same window is never
+  covered; permissions are the app's own commands from an app manifest and no `core:*` or plugin
+  permission. The model-browser child (`browse`) is named by no capability and has a different
+  origin, so it gets nothing; tests assert that `invoke` from it is refused.
 - **Tauri version:** 2.x stable (2.12 at time of writing) with the `unstable` feature for multiwebview; 3.0 is alpha and not used.
 - Packaging with the Tauri bundler for Windows; icons regenerated from `assets/`.
 
@@ -273,3 +278,33 @@ A single `verify` command (pnpm script) runs everything CI runs.
 Exact crate split and module layout; Rust crate choices beyond §5; type-generation tool; headless
 UI library; icon set; exact token values within direction B; how the per-launch desktop secret is
 transported; how CI caches; commit granularity.
+
+## 10. Implementation notes
+
+Deliberate deviations from the text above, recorded as the migration was built. This design
+describes intent; where a line here and the code disagree, this list is the explanation.
+
+- **Create and update project return the list DTO** (no `files`), not the detail DTO; a client that
+  needs the files fetches the detail.
+- **`SPM_MAX_STEP_MB` is ignored with a warning**, not refused: a leftover line in a compose file
+  must not stop the server. The server logs that it is ignored when it is set.
+- **`SPM_WEB_ROOT` defaults to the embedded bundle** (§5 said it "still overrides" it): unset or
+  empty serves the bundle compiled into the binary, and an explicit value is resolved against the
+  working directory.
+- **New `SPM_HOST`**: an IP literal to bind (default every interface), so a local run can stay on
+  loopback.
+- **An `https://` dev UI origin is unsupported.** `SPM_DEV_UI_ORIGIN` still validates it, but the
+  dev proxy speaks plain HTTP only and answers 502 for an `https://` upstream.
+- **No HTTP progress streaming**: the old import progress was a CLI feature
+  (`spm-server import-curamanager`) and stayed one; the zip-import route answers when it is done.
+- **The release profile unwinds** (no `panic = "abort"`), so the preview queue's `catch_unwind`
+  fails one row when a parser panics instead of taking the server down; a test keeps it that way.
+- **Desktop listener hardening beyond §3.3:** a launch-secret handshake, plus a gate on `Host`,
+  `Origin` and `Sec-Fetch-Site`; in remote mode the session cookie is kept **in memory only** and
+  never reaches the page or disk.
+- **Model browser under WebView2:** download progress events do not exist (progress is the size on
+  disk); popups are routed into the same view and `about:blank` is denied; subframe navigation
+  cannot be hooked, so the policy covers top-level navigation; and there is no OS notification when
+  a download lands.
+- **Accent `#c2410c` for filled light-mode buttons** (the design says `~#ea580c`): white text on
+  `#ea580c` misses AA contrast, so filled buttons use the darker orange in light mode.
