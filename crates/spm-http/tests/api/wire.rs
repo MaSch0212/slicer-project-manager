@@ -162,3 +162,57 @@ async fn an_upload_that_ends_short_of_its_declared_length_leaves_nothing_behind(
             .exists()
     );
 }
+
+/// A refused upload is still answered. The quota check runs before a byte is read, so the answer
+/// is ready while the client is still sending; if the server then closes the socket with the body
+/// unread, the client's operating system resets the connection and the 413 never arrives (a browser
+/// reports a network error instead of "over quota"). The server has to take the rest of the body
+/// off the socket before it answers.
+#[tokio::test]
+async fn an_upload_refused_for_quota_is_still_answered_while_the_body_is_in_flight() {
+    let server = TestServer::new();
+    let cookie = server.login_as_admin().await;
+    let me = server
+        .fetch("/api/account", crate::support::Req::get().cookie(&cookie))
+        .await
+        .json();
+    server
+        .fetch(
+            &format!("/api/users/{}", me["id"].as_str().unwrap()),
+            crate::support::Req::patch()
+                .cookie(&cookie)
+                .json(&json!({ "quotaBytes": 1024 * 1024 })),
+        )
+        .await;
+    let project = server.new_project(&cookie, "Refused").await;
+    let address = serve(server.router.clone()).await;
+
+    // 1.5 MiB in 64 KiB frames, over a 1 MiB quota.
+    const FRAME: usize = 64 * 1024;
+    const FRAMES: usize = 24;
+    for attempt in 0..5 {
+        let frames =
+            (0..FRAMES).map(|_| Ok::<_, std::convert::Infallible>(Bytes::from(vec![7u8; FRAME])));
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri(format!(
+                "http://{address}/api/projects/{}/files",
+                project["id"].as_str().unwrap()
+            ))
+            .header("cookie", &cookie)
+            .header("x-spm-file-name", format!("big-{attempt}.bin"))
+            .header("content-length", FRAME * FRAMES)
+            .body(Body::from_stream(stream::iter(frames)))
+            .unwrap();
+        let response = client_from(None)
+            .request(request)
+            .await
+            .expect("the 413 arrives instead of a reset connection");
+        assert_eq!(response.status(), 413);
+        let body = axum::body::to_bytes(Body::new(response.into_body()), usize::MAX)
+            .await
+            .unwrap();
+        let body: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(body["error"]["code"], "QuotaExceeded");
+    }
+}

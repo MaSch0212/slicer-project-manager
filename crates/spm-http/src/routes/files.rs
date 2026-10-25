@@ -23,6 +23,9 @@ use crate::state::AppState;
 
 pub const UPLOAD_NAME_HEADER: &str = "x-spm-file-name";
 
+/// The most of a refused upload's body that is read and thrown away before the refusal is sent.
+const DRAIN_LIMIT: u64 = 512 * 1024 * 1024;
+
 pub(super) fn routes() -> Router<AppState> {
     Router::new()
         .route("/api/projects/{id}/files", post(upload))
@@ -37,6 +40,17 @@ pub(super) fn routes() -> Router<AppState> {
 pub(crate) fn body_reader(body: Body) -> impl Read + Send + 'static {
     let stream = body.into_data_stream().map_err(std::io::Error::other);
     SyncIoBridge::new(StreamReader::new(stream))
+}
+
+/// Reads what is left of a refused upload's body and discards it.
+///
+/// The quota and the other checks run before a byte is read, so a refusal is ready while the client
+/// is still sending. Answering and closing with the body unread makes the client's operating system
+/// reset the connection, and the refusal never arrives: a browser reports a network error instead of
+/// "over quota". Taking the rest off the socket first lets the answer through. Bounded by
+/// [`DRAIN_LIMIT`]; past it (or when the client stops sending) the connection is dropped as before.
+fn drain(reader: &mut impl Read) {
+    let _ = std::io::copy(&mut reader.take(DRAIN_LIMIT), &mut std::io::sink());
 }
 
 fn require_upload_name(headers: &HeaderMap) -> Result<String, ApiError> {
@@ -91,9 +105,15 @@ async fn upload(
     let size = i64::try_from(size)
         .map_err(|_| AppError::validation("the declared upload size is too large"))?;
     let lib = state.lib().clone();
-    let file =
-        blocking(move || upload_file(&lib, &ctx, &project_id, &name, size, body_reader(body)))
-            .await?;
+    let file = blocking(move || {
+        let mut reader = body_reader(body);
+        let result = upload_file(&lib, &ctx, &project_id, &name, size, &mut reader);
+        if result.is_err() {
+            drain(&mut reader);
+        }
+        result
+    })
+    .await?;
     Ok(json(&decorate_file(&file)))
 }
 
