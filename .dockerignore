@@ -1,0 +1,15 @@
+# Only what the image builds from goes into the build context.
+.git
+.github
+.superpowers
+legacy
+target
+node_modules
+**/node_modules
+docs
+test-tmp
+tools
+assets
+packages/web/dist
+*.md
+!crates/**/*.md
