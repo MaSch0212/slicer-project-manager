@@ -1,19 +1,24 @@
 //! What core logs, and what it must never log.
 //!
 //! The legacy `logging.test.ts` mixed user/auth cases with rescan, preview-queue and importer
-//! cases. The user/auth, project, rescan and importer cases are here; the two preview-queue cases
-//! belong to the preview queue (part 4).
+//! cases. All of them are here now: the preview-queue pair at the bottom was held back until the
+//! queue existed (part 4).
 
 use std::fs;
 
+use spm_core::dto::FileKind;
 use spm_core::log::{LogLevel, LogLevelSetting, LogValue};
+use spm_core::previews::{QueueOptions, handler_from_fn, run_preview_queue};
 use spm_core::projects::import_curamanager::ImportProgress;
 use spm_core::projects::rescan::RescanProgress;
 use spm_core::testing::{TempLibrary, seed_user};
 use spm_core::validate::{CreateProjectInput, CreateUserInput};
+
+use crate::fixtures::cura_project;
+use crate::mesh_fixtures::make_png;
 use spm_core::{
-    Ctx, create_project, create_user, delete_project, delete_user, ensure_bootstrap_admin,
-    import_curamanager_library, login, rescan,
+    AppError, Ctx, create_project, create_user, delete_project, delete_user,
+    ensure_bootstrap_admin, import_curamanager_library, login, rescan,
 };
 
 fn text(value: Option<&LogValue>) -> Option<&str> {
@@ -263,4 +268,63 @@ fn a_rescan_with_no_progress_callback_still_works() {
     let ctx = seed_user(&lib, "marc");
     fs::create_dir_all(lib.dir().join("marc").join("Solo")).unwrap();
     assert_eq!(rescan(&lib, &ctx, None).unwrap().adopted, 1);
+}
+
+#[test]
+fn the_preview_queue_logs_a_batch_summary_and_stays_quiet_when_idle() {
+    let (lib, logs) = TempLibrary::logged();
+    let ctx = seed_user(&lib, "marc");
+    let dir = lib.dir().join("marc").join("Project");
+    fs::create_dir_all(&dir).unwrap();
+    cura_project(&dir.join("model.3mf"), Some(&make_png(256, 256)));
+    rescan(&lib, &ctx, None).unwrap();
+
+    logs.clear();
+    let result = run_preview_queue(&lib, &QueueOptions::default()).unwrap();
+    assert_eq!(
+        result.ready, 1,
+        "the fixture must actually produce a preview"
+    );
+    let batch = logs.find("preview batch").expect("the batch was logged");
+    assert_eq!(batch.level, LogLevel::Info);
+    assert_eq!(batch.field("claimed"), Some(&LogValue::UInt(1)));
+    assert_eq!(batch.field("ready"), Some(&LogValue::UInt(1)));
+
+    // Second run: nothing pending, so an operator on the default level sees nothing at all rather
+    // than a zeroed line every few seconds forever.
+    logs.clear();
+    run_preview_queue(&lib, &QueueOptions::default()).unwrap();
+    let info: Vec<_> = logs
+        .records()
+        .into_iter()
+        .filter(|record| record.level == LogLevel::Info)
+        .collect();
+    assert_eq!(info, []);
+}
+
+#[test]
+fn a_failing_preview_is_logged_at_warn_with_the_path_that_caused_it() {
+    let (lib, logs) = TempLibrary::logged();
+    let ctx = seed_user(&lib, "marc");
+    let dir = lib.dir().join("marc").join("Project");
+    fs::create_dir_all(&dir).unwrap();
+    cura_project(&dir.join("model.3mf"), Some(&make_png(256, 256)));
+    rescan(&lib, &ctx, None).unwrap();
+
+    logs.clear();
+    let result = run_preview_queue(
+        &lib,
+        &QueueOptions {
+            handlers: vec![handler_from_fn(&[FileKind::SlicerProject], |_| {
+                Err(AppError::internal("handler exploded"))
+            })],
+            ..QueueOptions::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(result.failed, 1);
+    let failure = logs.find("preview failed").expect("the failure was logged");
+    assert_eq!(failure.level, LogLevel::Warn);
+    let path = text(failure.field("path")).expect("the record carries the path");
+    assert!(path.ends_with("model.3mf"), "{path}");
 }
