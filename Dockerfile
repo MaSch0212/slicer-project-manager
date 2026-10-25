@@ -25,6 +25,8 @@ WORKDIR /src
 # cargo download the same version again).
 COPY Cargo.toml Cargo.lock ./
 COPY crates crates
+# A workspace member, so cargo must be able to read it; it is not built for the server.
+COPY apps/desktop/src-tauri apps/desktop/src-tauri
 # build.rs embeds this directory.
 COPY --from=web /src/packages/web/dist packages/web/dist
 RUN rustup target add x86_64-unknown-linux-musl \
