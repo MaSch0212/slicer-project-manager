@@ -21,9 +21,14 @@ pub fn safe_join(base: &Path, segments: &[&str]) -> Result<PathBuf> {
         let path = Path::new(segment);
         let rooted = path.is_absolute() || path.has_root() || segment.starts_with(['/', '\\']);
         let traversal = segment.split(['/', '\\']).any(|part| part == "..");
-        let has_prefix = path
-            .components()
-            .any(|component| matches!(component, Component::Prefix(_)));
+        // A drive prefix (`C:/x`, `C:x`) is only a prefix to Windows; refuse it everywhere so the
+        // verdict does not depend on the platform.
+        let drive =
+            matches!(segment.as_bytes(), [letter, b':', ..] if letter.is_ascii_alphabetic());
+        let has_prefix = drive
+            || path
+                .components()
+                .any(|component| matches!(component, Component::Prefix(_)));
         if segment.is_empty() || rooted || traversal || has_prefix {
             return Err(illegal(segment));
         }

@@ -25,7 +25,7 @@ jobs:
       - run: cargo clippy --workspace --all-targets --all-features -- -D warnings
       - run: cargo clippy -p spm-core -- -D warnings
       # The hidden smoke test is `#![cfg(windows)]` (WebView2); the `desktop` job runs it.
-      - run: cargo test --workspace --all-features
+      - run: cargo test --workspace --all-features --no-fail-fast
 
   web:
     runs-on: ubuntu-latest

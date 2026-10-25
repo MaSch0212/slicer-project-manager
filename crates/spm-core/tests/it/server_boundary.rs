@@ -28,7 +28,8 @@ fn workspace_root() -> PathBuf {
 fn core_features_for(package: &str, extra: &[&str]) -> Vec<String> {
     let output = Command::new(env!("CARGO"))
         .current_dir(workspace_root())
-        .args(["tree", "--locked", "--prefix", "none", "-e", "normal,build"])
+        .args(["tree", "--locked", "--color", "never", "--prefix", "none"])
+        .args(["-e", "normal,build"])
         .args(["-f", "{p}|{f}", "-p", package])
         .args(extra)
         .output()

@@ -53,6 +53,8 @@ fn safe_join_refuses_absolute_rooted_and_backslash_traversal_segments() {
         "a/../../b",
         "a\\..\\..\\b",
         "C:\\Windows",
+        "C:/Windows",
+        "c:x",
         "..",
     ] {
         assert_eq!(
