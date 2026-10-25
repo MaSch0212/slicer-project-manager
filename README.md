@@ -124,8 +124,7 @@ fixture) is what `pnpm verify` runs.
 In the container (the Docker image above), the server measured **2.56 MiB idle**. Rendering a
 library of **24 large files** (twelve ~50 MB STLs, six 100 MB STLs, six ~720k-triangle 3MFs) at
 concurrency 1, its anonymous memory peaked at **73.6 MB with no limit set**. The same library under
-`docker run --memory=64m` still completed **24 of 24 previews**, peaking at 65.9 MB (62.8 MiB): with
-less headroom the allocator returned memory sooner, so the peak stayed under the limit.
+`docker run --memory=64m` still completed **24 of 24 previews**, peaking at 65.9 MB (62.8 MiB).
 
 Two variables set the ceiling, and they multiply: `SPM_MAX_MESH_MB` is the biggest single mesh, and
 `SPM_PREVIEW_CONCURRENCY` is how many can be in memory at once. As a rule of thumb, budget the
