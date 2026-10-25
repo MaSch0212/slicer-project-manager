@@ -12,7 +12,16 @@ publish = false
 spm-core = { path = "crates/spm-core" }
 spm-http = { path = "crates/spm-http" }
 axum = "0.8.9"
-tokio = { version = "1.54.1", features = ["macros", "rt-multi-thread", "net", "fs", "io-util", "time", "sync", "signal"] }
+tokio = { version = "1.54.1", features = [
+  "macros",
+  "rt-multi-thread",
+  "net",
+  "fs",
+  "io-util",
+  "time",
+  "sync",
+  "signal",
+] }
 tower = { version = "0.5", features = ["util"] }
 
 [workspace.lints.rust]

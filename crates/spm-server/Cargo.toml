@@ -22,7 +22,10 @@ spm-core.workspace = true
 spm-http.workspace = true
 axum.workspace = true
 tokio.workspace = true
-rust-embed = { version = "8.13", default-features = false, features = ["debug-embed", "interpolate-folder-path"] }
+rust-embed = { version = "8.13", default-features = false, features = [
+  "debug-embed",
+  "interpolate-folder-path",
+] }
 
 [dev-dependencies]
 spm-core = { workspace = true, features = ["testing"] }
