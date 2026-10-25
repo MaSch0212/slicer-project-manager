@@ -38,6 +38,9 @@ uuid = { version = "1", features = ["v4"] }
 [dev-dependencies]
 spm-core = { path = ".", features = ["testing", "desktop"] }
 tempfile = "3"
+# A counting global allocator for `tests/memory.rs`. The workspace forbids `unsafe`, which an
+# allocator impl needs, so the wrapper comes from this crate instead of being written in the test.
+peak_alloc = "0.3"
 
 [lints]
 workspace = true
