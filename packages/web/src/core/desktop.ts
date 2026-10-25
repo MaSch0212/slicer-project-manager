@@ -1,10 +1,16 @@
 import { invoke as tauriInvoke, isTauri } from '@tauri-apps/api/core'
 import {
   isAppErrorCode,
+  type BrowseBounds,
+  type BrowseDownloadDto,
+  type BrowseMatchDto,
+  type BrowseNoticeDto,
+  type BrowseStateDto,
   type DiscardedSessionsDto,
   type FileDto,
   type LibraryStateDto,
   type LocalLibraryDto,
+  type ModelSiteDto,
   type RemoteLibraryDto,
   type SlicerConfigDto,
   type SlicerId,
@@ -124,6 +130,46 @@ export function createDesktopClient(invokeFn: InvokeFn = tauriInvoke) {
         }),
       discardSessions: (launchIds: readonly string[]) =>
         call<DiscardedSessionsDto>('desktop_slicers_discard_sessions', { launchIds }),
+    },
+
+    /**
+     * The model browser: a native view laid over the `/browse` page, with its own downloads. A
+     * property of the *computer*, so it works the same in local and in remote mode, and **no call
+     * takes a path**: the page names a download and a project by id, and the bytes of a download go
+     * from the app's staging directory into the library without passing through the page.
+     *
+     * Everything a site chose (a title, a URL, a file name, an error sentence) is rendered as text.
+     * `null` is the way to say "nothing"; an argument that is left out is a mistake the shell
+     * refuses.
+     */
+    browse: {
+      sites: () => call<ModelSiteDto[]>('desktop_browse_sites'),
+      /** Creates the view where the placeholder is. `url` of `null` opens on the remembered page. */
+      attach: (bounds: BrowseBounds, url: string | null = null) =>
+        call<BrowseStateDto>('desktop_browse_attach', { bounds, url }),
+      /** Leaves the route: destroys the view. */
+      detach: () => call<void>('desktop_browse_detach'),
+      /** Stops the view painting, for a dialog or a menu; the page keeps its place. */
+      hide: () => call<void>('desktop_browse_hide'),
+      show: () => call<BrowseStateDto>('desktop_browse_show'),
+      /** Where the placeholder is, in CSS pixels. The shell intersects it with what it allows. */
+      setBounds: (bounds: BrowseBounds) => call<void>('desktop_browse_set_bounds', { bounds }),
+      navigate: (url: string) => call<BrowseStateDto>('desktop_browse_navigate', { url }),
+      back: () => call<BrowseStateDto>('desktop_browse_back'),
+      forward: () => call<BrowseStateDto>('desktop_browse_forward'),
+      reload: () => call<BrowseStateDto>('desktop_browse_reload'),
+      state: () => call<BrowseStateDto>('desktop_browse_state'),
+      downloads: () => call<BrowseDownloadDto[]>('desktop_browse_downloads'),
+      notices: () => call<BrowseNoticeDto[]>('desktop_browse_notices'),
+      dismissNotice: (id: string) => call<void>('desktop_browse_dismiss_notice', { id }),
+      /** Lands a staged download into a project as a new file. `name` of `null` keeps its own. */
+      land: (downloadId: string, projectId: string, name: string | null = null) =>
+        call<FileDto>('desktop_browse_land', { downloadId, projectId, name }),
+      discard: (downloadId: string) => call<void>('desktop_browse_discard', { downloadId }),
+      /** Which projects a page may be the source of. `null` for a download no page is known for. */
+      match: (url: string | null) => call<BrowseMatchDto>('desktop_browse_match', { url }),
+      /** Forgets the remembered last page. */
+      clearLastPage: () => call<void>('desktop_browse_clear_last_page'),
     },
   }
 }

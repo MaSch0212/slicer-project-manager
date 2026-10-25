@@ -117,3 +117,68 @@ describe('isServerAddress', () => {
     expect(isServerAddress(address)).toBe(false)
   })
 })
+
+describe('the model browser commands', () => {
+  it('names each command as the shell registers it, with ids and values and never a path', async () => {
+    const invoke = vi.fn().mockResolvedValue(null)
+    const { browse } = createDesktopClient(invoke)
+    const bounds = { x: 1, y: 2, width: 3, height: 4 }
+    await browse.sites()
+    await browse.attach(bounds)
+    await browse.attach(bounds, 'https://example.com/')
+    await browse.detach()
+    await browse.hide()
+    await browse.show()
+    await browse.setBounds(bounds)
+    await browse.navigate('https://example.com/a')
+    await browse.back()
+    await browse.forward()
+    await browse.reload()
+    await browse.state()
+    await browse.downloads()
+    await browse.notices()
+    await browse.dismissNotice('n-1')
+    await browse.land('dl-1', 'p-1')
+    await browse.land('dl-1', 'p-1', 'x.zip')
+    await browse.discard('dl-1')
+    await browse.match('https://example.com/m')
+    await browse.match(null)
+    await browse.clearLastPage()
+    expect(invoke.mock.calls).toEqual([
+      ['desktop_browse_sites', undefined],
+      ['desktop_browse_attach', { bounds, url: null }],
+      ['desktop_browse_attach', { bounds, url: 'https://example.com/' }],
+      ['desktop_browse_detach', undefined],
+      ['desktop_browse_hide', undefined],
+      ['desktop_browse_show', undefined],
+      ['desktop_browse_set_bounds', { bounds }],
+      ['desktop_browse_navigate', { url: 'https://example.com/a' }],
+      ['desktop_browse_back', undefined],
+      ['desktop_browse_forward', undefined],
+      ['desktop_browse_reload', undefined],
+      ['desktop_browse_state', undefined],
+      ['desktop_browse_downloads', undefined],
+      ['desktop_browse_notices', undefined],
+      ['desktop_browse_dismiss_notice', { id: 'n-1' }],
+      ['desktop_browse_land', { downloadId: 'dl-1', projectId: 'p-1', name: null }],
+      ['desktop_browse_land', { downloadId: 'dl-1', projectId: 'p-1', name: 'x.zip' }],
+      ['desktop_browse_discard', { downloadId: 'dl-1' }],
+      ['desktop_browse_match', { url: 'https://example.com/m' }],
+      ['desktop_browse_match', { url: null }],
+      ['desktop_browse_clear_last_page', undefined],
+    ])
+  })
+
+  it('rebuilds a refusal from the shell as the one ApiError, with its details', async () => {
+    const { browse } = createDesktopClient(() =>
+      Promise.reject({
+        code: 'Conflict',
+        message: 'that download is still running',
+        details: { downloadId: 'd' },
+      }),
+    )
+    const error = await browse.discard('d').catch((e: unknown) => e)
+    expect(error).toBeInstanceOf(ApiError)
+    expect(error).toMatchObject({ code: 'Conflict', details: { downloadId: 'd' } })
+  })
+})

@@ -18,6 +18,7 @@ function fakeClient(overrides: Partial<DesktopClient> = {}): DesktopClient {
     chooseLibrary: vi.fn().mockResolvedValue(undefined),
     // Not what these tests are about; the slicers have their own suites.
     slicers: {} as DesktopClient['slicers'],
+    browse: {} as DesktopClient['browse'],
     ...overrides,
   }
 }

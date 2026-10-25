@@ -3,6 +3,7 @@ import { createComputed, on, Show, type JSX } from 'solid-js'
 import { Button } from './button'
 import { cx } from './cx'
 import { X } from './icons'
+import { createOverlayClaim } from './overlay'
 
 export type DialogSize = 'sm' | 'md' | 'lg'
 
@@ -59,6 +60,7 @@ export function Dialog(props: {
   children?: JSX.Element
 }) {
   const returnFocus = createFocusReturn(() => props.open)
+  createOverlayClaim(() => props.open)
   return (
     <KDialog open={props.open} onOpenChange={props.onOpenChange} modal>
       <KDialog.Portal>

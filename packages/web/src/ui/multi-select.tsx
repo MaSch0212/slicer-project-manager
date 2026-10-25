@@ -5,6 +5,7 @@ import { cx } from './cx'
 import { useFormField } from './form-field'
 import { Check, ChevronDown } from './icons'
 import { fieldClass } from './input'
+import { createOverlayClaim } from './overlay'
 import type { SelectOption } from './select'
 
 /**
@@ -24,6 +25,8 @@ export function MultiSelect(props: {
   class?: string
 }) {
   const field = useFormField()
+  const [open, setOpen] = createSignal(false)
+  createOverlayClaim(open)
   const labels = createMemo(() => new Map(props.options.map((o) => [o.value, o.label])))
   const optionFor = (value: string): SelectOption => ({
     value,
@@ -32,6 +35,8 @@ export function MultiSelect(props: {
   return (
     <KSelect<SelectOption>
       multiple
+      open={open()}
+      onOpenChange={setOpen}
       options={props.options.map((o) => ({ ...o }))}
       optionValue="value"
       optionTextValue="label"

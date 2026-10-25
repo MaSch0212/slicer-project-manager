@@ -37,6 +37,7 @@ import {
   Progress,
   StatList,
   ToggleIconButton,
+  ViewportSlot,
   IconLinkButton,
   Stage,
   Thumb,
@@ -560,6 +561,12 @@ export default function UiGallery() {
             </Button>
           }
         />
+      </Section>
+
+      <Section title="Viewport slot">
+        <ViewportSlot label="Where a native view is laid over the page" class="h-40 min-h-0">
+          Nothing is open yet.
+        </ViewportSlot>
       </Section>
     </div>
   )

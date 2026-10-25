@@ -4,6 +4,7 @@ import { A } from '@solidjs/router'
 import { Show, type JSX } from 'solid-js'
 import { Dynamic, Portal } from 'solid-js/web'
 import { createFocusReturn, overlayClass } from './dialog'
+import { createOverlayClaim } from './overlay'
 import { cx } from './cx'
 import { Layers, X, type IconComponent } from './icons'
 import { tooltipClass } from './tooltip'
@@ -153,6 +154,7 @@ export function Drawer(props: {
   children: JSX.Element
 }) {
   const returnFocus = createFocusReturn(() => props.open)
+  createOverlayClaim(() => props.open)
   return (
     <KDialog open={props.open} onOpenChange={props.onOpenChange} modal>
       <KDialog.Portal>

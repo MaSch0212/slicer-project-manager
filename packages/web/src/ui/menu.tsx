@@ -1,9 +1,10 @@
 import { DropdownMenu } from '@kobalte/core/dropdown-menu'
-import { For, Show, type JSX } from 'solid-js'
+import { createSignal, For, Show, type JSX } from 'solid-js'
 import { Dynamic } from 'solid-js/web'
 import { buttonClass, type ButtonVariant } from './button'
 import { cx } from './cx'
 import { Check, ChevronDown, MoreHorizontal, type IconComponent } from './icons'
+import { createOverlayClaim } from './overlay'
 
 export type MenuEntry =
   | {
@@ -34,8 +35,15 @@ export function Menu(props: {
   placement?: 'bottom-start' | 'bottom-end'
   children?: JSX.Element
 }) {
+  const [open, setOpen] = createSignal(false)
+  createOverlayClaim(open)
   return (
-    <DropdownMenu placement={props.placement ?? 'bottom-end'} gutter={6}>
+    <DropdownMenu
+      open={open()}
+      onOpenChange={setOpen}
+      placement={props.placement ?? 'bottom-end'}
+      gutter={6}
+    >
       <DropdownMenu.Trigger
         aria-label={props.iconOnly ? props.label : undefined}
         class={buttonClass(
