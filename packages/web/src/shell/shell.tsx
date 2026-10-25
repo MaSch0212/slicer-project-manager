@@ -44,7 +44,9 @@ export function Shell(props: RouteSectionProps) {
   const [drawerOpen, setDrawerOpen] = createSignal(false)
 
   const collapsed = () => settings.settings().navCollapsed
-  const hasNav = () => navEntries().length > 0
+  // The connect page is a question, not a place in the app: no library exists yet for the
+  // navigation to lead into.
+  const hasNav = () => navEntries().length > 0 && location.pathname !== '/desktop/connect'
 
   // The setting is the truth once it has loaded; until then index.tsx has applied the cached one.
   createEffect(() => {

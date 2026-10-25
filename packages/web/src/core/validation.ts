@@ -151,3 +151,28 @@ export function parseQuotaMib(text: string): number | null | 'invalid' {
   const bytes = Number(trimmed) * MIB
   return Number.isSafeInteger(bytes) && bytes > 0 ? bytes : 'invalid'
 }
+
+/**
+ * Whether what was typed is a server address the desktop shell will accept: an origin and nothing
+ * else (`http:` or `https:`, no user name or password, no path, no query, no fragment). The shell
+ * validates again, in Rust, and its answer is the truth; `server-addresses.json` is the table both
+ * sides are tested against so the two cannot drift.
+ */
+export function isServerAddress(raw: string): boolean {
+  const text = raw.trim()
+  if (text === '') return false
+  let url: URL
+  try {
+    url = new URL(text)
+  } catch {
+    return false
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') return false
+  if (url.username !== '' || url.password !== '') return false
+  if (url.search !== '' || url.hash !== '') return false
+  if (url.pathname !== '' && url.pathname !== '/') return false
+  // The parser has already normalised `/api/../..` into the bare origin, which would connect
+  // somewhere other than what was typed. What was *typed* after the host must be no path at all.
+  const typedPath = text.replace(/^[a-z][a-z0-9+.-]*:\/\/[^/?#]*/i, '').replace(/[?#].*$/s, '')
+  return typedPath === '' || typedPath === '/'
+}

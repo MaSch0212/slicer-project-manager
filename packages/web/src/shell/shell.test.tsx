@@ -37,7 +37,9 @@ vi.mock('../core/notify', () => ({ notify }))
 import { auth, capabilities, settings } from '../core/stores'
 import { Shell } from './shell'
 
-async function setup(options: { caps?: Capabilities; navCollapsed?: boolean } = {}) {
+async function setup(
+  options: { caps?: Capabilities; navCollapsed?: boolean; path?: string; ready?: string } = {},
+) {
   api.capabilities.mockResolvedValue(options.caps ?? EVERY_ENTRY)
   api.account.me.mockResolvedValue(ADMIN)
   api.settings.get.mockResolvedValue({
@@ -53,15 +55,16 @@ async function setup(options: { caps?: Capabilities; navCollapsed?: boolean } = 
   await settings.load()
 
   const history = createMemoryHistory()
-  history.set({ value: '/projects' })
+  history.set({ value: options.path ?? '/projects' })
   render(() => (
     <MemoryRouter history={history} root={Shell}>
       <Route path="/projects" component={() => <h1>projects page</h1>} />
       <Route path="/settings" component={() => <h1>settings page</h1>} />
       <Route path="/login" component={() => <h1>login page</h1>} />
+      <Route path="/desktop/connect" component={() => <h1>connect page</h1>} />
     </MemoryRouter>
   ))
-  await screen.findByText('projects page')
+  await screen.findByText(options.ready ?? 'projects page')
   return { history }
 }
 
@@ -96,6 +99,34 @@ describe('Shell sign-out', () => {
     expect(notify.error).toHaveBeenCalledWith('Something went wrong')
     // The store clears local state in a `finally`: the user really is signed out.
     expect(auth.isAuthenticated()).toBe(false)
+  })
+})
+
+describe('Shell on the desktop connect page', () => {
+  it('draws no navigation: there is no library yet for it to lead into', async () => {
+    await setup({
+      caps: {
+        ...EVERY_ENTRY,
+        requiresAuth: false,
+        canManageUsers: false,
+        canPickLocalFolder: true,
+      },
+      path: '/desktop/connect',
+      ready: 'connect page',
+    })
+    expect(screen.queryAllByRole('navigation', { name: 'Main navigation' })).toHaveLength(0)
+  })
+
+  it('draws it everywhere else, for the same capabilities', async () => {
+    await setup({
+      caps: {
+        ...EVERY_ENTRY,
+        requiresAuth: false,
+        canManageUsers: false,
+        canPickLocalFolder: true,
+      },
+    })
+    expect(sidebar()).toBeTruthy()
   })
 })
 

@@ -3,6 +3,7 @@ import type { Language, Theme, ViewMode } from '../api/generated'
 import { t, setLanguage, type TranslationKey } from '../core/i18n'
 import { errorMessage } from '../core/i18n/errors'
 import { notify } from '../core/notify'
+import { isDesktop } from '../core/desktop'
 import { auth, capabilities, settings } from '../core/stores'
 import {
   LayoutGrid,
@@ -15,11 +16,11 @@ import {
   SettingRow,
   Sun,
   Switch,
-  Text,
   type IconComponent,
 } from '../ui'
 import { AccountSection } from './settings-account'
 import { ImportPanel } from './import-panel'
+import { LibraryLocation } from './settings-library'
 
 const THEMES: readonly { value: Theme; labelKey: TranslationKey; icon: IconComponent }[] = [
   { value: 'system', labelKey: 'settings.themeSystem', icon: Monitor },
@@ -99,14 +100,11 @@ export function SettingsGeneral() {
       </SectionCard>
 
       {/*
-        EXTENSION POINT (desktop step): where the library lives (choose a folder, or connect to a
-        server). It is a card in this tab, rendered only where the shell can pick a local folder.
-        Fill the body in; the capability gate stays.
+        Where the library lives: where the shell can pick a local folder, and in the desktop app
+        whatever the mode (a connected app has no folder to pick, but it has a way back).
       */}
-      <Show when={capabilities.capabilities().canPickLocalFolder}>
-        <SectionCard title={t('settings.libraryTitle')} description={t('settings.libraryLead')}>
-          <Text variant="muted">{t('common.comingSoon')}</Text>
-        </SectionCard>
+      <Show when={capabilities.capabilities().canPickLocalFolder || isDesktop()}>
+        <LibraryLocation />
       </Show>
 
       <Show when={capabilities.capabilities().requiresAuth && auth.isAuthenticated()}>

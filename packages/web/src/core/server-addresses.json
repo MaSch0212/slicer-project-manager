@@ -1,0 +1,33 @@
+{
+  "comment": "Server addresses the desktop connect form and the Rust shell (spm_shell::remote::parse_remote_origin) must agree on. Read by core/validation.test.ts and by crates/spm-shell/tests/remote_origin.rs.",
+  "accepted": [
+    "http://localhost:3000",
+    "https://print.example.com",
+    "  https://print.example.com  ",
+    "http://192.168.1.20:8080",
+    "http://[::1]:8080",
+    "https://example.com:443",
+    "https://example.com/",
+    "https://example.com/?",
+    "https://example.com/#",
+    "HTTPS://EXAMPLE.COM"
+  ],
+  "refused": [
+    "",
+    "   ",
+    "example.com",
+    "not a url",
+    "file:///etc/passwd",
+    "ftp://example.com",
+    "javascript:alert(1)",
+    "data:text/html,hi",
+    "https://user@example.com",
+    "https://user:secret@example.com",
+    "https://example.com/api",
+    "https://example.com/api/../..",
+    "https://example.com//",
+    "https://example.com?x=1",
+    "https://example.com/#top",
+    "https://example.com:99999"
+  ]
+}
