@@ -176,8 +176,8 @@ fn a_library_that_cannot_be_opened_is_one_line_and_exit_status_1() {
 #[cfg(unix)]
 mod listening {
     use super::*;
-    use std::io::{BufRead, BufReader, Read};
-    use std::net::TcpListener;
+    use std::io::{BufRead, BufReader, Read, Write};
+    use std::net::{TcpListener, TcpStream};
     use std::path::Path;
     use std::process::{Child, Stdio};
     use std::sync::mpsc::{self, Receiver};
