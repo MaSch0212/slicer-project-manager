@@ -215,3 +215,19 @@ export function curaManagerArchive(suffix = ''): Uint8Array {
     { name: 'CuraLibrary/metadata-cache.json', body: '{}' },
   ])
 }
+
+/**
+ * A Wavefront OBJ of `mesh` padded with comment lines up to `bytes`, which the loader skips. Used
+ * to cross the viewer's size gate cheaply: a fixture 2 MB past the line parses as fast as one 0.1 MB
+ * past it, and only the write and the localhost download scale with the padding.
+ */
+export function paddedObj(mesh: Mesh, bytes: number): Uint8Array {
+  const body = obj(mesh)
+  const comment = `# ${'padding '.repeat(8)}\n`
+  const lines = Math.max(0, Math.ceil((bytes - body.length) / comment.length))
+  const out = new Uint8Array(body.length + lines * comment.length)
+  out.set(body, 0)
+  const pad = new TextEncoder().encode(comment)
+  for (let i = 0; i < lines; i++) out.set(pad, body.length + i * pad.length)
+  return out
+}

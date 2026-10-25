@@ -40,6 +40,17 @@ export type StartOptions = {
   startTimeoutMs?: number
 }
 
+/** A server that is up and has printed its first-run activation token, and nothing more. */
+export type LaunchedServer = {
+  /** `http://127.0.0.1:<port>`. */
+  origin: string
+  libraryDir: string
+  /** The bootstrap admin's single-use token, as printed in the `/activate#<token>` link. */
+  activationToken: string
+  /** Stops the server (the whole process tree) and deletes the library. Safe to call twice. */
+  stop(): Promise<void>
+}
+
 export type ApiResult<T> = { status: number; body: T }
 
 export type SeededServer = {
@@ -87,11 +98,11 @@ function killTree(child: ChildProcess): void {
 const sleep = (ms: number) => new Promise((done) => setTimeout(done, ms))
 
 /**
- * Starts `cargo run -p spm-server` on a free loopback port over a new temporary library, waits for
- * it to answer, and activates the bootstrap admin through the `/activate#<token>` path the server
- * prints on first run (`admin` / `ADMIN_PASSWORD`).
+ * Starts `cargo run -p spm-server` on a free loopback port over a new temporary library and waits
+ * for it to answer and to print the bootstrap admin's activation link. Nothing is activated: a
+ * test of the first-run flow starts here, everything else calls `startServer`.
  */
-export async function startServer(options: StartOptions = {}): Promise<SeededServer> {
+export async function launchServer(options: StartOptions = {}): Promise<LaunchedServer> {
   const libraryDir = mkdtempSync(join(tmpdir(), 'spm-seed-'))
   const port = await freePort()
   const origin = `http://127.0.0.1:${port}`
@@ -158,6 +169,22 @@ export async function startServer(options: StartOptions = {}): Promise<SeededSer
       await sleep(250)
     }
 
+    return { origin, libraryDir, activationToken: activation!, stop }
+  } catch (error) {
+    await stop()
+    throw error
+  }
+}
+
+/**
+ * `launchServer`, then the bootstrap admin activated through the `/activate#<token>` path the
+ * server prints on first run (`admin` / `ADMIN_PASSWORD`).
+ */
+export async function startServer(options: StartOptions = {}): Promise<SeededServer> {
+  const launched = await launchServer(options)
+  const { origin, libraryDir, stop } = launched
+  const activation = launched.activationToken
+  try {
     const response = await fetch(`${origin}/api/auth/activation/${activation}`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },

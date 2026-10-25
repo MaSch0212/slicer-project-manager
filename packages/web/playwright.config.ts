@@ -6,14 +6,21 @@ const ORIGIN = `http://127.0.0.1:${PORT}`
 
 /**
  * Headless is forced, here and not left to a flag: a test run must never open a window or take
- * focus. The server binds 127.0.0.1 for the same reason as every other local listener (a firewall
- * prompt on Windows otherwise).
+ * focus. Every listener binds 127.0.0.1 for the same reason (a firewall prompt on Windows
+ * otherwise).
  *
- * Web part 3 replaces this webServer with `spm-server` over a temporary library.
+ * The suite runs against real `spm-server` processes over throwaway libraries, serving the built
+ * bundle (`pnpm e2e` builds it first): each spec file starts its own (see `e2e/support.ts`), so
+ * files run in parallel workers without sharing data or the login rate limit. Only the UI gallery
+ * spec needs the Vite dev server below, because `/_ui` exists in development builds only.
  */
 export default defineConfig({
   testDir: './e2e',
-  fullyParallel: true,
+  // Tests inside a file share that file's server and run in order; files run in parallel.
+  fullyParallel: false,
+  workers: Number(process.env['SPM_E2E_WORKERS'] ?? 3),
+  timeout: 45_000,
+  expect: { timeout: 10_000 },
   forbidOnly: !!process.env['CI'],
   reporter: [['list']],
   use: {
