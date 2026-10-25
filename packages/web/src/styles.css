@@ -1,1 +1,139 @@
 @import 'tailwindcss';
+
+/*
+ * The design tokens, defined once. Every colour in the app is one of these variables; the
+ * component library (src/ui) is the only place that turns them into utilities, and
+ * src/ui/no-adhoc-styling.test.ts keeps feature code from reaching for colours, borders, radii or
+ * font sizes itself.
+ *
+ * Light and dark are one set: `light-dark(<light>, <dark>)` picks by the element's `color-scheme`.
+ * `:root` declares `light dark`, so the OS preference is the default with no JavaScript and no
+ * flash; `data-theme="light|dark"` on <html> (set from the user's setting, see core/theme.ts)
+ * pins one. "system" removes the attribute.
+ *
+ * Contrast (WCAG AA, measured): fg and fg-muted are 4.5:1 or better on bg, surface and surface-2 in
+ * both schemes; `accent-solid` carries `accent-fg` text at 4.5:1 or better. `accent` itself
+ * (#ea580c / #f97316) is for focus rings, indicators and tints, which need 3:1, not for text:
+ * text in the accent hue uses `accent-text`. fg-subtle is for disabled controls only, which WCAG
+ * exempts; never use it for text a user needs to read.
+ */
+@theme static {
+  /* Drop Tailwind's default palette, radii and shadows: only the tokens below exist. */
+  --color-*: initial;
+  --radius-*: initial;
+  --shadow-*: initial;
+
+  --font-sans:
+    Inter, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial,
+    sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', 'Cascadia Code', Menlo, Consolas, monospace;
+
+  /* Surfaces and lines */
+  --color-bg: light-dark(#f7f7f8, #0c0d0f);
+  --color-surface: light-dark(#ffffff, #15171a);
+  --color-surface-2: light-dark(#f1f2f4, #1c1f23);
+  --color-surface-3: light-dark(#e8e9ed, #262a2f);
+  --color-border: light-dark(#e3e4e7, #23262b);
+  --color-border-input: light-dark(#8c919a, #6a707a);
+  --color-overlay: light-dark(rgb(17 18 20 / 0.4), rgb(0 0 0 / 0.6));
+
+  /* Text */
+  --color-fg: light-dark(#111214, #e7e7ea);
+  --color-fg-muted: light-dark(#5c616b, #9a9fa9);
+  --color-fg-subtle: light-dark(#9a9ea6, #5b6069);
+
+  /* The one accent */
+  --color-accent: light-dark(#ea580c, #f97316);
+  --color-accent-solid: light-dark(#c2410c, #f97316);
+  --color-accent-solid-hover: light-dark(#9a3412, #fb923c);
+  --color-accent-fg: light-dark(#ffffff, #1a0d04);
+  --color-accent-text: light-dark(#c2410c, #fb923c);
+  --color-accent-soft: light-dark(#fff1e6, #2a1a0e);
+  --color-accent-soft-fg: light-dark(#c2410c, #fdba74);
+
+  /* Status */
+  --color-danger-solid: light-dark(#dc2626, #dc2626);
+  --color-danger-solid-hover: light-dark(#b91c1c, #ef4444);
+  --color-danger-fg: #ffffff;
+  --color-danger-text: light-dark(#b91c1c, #f87171);
+  --color-danger-soft: light-dark(#fef2f2, #2a1214);
+  --color-success-text: light-dark(#15803d, #4ade80);
+  --color-success-soft: light-dark(#f0fdf4, #0f2418);
+  --color-warning-text: light-dark(#a16207, #facc15);
+  --color-warning-soft: light-dark(#fefce8, #2a2210);
+
+  /* Shape */
+  --radius-xs: 4px;
+  --radius-control: 6px;
+  --radius-popover: 8px;
+  --radius-card: 10px;
+
+  --shadow-card: 0 1px 2px light-dark(rgb(17 18 20 / 0.05), rgb(0 0 0 / 0.4));
+  --shadow-popover:
+    0 8px 24px light-dark(rgb(17 18 20 / 0.12), rgb(0 0 0 / 0.5)),
+    0 0 0 1px light-dark(rgb(17 18 20 / 0.04), rgb(255 255 255 / 0.03));
+
+  /* Motion */
+  --animate-pop: pop 120ms ease-out;
+  --animate-fade: fade 120ms ease-out;
+  --animate-shimmer: shimmer 1.4s ease-in-out infinite;
+  --animate-spin: spin 0.8s linear infinite;
+  @keyframes pop {
+    from {
+      opacity: 0;
+      transform: scale(0.97);
+    }
+  }
+  @keyframes fade {
+    from {
+      opacity: 0;
+    }
+  }
+  @keyframes shimmer {
+    50% {
+      opacity: 0.5;
+    }
+  }
+}
+
+:root {
+  color-scheme: light dark;
+}
+:root[data-theme='light'] {
+  color-scheme: light;
+}
+:root[data-theme='dark'] {
+  color-scheme: dark;
+}
+
+@layer base {
+  html {
+    font-family: var(--font-sans);
+    -webkit-text-size-adjust: 100%;
+  }
+  body {
+    margin: 0;
+    background: var(--color-bg);
+    color: var(--color-fg);
+    font-size: 0.875rem;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+  /* The one focus ring: the accent, never removed, only drawn for keyboard focus. */
+  :focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+  }
+  ::selection {
+    background: var(--color-accent-soft);
+    color: var(--color-accent-soft-fg);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
