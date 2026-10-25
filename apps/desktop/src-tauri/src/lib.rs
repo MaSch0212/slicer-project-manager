@@ -80,6 +80,9 @@ pub const BROWSE_TEST_HOSTS_ENV: &str = "SPM_DESKTOP_BROWSE_TEST_HOSTS";
 /// With the fixture origin of a stand-in model site, the smoke run also drives the model browser
 /// through the bridge and from the view's side. See [`hidden_browse`].
 pub const SMOKE_BROWSE_ENV: &str = "SPM_DESKTOP_SMOKE_BROWSE";
+/// With `1`, the smoke run also opens the four real model sites read-only and reports what it saw.
+/// Manual only, never in `verify`: see [`hidden_browse::probe_real_sites`].
+pub const SMOKE_REAL_SITES_ENV: &str = "SPM_DESKTOP_SMOKE_REAL_SITES";
 /// The Vite dev server to serve the UI from, instead of the embedded bundle.
 pub const DEV_UI_ENV: &str = "SPM_DEV_UI_ORIGIN";
 

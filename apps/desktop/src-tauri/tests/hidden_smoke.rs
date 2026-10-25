@@ -447,3 +447,33 @@ fn the_model_browser_the_real_child_webview_against_a_fixture_site_hidden() {
     );
     drop(fixture);
 }
+
+/// **Manual, read-only, not part of `verify`** (it is `#[ignore]`d and needs the network): opens
+/// each of the four real sites' start pages in the real child, hidden, and prints what it saw. It
+/// clicks nothing, signs in to nothing and never tries to get past a challenge; a site that does not
+/// answer is a line in the output, not a failure.
+///
+/// `cargo test -p spm-desktop --test hidden_smoke -- --ignored the_real_sites --nocapture`
+#[test]
+#[ignore = "talks to the four real sites; run by hand"]
+fn the_real_sites_are_reachable_read_only_from_the_real_child_hidden() {
+    let root = tempfile::tempdir().unwrap();
+    let library = root.path().join("library");
+    std::fs::create_dir_all(&library).unwrap();
+    let run = run_hidden(
+        root.path(),
+        &[
+            ("SPM_LIBRARY_DIR", library.to_str().unwrap()),
+            ("SPM_DESKTOP_SMOKE_REAL_SITES", "1"),
+        ],
+    );
+    for check in run.report["checks"].as_array().unwrap() {
+        if check["name"]
+            .as_str()
+            .is_some_and(|name| name.starts_with("real site"))
+        {
+            println!("{}: {}", check["name"], check["detail"]);
+        }
+    }
+    assert_green(&run);
+}

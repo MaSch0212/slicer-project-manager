@@ -662,3 +662,70 @@ pub async fn run<R: Runtime>(
         "",
     );
 }
+
+/// **Manual, read-only, never part of `verify`.** Opens the real child on each of the four real
+/// sites' start pages and reports what it saw (the title, the URL, how long a Cloudflare
+/// "Just a moment…" took to clear on its own). It drives nothing: no click, no script, no login, no
+/// download, and it never tries to get past a challenge: a page that is still checking after the
+/// wait is reported as such. Network, consent banners and bot protection are somebody else's, so a
+/// site that does not answer is a line in the report and not a failure.
+///
+/// Run with `cargo test -p spm-desktop --test hidden_smoke -- --ignored the_real_sites`.
+pub async fn probe_real_sites<R: Runtime>(report: &mut SmokeReport, app: &AppHandle<R>) {
+    let Some(ctx) = app.try_state::<AppCtx>() else {
+        return;
+    };
+    let host = std::sync::Arc::clone(ctx.browse.host());
+    let bounds = spm_core::dto::BrowseBounds {
+        x: 100.0,
+        y: 200.0,
+        width: 700.0,
+        height: 400.0,
+    };
+    for site in host.sites() {
+        // The page counts only once it is on this site, not the previous one still on screen.
+        let site_host = site
+            .home_url
+            .trim_start_matches("https://")
+            .trim_start_matches("www.")
+            .trim_end_matches('/')
+            .to_owned();
+        let mut seen = json!({"site": site.id, "title": null, "url": null, "seconds": null});
+        let started = std::time::Instant::now();
+        let attached = if app.get_webview(BROWSE_WEBVIEW).is_some() {
+            host.navigate(&site.home_url)
+        } else {
+            host.attach(bounds, Some(&site.home_url))
+        };
+        if attached.is_ok() {
+            // A managed challenge clears itself in a few seconds; waiting is all that is done.
+            while started.elapsed() < Duration::from_secs(45) {
+                tokio::time::sleep(Duration::from_secs(1)).await;
+                let state = host.state();
+                let title = state.title.unwrap_or_default();
+                let there = state
+                    .url
+                    .as_deref()
+                    .is_some_and(|url| url.contains(&site_host));
+                if there
+                    && !state.is_loading
+                    && !title.is_empty()
+                    && !title.starts_with("Just a moment")
+                {
+                    seen["title"] = json!(title);
+                    seen["url"] = json!(state.url);
+                    seen["seconds"] = json!(started.elapsed().as_secs());
+                    break;
+                }
+                seen["title"] = json!(title);
+            }
+        }
+        check(
+            report,
+            &format!("real site (read-only): {}", site.display_name),
+            true,
+            short(&seen),
+        );
+    }
+    host.detach();
+}

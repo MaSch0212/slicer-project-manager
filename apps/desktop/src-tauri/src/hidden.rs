@@ -674,6 +674,10 @@ async fn write_report<R: Runtime>(
         crate::hidden_browse::run(&mut report, app, main, handle, probes, &fixture, &opener).await;
     }
 
+    if env_value(crate::SMOKE_REAL_SITES_ENV).is_some_and(|value| value == "1") {
+        crate::hidden_browse::probe_real_sites(&mut report, app).await;
+    }
+
     report.ok = report.checks.iter().all(|check| check.ok);
     let value = serde_json::to_value(&report).unwrap_or_default();
     if let Err(error) = write_json_file(Path::new(path), &value) {
