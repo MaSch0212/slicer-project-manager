@@ -246,7 +246,7 @@ Three.js stays for the interactive viewer, lazy-loaded. i18n keeps the existing 
   label** (`webviews: ["main"]`, `windows: []`), so a child webview in the same window is never
   covered; permissions are the app's own commands from an app manifest and no `core:*` or plugin
   permission. The model-browser child (`browse`) is named by no capability and has a different
-  origin, so it gets nothing; tests assert that `invoke` from it is refused.
+  origin, so it gets nothing; a test asserts that no capability names it.
 - **Tauri version:** 2.x stable (2.12 at time of writing) with the `unstable` feature for multiwebview; 3.0 is alpha and not used.
 - Packaging with the Tauri bundler for Windows; icons regenerated from `assets/`.
 
