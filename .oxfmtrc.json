@@ -10,7 +10,6 @@
     "**/dist/**",
     "pnpm-lock.yaml",
     "Cargo.lock",
-    "docs/**",
-    "README.md"
+    "docs/**"
   ]
 }
