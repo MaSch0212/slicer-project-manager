@@ -176,8 +176,8 @@ fn a_library_that_cannot_be_opened_is_one_line_and_exit_status_1() {
 #[cfg(unix)]
 mod listening {
     use super::*;
-    use std::io::{BufRead, BufReader, Read, Write};
-    use std::net::{TcpListener, TcpStream};
+    use std::io::{BufRead, BufReader, Read};
+    use std::net::TcpListener;
     use std::path::Path;
     use std::process::{Child, Stdio};
     use std::sync::mpsc::{self, Receiver};
@@ -197,7 +197,6 @@ mod listening {
         child: Child,
         lines: Receiver<String>,
         seen: Vec<String>,
-        port: u16,
     }
 
     impl Server {
@@ -233,7 +232,6 @@ mod listening {
                 child,
                 lines,
                 seen: Vec::new(),
-                port,
             }
         }
 
@@ -255,36 +253,6 @@ mod listening {
                 }
             }
             panic!("no line containing {needle:?}; saw {:#?}", self.seen);
-        }
-
-        /// Every line printed so far, after giving the process a moment to print what it is about to.
-        fn drain(&mut self) -> Vec<String> {
-            thread::sleep(Duration::from_millis(300));
-            while let Ok(line) = self.lines.try_recv() {
-                self.seen.push(line);
-            }
-            self.seen.clone()
-        }
-
-        fn get(&self, path: &str) -> (u16, String) {
-            let mut stream =
-                TcpStream::connect(("127.0.0.1", self.port)).expect("the server accepts");
-            write!(
-                stream,
-                "GET {path} HTTP/1.1\r\nHost: localhost:{}\r\nConnection: close\r\n\r\n",
-                self.port
-            )
-            .unwrap();
-            let mut raw = String::new();
-            stream.read_to_string(&mut raw).unwrap();
-            let status = raw.split_whitespace().nth(1).unwrap().parse().unwrap();
-            let body = raw.split_once("\r\n\r\n").map_or("", |(_, body)| body);
-            (status, body.to_owned())
-        }
-
-        fn stop(mut self) {
-            let _ = self.child.kill();
-            let _ = self.child.wait();
         }
     }
 
