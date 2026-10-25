@@ -5,6 +5,9 @@ import { applyTheme } from '../core/theme'
 import {
   Alert,
   Archive,
+  ArchiveRestore,
+  ArchiveX,
+  ArrowUpDown,
   Badge,
   Button,
   Card,
@@ -12,6 +15,12 @@ import {
   ConfirmDialog,
   Dialog,
   Divider,
+  DropZone,
+  FileArchive,
+  Cuboid,
+  Download,
+  Eye,
+  ImageOff,
   EmptyState,
   FolderOpen,
   FormField,
@@ -20,6 +29,13 @@ import {
   Input,
   Link,
   LinkButton,
+  MediaCard,
+  Progress,
+  StatList,
+  ToggleIconButton,
+  IconLinkButton,
+  Stage,
+  Thumb,
   Menu,
   MultiSelect,
   Monitor,
@@ -90,6 +106,9 @@ export default function UiGallery() {
   const [notes, setNotes] = createSignal('')
   const [checked, setChecked] = createSignal(true)
   const [on, setOn] = createSignal(true)
+  const [archived, setArchived] = createSignal(false)
+  const [view, setView] = createSignal<'grid' | 'list'>('grid')
+  const [dropped, setDropped] = createSignal<string[]>([])
 
   return (
     <div class="flex flex-col gap-10" data-testid="ui-gallery">
@@ -247,6 +266,103 @@ export default function UiGallery() {
         <Row label="badges">
           <For each={BADGE_VARIANTS}>{(variant) => <Badge variant={variant}>{variant}</Badge>}</For>
         </Row>
+      </Section>
+
+      <Section title="Library">
+        <Row label="filter bar controls">
+          <Select
+            aria-label="Sort"
+            leading={ArrowUpDown}
+            class="min-w-44"
+            value={sort()}
+            onChange={setSort}
+            options={[
+              { value: 'updatedAt', label: 'Recently updated' },
+              { value: 'name', label: 'A-Z' },
+            ]}
+          />
+          <ToggleIconButton
+            label="Show archived"
+            pressed={archived()}
+            onPressedChange={setArchived}
+            iconOn={Archive}
+            iconOff={ArchiveX}
+          />
+          <IconLinkButton href="/projects" icon={Eye} label="View in 3D" />
+          <IconLinkButton
+            href="/api/files/x/raw"
+            icon={Download}
+            label="Download"
+            external
+            download="benchy.stl"
+          />
+          <SegmentedControl
+            iconOnly
+            label="Project view"
+            value={view()}
+            onChange={setView}
+            options={[
+              { value: 'grid', label: 'Grid', icon: ArchiveRestore },
+              { value: 'list', label: 'List', icon: FileArchive },
+            ]}
+          />
+        </Row>
+        <div
+          class={
+            view() === 'grid' ? 'grid grid-cols-2 gap-4 sm:grid-cols-4' : 'flex flex-col gap-2'
+          }
+        >
+          <MediaCard
+            layout={view()}
+            href="/projects"
+            title="Benchy"
+            meta="3 files"
+            placeholder="Preview pending"
+            badges={
+              <>
+                <Tag>boats</Tag>
+                <Badge>Archived</Badge>
+              </>
+            }
+          />
+          <MediaCard
+            layout={view()}
+            title="A project with a very long name that has to be cut off somewhere sensible"
+            meta="12 files"
+            placeholderIcon={Cuboid}
+            placeholder="Preview failed"
+            badges={<Badge variant="danger">Folder missing</Badge>}
+            actions={<IconButton icon={Pencil} label="Rename" size="sm" />}
+          />
+        </div>
+        <Row label="thumbnail">
+          <Thumb class="size-24" placeholder="No preview" placeholderIcon={ImageOff} />
+        </Row>
+        <Row label="drop zone">
+          <DropZone
+            class="w-full"
+            label="Drag files here"
+            buttonLabel="Choose files"
+            hint="STL, OBJ, 3MF and other files"
+            onFiles={(files) => setDropped(files.map((file) => file.name))}
+          />
+        </Row>
+        <Text variant="small">Dropped: {dropped().join(', ') || 'nothing yet'}</Text>
+        <Row label="progress">
+          <div class="flex w-full max-w-sm flex-col gap-3">
+            <Progress label="Uploading" value={0.4} />
+            <Progress label="Waiting for the size" />
+          </div>
+        </Row>
+        <Row label="stat list">
+          <StatList
+            items={[
+              { label: 'Projects created', value: 3 },
+              { label: 'Files added', value: 12 },
+            ]}
+          />
+        </Row>
+        <Stage class="!h-40" />
       </Section>
 
       <Section title="Alerts">

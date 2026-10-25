@@ -4,7 +4,7 @@ import { Dynamic } from 'solid-js/web'
 import { cx } from './cx'
 import { AlertTriangle, CircleAlert, CircleCheck, Info } from './icons'
 
-export type TextVariant = 'body' | 'muted' | 'small' | 'label' | 'mono'
+export type TextVariant = 'body' | 'muted' | 'small' | 'label' | 'mono' | 'danger'
 
 const textVariants: Record<TextVariant, string> = {
   body: 'text-sm text-fg',
@@ -12,6 +12,7 @@ const textVariants: Record<TextVariant, string> = {
   small: 'text-xs text-fg-muted',
   label: 'text-xs font-medium tracking-wide text-fg-muted uppercase',
   mono: 'font-mono text-xs text-fg',
+  danger: 'text-xs font-medium text-danger-text',
 }
 
 /** Running text. Feature code uses this instead of picking colours and sizes itself. */

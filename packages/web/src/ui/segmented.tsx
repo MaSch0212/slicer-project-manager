@@ -18,6 +18,8 @@ export function SegmentedControl<T extends string>(props: {
   options: readonly SegmentOption<T>[]
   value: T
   onChange: (value: T) => void
+  /** Shows only the icons; the labels stay as the accessible names. */
+  iconOnly?: boolean
   class?: string
 }) {
   const name = createUniqueId()
@@ -44,7 +46,7 @@ export function SegmentedControl<T extends string>(props: {
             <Show when={option.icon}>
               <Dynamic component={option.icon} class="size-3.5" aria-hidden="true" />
             </Show>
-            {option.label}
+            <span class={props.iconOnly ? 'sr-only' : undefined}>{option.label}</span>
           </label>
         )}
       </For>

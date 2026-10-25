@@ -37,7 +37,14 @@ export function MultiSelect(props: {
       optionTextValue="label"
       optionDisabled="disabled"
       value={props.value.map(optionFor)}
-      onChange={(selected) => props.onChange(selected.map((o) => o.value))}
+      onChange={(selected) => {
+        const next = selected.map((o) => o.value)
+        // The primitive also reports when a controlled `value` changes from outside. Passing that
+        // on would feed the parent's own update back to it, which can loop for ever.
+        const same =
+          next.length === props.value.length && next.every((v) => props.value.includes(v))
+        if (!same) props.onChange(next)
+      }}
       disabled={props.disabled}
       disallowEmptySelection={false}
       gutter={6}

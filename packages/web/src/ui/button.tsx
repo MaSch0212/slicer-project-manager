@@ -82,22 +82,52 @@ export function Button(props: ButtonProps) {
   )
 }
 
-/** A router link that looks like a button: for "go somewhere", where `Button` is "do something". */
+/**
+ * A link that looks like a button: for "go somewhere", where `Button` is "do something". A router
+ * link by default; with `external` a plain anchor, for a download or another site (`download` asks
+ * the browser to save the file instead of opening it).
+ */
 export function LinkButton(
-  props: Omit<ComponentProps<typeof A>, 'children'> & {
+  props: Omit<ComponentProps<typeof A>, 'children' | 'download'> & {
     variant?: ButtonVariant
     size?: ButtonSize
     icon?: IconComponent
+    external?: boolean
+    download?: string
     children?: JSX.Element
   },
 ) {
-  const [local, rest] = splitProps(props, ['variant', 'size', 'icon', 'children', 'class'])
-  return (
-    <A {...rest} class={cx(buttonClass(local.variant, local.size), local.class)}>
+  const [local, rest] = splitProps(props, [
+    'variant',
+    'size',
+    'icon',
+    'external',
+    'children',
+    'class',
+  ])
+  const content = () => (
+    <>
       <Show when={local.icon}>
         <Dynamic component={local.icon} class="size-4" aria-hidden="true" />
       </Show>
       {local.children}
-    </A>
+    </>
+  )
+  return (
+    <Show
+      when={local.external}
+      fallback={
+        <A {...rest} class={cx(buttonClass(local.variant, local.size), local.class)}>
+          {content()}
+        </A>
+      }
+    >
+      <a
+        {...(rest as ComponentProps<'a'>)}
+        class={cx(buttonClass(local.variant, local.size), local.class)}
+      >
+        {content()}
+      </a>
+    </Show>
   )
 }
