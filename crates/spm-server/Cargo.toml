@@ -9,6 +9,7 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+spm-core.workspace = true
 spm-http.workspace = true
 axum.workspace = true
 tokio.workspace = true

@@ -44,7 +44,12 @@ fn core_features_for(package: &str, extra: &[&str]) -> Vec<String> {
         .filter(|line| line.starts_with("spm-core v"))
         .map(|line| {
             let features = line.split_once('|').map_or("", |(_, features)| features);
+            // `cargo tree` marks a package it already printed with a trailing `(*)`; that is the
+            // same resolution again (spm-server depends on spm-core directly and through
+            // spm-http), not a different one.
             features
+                .trim_end()
+                .trim_end_matches("(*)")
                 .split(',')
                 .map(str::trim)
                 .filter(|feature| !feature.is_empty())

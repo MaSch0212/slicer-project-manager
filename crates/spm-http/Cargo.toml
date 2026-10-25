@@ -10,8 +10,18 @@ workspace = true
 
 [dependencies]
 spm-core.workspace = true
-axum.workspace = true
+axum = { workspace = true, features = ["ws"] }
+tokio.workspace = true
+tokio-util = { version = "0.7", features = ["io", "io-util"] }
+futures-util = "0.3"
+hyper-util = { version = "0.1", features = ["client-legacy", "http1", "tokio"] }
+tokio-tungstenite = "0.29"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+url = "2"
 
 [dev-dependencies]
-tokio.workspace = true
+spm-core = { workspace = true, features = ["testing"] }
 tower.workspace = true
+tempfile = "3"
+flate2 = "1.1"

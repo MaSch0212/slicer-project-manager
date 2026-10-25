@@ -17,7 +17,11 @@ fn listen_addr(port: Option<&str>) -> Result<SocketAddr, String> {
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let addr = listen_addr(std::env::var("SPM_PORT").ok().as_deref())?;
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    axum::serve(listener, spm_http::router()).await?;
+    let app = axum::Router::new().route(
+        "/api/health",
+        axum::routing::get(|| async { spm_core::app_name() }),
+    );
+    axum::serve(listener, app).await?;
     Ok(())
 }
 
