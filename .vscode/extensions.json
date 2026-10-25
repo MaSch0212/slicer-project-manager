@@ -1,0 +1,3 @@
+{
+  "recommendations": ["rust-lang.rust-analyzer", "oxc.oxc-vscode", "tauri-apps.tauri-vscode"]
+}

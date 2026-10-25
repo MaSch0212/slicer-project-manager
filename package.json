@@ -1,6 +1,7 @@
 {
   "name": "slicer-project-manager",
   "private": true,
+  "type": "module",
   "scripts": {
     "lint": "oxlint",
     "fmt": "oxfmt",
