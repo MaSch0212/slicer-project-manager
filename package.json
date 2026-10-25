@@ -17,6 +17,7 @@
     "e2e": "pnpm --filter @spm/web build && cargo build -p spm-server && pnpm --filter @spm/web test:e2e",
     "gen:types": "cargo run -p spm-core --example gen_ts",
     "icons": "node tools/generate-icons.ts",
+    "notices": "node tools/generate-notices.mjs",
     "lint:rust": "cargo clippy --workspace --all-targets --all-features -- -D warnings && cargo clippy -p spm-core -- -D warnings && cargo fmt --all --check",
     "verify": "pnpm lint && pnpm fmt:check && pnpm typecheck && pnpm test && pnpm test:tools && pnpm test:rust && pnpm lint:rust"
   },
