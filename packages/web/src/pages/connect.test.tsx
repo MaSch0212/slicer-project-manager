@@ -16,6 +16,8 @@ function fakeClient(overrides: Partial<DesktopClient> = {}): DesktopClient {
     pickFolder: vi.fn().mockResolvedValue({ dir: 'C:\\Library' }),
     connectRemote: vi.fn().mockResolvedValue({ origin: 'https://print.example.com' }),
     chooseLibrary: vi.fn().mockResolvedValue(undefined),
+    // Not what these tests are about; the slicers have their own suites.
+    slicers: {} as DesktopClient['slicers'],
     ...overrides,
   }
 }

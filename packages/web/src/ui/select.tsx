@@ -59,7 +59,15 @@ export function Select<T extends string = string>(
           local.leading ? 'pl-9' : 'pl-3',
           local.class,
         )}
-        onChange={(event) => local.onChange(event.currentTarget.value as T)}
+        onChange={(event) => {
+          local.onChange(event.currentTarget.value as T)
+          // Controlled for real: `value` is the truth and `onChange` a request. When the owner
+          // refuses it (the value does not change) the control goes back to what `value` says
+          // rather than sitting on the option the user clicked, which would be a control showing
+          // a state the app does not have. When the owner accepts it synchronously, `value` is
+          // already the new one and this is a no-op.
+          event.currentTarget.value = local.value ?? ''
+        }}
       >
         <Show when={local.placeholder !== undefined}>
           <option value="" disabled selected={local.value === undefined || local.value === ''}>

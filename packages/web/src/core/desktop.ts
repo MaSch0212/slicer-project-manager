@@ -1,9 +1,16 @@
 import { invoke as tauriInvoke, isTauri } from '@tauri-apps/api/core'
 import {
   isAppErrorCode,
+  type DiscardedSessionsDto,
+  type FileDto,
   type LibraryStateDto,
   type LocalLibraryDto,
   type RemoteLibraryDto,
+  type SlicerConfigDto,
+  type SlicerId,
+  type SlicerLaunchDto,
+  type SlicerLaunchOptions,
+  type SlicerSessionDto,
 } from '../api/generated'
 import { ApiError } from './api/error'
 
@@ -36,7 +43,13 @@ function asApiError(error: unknown): ApiError {
   if (typeof error === 'object' && error !== null) {
     const { code, message } = error as { code?: unknown; message?: unknown }
     if (typeof code === 'string' && isAppErrorCode(code)) {
-      return new ApiError(code, typeof message === 'string' ? message : 'request failed')
+      const { details } = error as { details?: unknown }
+      return new ApiError(code, typeof message === 'string' ? message : 'request failed', {
+        details:
+          typeof details === 'object' && details !== null
+            ? (details as Record<string, unknown>)
+            : undefined,
+      })
     }
   }
   return new ApiError('Internal', error instanceof Error ? error.message : String(error))
@@ -68,6 +81,50 @@ export function createDesktopClient(invokeFn: InvokeFn = tauriInvoke) {
       call<RemoteLibraryDto | null>('desktop_library_connect', { url }),
     /** The application menu's "Choose library…": asks which mode, then does what the answer says. */
     chooseLibrary: () => call<void>('desktop_library_choose'),
+
+    /**
+     * Slicers (subsystem D): which slicers this computer has, handing a file to one, and what
+     * became of the files it was handed. A property of the *computer*, so it works the same in
+     * local and in remote mode. **No call takes a path**: the one path on the whole surface comes
+     * out of a native dialog the shell owns, and a launch names a file by its ids.
+     *
+     * `null` is the way to say "nothing" (unbind, no default); an argument that is left out is a
+     * mistake the shell refuses.
+     */
+    slicers: {
+      get: () => call<SlicerConfigDto>('desktop_slicers_get'),
+      /** Searches this computer for installed slicers (Windows only) and merges what it finds. */
+      scan: () => call<SlicerConfigDto>('desktop_slicers_scan'),
+      /** Opens a native file dialog for one product's program; `null` is a cancelled dialog. */
+      addManual: (slicerId: SlicerId) =>
+        call<SlicerConfigDto | null>('desktop_slicers_add_manual', { slicerId }),
+      remove: (installId: string) => call<SlicerConfigDto>('desktop_slicers_remove', { installId }),
+      /** Points a product at one of its installs; `null` unbinds it. */
+      bind: (slicerId: SlicerId, installId: string | null) =>
+        call<SlicerConfigDto>('desktop_slicers_bind', { slicerId, installId }),
+      /** The product a file that names no slicer is opened with; `null` clears it. */
+      setDefault: (slicerId: SlicerId | null) =>
+        call<SlicerConfigDto>('desktop_slicers_set_default', { slicerId }),
+      /** Throws the configuration away: the only way out of one this build cannot read. */
+      resetConfig: () => call<SlicerConfigDto>('desktop_slicers_reset_config'),
+      /** Hands a file of a project to a slicer. */
+      open: (fileId: string, projectId: string, opts: SlicerLaunchOptions) =>
+        call<SlicerLaunchDto>('desktop_slicers_open', { fileId, projectId, opts }),
+      sessions: () => call<SlicerSessionDto[]>('desktop_slicers_sessions'),
+      /** The user's answer to one session. `import` answers with the file it added. */
+      resolveSession: (
+        launchId: string,
+        action: 'import' | 'discard',
+        options: { projectId?: string } = {},
+      ) =>
+        call<FileDto | null>('desktop_slicers_resolve_session', {
+          launchId,
+          action,
+          projectId: options.projectId ?? null,
+        }),
+      discardSessions: (launchIds: readonly string[]) =>
+        call<DiscardedSessionsDto>('desktop_slicers_discard_sessions', { launchIds }),
+    },
   }
 }
 

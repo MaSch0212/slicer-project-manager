@@ -49,6 +49,65 @@ describe('the desktop client', () => {
   })
 })
 
+describe('the slicer commands', () => {
+  it('names each command as the shell registers it, with ids and values and never a path', async () => {
+    const invoke = vi.fn().mockResolvedValue(null)
+    const { slicers } = createDesktopClient(invoke)
+    await slicers.get()
+    await slicers.scan()
+    await slicers.addManual('cura')
+    await slicers.remove('registry:HKLM:Cura')
+    await slicers.bind('cura', 'registry:HKLM:Cura')
+    await slicers.bind('cura', null)
+    await slicers.setDefault('orca')
+    await slicers.setDefault(null)
+    await slicers.resetConfig()
+    await slicers.open('f1', 'p1', { mode: 'new-project', slicerId: 'bambu' })
+    await slicers.open('f2', 'p1', { mode: 'as-is' })
+    await slicers.sessions()
+    await slicers.resolveSession('l1', 'import', { projectId: 'p1' })
+    await slicers.resolveSession('l2', 'discard')
+    await slicers.discardSessions(['a', 'b'])
+    expect(invoke.mock.calls).toEqual([
+      ['desktop_slicers_get', undefined],
+      ['desktop_slicers_scan', undefined],
+      ['desktop_slicers_add_manual', { slicerId: 'cura' }],
+      ['desktop_slicers_remove', { installId: 'registry:HKLM:Cura' }],
+      ['desktop_slicers_bind', { slicerId: 'cura', installId: 'registry:HKLM:Cura' }],
+      // `null` is "unbind", and it is sent: an absent key is a different (refused) request.
+      ['desktop_slicers_bind', { slicerId: 'cura', installId: null }],
+      ['desktop_slicers_set_default', { slicerId: 'orca' }],
+      ['desktop_slicers_set_default', { slicerId: null }],
+      ['desktop_slicers_reset_config', undefined],
+      [
+        'desktop_slicers_open',
+        { fileId: 'f1', projectId: 'p1', opts: { mode: 'new-project', slicerId: 'bambu' } },
+      ],
+      ['desktop_slicers_open', { fileId: 'f2', projectId: 'p1', opts: { mode: 'as-is' } }],
+      ['desktop_slicers_sessions', undefined],
+      ['desktop_slicers_resolve_session', { launchId: 'l1', action: 'import', projectId: 'p1' }],
+      ['desktop_slicers_resolve_session', { launchId: 'l2', action: 'discard', projectId: null }],
+      ['desktop_slicers_discard_sessions', { launchIds: ['a', 'b'] }],
+    ])
+  })
+
+  it('keeps the details of a shell error, because a reason can be all that tells two apart', async () => {
+    const { slicers } = createDesktopClient(() =>
+      Promise.reject({
+        code: 'Internal',
+        message: 'could not look for slicers installed on this machine',
+        details: { reason: 'detection-failed', cause: 'ETIMEDOUT' },
+      }),
+    )
+    const error = await slicers.scan().catch((e: unknown) => e)
+    expect(error).toBeInstanceOf(ApiError)
+    expect(error).toMatchObject({
+      code: 'Internal',
+      details: { reason: 'detection-failed', cause: 'ETIMEDOUT' },
+    })
+  })
+})
+
 describe('isServerAddress', () => {
   // The same table crates/spm-shell/tests/remote_origin.rs checks the Rust parser against.
   it.each(addresses.accepted)('accepts %j', (address) => {

@@ -15,10 +15,10 @@ const PATHS: Record<SettingsTab, string> = {
  * The frame of every settings screen: the page header and a tab strip that is a navigation control
  * (each tab is its own route, so `/settings/slicers` stays deep-linkable and guarded).
  *
- * EXTENSION POINT (desktop step): a tab appears here only when its capability says the shell can
- * do it. The Slicers tab is `canConfigureSlicers`; the browser build never shows it, and its route
- * is guarded by the same flag in `routes.tsx`. Add a tab by adding a `SettingsTab` value, its path
- * and its capability test below, then wrap the new page in `SettingsLayout`.
+ * A tab appears here only when its capability says the shell can do it. The Slicers tab is
+ * `canConfigureSlicers`; the browser build never shows it, and its route is guarded by the same
+ * flag in `routes.tsx`. Add a tab by adding a `SettingsTab` value, its path and its capability
+ * test below, then wrap the new page in `SettingsLayout`.
  */
 export function SettingsLayout(props: {
   active: SettingsTab

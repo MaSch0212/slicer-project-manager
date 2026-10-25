@@ -15,6 +15,7 @@ import {
   SectionCard,
   SettingRow,
   Checkbox,
+  ChoiceList,
   ConfirmDialog,
   Dialog,
   Divider,
@@ -112,6 +113,7 @@ export default function UiGallery() {
   const [archived, setArchived] = createSignal(false)
   const [view, setView] = createSignal<'grid' | 'list'>('grid')
   const [dropped, setDropped] = createSignal<string[]>([])
+  const [install, setInstall] = createSignal<string | null>(null)
 
   return (
     <div class="flex flex-col gap-10" data-testid="ui-gallery">
@@ -394,6 +396,31 @@ export default function UiGallery() {
             <Button size="sm">Change</Button>
           </SettingRow>
         </SectionCard>
+        <ChoiceList
+          label="Which install to launch"
+          value={install()}
+          onChange={setInstall}
+          options={[
+            {
+              value: 'one',
+              label: 'UltiMaker Cura 5.12.0',
+              detail: '5.12.0',
+              code: 'C:/Program Files/UltiMaker Cura 5.12.0/UltiMaker-Cura.exe',
+              action: (
+                <Button size="sm" variant="ghost">
+                  Remove
+                </Button>
+              ),
+            },
+            {
+              value: 'two',
+              label: 'UltiMaker Cura 5.13.0',
+              detail: '5.13.0',
+              code: 'C:/Program Files/UltiMaker Cura 5.13.0/UltiMaker-Cura.exe',
+              badge: <Badge variant="danger">Missing</Badge>,
+            },
+          ]}
+        />
         <CopyField
           value="http://127.0.0.1:3000/activate#example-token"
           label="Activation link"

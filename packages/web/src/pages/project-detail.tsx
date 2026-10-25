@@ -12,8 +12,9 @@ import {
   TAG_MAX_LENGTH,
   webLink,
 } from '../core/project-detail'
+import { createSlicerLaunch, handedMessage } from '../core/slicer-launch'
 import { slicerDisplayName } from '../core/slicer-names'
-import { settings } from '../core/stores'
+import { capabilities, settings } from '../core/stores'
 import { createUploadQueue } from '../core/upload-queue'
 import { validateFileName } from '../core/validation'
 import {
@@ -33,8 +34,10 @@ import {
   EmptyState,
   Eye,
   FileBox,
+  FilePlus,
   FormField,
   Heading,
+  IconButton,
   IconLinkButton,
   ImageOff,
   Input,
@@ -46,9 +49,11 @@ import {
   Menu,
   PageHeader,
   Pencil,
+  Printer,
   Progress,
   RefreshCw,
   SegmentedControl,
+  Select,
   Skeleton,
   TagInput,
   Text,
@@ -57,6 +62,7 @@ import {
   type IconComponent,
 } from '../ui'
 import { ProjectFormDialog } from './project-form-dialog'
+import { SlicerSessionsCard } from './slicer-sessions-card'
 
 const POLL_MS = 4000
 /** A preview that is still pending after this many polls is left alone until the next visit. */
@@ -100,6 +106,19 @@ export default function ProjectDetailPage() {
   const [tags, setTags] = createSignal<string[]>([])
 
   const viewMode = () => settings.settings().viewMode
+
+  // Handing a file to a slicer, where the shell can (the desktop app). The configuration is loaded
+  // because the page needs the facts the shell reads: which products are bound, and the default.
+  const slicerLaunch = createSlicerLaunch(
+    () => params.id,
+    () => capabilities.capabilities().canLaunchSlicer,
+  )
+  createEffect(
+    on(
+      () => capabilities.capabilities().canLaunchSlicer,
+      () => void slicerLaunch.load(),
+    ),
+  )
 
   const uploads = createUploadQueue({
     upload: (file, onProgress) =>
@@ -209,6 +228,31 @@ export default function ProjectDetailPage() {
                 icon={Eye}
                 label={`${t('projects.view')}: ${file.name}`}
                 size="sm"
+              />
+            </Show>
+            {/* Two launch paths, and the difference is visible because it has to be: one opens
+                the user's own project where it lives, the other starts a new slicer project from
+                the file (a .3mf is handed over with its embedded slicer configuration stripped,
+                so the slicer does not ask to adopt someone else's settings). "As it is" is
+                offered for a slicer project alone, which is what the shell accepts on that path:
+                for a mesh it would launch the file in place and let the slicer propose its
+                project over the top of it. */}
+            <Show when={slicerLaunch.available()}>
+              <Show when={file.kind === 'slicer_project'}>
+                <IconButton
+                  icon={Printer}
+                  label={`${t('projects.openInSlicer')} ${file.name}`}
+                  size="sm"
+                  disabled={slicerLaunch.busy()}
+                  onClick={() => void slicerLaunch.request(file, 'as-is')}
+                />
+              </Show>
+              <IconButton
+                icon={FilePlus}
+                label={`${t('projects.newSlicerProject')} ${file.name}`}
+                size="sm"
+                disabled={slicerLaunch.busy()}
+                onClick={() => void slicerLaunch.request(file, 'new-project')}
               />
             </Show>
             <IconLinkButton
@@ -323,6 +367,40 @@ export default function ProjectDetailPage() {
                 {(message) => <Alert variant="danger">{message()}</Alert>}
               </Show>
 
+              {/* What was handed over, and to what: never that anything opened (a successful
+                  spawn is not evidence the file loaded). */}
+              <Show when={slicerLaunch.launched()}>
+                {(handed) => (
+                  <Alert variant="success">
+                    <div class="flex flex-col gap-2">
+                      <span>{handedMessage(handed())}</span>
+                      <ul class="m-0 flex list-none flex-col gap-1 p-0">
+                        <For each={handed().launch.notices}>{(notice) => <li>{notice}</li>}</For>
+                      </ul>
+                      <div>
+                        <Button size="sm" variant="ghost" onClick={slicerLaunch.dismissLaunched}>
+                          {t('projects.dismiss')}
+                        </Button>
+                      </div>
+                    </div>
+                  </Alert>
+                )}
+              </Show>
+              <Show when={slicerLaunch.error()}>
+                {(message) => (
+                  <Alert variant="danger">
+                    <div class="flex flex-col gap-2">
+                      <span>{message()}</span>
+                      <div>
+                        <Button size="sm" variant="ghost" onClick={slicerLaunch.dismissError}>
+                          {t('projects.dismiss')}
+                        </Button>
+                      </div>
+                    </div>
+                  </Alert>
+                )}
+              </Show>
+
               <Card class="flex flex-col gap-5" padding="lg">
                 <div class="grid gap-5 sm:grid-cols-2">
                   <div class="flex flex-col gap-1">
@@ -372,16 +450,36 @@ export default function ProjectDetailPage() {
                     </Heading>
                     <Badge class="tabular-nums">{project().files.length}</Badge>
                   </div>
-                  <SegmentedControl
-                    iconOnly
-                    label={t('projects.filesView')}
-                    value={viewMode()}
-                    onChange={(mode) => void settings.patch({ viewMode: mode }).catch(() => {})}
-                    options={[
-                      { value: 'grid', label: t('projects.viewModeGrid'), icon: LayoutGrid },
-                      { value: 'list', label: t('projects.viewModeList'), icon: ListIcon },
-                    ]}
-                  />
+                  <div class="flex flex-wrap items-center gap-3">
+                    {/* Which product a launch uses. "Automatic" is what most launches want: the
+                        shell applies its own rule and says which one it picked. */}
+                    <Show when={slicerLaunch.available() && slicerLaunch.options().length > 0}>
+                      <Select
+                        aria-label={t('projects.slicerChoice')}
+                        value={slicerLaunch.chosen() ?? ''}
+                        onChange={(value) =>
+                          slicerLaunch.setChosen(
+                            slicerLaunch.options().find((option) => option.value === value)
+                              ?.value ?? null,
+                          )
+                        }
+                        options={[
+                          { value: '', label: t('projects.slicerAutomatic') },
+                          ...slicerLaunch.options(),
+                        ]}
+                      />
+                    </Show>
+                    <SegmentedControl
+                      iconOnly
+                      label={t('projects.filesView')}
+                      value={viewMode()}
+                      onChange={(mode) => void settings.patch({ viewMode: mode }).catch(() => {})}
+                      options={[
+                        { value: 'grid', label: t('projects.viewModeGrid'), icon: LayoutGrid },
+                        { value: 'list', label: t('projects.viewModeList'), icon: ListIcon },
+                      ]}
+                    />
+                  </div>
                 </div>
 
                 <DropZone
@@ -468,6 +566,12 @@ export default function ProjectDetailPage() {
                 </Show>
               </section>
 
+              {/* Beside the launch control, narrowed to this project (plus any orphan, which has to
+                  be offered somewhere): the files a slicer still has, and what to do about them. */}
+              <Show when={slicerLaunch.available()}>
+                <SlicerSessionsCard projectId={params.id} onImported={() => void detail.load()} />
+              </Show>
+
               <ProjectFormDialog
                 open={editing()}
                 onOpenChange={setEditing}
@@ -552,6 +656,36 @@ export default function ProjectDetailPage() {
             />
           </FormField>
         </form>
+      </Dialog>
+
+      {/* Cura never saves back over the file it was given, and the app can neither cause that nor
+          fix it. A notice with a way past it, not a gate: Cura against a file is perfectly useful
+          for viewing and slicing. What is launched is what was warned about. */}
+      <Dialog
+        open={slicerLaunch.pending() !== null}
+        onOpenChange={(open) => !open && slicerLaunch.cancelCura()}
+        size="sm"
+        title={t('projects.curaHazardTitle')}
+        description={t('projects.curaHazard')}
+        closeLabel={t('common.close')}
+        footer={
+          <>
+            <Button variant="secondary" onClick={slicerLaunch.cancelCura}>
+              {t('common.cancel')}
+            </Button>
+            <Button variant="primary" onClick={() => void slicerLaunch.continueCura()}>
+              {t('projects.curaHazardContinue')}
+            </Button>
+          </>
+        }
+      >
+        <div class="py-2">
+          <Checkbox
+            label={t('projects.curaHazardDontShow')}
+            checked={slicerLaunch.dontShowAgain()}
+            onChange={slicerLaunch.setDontShowAgain}
+          />
+        </div>
       </Dialog>
 
       <ConfirmDialog
