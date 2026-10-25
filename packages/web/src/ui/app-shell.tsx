@@ -56,7 +56,14 @@ export function Brand(props: { name: string; href: string; collapsed?: boolean }
   )
 }
 
-/** The permanent sidebar, from `md` up. `collapsed` shrinks it to icons. */
+/**
+ * The permanent sidebar, from `md` up. `collapsed` shrinks it to icons.
+ *
+ * Two layers, on purpose: the `<aside>` is the column. It stretches to the full height of the
+ * shell (so its background and border run to the foot of a long page, however tall) and carries
+ * the width. The panel inside is what stays put: it is exactly one viewport tall and sticks to the
+ * top, so the brand, entries and footer are always in reach while the page scrolls.
+ */
 export function Sidebar(props: {
   label: string
   collapsed?: boolean
@@ -67,19 +74,21 @@ export function Sidebar(props: {
   return (
     <aside
       class={cx(
-        'sticky top-0 hidden h-dvh shrink-0 flex-col gap-4 border-r border-border bg-surface p-3 transition-[width] md:flex',
+        'hidden shrink-0 self-stretch border-r border-border bg-surface transition-[width] md:block',
         props.collapsed ? 'w-16' : 'w-60',
       )}
     >
-      {props.brand}
-      <nav aria-label={props.label} class="flex-1 overflow-y-auto">
-        {props.children}
-      </nav>
-      <Show when={props.footer}>
-        <div class={cx('flex gap-1', props.collapsed ? 'flex-col items-center' : 'items-center')}>
-          {props.footer}
-        </div>
-      </Show>
+      <div class="sticky top-0 flex h-dvh flex-col gap-4 p-3">
+        {props.brand}
+        <nav aria-label={props.label} class="flex-1 overflow-y-auto">
+          {props.children}
+        </nav>
+        <Show when={props.footer}>
+          <div class={cx('flex gap-1', props.collapsed ? 'flex-col items-center' : 'items-center')}>
+            {props.footer}
+          </div>
+        </Show>
+      </div>
     </aside>
   )
 }
