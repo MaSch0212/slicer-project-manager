@@ -172,7 +172,18 @@ pub const MAX_LINE_CHARS: usize = 1 << 20;
 ///
 /// Decoding is incremental: a multi-byte character split across a chunk boundary is held back and
 /// completed rather than becoming two replacement characters.
-pub fn make_line_sink<F: FnMut(&str)>(visit: F) -> LineSink<F> {
+pub fn make_line_sink<F: FnMut(&str)>(mut visit: F) -> LineSink<impl FnMut(&str) -> Result<()>> {
+    make_try_line_sink(move |line| {
+        visit(line);
+        Ok(())
+    })
+}
+
+/// [`make_line_sink`] for a visitor that can refuse a line: its first error ends the run.
+///
+/// The parsers need this: a malformed line is a `Validation` error, and a visitor that could only
+/// stash the error and keep being called would read the rest of a file it has already rejected.
+pub fn make_try_line_sink<F: FnMut(&str) -> Result<()>>(visit: F) -> LineSink<F> {
     LineSink {
         visit,
         pending: Vec::new(),
@@ -180,7 +191,7 @@ pub fn make_line_sink<F: FnMut(&str)>(visit: F) -> LineSink<F> {
     }
 }
 
-/// The sink [`make_line_sink`] builds.
+/// The sink [`make_line_sink`] and [`make_try_line_sink`] build.
 pub struct LineSink<F> {
     visit: F,
     /// The head of a multi-byte character the last chunk ended in the middle of (at most 3 bytes).
@@ -225,7 +236,7 @@ impl<F> LineSink<F> {
     }
 }
 
-impl<F: FnMut(&str)> ChunkSink for LineSink<F> {
+impl<F: FnMut(&str) -> Result<()>> ChunkSink for LineSink<F> {
     type Output = ();
 
     fn push(&mut self, chunk: &[u8]) -> Result<()> {
@@ -235,11 +246,12 @@ impl<F: FnMut(&str)> ChunkSink for LineSink<F> {
         while let Some(at) = rest.find('\n') {
             let (line, tail) = rest.split_at(at);
             if self.carry.is_empty() {
-                (self.visit)(line);
+                (self.visit)(line)?;
             } else {
                 self.carry.push_str(line);
-                (self.visit)(&self.carry);
+                let joined = (self.visit)(&self.carry);
                 self.carry.clear();
+                joined?;
             }
             rest = &tail[1..];
         }
@@ -260,7 +272,6 @@ impl<F: FnMut(&str)> ChunkSink for LineSink<F> {
     fn end(mut self) -> Result<()> {
         let mut last = std::mem::take(&mut self.carry);
         self.decode(&[], true, &mut last);
-        (self.visit)(&last);
-        Ok(())
+        (self.visit)(&last)
     }
 }
