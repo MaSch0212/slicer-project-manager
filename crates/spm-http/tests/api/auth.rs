@@ -58,10 +58,12 @@ async fn the_activation_token_can_be_checked_before_a_password_is_typed() {
     let token = server.bootstrap_token.clone().unwrap();
     let ok = server.get(&format!("/api/auth/activation/{token}")).await;
     assert_eq!(ok.json(), json!({ "valid": true, "username": "admin" }));
+    // Key order is part of the bytes clients have always seen.
+    assert_eq!(ok.text(), r#"{"valid":true,"username":"admin"}"#);
 
     let bad = server.get("/api/auth/activation/not-a-real-token").await;
     assert_eq!(bad.status, 200);
-    assert_eq!(bad.json(), json!({ "valid": false }));
+    assert_eq!(bad.text(), r#"{"valid":false}"#);
 }
 
 #[tokio::test]

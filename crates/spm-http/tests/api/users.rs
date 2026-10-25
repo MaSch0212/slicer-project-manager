@@ -23,6 +23,7 @@ async fn creating_a_user_returns_an_activation_url_carrying_the_token_in_the_fra
     .await;
     assert_eq!(reply.status, 200);
 
+    assert!(reply.text().starts_with(r#"{"user":{"#), "{}", reply.text());
     let body = reply.json();
     assert_eq!(body["user"]["username"], "anna");
     assert_eq!(body["user"]["status"], "pending");

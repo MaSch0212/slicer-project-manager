@@ -3,7 +3,8 @@ use axum::extract::{Path, State};
 use axum::http::{HeaderMap, Uri};
 use axum::response::Response;
 use axum::routing::{get, patch, post};
-use serde_json::json as json_value;
+use serde::Serialize;
+use spm_core::dto::UserDto;
 use spm_core::validate::{CreateUserInput, UpdateUserInput};
 use spm_core::{create_user, delete_user, list_users, reissue_invite, update_user};
 
@@ -18,6 +19,20 @@ pub(super) fn routes() -> Router<AppState> {
         .route("/api/users", get(list).post(create))
         .route("/api/users/{id}/invite", post(invite))
         .route("/api/users/{id}", patch(update).delete(remove))
+}
+
+/// Structs rather than `json!` maps: key order is part of the bytes clients have always seen.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CreatedUserBody {
+    user: UserDto,
+    activation_url: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct InviteBody {
+    activation_url: String,
 }
 
 fn link(state: &AppState, uri: &Uri, headers: &HeaderMap, token: &str) -> String {
@@ -43,10 +58,10 @@ async fn create(
     let lib = state.lib().clone();
     let created = blocking(move || create_user(&lib, &ctx, input)).await?;
     // Returned once, for the admin to copy out of band. There is no SMTP.
-    Ok(json(&json_value!({
-        "user": created.user,
-        "activationUrl": link(&state, &uri, &headers, &created.token),
-    })))
+    Ok(json(&CreatedUserBody {
+        user: created.user,
+        activation_url: link(&state, &uri, &headers, &created.token),
+    }))
 }
 
 async fn invite(
@@ -58,9 +73,9 @@ async fn invite(
 ) -> Result<Response, ApiError> {
     let lib = state.lib().clone();
     let token = blocking(move || reissue_invite(&lib, &ctx, &id)).await?;
-    Ok(json(&json_value!({
-        "activationUrl": link(&state, &uri, &headers, &token),
-    })))
+    Ok(json(&InviteBody {
+        activation_url: link(&state, &uri, &headers, &token),
+    }))
 }
 
 async fn update(

@@ -4,7 +4,7 @@ use axum::http::header::{SET_COOKIE, USER_AGENT};
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::Response;
 use axum::routing::{get, post};
-use serde_json::json as json_value;
+use serde::Serialize;
 use spm_core::auth::activation::check_activation_token;
 use spm_core::auth::sessions::delete_session;
 use spm_core::validate::{ActivateInput, LoginInput};
@@ -48,6 +48,14 @@ pub(super) fn routes(state: &AppState) -> Router<AppState> {
                 AUTH_RATE_LIMIT,
             )),
         )
+}
+
+/// A struct rather than a `json!` map: key order is part of the bytes clients have always seen.
+#[derive(Serialize)]
+struct ActivationCheckBody {
+    valid: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    username: Option<String>,
 }
 
 fn user_agent(headers: &HeaderMap) -> Option<String> {
@@ -112,8 +120,14 @@ async fn get_activation(
     let check =
         blocking(move || check_activation_token(&lib, &token, spm_core::clock::now_ms())).await?;
     Ok(match (check.valid, check.username) {
-        (true, Some(username)) => json(&json_value!({ "valid": true, "username": username })),
-        _ => json(&json_value!({ "valid": false })),
+        (true, Some(username)) => json(&ActivationCheckBody {
+            valid: true,
+            username: Some(username),
+        }),
+        _ => json(&ActivationCheckBody {
+            valid: false,
+            username: None,
+        }),
     })
 }
 

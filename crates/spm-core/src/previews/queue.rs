@@ -443,11 +443,11 @@ fn failure_message(error: &AppError) -> String {
 /// genuinely unrenderable file gets, with nothing left to say which it was or why.
 ///
 /// A panic in a handler is turned into the same failure, so one bad file cannot take the batch
-/// (or the host's worker thread) down with it. That holds for builds that unwind: the workspace's
-/// release profile sets `panic = "abort"`, where a panic anywhere in the process ends it and
-/// `catch_unwind` has nothing to catch. The guard is for tests, debug builds and any host that
-/// builds with unwinding; it is not what keeps the shipped binaries safe from a hostile file (the
-/// parsers return errors for everything a file can cause).
+/// (or the host's worker thread) down with it. That holds for builds that unwind, which includes
+/// the workspace's release profile: it must not set `panic = "abort"`, where a panic anywhere in
+/// the process ends it and `catch_unwind` has nothing to catch (a test in `spm-server` reads the
+/// profile to keep it that way). The parsers return errors for everything a file can cause, so
+/// this is the second line of defence against a parser bug, not the first.
 fn produce(job: &PreviewJob, matching: &[&SharedHandler]) -> Result<Option<PreviewOutput>> {
     let run = || -> Result<Option<PreviewOutput>> {
         for handler in matching {
