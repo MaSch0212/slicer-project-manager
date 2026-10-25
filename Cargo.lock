@@ -882,6 +882,7 @@ dependencies = [
  "crc32fast",
  "flate2",
  "getrandom",
+ "memchr",
  "pbkdf2",
  "regex",
  "rusqlite",

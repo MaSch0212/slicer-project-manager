@@ -28,6 +28,7 @@ pub mod error;
 pub mod files;
 pub mod log;
 pub mod match_key;
+pub mod previews;
 pub mod projects;
 pub mod tsgen;
 pub mod users;
@@ -46,6 +47,7 @@ pub use files::usecases::{
     resolve_file_path, resolve_preview_path, upload_file,
 };
 pub use log::{LogLevel, LogLevelSetting, Logger};
+pub use previews::{BatchResult, PreviewConfig, PreviewWorker, run_preview_batch};
 pub use projects::import_curamanager::{
     CuraManagerImport, ImportProgress, import_curamanager_library,
 };

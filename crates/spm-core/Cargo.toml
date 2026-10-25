@@ -20,6 +20,7 @@ base64 = "0.23"
 crc32fast = { version = "1.5", optional = true }
 flate2 = "1.1"
 getrandom = "0.4"
+memchr = "2.8"
 pbkdf2 = "0.13"
 regex = { version = "1.13", optional = true }
 rusqlite = { version = "0.41", features = ["bundled"] }
