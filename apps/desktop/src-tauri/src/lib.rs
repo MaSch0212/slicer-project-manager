@@ -193,7 +193,9 @@ fn executable_picker<R: tauri::Runtime>(
             };
             dialog = dialog.add_filter(programs, &["exe"]);
         }
-        if let Some(parent) = handle.get_webview_window(security::MAIN_WEBVIEW) {
+        // `get_window`: see `commands::main_window` for why the webview-window lookup stops
+        // answering once the model browser has a tab open.
+        if let Some(parent) = handle.get_window(security::MAIN_WEBVIEW) {
             dialog = dialog.set_parent(&parent);
         }
         let picked = dialog.blocking_pick_file()?.into_path().ok()?;

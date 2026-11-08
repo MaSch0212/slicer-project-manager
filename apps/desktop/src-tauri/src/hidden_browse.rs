@@ -99,6 +99,9 @@ const BROWSE_MAIN_JS: &str = r#"
     bounds: { x: 0, y: 0, width: 6000, height: 6000 },
   });
   out.attach = { ok: attach.ok, attached: attach.ok && attach.value.attached, count: attach.ok ? attach.value.tabs.length : -1 };
+  // The window commands must survive a second webview joining the window: Tauri stops calling it
+  // a "webview window" the moment one does, and everything the title bar does goes through them.
+  out.windowAfterAttach = await call('desktop_window_state');
   await call('desktop_browse_navigate', { url: FIX + '/thing:7401409/files' });
   out.thing = brief(await settled('fixture:thing'));
   window.__spmGo = null;
@@ -238,7 +241,7 @@ const BROWSE_MAIN_JS: &str = r#"
   // A title is a small channel (a long one is cut, and a cut report is not JSON), so the answer
   // goes out in parts, each its own step, with a beat between so none replaces another unread.
   const parts = {
-    'browse-a': ['sites', 'attach', 'thing', 'refusedWithNoView', 'badBounds', 'tinyAnswer', 'normalAnswer', 'hide', 'show'],
+    'browse-a': ['sites', 'attach', 'thing', 'refusedWithNoView', 'badBounds', 'tinyAnswer', 'normalAnswer', 'hide', 'show', 'windowAfterAttach'],
     'browse-policy': ['policy'],
     'browse-idioms': ['idioms', 'afterDiscards'],
     'browse-landing': ['landed', 'match', 'matchNone', 'matchNull', 'badLand', 'unknownLand', 'land'],
@@ -555,6 +558,12 @@ pub async fn run<R: Runtime>(
         short(
             &json!({"land": a["land"], "project": a["projectAfter"]["files"], "after": a["downloadsAfterLand"], "bad": a["badLand"], "unknown": a["unknownLand"]}),
         ),
+    );
+    check(
+        report,
+        "the window still answers its own commands with a browse tab in the window (the title bar is the page's)",
+        ok_value(&a, "windowAfterAttach").is_some(),
+        short(&a["windowAfterAttach"]),
     );
     check(
         report,

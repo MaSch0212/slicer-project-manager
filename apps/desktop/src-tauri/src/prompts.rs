@@ -23,9 +23,12 @@ pub struct TauriPrompts<R: Runtime> {
 impl<R: Runtime> TauriPrompts<R> {
     /// A dialog the user raised is modal to the window it was raised from. A startup prompt has
     /// no window to be modal to (or the window is hidden).
-    fn parent(&self, trigger: PromptTrigger) -> Option<tauri::WebviewWindow<R>> {
+    ///
+    /// **`get_window`, never `get_webview_window`**: see `commands::main_window`. A dialog that
+    /// lost its parent is not modal to anything and can end up behind the window.
+    fn parent(&self, trigger: PromptTrigger) -> Option<tauri::Window<R>> {
         match trigger {
-            PromptTrigger::User => self.app.get_webview_window(MAIN_WEBVIEW),
+            PromptTrigger::User => self.app.get_window(MAIN_WEBVIEW),
             PromptTrigger::Startup => None,
         }
     }

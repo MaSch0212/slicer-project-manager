@@ -372,6 +372,7 @@ const BROWSE_CHECKS: &[&str] = &[
     "browse: discard removes a staged download",
     "browse: a page is matched to the project whose website has its key, and nothing else matches (the honest answer)",
     "browse: landing refuses an unsafe name and an id it never staged, then lands through the loopback API with the bytes in the project and the staging directory gone",
+    "the window still answers its own commands with a browse tab in the window (the title bar is the page's)",
     "browse: leaving the route takes the tabs off screen and keeps them, and coming back finds the same tab on the same page",
     "browse: a second tab is its own webview, selecting goes back to the first, and closing leaves one",
     "browse: the front tab can be captured as a still picture for a dialog to be drawn over",

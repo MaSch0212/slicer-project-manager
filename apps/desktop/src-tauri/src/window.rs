@@ -31,7 +31,9 @@ use spm_shell::gate::LaunchGate;
 use spm_shell::nav::{NavigationPolicy, is_openable_externally, navigation_policy};
 use spm_shell::shell::{ShellEvents, ShellRoute};
 use tauri::webview::NewWindowResponse;
-use tauri::{AppHandle, Manager, Runtime, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
+use tauri::{
+    AppHandle, Manager, Runtime, Webview, WebviewUrl, WebviewWindow, WebviewWindowBuilder,
+};
 
 use crate::security::MAIN_WEBVIEW;
 
@@ -119,35 +121,41 @@ pub struct TauriEvents<R: Runtime> {
 }
 
 impl<R: Runtime> TauriEvents<R> {
-    fn window(&self) -> Option<WebviewWindow<R>> {
-        self.app.get_webview_window(MAIN_WEBVIEW)
+    /// The app's own webview. **`get_webview`, never `get_webview_window`**: see
+    /// `commands::main_window` for why the latter stops answering once the model browser has a
+    /// tab open. Loading a library the user just chose goes through here, so getting this wrong
+    /// means choosing a library quietly does nothing.
+    fn webview(&self) -> Option<Webview<R>> {
+        self.app.get_webview(MAIN_WEBVIEW)
     }
 }
 
 impl<R: Runtime> ShellEvents for TauriEvents<R> {
     fn navigate(&self, route: ShellRoute) {
-        let (Some(window), Some(gate)) = (self.window(), self.gate.get()) else {
+        let (Some(webview), Some(gate)) = (self.webview(), self.gate.get()) else {
             // A no-op at startup, when the shell has decided before any window exists.
             return;
         };
         if let Ok(url) = gate.handshake_url(route.path()).parse() {
-            let _ = window.navigate(url);
+            let _ = webview.navigate(url);
         }
     }
 
     fn reload(&self) {
-        let Some(window) = self.window() else { return };
+        let Some(webview) = self.webview() else {
+            return;
+        };
         // **A window on the connect page is sent home instead of reloaded.** It is the one route
         // in the app that is a *question*: reloading it after the question has been answered puts
         // the user back in front of "where is your library?" with the library already open
         // behind it.
-        let on_connect = window
+        let on_connect = webview
             .url()
             .is_ok_and(|url| url.path() == ShellRoute::Connect.path());
         if on_connect {
             self.navigate(ShellRoute::Home);
         } else {
-            let _ = window.eval("window.location.reload()");
+            let _ = webview.eval("window.location.reload()");
         }
     }
 }

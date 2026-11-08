@@ -507,11 +507,27 @@ pub struct WindowStateDto {
     pub is_maximized: bool,
 }
 
+/// The main window.
+///
+/// **`get_window`, never `get_webview_window`.** Tauri only calls a window a "webview window"
+/// while it hosts exactly one webview whose label matches its own
+/// (`webviews().all(|w| w.label() == self.label())`), so the moment the model browser adds a
+/// `browse-<tab>` child to it, `get_webview_window("main")` answers `None` — for good, because
+/// the tabs outlive the route. Everything that asks for the window this way simply stops
+/// working, silently.
 fn main_window<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,
-) -> Result<tauri::WebviewWindow<R>, CommandError> {
-    app.get_webview_window(crate::security::MAIN_WEBVIEW)
+) -> Result<tauri::Window<R>, CommandError> {
+    app.get_window(crate::security::MAIN_WEBVIEW)
         .ok_or_else(|| internal("there is no main window"))
+}
+
+/// The app's own webview, for the things that are the *page's* and not the window's.
+fn main_webview<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+) -> Result<tauri::Webview<R>, CommandError> {
+    app.get_webview(crate::security::MAIN_WEBVIEW)
+        .ok_or_else(|| internal("there is no main webview"))
 }
 
 /// Whether the window is maximised. The page asks after every resize; there is no event channel
@@ -577,11 +593,12 @@ pub fn desktop_window_close<R: tauri::Runtime>(
 pub fn desktop_window_toggle_devtools<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
 ) -> Result<(), CommandError> {
-    let window = main_window(&app)?;
-    if window.is_devtools_open() {
-        window.close_devtools();
+    // The developer tools belong to a webview, not to a window.
+    let webview = main_webview(&app)?;
+    if webview.is_devtools_open() {
+        webview.close_devtools();
     } else {
-        window.open_devtools();
+        webview.open_devtools();
     }
     Ok(())
 }
