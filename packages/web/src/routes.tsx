@@ -5,7 +5,6 @@ import ActivatePage from './pages/activate'
 import ImportPage from './pages/import'
 import LoginPage from './pages/login'
 import NotFoundPage from './pages/not-found'
-import ProjectDetailPage from './pages/project-detail'
 import ProjectsPage from './pages/projects'
 import SettingsPage from './pages/settings'
 
@@ -58,8 +57,9 @@ export const routes: RouteDefinition[] = [
   { path: '/', component: redirectToProjects },
   { path: '/login', component: LoginPage },
   { path: '/activate', component: ActivatePage },
-  { path: '/projects', component: auth(ProjectsPage) },
-  { path: '/projects/:id', component: auth(ProjectDetailPage) },
+  // One route, two paths: `/projects/abc` is the list with that project open beside it, and
+  // keeping it the same route is what stops the list reloading every time one is selected.
+  { path: ['/projects', '/projects/:id'], component: auth(ProjectsPage) },
   { path: '/projects/:id/view/:fileId', component: auth(ViewerPage) },
   { path: '/import', component: auth(ImportPage) },
   { path: '/settings', component: auth(SettingsPage) },

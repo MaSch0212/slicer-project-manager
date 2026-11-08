@@ -54,7 +54,9 @@ export function AppShell(props: {
           </header>
           <main
             class={cx(
-              'flex min-h-0 w-full min-w-0 flex-1 flex-col',
+              // `relative`: see the note in the projects list for what an absolutely positioned
+              // `sr-only` line does to the document without it.
+              'relative flex min-h-0 w-full min-w-0 flex-1 flex-col',
               props.fullBleed ? undefined : 'overflow-y-auto',
             )}
           >

@@ -119,7 +119,9 @@
     "uploadMissingFolder": "Files cannot be added while the project folder is missing.",
     "noNotes": "No notes yet",
     "tagsHint": "Press Enter to add a tag.",
-    "detailsTitle": "Details"
+    "detailsTitle": "Details",
+    "panelWidth": "The width of the project panel",
+    "detailPanel": "Project details"
   },
   "import": {
     "title": "Import",

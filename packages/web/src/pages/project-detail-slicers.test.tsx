@@ -1,4 +1,4 @@
-import { createMemoryHistory, MemoryRouter, Route } from '@solidjs/router'
+import { createMemoryHistory, MemoryRouter, Route, useParams } from '@solidjs/router'
 import { fireEvent, render, screen, waitFor } from '@solidjs/testing-library'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
@@ -44,7 +44,7 @@ import { curaHazard } from '../core/cura-hazard'
 import { setLanguage } from '../core/i18n'
 import en from '../core/i18n/en.json'
 import { capabilities, settings } from '../core/stores'
-import ProjectDetailPage from './project-detail'
+import { ProjectDetail } from './project-detail'
 
 const BENCHY: FileDto = {
   id: 'f1',
@@ -129,12 +129,18 @@ const BROWSER: Capabilities = {
   canConfigureSlicers: false,
 }
 
+/** The detail as the route used to render it: a page of its own, keyed on `:id`. */
+function RoutedDetail() {
+  const params = useParams<{ id: string }>()
+  return <ProjectDetail id={params.id} variant="page" />
+}
+
 function renderPage() {
   const history = createMemoryHistory()
   history.set({ value: '/projects/p1' })
   return render(() => (
     <MemoryRouter history={history}>
-      <Route path="/projects/:id" component={ProjectDetailPage} />
+      <Route path="/projects/:id" component={() => <RoutedDetail />} />
     </MemoryRouter>
   ))
 }

@@ -66,7 +66,11 @@ test.describe('library screenshots', () => {
           test(`project detail ${mode}`, async ({ page }) => {
             await setView(mode)
             await page.goto(`${server.origin}/projects/${seeded['Benchy']!.id}`)
-            await expect(page.getByRole('heading', { name: 'Benchy', level: 1 })).toBeVisible()
+            await expect(
+              page
+                .getByRole('complementary', { name: 'Project details' })
+                .getByRole('heading', { name: 'Benchy', level: 2 }),
+            ).toBeVisible()
             await page.waitForLoadState('networkidle')
             await page.screenshot({ path: shot(`detail-${mode}`), fullPage: true })
           })
@@ -90,7 +94,11 @@ test.describe('library screenshots', () => {
             ['Hinge', 'step'],
           ] as const) {
             await page.goto(`${server.origin}/projects/${seeded[key]!.id}`)
-            await expect(page.getByRole('heading', { name: key, level: 1 })).toBeVisible()
+            await expect(
+              page
+                .getByRole('complementary', { name: 'Project details' })
+                .getByRole('heading', { name: key, level: 2 }),
+            ).toBeVisible()
             await page.waitForLoadState('networkidle')
             await page.screenshot({ path: shot(`detail-${name}`), fullPage: true })
           }

@@ -55,7 +55,7 @@ export function SettingsFrame(props: {
           ref={(element: HTMLDivElement) => props.scrollRef(element)}
           onScroll={() => props.onScroll()}
           on:scrollend={() => props.onScrollEnd()}
-          class="min-w-0 flex-1 overflow-y-auto p-5"
+          class="relative min-w-0 flex-1 overflow-y-auto p-5"
         >
           <div class="flex max-w-3xl flex-col gap-8">{props.children}</div>
         </div>

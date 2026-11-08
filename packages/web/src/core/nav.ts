@@ -64,11 +64,16 @@ export const navEntries = createRoot(() =>
  * pretending to be a browser. `/settings` owns its scrolling too: its section menu is a column
  * beside the content, which only works if the content is what scrolls.
  */
-const FULL_BLEED: readonly string[] = ['/browse', '/settings']
+const FULL_BLEED: readonly ((path: string) => boolean)[] = [
+  (path) => path === '/browse',
+  (path) => path === '/settings',
+  // The list and the detail panel beside it are two scrolling columns of one frame.
+  (path) => path === '/projects' || /^\/projects\/[^/]+$/.test(path),
+]
 
 /** Whether this path is one of them. */
 export function isFullBleed(path: string): boolean {
-  return FULL_BLEED.includes(path)
+  return FULL_BLEED.some((matches) => matches(path))
 }
 
 /** The entry's label in the current language. */

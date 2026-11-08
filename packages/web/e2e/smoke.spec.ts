@@ -1,6 +1,14 @@
 import { expect, test } from '@playwright/test'
 import { ADMIN_PASSWORD, ADMIN_USERNAME } from './seed'
-import { expectHeading, open, sidebarNav, signInThroughForm, useServer } from './support'
+import {
+  expectHeading,
+  open,
+  sidebarNav,
+  signInThroughForm,
+  useServer,
+  expectPanel,
+  detailPanel,
+} from './support'
 
 /**
  * The shortest path through the real app, signing in the way a person does (the other specs borrow
@@ -19,9 +27,11 @@ test('an admin can log in, create a project and see it in the grid', async ({ pa
   await page.getByRole('button', { name: 'New project' }).first().click()
   await page.getByRole('dialog').getByLabel('Name').fill('Benchy')
   await page.getByRole('button', { name: 'Create project' }).click()
-  await expectHeading(page, 'Benchy')
+  // Creating one opens it beside the list rather than on a page of its own.
+  await expectPanel(page, 'Benchy')
 
-  await page.getByRole('link', { name: 'Back to all projects' }).click()
+  await detailPanel(page).getByRole('button', { name: 'Close' }).click()
+  await expect(detailPanel(page)).toHaveCount(0)
   await expect(page.getByRole('heading', { name: 'Benchy', level: 2 })).toBeVisible()
 })
 

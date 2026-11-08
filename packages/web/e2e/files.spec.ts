@@ -2,7 +2,7 @@ import { expect, test, type Page } from '@playwright/test'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { binaryStl, cube, cylinder, obj, threeMf } from './fixtures'
-import { asAdmin, expectHeading, open, useServer } from './support'
+import { asAdmin, detailPanel, expectPanel, open, useServer } from './support'
 
 const state = useServer()
 
@@ -17,7 +17,9 @@ async function newProject(name: string): Promise<string> {
 const folder = (project: string) => join(state.server.libraryDir, state.server.username, project)
 
 const fileCard = (page: Page, name: string) =>
-  page.locator('main ul > li').filter({ has: page.getByRole('heading', { name, exact: true }) })
+  detailPanel(page)
+    .locator('ul > li')
+    .filter({ has: page.getByRole('heading', { name, exact: true }) })
 
 const choose = (page: Page, files: { name: string; mimeType: string; buffer: Buffer }[]) =>
   page.locator('input[type="file"]').setInputFiles(files)
@@ -27,7 +29,7 @@ test('an uploaded model shows up, gets a rendered thumbnail, and can be download
 }) => {
   const id = await newProject('Upload Cube')
   await open(page, state.server, `/projects/${id}`)
-  await expectHeading(page, 'Upload Cube')
+  await expectPanel(page, 'Upload Cube')
   await expect(page.getByRole('heading', { name: 'This project has no files yet' })).toBeVisible()
 
   const bytes = Buffer.from(binaryStl(cube(20)))
@@ -62,7 +64,7 @@ test('every kind of file is classified, and only a model is offered the viewer',
 }) => {
   const id = await newProject('Upload Kinds')
   await open(page, state.server, `/projects/${id}`)
-  await expectHeading(page, 'Upload Kinds')
+  await expectPanel(page, 'Upload Kinds')
 
   await choose(page, [
     { name: 'a.stl', mimeType: 'model/stl', buffer: Buffer.from(binaryStl(cube(8))) },

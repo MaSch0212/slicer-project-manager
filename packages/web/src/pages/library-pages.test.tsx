@@ -1,4 +1,4 @@
-import { createMemoryHistory, MemoryRouter, Route } from '@solidjs/router'
+import { createMemoryHistory, MemoryRouter, Route, useParams } from '@solidjs/router'
 import { fireEvent, render, screen, waitFor, within } from '@solidjs/testing-library'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
@@ -37,9 +37,15 @@ const api = vi.hoisted(() => ({
 vi.mock('../core/api/client', () => ({ api }))
 
 import ImportPage from './import'
-import ProjectDetailPage from './project-detail'
+import { ProjectDetail } from './project-detail'
 import ProjectsPage from './projects'
 import { settings } from '../core/stores'
+
+/** The detail as the route used to render it: a page of its own, keyed on `:id`. */
+function RoutedDetail() {
+  const params = useParams<{ id: string }>()
+  return <ProjectDetail id={params.id} variant="page" />
+}
 
 const project = (over: Partial<ProjectDto> = {}): ProjectDto => ({
   id: 'p1',
@@ -77,10 +83,22 @@ function renderAt(path: string) {
   return render(() => (
     <MemoryRouter history={history}>
       <Route path="/projects" component={ProjectsPage} />
-      <Route path="/projects/:id" component={ProjectDetailPage} />
+      <Route path="/projects/:id" component={() => <RoutedDetail />} />
       <Route path="/import" component={ImportPage} />
     </MemoryRouter>
   ))
+}
+
+/** The app's own routing: one route for the list and the list-with-one-open. */
+function renderLibrary(path: string) {
+  const history = createMemoryHistory()
+  history.set({ value: path })
+  render(() => (
+    <MemoryRouter history={history}>
+      <Route path={['/projects', '/projects/:id']} component={ProjectsPage} />
+    </MemoryRouter>
+  ))
+  return history
 }
 
 beforeEach(() => {
@@ -699,5 +717,63 @@ describe('ImportPage', () => {
     await waitFor(() =>
       expect(screen.getByRole('alert').textContent).toBe('already in your library: Widget A'),
     )
+  })
+})
+
+/**
+ * Choosing a project opens it beside the list instead of replacing it. The selection is the
+ * route, which is what makes a link, the back button and a reload all land in the same place.
+ */
+describe('the project panel beside the list', () => {
+  it('shows the list alone until a project is chosen', async () => {
+    renderLibrary('/projects')
+    await screen.findByRole('heading', { name: 'Projects', level: 1 })
+
+    expect(screen.queryByRole('complementary', { name: 'Project details' })).toBeNull()
+    expect(api.projects.get).not.toHaveBeenCalled()
+  })
+
+  it('opens the chosen one beside the list, with the list still there', async () => {
+    renderLibrary('/projects/p1')
+    await screen.findByRole('heading', { name: 'Projects', level: 1 })
+
+    const panel = await screen.findByRole('complementary', { name: 'Project details' })
+    expect(within(panel).getByRole('heading', { name: 'Benchy' })).toBeTruthy()
+    // The list is still the list: this is a panel beside it, not a page over it.
+    expect(screen.getByRole('heading', { name: 'Projects', level: 1 })).toBeTruthy()
+    // And no way back is offered, because the list never went away.
+    expect(within(panel).queryByRole('link', { name: 'All projects' })).toBeNull()
+  })
+
+  it('does not reload the list when the selection changes', async () => {
+    const history = renderLibrary('/projects')
+    await screen.findByRole('heading', { name: 'Projects', level: 1 })
+    const listCalls = api.projects.list.mock.calls.length
+
+    history.set({ value: '/projects/p1' })
+    await screen.findByRole('complementary', { name: 'Project details' })
+
+    expect(api.projects.list.mock.calls.length).toBe(listCalls)
+  })
+
+  it('closes back to the list', async () => {
+    const history = renderLibrary('/projects/p1')
+    const panel = await screen.findByRole('complementary', { name: 'Project details' })
+
+    fireEvent.click(within(panel).getByRole('button', { name: 'Close' }))
+
+    await waitFor(() => expect(history.get()).toBe('/projects'))
+  })
+
+  it('offers a splitter that says how wide the panel is and answers the keyboard', async () => {
+    renderLibrary('/projects/p1')
+    await screen.findByRole('complementary', { name: 'Project details' })
+
+    const bar = screen.getByRole('separator', { name: 'The width of the project panel' })
+    const before = Number(bar.getAttribute('aria-valuenow'))
+    // It grows to the left, so the left arrow widens it.
+    fireEvent.keyDown(bar, { key: 'ArrowLeft' })
+
+    await waitFor(() => expect(Number(bar.getAttribute('aria-valuenow'))).toBeGreaterThan(before))
   })
 })

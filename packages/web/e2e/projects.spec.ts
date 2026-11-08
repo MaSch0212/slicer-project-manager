@@ -3,7 +3,15 @@ import { existsSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { binaryStl, cube } from './fixtures'
 import { seedLibrary, type SeedProject } from './seed'
-import { asAdmin, expectHeading, open, settingsSaved, useServer } from './support'
+import {
+  asAdmin,
+  detailPanel,
+  expectHeading,
+  expectPanel,
+  open,
+  settingsSaved,
+  useServer,
+} from './support'
 
 const stl = (name: string) => ({ name, bytes: binaryStl(cube(10)) })
 
@@ -195,14 +203,14 @@ test('a project is created with its details and tags', async ({ page }) => {
   await dialog.getByRole('button', { name: 'Create project' }).click()
 
   await expect(page).toHaveURL(/\/projects\/[0-9a-f-]+$/)
-  await expectHeading(page, 'Wall Hook')
+  await expectPanel(page, 'Wall Hook')
   await expect(page.getByRole('link', { name: 'https://example.com/hook' })).toBeVisible()
   await expect(page.getByText('Holds one coat.')).toBeVisible()
   await expect(page.getByRole('button', { name: 'Remove tag hooks' })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Remove tag wall' })).toBeVisible()
   expect(existsSync(join(state.server.libraryDir, state.server.username, 'Wall Hook'))).toBe(true)
 
-  await page.getByRole('link', { name: 'Back to all projects' }).click()
+  await detailPanel(page).getByRole('button', { name: 'Close' }).click()
   await expect(page.getByRole('heading', { name: 'Wall Hook', level: 2 })).toBeVisible()
 })
 
@@ -212,7 +220,7 @@ test('a project is edited: name, notes and tags', async ({ page }) => {
     notes: 'before',
   })
   await open(page, state.server, `/projects/${created.id}`)
-  await expectHeading(page, 'Edit Me')
+  await expectPanel(page, 'Edit Me')
 
   await page.getByRole('button', { name: 'Edit project' }).click()
   const dialog = page.getByRole('dialog', { name: 'Edit project' })
@@ -220,7 +228,7 @@ test('a project is edited: name, notes and tags', async ({ page }) => {
   await dialog.getByLabel('Name').fill('Edited')
   await dialog.getByLabel('Notes').fill('after')
   await dialog.getByRole('button', { name: 'Save changes' }).click()
-  await expectHeading(page, 'Edited')
+  await expectPanel(page, 'Edited')
   await expect(page.getByText('after', { exact: true })).toBeVisible()
 
   // Tags are edited in place, each change its own request.
@@ -239,7 +247,7 @@ test('a project is archived and restored', async ({ page }) => {
     name: 'Archive Me',
   })
   await open(page, state.server, `/projects/${created.id}`)
-  await expectHeading(page, 'Archive Me')
+  await expectPanel(page, 'Archive Me')
 
   await page.getByRole('button', { name: 'Archive this project' }).click()
   await expect(page.getByText('Archived', { exact: true })).toBeVisible()
@@ -267,7 +275,7 @@ test('deleting a project asks first, and keeps or erases the files as chosen', a
   let dialog = page.getByRole('dialog', { name: 'Delete this project?' })
   await dialog.getByRole('button', { name: 'Cancel' }).click()
   await expect(dialog).toBeHidden()
-  await expectHeading(page, 'Delete Keep Files')
+  await expectPanel(page, 'Delete Keep Files')
 
   // Plain delete: the project goes, its folder stays.
   await page.getByRole('button', { name: 'Delete project' }).click()

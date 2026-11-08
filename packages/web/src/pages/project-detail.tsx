@@ -1,4 +1,4 @@
-import { useNavigate, useParams } from '@solidjs/router'
+import { useNavigate } from '@solidjs/router'
 import { createEffect, createSignal, For, on, onCleanup, Show } from 'solid-js'
 import type { FileDto } from '../api/generated'
 import { api } from '../core/api/client'
@@ -87,10 +87,25 @@ const PREVIEW_ICON: Record<FileDto['previewState'], IconComponent> = {
  * reports one error message and reloads. While any preview is still pending the page refetches now
  * and then, so a thumbnail appears without a manual reload.
  */
-export default function ProjectDetailPage() {
-  const params = useParams<{ id: string }>()
+export function ProjectDetail(props: {
+  id: string
+  /**
+   * `page` is the whole frame, with a way back to the list. `panel` is the column beside the
+   * list, where the list *is* the way back, so it has a close instead.
+   */
+  variant?: 'page' | 'panel'
+  onClose?: () => void
+  /**
+   * Something changed that the list behind the panel shows: the name, the tags, whether it is
+   * archived, or the project itself going away.
+   *
+   * The panel does not replace the list any more, so a change made here has to reach it. On the
+   * old page this came free, because leaving it remounted the list.
+   */
+  onChanged?: () => void
+}) {
   const navigate = useNavigate()
-  const detail = createProjectDetail(() => params.id)
+  const detail = createProjectDetail(() => props.id)
 
   const [editing, setEditing] = createSignal(false)
   const [deleting, setDeleting] = createSignal(false)
@@ -110,7 +125,7 @@ export default function ProjectDetailPage() {
   // Handing a file to a slicer, where the shell can (the desktop app). The configuration is loaded
   // because the page needs the facts the shell reads: which products are bound, and the default.
   const slicerLaunch = createSlicerLaunch(
-    () => params.id,
+    () => props.id,
     () => capabilities.capabilities().canLaunchSlicer,
   )
   createEffect(
@@ -122,14 +137,14 @@ export default function ProjectDetailPage() {
 
   const uploads = createUploadQueue({
     upload: (file, onProgress) =>
-      api.files.uploadWithProgress(params.id, file.name, file, onProgress),
+      api.files.uploadWithProgress(props.id, file.name, file, onProgress),
     onFileDone: () => void detail.load(),
   })
 
   // Follow the route: a different project starts from nothing.
   createEffect(
     on(
-      () => params.id,
+      () => props.id,
       () => {
         detail.reset()
         void detail.load()
@@ -155,13 +170,18 @@ export default function ProjectDetailPage() {
 
   async function onTagsChange(next: string[]) {
     setTags(next)
-    if (!(await detail.setTags(next))) setTags(detail.detail()?.tags ?? [])
+    if (await detail.setTags(next)) props.onChanged?.()
+    else setTags(detail.detail()?.tags ?? [])
   }
 
   async function onDeleteProject() {
     setDeleteBusy(true)
     try {
-      if (await detail.deleteProject(deleteFiles())) navigate('/projects')
+      if (await detail.deleteProject(deleteFiles())) {
+        props.onChanged?.()
+        if (props.variant === 'panel') props.onClose?.()
+        else navigate('/projects')
+      }
     } finally {
       setDeleteBusy(false)
       setDeleting(false)
@@ -197,7 +217,7 @@ export default function ProjectDetailPage() {
 
   const listClass = () =>
     viewMode() === 'grid'
-      ? 'm-0 grid list-none grid-cols-2 gap-4 p-0 sm:grid-cols-3 lg:grid-cols-4'
+      ? 'm-0 grid list-none grid-cols-1 gap-4 p-0 @md:grid-cols-2 @3xl:grid-cols-3 @5xl:grid-cols-4'
       : 'm-0 flex list-none flex-col gap-2 p-0'
 
   const fileCard = (file: FileDto, folderMissing: boolean) => (
@@ -224,7 +244,7 @@ export default function ProjectDetailPage() {
           <>
             <Show when={file.kind === 'model'}>
               <IconLinkButton
-                href={`/projects/${params.id}/view/${file.id}`}
+                href={`/projects/${props.id}/view/${file.id}`}
                 icon={Eye}
                 label={`${t('projects.view')}: ${file.name}`}
                 size="sm"
@@ -292,7 +312,12 @@ export default function ProjectDetailPage() {
   )
 
   return (
-    <div class="flex flex-col gap-6">
+    /*
+     * A container, so everything inside sizes itself against *this column* rather than the
+     * window. In a 460px panel a `lg:grid-cols-4` file grid makes four hundred-pixel cards and
+     * clips their own buttons away; the viewport is 1280 and knows nothing about it.
+     */
+    <div class="@container flex flex-col gap-6">
       <Show
         when={!detail.loadError() || detail.detail()}
         fallback={
@@ -325,7 +350,17 @@ export default function ProjectDetailPage() {
             <>
               <PageHeader
                 title={project().name}
-                back={{ href: '/projects', label: t('projects.backToProjects') }}
+                level={props.variant === 'panel' ? 2 : 1}
+                back={
+                  props.variant === 'panel'
+                    ? undefined
+                    : { href: '/projects', label: t('projects.backToProjects') }
+                }
+                close={
+                  props.variant === 'panel'
+                    ? { label: t('common.close'), onClick: () => props.onClose?.() }
+                    : undefined
+                }
                 actions={
                   <>
                     <Button icon={Pencil} onClick={() => setEditing(true)}>
@@ -333,7 +368,11 @@ export default function ProjectDetailPage() {
                     </Button>
                     <Button
                       icon={project().isArchived ? ArchiveRestore : Archive}
-                      onClick={() => void detail.update({ isArchived: !project().isArchived })}
+                      onClick={() =>
+                        void detail
+                          .update({ isArchived: !project().isArchived })
+                          .then(() => props.onChanged?.())
+                      }
                     >
                       {project().isArchived ? t('projects.unarchive') : t('projects.archive')}
                     </Button>
@@ -402,7 +441,7 @@ export default function ProjectDetailPage() {
               </Show>
 
               <Card class="flex flex-col gap-5" padding="lg">
-                <div class="grid gap-5 sm:grid-cols-2">
+                <div class="grid gap-5 @2xl:grid-cols-2">
                   <div class="flex flex-col gap-1">
                     <Text variant="label">{t('projects.website')}</Text>
                     <Show when={project().website} fallback={<Text variant="muted">&ndash;</Text>}>
@@ -569,7 +608,7 @@ export default function ProjectDetailPage() {
               {/* Beside the launch control, narrowed to this project (plus any orphan, which has to
                   be offered somewhere): the files a slicer still has, and what to do about them. */}
               <Show when={slicerLaunch.available()}>
-                <SlicerSessionsCard projectId={params.id} onImported={() => void detail.load()} />
+                <SlicerSessionsCard projectId={props.id} onImported={() => void detail.load()} />
               </Show>
 
               <ProjectFormDialog
@@ -588,6 +627,8 @@ export default function ProjectDetailPage() {
                     website: values.website === '' ? null : values.website,
                     notes: values.notes.trim() === '' ? null : values.notes,
                   })
+                  // The name is on the card behind this panel.
+                  props.onChanged?.()
                 }}
               />
             </>

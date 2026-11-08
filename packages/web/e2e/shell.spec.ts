@@ -33,7 +33,7 @@ test('the brand names the app and the icon assets are served at the site root', 
   await expect(brand).toHaveCount(1)
   await expect(brand).toHaveAttribute('href', '/projects')
   // The mark is decorative: the link's own text names the app, so it must not add a second name.
-  await expect(brand.locator('svg')).toHaveAttribute('aria-hidden', 'true')
+  await expect(brand.locator('img')).toHaveAttribute('aria-hidden', 'true')
 
   const responses = await Promise.all(
     [

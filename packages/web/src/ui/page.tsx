@@ -1,8 +1,9 @@
 import { Show, type JSX } from 'solid-js'
 import { Dynamic } from 'solid-js/web'
 import { LinkButton } from './button'
+import { IconButton } from './icon-button'
 import { cx } from './cx'
-import { ArrowLeft, type IconComponent } from './icons'
+import { ArrowLeft, X, type IconComponent } from './icons'
 
 /** Nothing here yet, or nothing found: an icon, a sentence, and the way forward. */
 export function EmptyState(props: {
@@ -61,6 +62,13 @@ export function PageHeader(props: {
   description?: JSX.Element
   actions?: JSX.Element
   back?: { href: string; label: string }
+  /** A way out that is not a navigation: the detail panel's close, beside the title. */
+  close?: { label: string; onClick: () => void }
+  /**
+   * 1 for a page, 2 for a header inside one — the detail panel beside the project list, whose
+   * page already has the `<h1>`. Two `<h1>`s on a screen is two answers to "what is this".
+   */
+  level?: 1 | 2
   class?: string
 }) {
   return (
@@ -78,11 +86,29 @@ export function PageHeader(props: {
           </LinkButton>
         )}
       </Show>
-      <div class="flex flex-wrap items-center justify-between gap-x-4 gap-y-3">
-        <div class="flex min-w-0 flex-col gap-1">
-          <h1 class="text-2xl font-semibold tracking-tight text-fg">{props.title}</h1>
-          <Show when={props.description}>
-            <p class="text-sm text-fg-muted">{props.description}</p>
+      <div class="flex flex-wrap items-start justify-between gap-x-4 gap-y-3">
+        {/*
+          The close sits on the title's line, not after the actions: in a narrow panel the
+          actions wrap, and a close pushed along with them ends up stranded on a row of its own.
+        */}
+        <div class="flex min-w-0 flex-1 items-start gap-3">
+          <div class="flex min-w-0 flex-col gap-1">
+            <Dynamic
+              component={`h${props.level ?? 1}`}
+              class="text-2xl font-semibold tracking-tight text-fg"
+            >
+              {props.title}
+            </Dynamic>
+            <Show when={props.description}>
+              <p class="text-sm text-fg-muted">{props.description}</p>
+            </Show>
+          </div>
+          <Show when={props.close}>
+            {(close) => (
+              <span class="ml-auto shrink-0">
+                <IconButton icon={X} label={close().label} onClick={() => close().onClick()} />
+              </span>
+            )}
           </Show>
         </div>
         <Show when={props.actions}>

@@ -66,3 +66,16 @@ export const settingsSaved = (page: Page) =>
 /** Asserts a heading of the given level and name is on the page: "the page has arrived". */
 export const expectHeading = (page: Page, name: string | RegExp, level = 1) =>
   expect(page.getByRole('heading', { name, level })).toBeVisible()
+
+/**
+ * The project detail, which is a panel beside the list rather than a page of its own.
+ *
+ * Everything about one project is scoped to it: the project's name is also on its card in the
+ * list behind the panel, so an unscoped `getByRole('heading', ...)` now finds two.
+ */
+export const detailPanel = (page: Page) =>
+  page.getByRole('complementary', { name: 'Project details' })
+
+/** Asserts the panel has arrived for this project. */
+export const expectPanel = (page: Page, name: string | RegExp) =>
+  expect(detailPanel(page).getByRole('heading', { name, level: 2 })).toBeVisible()

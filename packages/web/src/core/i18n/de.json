@@ -119,7 +119,9 @@
     "uploadMissingFolder": "Solange der Projektordner fehlt, können keine Dateien hinzugefügt werden.",
     "noNotes": "Noch keine Notizen",
     "tagsHint": "Drücken Sie die Eingabetaste, um ein Schlagwort hinzuzufügen.",
-    "detailsTitle": "Details"
+    "detailsTitle": "Details",
+    "panelWidth": "Breite des Projektbereichs",
+    "detailPanel": "Projektdetails"
   },
   "import": {
     "title": "Import",

@@ -1,5 +1,13 @@
 import { expect, test, type Browser, type Page } from '@playwright/test'
-import { asAdmin, expectHeading, open, sidebarNav, signInThroughForm, useServer } from './support'
+import {
+  asAdmin,
+  expectHeading,
+  open,
+  sidebarNav,
+  signInThroughForm,
+  useServer,
+  expectPanel,
+} from './support'
 
 const state = useServer()
 
@@ -150,7 +158,7 @@ test('a created user follows their link, signs in, hits their quota, and the adm
     await user.getByRole('button', { name: 'New project' }).first().click()
     await user.getByRole('dialog').getByLabel('Name').fill('Quota Project')
     await user.getByRole('button', { name: 'Create project' }).click()
-    await expectHeading(user, 'Quota Project')
+    await expectPanel(user, 'Quota Project')
 
     const choose = (name: string, buffer: Buffer) =>
       user.locator('input[type="file"]').setInputFiles([{ name, mimeType: 'text/plain', buffer }])

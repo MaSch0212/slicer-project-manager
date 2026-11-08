@@ -93,13 +93,17 @@ test('the page scrolls inside the frame, and the sidebar does not move with it',
 
   const geometry = () =>
     page.evaluate(() => {
+      // Whichever element actually scrolls: the page decides that, not this test.
+      let scroller: HTMLElement | null = document.querySelector('main ul')
+      while (scroller && scroller.scrollHeight - scroller.clientHeight < 2) {
+        scroller = scroller.parentElement
+      }
       const aside = document.querySelector('aside')!.getBoundingClientRect()
-      const main = document.querySelector('main')!
       return {
         documentScroll: document.documentElement.scrollHeight - window.innerHeight,
         windowScrollY: window.scrollY,
-        mainScrollTop: main.scrollTop,
-        mainOverflow: main.scrollHeight - main.clientHeight,
+        scrollerTop: scroller?.scrollTop ?? 0,
+        scrollerOverflow: scroller ? scroller.scrollHeight - scroller.clientHeight : 0,
         asideTop: aside.top,
         asideHeight: aside.height,
         viewport: window.innerHeight,
@@ -108,10 +112,12 @@ test('the page scrolls inside the frame, and the sidebar does not move with it',
 
   const scrolled = await geometry()
   // The content is what scrolled, and it is genuinely longer than the frame...
-  expect(scrolled.mainOverflow).toBeGreaterThan(scrolled.viewport)
-  expect(scrolled.mainScrollTop).toBeGreaterThan(0)
+  expect(scrolled.scrollerOverflow).toBeGreaterThan(scrolled.viewport)
+  expect(scrolled.scrollerTop).toBeGreaterThan(0)
   // ...while the document itself does not scroll at all, which is what keeps the scrollbar out
-  // of the window bar.
+  // of the window bar. A `sr-only` line is `position: absolute`, so without a positioned
+  // ancestor it lands at the foot of the *document* and gives the window a scrollbar of its own:
+  // this is the assertion that catches that.
   expect(scrolled.documentScroll).toBe(0)
   expect(scrolled.windowScrollY).toBe(0)
   // The sidebar is beside the scroller, not inside it: it never moves and never grows past the

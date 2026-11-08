@@ -1,7 +1,7 @@
 import { expect, test, type Locator, type Page } from '@playwright/test'
 import { binaryStl, cube, obj, paddedObj, stepStub, threeMf, cylinder } from './fixtures'
 import { seedLibrary, type SeededProject, type SeedProject } from './seed'
-import { asAdmin, expectHeading, open, useServer } from './support'
+import { asAdmin, expectHeading, open, useServer, expectPanel } from './support'
 
 /**
  * The viewer, in a real browser: pixels reach the screen, the three formats draw, the stage reads
@@ -257,6 +257,13 @@ const viewerUrl = (name: string, file: string) =>
   `/projects/${project(name).id}/view/${project(name).fileIds[file]}`
 
 /** Opens one file in the viewer and waits for a model to be on the stage. */
+/** Opens a model from the project panel: a card further down it has to be scrolled to first. */
+async function openModelCard(page: Page, file: string) {
+  const link = page.getByRole('link', { name: `View in 3D: ${file}` })
+  await link.scrollIntoViewIfNeeded()
+  await link.click()
+}
+
 async function openInViewer(page: Page, name: string, file: string): Promise<Locator> {
   await open(page, state.server, viewerUrl(name, file))
   const stage = page.getByRole('img', { name: CANVAS_LABEL })
@@ -413,8 +420,8 @@ test('a model opens in the opening view even if the stage was dragged while it l
     await route.continue()
   })
   await page.getByRole('link', { name: BACK }).click()
-  await expectHeading(page, MODELS)
-  await page.getByRole('link', { name: 'View in 3D: cube.stl' }).click()
+  await expectPanel(page, MODELS)
+  await openModelCard(page, 'cube.stl')
 
   // The stage is up and live before the model is: that is the window this test exists for.
   await expect(page.locator('canvas')).toBeVisible()
@@ -510,12 +517,12 @@ test('a file that cannot be read as a model says so, and a missing file says it 
 
 test('the viewer is reached from a model card and returns to its project', async ({ page }) => {
   await open(page, state.server, `/projects/${project(MODELS).id}`)
-  await expectHeading(page, MODELS)
-  await page.getByRole('link', { name: 'View in 3D: cube.obj' }).click()
+  await expectPanel(page, MODELS)
+  await openModelCard(page, 'cube.obj')
   await expect(page.getByRole('img', { name: CANVAS_LABEL })).toBeVisible({ timeout: 30_000 })
   await expectHeading(page, 'cube.obj')
   await page.getByRole('link', { name: BACK }).click()
-  await expectHeading(page, MODELS)
+  await expectPanel(page, MODELS)
 })
 
 /**
@@ -564,12 +571,12 @@ test('twenty trips through the viewer do not accumulate WebGL contexts', async (
   })
 
   await open(page, state.server, `/projects/${project(MODELS).id}`)
-  await expectHeading(page, MODELS)
+  await expectPanel(page, MODELS)
   for (let trip = 0; trip < TRIPS; trip++) {
-    await page.getByRole('link', { name: 'View in 3D: cube.stl' }).click()
+    await openModelCard(page, 'cube.stl')
     await expect(page.getByRole('img', { name: CANVAS_LABEL })).toBeVisible({ timeout: 30_000 })
     await page.getByRole('link', { name: BACK }).click()
-    await expectHeading(page, MODELS)
+    await expectPanel(page, MODELS)
   }
 
   // Released as well as created, and the last one too: leaving the viewer is what releases it, and
