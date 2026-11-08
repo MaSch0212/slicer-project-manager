@@ -4,7 +4,6 @@ import { errorMessage } from '../core/i18n/errors'
 import { notify } from '../core/notify'
 import { settings } from '../core/stores'
 import {
-  Card,
   LayoutGrid,
   List,
   Monitor,
@@ -47,7 +46,7 @@ export function AppearanceSection() {
   }
 
   return (
-    <Card padding="lg" class="flex flex-col gap-5">
+    <div class="flex flex-col gap-5">
       <SettingRow label={t('settings.language')}>
         <Select<Language>
           aria-label={t('settings.language')}
@@ -91,6 +90,6 @@ export function AppearanceSection() {
           onChange={(navCollapsed) => void save({ navCollapsed })}
         />
       </SettingRow>
-    </Card>
+    </div>
   )
 }

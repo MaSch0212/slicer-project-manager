@@ -59,11 +59,12 @@ export const navEntries = createRoot(() =>
 /**
  * The routes that want the whole frame rather than the shell's centred column.
  *
- * `/browse` is the only one: its page is a placeholder for a native view that is laid over the
- * window, and a letterboxed rectangle in the middle of the page was the thing that made it look
- * like a web page pretending to be a browser.
+ * `/browse` is a placeholder for a native view laid over the window, and a letterboxed
+ * rectangle in the middle of the page was the thing that made it look like a web page
+ * pretending to be a browser. `/settings` owns its scrolling too: its section menu is a column
+ * beside the content, which only works if the content is what scrolls.
  */
-const FULL_BLEED: readonly string[] = ['/browse']
+const FULL_BLEED: readonly string[] = ['/browse', '/settings']
 
 /** Whether this path is one of them. */
 export function isFullBleed(path: string): boolean {

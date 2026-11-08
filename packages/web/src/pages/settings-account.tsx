@@ -11,7 +11,7 @@ import {
   validateProfile,
   type FieldErrors,
 } from '../core/validation'
-import { Button, Card, Divider, FormField, Heading, Input } from '../ui'
+import { Button, Divider, FormField, Heading, Input } from '../ui'
 
 /**
  * The signed-in user's own account: display name and password. Shown only where there is a session
@@ -21,11 +21,11 @@ import { Button, Card, Divider, FormField, Heading, Input } from '../ui'
  */
 export function AccountSection() {
   return (
-    <Card padding="lg" class="flex flex-col gap-5">
+    <div class="flex flex-col gap-5">
       <ProfileForm />
       <Divider />
       <PasswordForm />
-    </Card>
+    </div>
   )
 }
 

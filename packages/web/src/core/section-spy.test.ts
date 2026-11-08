@@ -1,36 +1,35 @@
 import { describe, expect, it } from 'vitest'
-import { pickActive } from './section-spy'
+import { activeSection, type SectionBox } from './section-spy'
 
 /**
- * The rule the settings menu follows. It is tested apart from the observer because jsdom has no
- * layout engine: what crosses the band is the browser's answer, and this is what we do with it.
+ * The rule the settings menu follows. It is tested apart from the measuring because jsdom has no
+ * layout engine: where each section sits is the browser's answer, and this is what we do with it.
  */
-describe('pickActive', () => {
-  const order = ['appearance', 'library', 'account', 'slicers', 'import']
+describe('activeSection', () => {
+  const at = (...tops: number[]): SectionBox[] =>
+    tops.map((top, index) => ({ id: `s${index}`, top }))
 
-  it('takes the first in document order, not the first the observer reported', () => {
-    // A short section scrolling past a tall one must not steal the mark from it.
-    expect(pickActive(order, new Set(['slicers', 'account']), null)).toBe('account')
+  it('takes the section crossing the middle of the view', () => {
+    // The view is 600 tall, so the middle is 300: s1 starts above it and s2 below.
+    expect(activeSection(at(-200, 100, 500), 600, false)).toBe('s1')
   })
 
-  it('keeps the last answer while nothing is crossing the band', () => {
-    // A section taller than the band, or a scroll between two: blanking here makes the menu
-    // flicker on every long section.
-    expect(pickActive(order, new Set(), 'slicers')).toBe('slicers')
+  it('takes the one above when the middle falls in the gap between two', () => {
+    expect(activeSection(at(-400, -50, 420), 600, false)).toBe('s1')
   })
 
-  it('falls back to the first section when there is no last answer', () => {
-    expect(pickActive(order, new Set(), null)).toBe('appearance')
+  it('takes the first while the page is still at the top', () => {
+    expect(activeSection(at(0, 700, 1400), 600, false)).toBe('s0')
   })
 
-  it('drops a remembered section that is no longer on the page', () => {
-    // Slicers disappears when the shell cannot configure them; a menu still pointing at it would
-    // mark an entry that is not there.
-    expect(pickActive(['appearance', 'import'], new Set(), 'slicers')).toBe('appearance')
+  it('takes the last at the end of the scroll, however short it is', () => {
+    // A last section too short to ever reach the middle would otherwise be unreachable in the
+    // menu: scrolled to the floor, it is what the reader is looking at.
+    expect(activeSection(at(-900, -400, 560), 600, true)).toBe('s2')
   })
 
-  it('answers null for a page with no sections at all', () => {
-    expect(pickActive([], new Set(), null)).toBeNull()
-    expect(pickActive([], new Set(), 'slicers')).toBeNull()
+  it('answers null for a page with no sections', () => {
+    expect(activeSection([], 600, false)).toBeNull()
+    expect(activeSection([], 600, true)).toBeNull()
   })
 })

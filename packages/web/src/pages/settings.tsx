@@ -4,7 +4,7 @@ import { isDesktop } from '../core/desktop'
 import { t, type TranslationKey } from '../core/i18n'
 import { createSectionSpy } from '../core/section-spy'
 import { auth, capabilities } from '../core/stores'
-import { Card, PageHeader, PageSection, SectionNav } from '../ui'
+import { SettingsFrame, SettingsSection } from '../ui'
 import { ImportPanel } from './import-panel'
 import { AccountSection } from './settings-account'
 import { AppearanceSection } from './settings-appearance'
@@ -70,11 +70,7 @@ const SECTIONS: readonly Section[] = [
     titleKey: 'settings.importTitle',
     descriptionKey: 'settings.importLead',
     available: () => true,
-    render: () => (
-      <Card padding="lg">
-        <ImportPanel />
-      </Card>
-    ),
+    render: () => <ImportPanel />,
   },
 ]
 
@@ -101,30 +97,28 @@ export default function SettingsPage() {
   })
 
   return (
-    <div class="flex flex-col gap-6">
-      <PageHeader title={t('settings.title')} />
-      <div class="flex flex-col gap-6 md:flex-row md:gap-10">
-        <SectionNav
-          label={t('settings.sections')}
-          items={visible().map((section) => ({ id: section.id, label: t(section.labelKey) }))}
-          active={spy.active()}
-          onSelect={(id) => spy.scrollTo(id)}
-        />
-        <div class="flex min-w-0 flex-1 flex-col gap-10">
-          <For each={visible()}>
-            {(section) => (
-              <PageSection
-                id={section.id}
-                ref={spy.observe(section.id)}
-                title={t(section.titleKey)}
-                description={t(section.descriptionKey)}
-              >
-                {section.render()}
-              </PageSection>
-            )}
-          </For>
-        </div>
-      </div>
-    </div>
+    <SettingsFrame
+      title={t('settings.title')}
+      navLabel={t('settings.sections')}
+      items={visible().map((section) => ({ id: section.id, label: t(section.labelKey) }))}
+      active={spy.active()}
+      onSelect={(id) => spy.scrollTo(id)}
+      scrollRef={spy.attach}
+      onScroll={spy.onScroll}
+      onScrollEnd={spy.onScrollEnd}
+    >
+      <For each={visible()}>
+        {(section) => (
+          <SettingsSection
+            id={section.id}
+            ref={spy.observe(section.id)}
+            title={t(section.titleKey)}
+            description={t(section.descriptionKey)}
+          >
+            {section.render()}
+          </SettingsSection>
+        )}
+      </For>
+    </SettingsFrame>
   )
 }

@@ -205,7 +205,7 @@ beforeEach(async () => {
 describe('SlicersSection', () => {
   // Spec G 6: this is a section of the settings page, rendered into that page's frame. A second
   // `<main>` would be invalid and an `<h1>` a second top-level heading; the settings page owns
-  // both, and its `PageSection` owns the `<h2>` over this.
+  // both, and the settings page's own section frame owns the `<h2>` over this.
   it('brings no landmark and no heading above its products', async () => {
     await setup()
 

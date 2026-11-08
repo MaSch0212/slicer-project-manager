@@ -18,8 +18,8 @@ import {
   IconButton,
   Plus,
   RefreshCw,
-  SectionCard,
   Select,
+  SettingsGroup,
   Spinner,
   Text,
   Trash2,
@@ -231,11 +231,7 @@ export function SlicersSection(props: { client?: DesktopClient }) {
       >
         {(config) => (
           <>
-            <SectionCard
-              level={3}
-              title={t('slicers.defaultTitle')}
-              description={t('slicers.defaultLead')}
-            >
+            <SettingsGroup title={t('slicers.defaultTitle')} description={t('slicers.defaultLead')}>
               <Show
                 when={defaults().length > 0}
                 fallback={<Text variant="muted">{t('slicers.defaultNone')}</Text>}
@@ -264,7 +260,7 @@ export function SlicersSection(props: { client?: DesktopClient }) {
                   </Button>
                 </div>
               </Show>
-            </SectionCard>
+            </SettingsGroup>
 
             <Accordion entries={entries()} defaultValue={initiallyOpen()} />
           </>

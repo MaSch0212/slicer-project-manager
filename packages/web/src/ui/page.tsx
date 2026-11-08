@@ -53,37 +53,6 @@ export function Skeleton(props: { class?: string; circle?: boolean }) {
 }
 
 /**
- * One titled block of a long page, and the thing a section menu scrolls to.
- *
- * `scroll-mt` is what keeps the heading clear of the sticky chrome when it is scrolled to; without
- * it the browser puts the heading exactly under the window bar.
- */
-export function PageSection(props: {
-  id?: string
-  ref?: (element: HTMLElement) => void
-  title: JSX.Element
-  description?: JSX.Element
-  class?: string
-  children: JSX.Element
-}) {
-  return (
-    <section
-      id={props.id}
-      ref={props.ref}
-      class={cx('flex scroll-mt-24 flex-col gap-4', props.class)}
-    >
-      <div class="flex flex-col gap-1">
-        <h2 class="text-lg font-semibold tracking-tight text-fg">{props.title}</h2>
-        <Show when={props.description}>
-          <p class="text-sm text-fg-muted">{props.description}</p>
-        </Show>
-      </div>
-      {props.children}
-    </section>
-  )
-}
-
-/**
  * The top of a page: title, optional description, actions on the right, and an optional way back.
  * Every routed page starts with one, so titles look the same everywhere.
  */

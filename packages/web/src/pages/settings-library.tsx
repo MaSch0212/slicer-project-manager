@@ -3,7 +3,7 @@ import { createResource, createSignal, Show } from 'solid-js'
 import { desktop, type DesktopClient } from '../core/desktop'
 import { t } from '../core/i18n'
 import { notify } from '../core/notify'
-import { Button, Card, FolderOpen, Globe, SettingRow, Text } from '../ui'
+import { Button, FolderOpen, Globe, SettingRow, Text } from '../ui'
 
 /**
  * Where the library lives, on the desktop (subsystem G 6.1): the folder or the server that is open
@@ -45,7 +45,7 @@ export function LibraryLocation(props: { client?: DesktopClient }) {
   }
 
   return (
-    <Card padding="lg" class="flex flex-col gap-5">
+    <div class="flex flex-col gap-5">
       <Show when={state()}>
         {(current) => (
           <>
@@ -90,6 +90,6 @@ export function LibraryLocation(props: { client?: DesktopClient }) {
           </>
         )}
       </Show>
-    </Card>
+    </div>
   )
 }
