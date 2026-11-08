@@ -81,24 +81,37 @@ beforeEach(async () => {
   Object.assign(navigator, { clipboard: { writeText: vi.fn().mockResolvedValue(undefined) } })
 })
 
-// Ported from settings.page.spec.ts: the tab strip is a navigation control driven by capabilities.
-describe('SettingsPage tabs', () => {
-  it('offers General alone where the shell cannot configure slicers', async () => {
+/**
+ * Ported from settings.page.spec.ts, which tested a tab strip. There are no tabs now: settings is
+ * one scrolling page, and the menu beside it is built from the sections that rendered — so the
+ * test is the same question asked of the menu. A section the shell cannot offer is absent from
+ * both, which is the property worth pinning: a menu entry that scrolled to nothing would be worse
+ * than no entry.
+ */
+describe('SettingsPage sections', () => {
+  const menuEntries = () =>
+    within(screen.getByRole('navigation', { name: 'Settings sections' }))
+      .getAllByRole('button')
+      .map((button) => button.textContent)
+
+  it('leaves Slicers out where the shell cannot configure them', async () => {
     await boot()
     renderAt('/settings')
     expect(await screen.findByRole('heading', { name: 'Settings', level: 1 })).toBeTruthy()
-    const tabs = screen.getAllByRole('tab')
-    expect(tabs.map((tab) => tab.textContent)).toEqual(['General'])
-    expect(tabs[0]!.getAttribute('aria-selected')).toBe('true')
+
+    expect(menuEntries()).toEqual(['Appearance', 'Account', 'Import'])
+    expect(screen.queryByRole('heading', { name: 'Slicers', level: 2 })).toBeNull()
   })
 
-  it('offers General and Slicers where it can, and the Slicers tab navigates', async () => {
+  it('offers Slicers where it can, as a section of the same page', async () => {
     await boot({ canConfigureSlicers: true })
     renderAt('/settings')
-    const tabs = await screen.findAllByRole('tab')
-    expect(tabs.map((tab) => tab.textContent)).toEqual(['General', 'Slicers'])
-    fireEvent.click(screen.getByRole('tab', { name: 'Slicers' }))
-    await screen.findByText('slicers page')
+    await screen.findByRole('heading', { name: 'Settings', level: 1 })
+
+    expect(menuEntries()).toEqual(['Appearance', 'Account', 'Slicers', 'Import'])
+    // Not a link and not a route: the heading it leads to is already on this page.
+    expect(screen.getByRole('heading', { name: 'Slicers', level: 2 })).toBeTruthy()
+    expect(screen.queryAllByRole('link', { name: 'Slicers' })).toHaveLength(0)
   })
 })
 

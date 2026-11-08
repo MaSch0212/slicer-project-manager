@@ -11,19 +11,21 @@ import {
   validateProfile,
   type FieldErrors,
 } from '../core/validation'
-import { Button, Divider, FormField, Heading, Input, SectionCard } from '../ui'
+import { Button, Card, Divider, FormField, Heading, Input } from '../ui'
 
 /**
  * The signed-in user's own account: display name and password. Shown only where there is a session
  * (a shell that signs nobody in has no account to edit, and the server has no password route).
+ *
+ * The heading above it belongs to the settings page's Account section, not to this card.
  */
 export function AccountSection() {
   return (
-    <SectionCard title={t('settings.accountTitle')} description={t('settings.accountLead')}>
+    <Card padding="lg" class="flex flex-col gap-5">
       <ProfileForm />
       <Divider />
       <PasswordForm />
-    </SectionCard>
+    </Card>
   )
 }
 

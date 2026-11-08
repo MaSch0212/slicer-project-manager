@@ -1,5 +1,5 @@
 import { createMemoryHistory, MemoryRouter, Route } from '@solidjs/router'
-import { fireEvent, render, screen, waitFor } from '@solidjs/testing-library'
+import { fireEvent, render, screen, waitFor, within } from '@solidjs/testing-library'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   DETECTION_FAILED,
@@ -12,11 +12,16 @@ import type { DesktopClient } from '../core/desktop'
 import en from '../core/i18n/en.json'
 import { setLanguage } from '../core/i18n'
 import { capabilities } from '../core/stores'
-import SlicersPage from './slicers'
+import { SlicersSection } from './settings-slicers'
 
 /**
  * The slicers installed on this machine, and which install of each product the app launches. A port
  * of the Angular `DesktopSlicersPage` spec, case for case, against the same `SlicerConfigDto`s.
+ *
+ * Each product is an accordion now, and only a product you have to decide about starts open, so
+ * `setup` opens the rest: these cases are about what the rows say, not about what is folded away.
+ * Opening is a one-off — the open set is keyed by product id and the products never change, so a
+ * rescan or a bind leaves everything the test opened still open.
  *
  * The two Curas are the two installs the developer's own machine really has, from the detection
  * run: they are the whole reason this page exists in the shape it does (one `SlicerId`, two
@@ -150,18 +155,26 @@ function fakeSlicers(config: SlicerConfigDto, overrides: Partial<Slicers> = {}):
   }
 }
 
+/** Opens every shut accordion. The triggers are the only expandable buttons in this section. */
+function expandAll() {
+  for (const trigger of screen.queryAllByRole('button', { expanded: false })) {
+    fireEvent.click(trigger)
+  }
+}
+
 async function setup(config: SlicerConfigDto = TWO_CURAS, overrides: Partial<Slicers> = {}) {
   const slicers = fakeSlicers(config, overrides)
   const client = { slicers } as unknown as DesktopClient
   const history = createMemoryHistory()
-  history.set({ value: '/settings/slicers' })
+  history.set({ value: '/settings' })
   render(() => (
     <MemoryRouter history={history}>
-      <Route path="/settings/slicers" component={() => <SlicersPage client={client} />} />
+      <Route path="/settings" component={() => <SlicersSection client={client} />} />
     </MemoryRouter>
   ))
   // The first load is what puts the products on the page.
-  await screen.findByRole('heading', { name: 'UltiMaker Cura', level: 2 })
+  await screen.findByRole('heading', { name: /UltiMaker Cura/, level: 3 })
+  expandAll()
   return { slicers }
 }
 
@@ -189,18 +202,59 @@ beforeEach(async () => {
   vi.spyOn(capabilities, 'capabilities').mockReturnValue(CAPS)
 })
 
-describe('SlicersPage', () => {
-  // Spec G 6: this is the Slicers *tab* of the settings page, rendered into that page's frame. A
-  // second `<main>` would be invalid and a second `<h1>` a second top-level heading; the settings
-  // frame around it owns both.
-  it('brings no landmark and no top-level heading of its own', async () => {
+describe('SlicersSection', () => {
+  // Spec G 6: this is a section of the settings page, rendered into that page's frame. A second
+  // `<main>` would be invalid and an `<h1>` a second top-level heading; the settings page owns
+  // both, and its `PageSection` owns the `<h2>` over this.
+  it('brings no landmark and no heading above its products', async () => {
     await setup()
 
     expect(document.querySelectorAll('main')).toHaveLength(0)
-    expect(document.querySelectorAll('h1')).toHaveLength(1)
-    expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Settings')
-    // Not vacuous by way of an empty page: the lead it does own is still there.
-    expect(pageText()).toContain(en.slicers.lead)
+    expect(document.querySelectorAll('h1')).toHaveLength(0)
+    expect(document.querySelectorAll('h2')).toHaveLength(0)
+    // Not vacuous by way of an empty section: the products are there, each heading its own card.
+    expect(screen.getAllByRole('heading', { level: 3 }).length).toBeGreaterThan(0)
+  })
+
+  // The line a shut card shows has to answer the question the card would answer, or folding the
+  // products away has cost the user the one fact they came for.
+  it('says on the shut card which install a settled product launches', async () => {
+    const bound = { ...TWO_CURAS, bindings: { cura: CURA_513.id } }
+    const slicers = fakeSlicers(bound)
+    const client = { slicers } as unknown as DesktopClient
+    const history = createMemoryHistory()
+    history.set({ value: '/settings' })
+    render(() => (
+      <MemoryRouter history={history}>
+        <Route path="/settings" component={() => <SlicersSection client={client} />} />
+      </MemoryRouter>
+    ))
+    const heading = await screen.findByRole('heading', { name: /UltiMaker Cura/, level: 3 })
+    const header = within(heading).getByRole('button')
+
+    // Shut, because nothing has to be decided about it.
+    expect(header.getAttribute('aria-expanded')).toBe('false')
+    expect(header.textContent).toContain('5.13.0')
+    expect(header.textContent).toContain(en.slicers.badgeActive)
+  })
+
+  // The two-Cura case is the one thing on this page the user *must* act on.
+  it('starts the one product that needs a decision open, and the others shut', async () => {
+    const slicers = fakeSlicers(TWO_CURAS)
+    const client = { slicers } as unknown as DesktopClient
+    const history = createMemoryHistory()
+    history.set({ value: '/settings' })
+    render(() => (
+      <MemoryRouter history={history}>
+        <Route path="/settings" component={() => <SlicersSection client={client} />} />
+      </MemoryRouter>
+    ))
+    const heading = await screen.findByRole('heading', { name: /UltiMaker Cura/, level: 3 })
+    const cura = within(heading).getByRole('button')
+
+    expect(cura.getAttribute('aria-expanded')).toBe('true')
+    expect(cura.textContent).toContain(en.slicers.badgeChoose)
+    expect(screen.queryAllByRole('button', { expanded: false }).length).toBeGreaterThan(0)
   })
 
   describe('two installs of one product', () => {
@@ -526,10 +580,10 @@ describe('SlicersPage', () => {
       const slicers = fakeSlicers(NOTHING_FOUND, { get: vi.fn().mockRejectedValue(error) })
       const client = { slicers } as unknown as DesktopClient
       const history = createMemoryHistory()
-      history.set({ value: '/settings/slicers' })
+      history.set({ value: '/settings' })
       render(() => (
         <MemoryRouter history={history}>
-          <Route path="/settings/slicers" component={() => <SlicersPage client={client} />} />
+          <Route path="/settings" component={() => <SlicersSection client={client} />} />
         </MemoryRouter>
       ))
       await screen.findByRole('alert')
@@ -725,34 +779,7 @@ describe('SlicersPage', () => {
 
 // Re-expressed from the Electron suite's `slicers.spec.ts` (which drove the real window): the same
 // two user-visible flows, over the real page and a fake shell client.
-describe('the Slicers tab, end to end', () => {
-  it('has the tab strip above the slicers, with Slicers selected, and General one click away', async () => {
-    const slicers = fakeSlicers(TWO_CURAS)
-    const client = { slicers } as unknown as DesktopClient
-    const history = createMemoryHistory()
-    history.set({ value: '/settings/slicers' })
-    render(() => (
-      <MemoryRouter history={history}>
-        <Route path="/settings" component={() => <p>general tab</p>} />
-        <Route path="/settings/slicers" component={() => <SlicersPage client={client} />} />
-      </MemoryRouter>
-    ))
-    await screen.findByRole('heading', { name: 'UltiMaker Cura', level: 2 })
-
-    const tabs = screen.getAllByRole('tab')
-    expect(tabs.map((tab) => tab.textContent)).toEqual(['General', 'Slicers'])
-    expect(screen.getByRole('tab', { name: 'Slicers' }).getAttribute('aria-selected')).toBe('true')
-    // The strip is above the rows: the first tab precedes the first product in the document.
-    expect(
-      tabs[0]!.compareDocumentPosition(screen.getByRole('heading', { name: 'UltiMaker Cura' })) &
-        Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy()
-
-    fireEvent.click(screen.getByRole('tab', { name: 'General' }))
-    await screen.findByText('general tab')
-    expect(history.get()).toBe('/settings')
-  })
-
+describe('the Slicers section, end to end', () => {
   it('stacks two installs of one product, chooses neither, and stops asking once one is chosen', async () => {
     const bound = { ...TWO_CURAS, bindings: { cura: CURA_513.id } }
     await setup(TWO_CURAS, { bind: vi.fn().mockResolvedValue(bound) })

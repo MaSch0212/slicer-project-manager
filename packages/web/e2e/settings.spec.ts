@@ -157,18 +157,24 @@ test('collapsing the navigation keeps every name, and survives a reload', async 
   await expect.poll(width).toBe(expanded)
 })
 
-test('the web build has no Slicers tab, and its route sends you back to the projects', async ({
+test('the web build has no Slicers section, and its old route lands on the settings page', async ({
   page,
 }) => {
   await settingsPage(page)
-  await expect(page.getByRole('tab')).toHaveCount(1)
-  await expect(page.getByRole('tab', { name: 'General' })).toHaveAttribute('aria-selected', 'true')
-  await expect(page.getByRole('tab', { name: 'Slicers' })).toHaveCount(0)
+  const menu = page.getByRole('navigation', { name: 'Settings sections' })
+  await expect(menu.getByRole('button')).toHaveText(['Appearance', 'Account', 'Import'])
+  await expect(page.getByRole('heading', { name: 'Slicers', level: 2 })).toHaveCount(0)
   // Desktop-only sections are not drawn for a browser either.
   await expect(page.getByText('Where your library is')).toHaveCount(0)
 
+  // The section menu scrolls; it does not navigate, so the address never changes.
+  await menu.getByRole('button', { name: 'Import' }).click()
+  await expect(page).toHaveURL(`${state.server.origin}/settings`)
+  await expect(page.getByRole('heading', { name: 'Import a library', level: 2 })).toBeVisible()
+
+  // Slicers was its own page once. The link still lands somewhere sensible.
   await open(page, state.server, '/settings/slicers')
-  await expect(page).toHaveURL(`${state.server.origin}/projects`)
+  await expect(page).toHaveURL(`${state.server.origin}/settings`)
 })
 
 test('the display name is saved and is still there after a reload', async ({ page }) => {

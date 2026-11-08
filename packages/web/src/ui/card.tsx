@@ -1,4 +1,5 @@
 import { Show, splitProps, type ComponentProps, type JSX } from 'solid-js'
+import { Dynamic } from 'solid-js/web'
 import { cx } from './cx'
 
 export type CardPadding = 'none' | 'md' | 'lg'
@@ -38,13 +39,24 @@ export function Card(
 export function SectionCard(props: {
   title: JSX.Element
   description?: JSX.Element
+  /**
+   * The heading level. 2 for a card that is a top-level block of its page; 3 for one inside a
+   * `PageSection`, whose own heading is the 2. Wrong here means a screen reader's outline of the
+   * page says the wrong thing, so it is a prop rather than a fixed tag.
+   */
+  level?: 2 | 3
   class?: string
   children: JSX.Element
 }) {
   return (
     <Card padding="lg" class={cx('flex flex-col gap-5', props.class)}>
       <div class="flex flex-col gap-1">
-        <h2 class="text-base font-semibold tracking-tight text-fg">{props.title}</h2>
+        <Dynamic
+          component={`h${props.level ?? 2}`}
+          class="text-base font-semibold tracking-tight text-fg"
+        >
+          {props.title}
+        </Dynamic>
         <Show when={props.description}>
           <p class="text-sm text-fg-muted">{props.description}</p>
         </Show>

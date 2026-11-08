@@ -49,10 +49,10 @@ const capability =
 const ViewerPage = lazy(() => import('./pages/viewer'))
 const AdminUsersPage = lazy(() => import('./pages/admin-users'))
 const BrowsePage = lazy(() => import('./pages/browse'))
-const SlicersPage = lazy(() => import('./pages/slicers'))
 const ConnectPage = lazy(() => import('./pages/connect'))
 
 const redirectToProjects: Component = () => <Navigate href="/projects" />
+const redirectToSettings: Component = () => <Navigate href="/settings" />
 
 export const routes: RouteDefinition[] = [
   { path: '/', component: redirectToProjects },
@@ -63,7 +63,9 @@ export const routes: RouteDefinition[] = [
   { path: '/projects/:id/view/:fileId', component: auth(ViewerPage) },
   { path: '/import', component: auth(ImportPage) },
   { path: '/settings', component: auth(SettingsPage) },
-  { path: '/settings/slicers', component: capability('canConfigureSlicers', SlicersPage) },
+  // Slicers was its own page until the settings page became one scroll. The capability gate moved
+  // onto the section; this is here so links and bookmarks still land somewhere sensible.
+  { path: '/settings/slicers', component: redirectToSettings },
   { path: '/admin/users', component: admin(AdminUsersPage) },
   { path: '/browse', component: capability('canBrowseModelSites', BrowsePage) },
   // Where a desktop shell with no library yet chooses one, so it cannot require a session.

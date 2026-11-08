@@ -3,7 +3,7 @@ import { createResource, createSignal, Show } from 'solid-js'
 import { desktop, type DesktopClient } from '../core/desktop'
 import { t } from '../core/i18n'
 import { notify } from '../core/notify'
-import { Button, FolderOpen, Globe, SectionCard, SettingRow, Text } from '../ui'
+import { Button, Card, FolderOpen, Globe, SettingRow, Text } from '../ui'
 
 /**
  * Where the library lives, on the desktop (subsystem G 6.1): the folder or the server that is open
@@ -16,6 +16,9 @@ import { Button, FolderOpen, Globe, SectionCard, SettingRow, Text } from '../ui'
  *
  * The shell loads the new library into this window itself, so nothing here navigates after a
  * choice; the connect page is where a server address is typed, so that is a plain navigation.
+ *
+ * The heading and the sentence above it belong to the settings page's Library section, not to
+ * this card, so that the section menu and the heading can never drift apart.
  */
 export function LibraryLocation(props: { client?: DesktopClient }) {
   const client = () => props.client ?? desktop
@@ -42,7 +45,7 @@ export function LibraryLocation(props: { client?: DesktopClient }) {
   }
 
   return (
-    <SectionCard title={t('settings.libraryTitle')} description={t('settings.libraryLead')}>
+    <Card padding="lg" class="flex flex-col gap-5">
       <Show when={state()}>
         {(current) => (
           <>
@@ -87,6 +90,6 @@ export function LibraryLocation(props: { client?: DesktopClient }) {
           </>
         )}
       </Show>
-    </SectionCard>
+    </Card>
   )
 }

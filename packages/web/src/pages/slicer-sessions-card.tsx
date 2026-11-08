@@ -47,6 +47,8 @@ export function SlicerSessionsCard(props: {
   projectId?: string
   /** Fired after something was imported, so the page holding this can reload what it shows. */
   onImported?: () => void
+  /** 3 inside a `PageSection` (the settings page), 2 where the card is a block of its own. */
+  level?: 2 | 3
   /** Test seams: a fake shell client, project list and clock. */
   deps?: Partial<SessionsDeps>
 }) {
@@ -57,7 +59,11 @@ export function SlicerSessionsCard(props: {
   onMount(() => void sessions.reload())
 
   return (
-    <SectionCard title={t('slicerSessions.title')} description={t('slicerSessions.lead')}>
+    <SectionCard
+      level={props.level}
+      title={t('slicerSessions.title')}
+      description={t('slicerSessions.lead')}
+    >
       <Show when={sessions.failure()}>
         {(message) => <Alert variant="danger">{message()}</Alert>}
       </Show>
