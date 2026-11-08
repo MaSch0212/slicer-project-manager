@@ -9,6 +9,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
 
 use spm_core::AppError;
+use spm_core::dto::BrowseNoticeKind;
 use spm_core::dto::{
     BrowseBounds, BrowseDownloadDto, BrowseMatchDto, BrowseNoticeDto, BrowseTabsDto, FileDto,
     ModelSiteDto,
@@ -16,7 +17,7 @@ use spm_core::dto::{
 
 use super::api::LibrarySource;
 use super::commands::BrowseBackend;
-use super::downloads::{Decision, Downloads, DownloadsOptions, MODEL_DOWNLOADS_DIR};
+use super::downloads::{Decision, Downloads, DownloadsOptions, MODEL_DOWNLOADS_DIR, Plan};
 use super::host::{BrowseHost, BrowseHostOptions, HostWindow, ViewFactory};
 use super::land::{BrowseLanding, match_projects};
 use super::notices::{BrowseNotices, Notify};
@@ -45,7 +46,7 @@ pub struct BrowseServices {
     host: Arc<BrowseHost>,
     downloads: Arc<Downloads>,
     notices: Arc<BrowseNotices>,
-    landing: BrowseLanding,
+    landing: Arc<BrowseLanding>,
     library: LibrarySource,
 }
 
@@ -85,7 +86,10 @@ impl BrowseServices {
         let _ = downloads_cell.set(Arc::clone(&downloads));
 
         Arc::new(BrowseServices {
-            landing: BrowseLanding::new(Arc::clone(&downloads), Arc::clone(&parts.library)),
+            landing: Arc::new(BrowseLanding::new(
+                Arc::clone(&downloads),
+                Arc::clone(&parts.library),
+            )),
             registry,
             host,
             downloads,
@@ -116,10 +120,71 @@ impl BrowseServices {
         self.downloads.on_requested(request)
     }
 
-    /// The browser says a download ended. A view parked for it is destroyed now.
-    pub fn on_download_finished(&self, url: &str, path: Option<&std::path::Path>, success: bool) {
-        self.downloads.on_finished(url, path, success);
+    /// The browser says a download ended: a view parked for it is destroyed, and **the choice
+    /// the user made when it started is carried out**.
+    ///
+    /// The decision lives here rather than in the page because the page stops existing the
+    /// moment the user leaves `/browse`, and a file has to land even if they walked away while
+    /// it was coming down.
+    ///
+    /// **Landing runs on a thread of its own.** This is called from the browser's own
+    /// download hook on the main thread, and a landing is a blocking upload (in remote mode, over
+    /// the network); doing it here would freeze the window for the length of it.
+    pub fn on_download_finished(
+        self: &Arc<Self>,
+        url: &str,
+        path: Option<&std::path::Path>,
+        success: bool,
+    ) {
+        let finished = self.downloads.on_finished(url, path, success);
         self.host.release_parked();
+        let Some(finished) = finished else { return };
+        let Some(plan) = finished.plan else { return };
+        match plan {
+            // Cancelled while it was still coming down: nothing could stop the bytes, so they
+            // were allowed to arrive and `downloads` deleted them as they landed. Nothing to do
+            // here, and nothing to tell the user: they are the one who cancelled it.
+            Plan::Cancel => {}
+            Plan::Land {
+                project_id,
+                file_name,
+            } => {
+                if !finished.completed {
+                    self.notices.add(
+                        BrowseNoticeKind::Refused,
+                        &file_name,
+                        "this download did not finish, so it was not added to your project",
+                    );
+                    return;
+                }
+                let services = Arc::clone(self);
+                std::thread::spawn(move || {
+                    services.land_decided(&finished.download_id, &project_id, &file_name);
+                });
+            }
+        }
+    }
+
+    /// Files a download the user already chose a home for. A refusal is kept as a notice with
+    /// the server's own words, and the download stays staged so it can be filed by hand.
+    fn land_decided(&self, download_id: &str, project_id: &str, file_name: &str) {
+        match self.landing.land(download_id, project_id, Some(file_name)) {
+            Ok(_) => {
+                // Only when nobody is looking. With the page on screen the download leaving the
+                // list is the answer, and a notice that had to be dismissed would be in the way.
+                if !self.host.is_attached() {
+                    self.notices.add(
+                        BrowseNoticeKind::Completed,
+                        file_name,
+                        "this download finished and was added to your project",
+                    );
+                }
+            }
+            Err(error) => {
+                self.notices
+                    .add(BrowseNoticeKind::Refused, file_name, &error.message);
+            }
+        }
     }
 
     /// The shell is going away. Every tab goes with it; nothing of where the user was is kept.
@@ -212,6 +277,16 @@ impl BrowseBackend for BrowseServices {
 
     fn discard(&self, download_id: &str) -> Result<(), AppError> {
         self.downloads.discard(download_id)?;
+        self.host.release_parked();
+        Ok(())
+    }
+
+    fn decide(&self, download_id: &str, project_id: &str, file_name: &str) -> Result<(), AppError> {
+        self.downloads.decide(download_id, project_id, file_name)
+    }
+
+    fn cancel(&self, download_id: &str) -> Result<(), AppError> {
+        self.downloads.cancel(download_id)?;
         self.host.release_parked();
         Ok(())
     }

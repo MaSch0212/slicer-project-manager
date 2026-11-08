@@ -1,6 +1,7 @@
 export * from './accordion'
 export * from './app-shell'
 export * from './badges'
+export * from './browser-downloads'
 export * from './browser-tabs'
 export * from './button'
 export * from './card'

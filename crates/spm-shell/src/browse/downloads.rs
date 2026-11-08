@@ -156,6 +156,34 @@ pub struct DownloadRequest {
     pub had_user_gesture: bool,
 }
 
+/// What the user said should happen to a download's bytes when they arrive.
+///
+/// **In memory only, never in `download.json`.** A decision is about a download of *this* run;
+/// a process that dies mid-download leaves the same orphan it always did, which the sweep
+/// surfaces and the user deals with by hand. Writing it down would be a second on-disk format
+/// to keep compatible, for a case nobody asked for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Plan {
+    /// File it into this project, under this name.
+    Land {
+        project_id: String,
+        file_name: String,
+    },
+    /// Throw the bytes away when they land. **Not a stop**: nothing can stop a WebView2 download
+    /// once it has started, so this is the only honest meaning the word has here.
+    Cancel,
+}
+
+/// What a finished download turned into, for the caller that acts on the decision.
+#[derive(Debug, Clone)]
+pub struct Finished {
+    pub download_id: String,
+    /// The bytes arrived whole. False for an interrupted download.
+    pub completed: bool,
+    /// What the user chose, taken out of the record so it is acted on exactly once.
+    pub plan: Option<Plan>,
+}
+
 /// The answer to a request. There is nothing in between: a refusal is final.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Decision {
@@ -201,6 +229,8 @@ struct Entry {
     is_verifiable: bool,
     has_record: bool,
     bytes_on_disk: i64,
+    /// What the user decided, if they have.
+    plan: Option<Plan>,
 }
 
 impl Entry {
@@ -324,6 +354,7 @@ impl Downloads {
             is_verifiable: false,
             has_record: true,
             bytes_on_disk: 0,
+            plan: None,
         });
         Decision::Stage(save_path)
     }
@@ -345,11 +376,8 @@ impl Downloads {
     /// path, or failing that by the URL of the only download still running for it.
     ///
     /// Rewrites the record **once**, with the state it ended in and the size it ended with.
-    pub fn on_finished(&self, url: &str, path: Option<&Path>, success: bool) {
-        let Some((download_id, directory, file_path, notice_name)) = self.locate_running(url, path)
-        else {
-            return;
-        };
+    pub fn on_finished(&self, url: &str, path: Option<&Path>, success: bool) -> Option<Finished> {
+        let (download_id, directory, file_path, notice_name) = self.locate_running(url, path)?;
         let size = size_of(&file_path);
         if success && size > self.options.limits.max_download_bytes {
             // No content length means the single-download cap can only be enforced here.
@@ -362,17 +390,16 @@ impl Downloads {
                     as_gib(self.options.limits.max_download_bytes)
                 ),
             );
-            return;
+            // The decision went with the entry; there is nothing left to act on.
+            return None;
         }
         let completed;
+        let plan;
         let record = {
             let mut entries = self.entries();
-            let Some(entry) = entries
+            let entry = entries
                 .iter_mut()
-                .find(|entry| entry.record.download_id == download_id)
-            else {
-                return;
-            };
+                .find(|entry| entry.record.download_id == download_id)?;
             entry.record.state = if success {
                 BrowseDownloadState::Completed
             } else {
@@ -385,16 +412,93 @@ impl Downloads {
             entry.bytes_on_disk = size;
             entry.is_verifiable = vouches_for_the_bytes(&entry.record, size, true);
             completed = entry.record.state == BrowseDownloadState::Completed;
+            // Taken out, not copied: a decision is acted on exactly once.
+            plan = entry.plan.take();
             entry.record.clone()
         };
         self.write_record(&directory, &record);
-        if completed && !(self.options.is_view_attached)() {
+        // A cancelled download is deleted here, by the module that owns the staging directory,
+        // and not left for the caller: taking the plan out of the entry would otherwise put the
+        // row back on the list between the bytes arriving and somebody acting on it.
+        if plan == Some(Plan::Cancel) {
+            self.remove_entry(&download_id);
+            return Some(Finished {
+                download_id,
+                completed,
+                plan,
+            });
+        }
+        // Only for a download nobody chose a home for. One that files itself needs no notice.
+        if completed && plan.is_none() && !(self.options.is_view_attached)() {
             self.options.notices.add(
                 BrowseNoticeKind::Completed,
                 &record.file_name,
                 "this download finished in the background",
             );
         }
+        Some(Finished {
+            download_id,
+            completed,
+            plan,
+        })
+    }
+
+    /// Records where a download's bytes are to go when they arrive.
+    ///
+    /// The project must already exist: creating one belongs to the library API, and the page
+    /// does it before it decides, so that a project the user has just named appears at once
+    /// rather than minutes later when the file lands.
+    pub fn decide(
+        &self,
+        download_id: &str,
+        project_id: &str,
+        file_name: &str,
+    ) -> Result<(), AppError> {
+        validate::file_name(file_name).map_err(|_| {
+            AppError::validation("that is not a usable file name")
+                .with_details(details(download_id))
+        })?;
+        let mut entries = self.entries();
+        let entry = entries
+            .iter_mut()
+            .find(|entry| entry.record.download_id == download_id)
+            .ok_or_else(|| {
+                AppError::not_found("there is no staged download with that id")
+                    .with_details(details(download_id))
+            })?;
+        entry.plan = Some(Plan::Land {
+            project_id: project_id.to_owned(),
+            file_name: file_name.to_owned(),
+        });
+        Ok(())
+    }
+
+    /// The user does not want this file.
+    ///
+    /// One that is already on disk is deleted now. One still coming down cannot be stopped (see
+    /// [`Plan::Cancel`]), so it is marked, taken off the list at once so the user sees it go,
+    /// and deleted when the bytes arrive.
+    pub fn cancel(&self, download_id: &str) -> Result<(), AppError> {
+        let running = {
+            let mut entries = self.entries();
+            let entry = entries
+                .iter_mut()
+                .find(|entry| entry.record.download_id == download_id)
+                .ok_or_else(|| {
+                    AppError::not_found("there is no staged download with that id")
+                        .with_details(details(download_id))
+                })?;
+            if entry.is_running() {
+                entry.plan = Some(Plan::Cancel);
+                true
+            } else {
+                false
+            }
+        };
+        if !running {
+            self.remove(download_id);
+        }
+        Ok(())
     }
 
     /// The running entry a `Finished` event is about: its id, directory, staged file and the name
@@ -520,6 +624,8 @@ impl Downloads {
                     is_verifiable: false,
                     has_record: false,
                     bytes_on_disk: found.size,
+                    // A previous run's download. Nobody alive decided anything about it.
+                    plan: None,
                 }
             }
             Some(record) => {
@@ -530,6 +636,7 @@ impl Downloads {
                     is_orphan: true,
                     has_record: true,
                     bytes_on_disk,
+                    plan: None,
                 }
             }
         }
@@ -539,6 +646,9 @@ impl Downloads {
     pub fn list(&self) -> Vec<BrowseDownloadDto> {
         self.entries()
             .iter()
+            // A cancelled download is gone as far as anyone looking is concerned; what is left
+            // is bytes still arriving at a file that will be deleted when they stop.
+            .filter(|entry| entry.plan != Some(Plan::Cancel))
             .map(|entry| {
                 let mut received = entry.record.received_bytes;
                 if entry.is_running() {
@@ -561,6 +671,7 @@ impl Downloads {
                     started_at: entry.record.started_at,
                     is_orphan: entry.is_orphan,
                     is_verifiable: entry.is_verifiable,
+                    is_decided: entry.plan.is_some(),
                 }
             })
             .collect()

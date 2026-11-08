@@ -1,5 +1,4 @@
-import { createEffect, createSignal, For, onCleanup, onMount, Show } from 'solid-js'
-import type { BrowseDownloadDto } from '../api/generated'
+import { createEffect, createMemo, createSignal, onCleanup, onMount, Show } from 'solid-js'
 import {
   BROWSE_TEXT_MAX,
   createBrowse,
@@ -16,34 +15,40 @@ import {
   Alert,
   ArrowLeft,
   ArrowRight,
-  Badge,
   BrowserChrome,
   BrowserNotice,
-  BrowserPanel,
   BrowserTabStrip,
   Button,
-  Card,
+  Dialog,
+  DownloadChip,
+  DownloadTray,
   FormField,
   Globe,
-  Heading,
   IconButton,
   Input,
   overlayOpen,
-  Progress,
   RefreshCw,
   Select,
   Text,
   ViewportSlot,
+  ViewStill,
+  type DownloadItem,
 } from '../ui'
 
 /**
- * The model browser: several sites open at once, each a native view laid over this page, with the
- * app's own chrome around them.
+ * The model browser: several sites open at once, each a native view laid over this page, with
+ * the app's own chrome around them.
  *
  * **The views are not in this document**, so everything the page draws lives outside their
- * rectangle: the tab strip and the address row above it. The page reports the placeholder's
- * bounds (mount, resize, scroll, a sidebar collapsing), hides the views while a dialog or menu is
- * open, and takes them off screen — but does not destroy them — when the route goes.
+ * rectangle: the tab strip and the address row above, the download tray between. The page
+ * reports the placeholder's bounds (mount, resize, scroll, a sidebar collapsing), hides the
+ * views while a dialog or menu is open, and takes them off screen — but does not destroy them —
+ * when the route goes.
+ *
+ * **A download is decided when it starts, not when it arrives.** The dialog opens the moment a
+ * site sends a file, over a still picture of the view (nothing the page draws can cover a native
+ * view, so the view is swapped for a photograph of itself); the choice is recorded in the shell
+ * and the file files itself when it lands, even if the user has walked away by then.
  *
  * **Every string a site chose is rendered as text**, bounded, and never as markup or a link: the
  * way to go somewhere is the address field, the start-site picker or a tab, which ask the shell.
@@ -52,6 +57,7 @@ export default function BrowsePage(props: { deps?: Partial<BrowseDeps> }) {
   const browse = createBrowse(props.deps)
   const [address, setAddress] = createSignal('')
   const [editing, setEditing] = createSignal(false)
+  const [trayOpen, setTrayOpen] = createSignal(false)
   let slot: HTMLDivElement | undefined
   let stopObserving: (() => void) | null = null
 
@@ -97,6 +103,77 @@ export default function BrowsePage(props: { deps?: Partial<BrowseDeps> }) {
       }
     }
     return t('browse.newTab')
+  }
+
+  /**
+   * Everything the browser currently has to say, newest first: files on their way, files waiting
+   * to be filed (what a previous run left), and the problems. One list, because from where the
+   * user sits they are one thing — "what happened to my download".
+   */
+  const items = createMemo<DownloadItem[]>(() => {
+    const downloads = browse.downloads()
+    const running: DownloadItem[] = downloads.filter(isStillDownloading).map((item) => ({
+      id: item.downloadId,
+      title: truncateForDisplay(item.fileName),
+      detail: t('browse.downloadRunningUnknownSize', {
+        received: formatBytes(item.receivedBytes),
+      }),
+      kind: 'running',
+      // WebView2 reports no content length, so there is a total only once it has finished.
+      progress: item.totalBytes > 0 ? item.receivedBytes / item.totalBytes : undefined,
+      dismissLabel: `${t('browse.cancelDownload')} ${item.fileName}`,
+      onDismiss: () => void browse.cancelDownload(item),
+    }))
+    const waiting: DownloadItem[] = downloads
+      .filter((item) => !isStillDownloading(item))
+      .map((item) => ({
+        id: item.downloadId,
+        title: truncateForDisplay(item.fileName),
+        // Both facts matter and neither replaces the other: where it came from, and whether
+        // anything can vouch for the bytes.
+        detail: [
+          item.isOrphan ? t('browse.downloadOrphan') : t('browse.waitingToFile'),
+          item.isVerifiable ? null : t('browse.downloadUnverifiable'),
+        ]
+          .filter((part) => part !== null)
+          .join(' · '),
+        kind: item.isVerifiable ? 'waiting' : 'problem',
+        action: item.isVerifiable ? (
+          <Button size="sm" variant="secondary" onClick={() => void browse.openPanel(item)}>
+            {t('browse.fileIt')}
+          </Button>
+        ) : undefined,
+        dismissLabel: `${t('browse.discard')} ${item.fileName}`,
+        onDismiss: () => void browse.discard(item),
+      }))
+    const notices: DownloadItem[] = browse.notices().map((notice) => ({
+      id: notice.id,
+      title: truncateForDisplay(notice.fileName),
+      detail: truncateForDisplay(notice.detail),
+      kind: 'problem',
+      // A refusal is the cap saying there is no room; the way out is to clear what is staged.
+      action:
+        notice.kind === 'refused' && browse.roomMakers().length > 0 ? (
+          <Button size="sm" variant="secondary" onClick={() => void browse.makeRoom()}>
+            {t('browse.makeRoom', { count: browse.roomMakers().length })}
+          </Button>
+        ) : undefined,
+      dismissLabel: `${t('browse.dismiss')} ${notice.fileName}`,
+      onDismiss: () => void browse.dismissNotice(notice.id),
+    }))
+    return [...running, ...waiting, ...notices]
+  })
+
+  const problem = () => items().some((item) => item.kind === 'problem')
+  // Nothing to say, nothing to open: the tray shuts itself rather than leaving an empty strip.
+  createEffect(() => {
+    if (items().length === 0) setTrayOpen(false)
+  })
+
+  const panel = () => browse.panel()
+  const deciding = () => {
+    const current = panel()
+    return current !== null && isStillDownloading(current.download)
   }
 
   return (
@@ -165,7 +242,21 @@ export default function BrowsePage(props: { deps?: Partial<BrowseDeps> }) {
             if (site) void browse.goToSite(site)
           }}
         />
+        <Show when={items().length > 0}>
+          <DownloadChip
+            label={t('browse.downloadsTitle')}
+            summary={items()[0]!.title}
+            count={items().length}
+            problem={problem()}
+            open={trayOpen()}
+            onToggle={() => setTrayOpen(!trayOpen())}
+          />
+        </Show>
       </BrowserChrome>
+
+      <Show when={trayOpen() && items().length > 0}>
+        <DownloadTray label={t('browse.downloadsTitle')} items={items()} />
+      </Show>
 
       <Show when={browse.failure()}>
         {(message) => (
@@ -192,227 +283,138 @@ export default function BrowsePage(props: { deps?: Partial<BrowseDeps> }) {
           <Alert variant="info">{t('browse.verifying')}</Alert>
         </BrowserNotice>
       </Show>
+      <Show when={browse.landed()}>
+        {(landed) => (
+          <BrowserNotice>
+            <Alert variant="success">
+              {t('browse.landed', {
+                name: truncateForDisplay(landed().name),
+                project: truncateForDisplay(landed().project),
+              })}
+              <Show when={landed().archive}>
+                {(mode) => (
+                  <Text as="span" variant="small">
+                    {mode() === 'remote' ? t('browse.archiveRemote') : t('browse.archiveLocal')}
+                  </Text>
+                )}
+              </Show>
+            </Alert>
+          </BrowserNotice>
+        )}
+      </Show>
 
       <ViewportSlot
         ref={(element: HTMLDivElement) => (slot = element)}
         label={t('browse.title')}
         fill
+        bare={browse.still() !== null}
       >
-        {t('browse.noPage')}
+        <Show when={browse.still()} fallback={t('browse.noPage')}>
+          {(src) => <ViewStill src={src()} label={t('browse.stillLabel')} />}
+        </Show>
       </ViewportSlot>
 
-      {/*
-        The downloads, still a list under the view. The decide-when-it-starts dialog that replaces
-        this needs the choice to live in the shell rather than here (a file has to land even if
-        you left the page while it was coming down), which is its own piece of work; until then
-        this is the only way to file what a site sent, so it stays.
-      */}
-      <Show when={browse.notices().length > 0 || browse.downloads().length > 0 || browse.landed()}>
-        <BrowserPanel label={t('browse.downloadsTitle')}>
-          <For each={browse.notices()}>
-            {(notice) => (
-              <Alert
-                variant={notice.kind === 'refused' ? 'warning' : 'info'}
-                title={t('browse.noticesTitle')}
-              >
-                <Text as="span">{truncateForDisplay(notice.fileName)}</Text>
-                <Text as="span" variant="muted">
-                  {truncateForDisplay(notice.detail)}
-                </Text>
-                <div class="mt-2 flex flex-wrap gap-2">
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    onClick={() => void browse.dismissNotice(notice.id)}
-                  >
-                    {t('browse.dismiss')}
-                  </Button>
-                  <Show when={notice.kind === 'refused' && browse.roomMakers().length > 0}>
-                    <Button size="sm" variant="secondary" onClick={() => void browse.makeRoom()}>
-                      {t('browse.makeRoom', { count: browse.roomMakers().length })}
-                    </Button>
-                  </Show>
-                </div>
-              </Alert>
-            )}
-          </For>
-
-          <Show when={browse.landed()}>
-            {(landed) => (
-              <>
-                <Alert variant="success">
-                  {t('browse.landed', {
-                    name: truncateForDisplay(landed().name),
-                    project: truncateForDisplay(landed().project),
-                  })}
-                </Alert>
-                <Show when={landed().archive}>
-                  {(mode) => (
-                    <Alert variant="warning">
-                      {mode() === 'remote' ? t('browse.archiveRemote') : t('browse.archiveLocal')}
-                    </Alert>
-                  )}
-                </Show>
-              </>
-            )}
-          </Show>
-
-          <Show when={browse.downloads().length > 0}>
-            <Heading level={2}>{t('browse.downloadsTitle')}</Heading>
-            <ul class="m-0 flex list-none flex-col gap-3 p-0">
-              <For each={browse.downloads()}>
-                {(item) => <DownloadRow item={item} browse={browse} />}
-              </For>
-            </ul>
-          </Show>
-        </BrowserPanel>
-      </Show>
+      <ChoiceDialog browse={browse} deciding={deciding()} />
     </div>
   )
 }
 
-function DownloadRow(props: { item: BrowseDownloadDto; browse: BrowseStore }) {
-  const item = () => props.item
-  const running = () => isStillDownloading(item())
-  const open = () => props.browse.panel()?.download.downloadId === item().downloadId
-  return (
-    <li>
-      <Card class="flex flex-col gap-3">
-        <div class="flex flex-wrap items-center gap-2">
-          <Text as="span" variant="label">
-            {truncateForDisplay(item().fileName)}
-          </Text>
-          <Show when={item().isOrphan}>
-            <Badge variant="warning">{t('browse.downloadOrphan')}</Badge>
-          </Show>
-        </div>
-
-        <Show when={running()}>
-          <Text variant="small">
-            {item().totalBytes > 0
-              ? t('browse.downloadRunning', {
-                  received: formatBytes(item().receivedBytes),
-                  total: formatBytes(item().totalBytes),
-                })
-              : t('browse.downloadRunningUnknownSize', {
-                  received: formatBytes(item().receivedBytes),
-                })}
-          </Text>
-          <Progress
-            label={truncateForDisplay(item().fileName)}
-            value={item().totalBytes > 0 ? item().receivedBytes / item().totalBytes : undefined}
-          />
-        </Show>
-        <Show when={!running() && !item().isVerifiable}>
-          <Alert variant="warning">
-            {item().state === 'completed' ? '' : `${t('browse.downloadFailed')} `}
-            {t('browse.downloadUnverifiable')}
-          </Alert>
-        </Show>
-
-        <Show
-          when={item().pageUrl}
-          fallback={<Text variant="small">{t('browse.fromNoPage')}</Text>}
-        >
-          {(page) => (
-            <Text variant="small">{t('browse.fromPage', { url: truncateForDisplay(page()) })}</Text>
-          )}
-        </Show>
-
-        <div class="flex flex-wrap gap-2">
-          <Show when={!running() && item().state === 'completed' && item().isVerifiable}>
-            <Button
-              size="sm"
-              variant="primary"
-              onClick={() => void props.browse.openPanel(item())}
-              aria-expanded={open()}
-            >
-              {t('browse.addToProject')}
-            </Button>
-          </Show>
-          <Show when={!running()}>
-            <Button size="sm" variant="secondary" onClick={() => void props.browse.discard(item())}>
-              {t('browse.discard')}
-            </Button>
-          </Show>
-        </div>
-
-        <Show when={open()}>
-          <LandingPanelView browse={props.browse} />
-        </Show>
-      </Card>
-    </li>
-  )
-}
-
-function LandingPanelView(props: { browse: BrowseStore }) {
+/**
+ * Where this file goes, asked once.
+ *
+ * For a download still on its way the answer is recorded and the shell carries it out, so the
+ * dialog closes and browsing goes on. Closing it without answering cancels that download —
+ * there is no third state in which a file sits unclaimed. A download that is already on disk
+ * (what a previous run left) is filed when the dialog is confirmed, and backing out of it
+ * leaves the file alone.
+ */
+function ChoiceDialog(props: { browse: BrowseStore; deciding: boolean }) {
   const panel = () => props.browse.panel()
   return (
     <Show when={panel()}>
       {(current) => (
-        <div
-          role="region"
-          aria-label={t('browse.addToProject')}
-          class="flex flex-col gap-4"
-          ref={(element: HTMLDivElement) =>
-            queueMicrotask(() => element.scrollIntoView?.({ block: 'nearest' }))
+        <Dialog
+          open
+          onOpenChange={(open) => {
+            if (!open) void props.browse.closePanel()
+          }}
+          title={t('browse.addToProject')}
+          description={props.deciding ? t('browse.decideLead') : t('browse.fileItLead')}
+          closeLabel={t('common.close')}
+          footer={
+            <>
+              <Button variant="secondary" onClick={() => void props.browse.closePanel()}>
+                {props.deciding ? t('browse.cancelDownload') : t('browse.cancel')}
+              </Button>
+              <Button
+                variant="primary"
+                loading={current().busy}
+                disabled={current().projectId === '' && current().newName.trim() === ''}
+                onClick={() => void props.browse.land()}
+              >
+                {current().projectId === '' ? t('browse.createAndAdd') : t('browse.addHere')}
+              </Button>
+            </>
           }
         >
-          <Show when={current().suggested.length > 0}>
-            <Alert variant="info" title={t('browse.suggested')}>
-              {t('browse.suggestedLead')}
-            </Alert>
-          </Show>
-          <Show when={current().error}>{(error) => <Alert variant="danger">{error()}</Alert>}</Show>
-          <FormField label={t('browse.chooseProject')}>
-            <Select
-              placeholder={t('browse.chooseProjectPlaceholder')}
-              value={current().projectId || undefined}
-              options={props.browse.projects().map((project) => ({
-                value: project.id,
-                label: current().suggested.includes(project.id)
-                  ? `${truncateForDisplay(project.name)} (${t('browse.suggested')})`
-                  : truncateForDisplay(project.name),
-              }))}
-              onChange={(projectId) => props.browse.editPanel({ projectId })}
-            />
-          </FormField>
-          <Show when={props.browse.projects().length === 0}>
-            <Text variant="muted">{t('browse.noProjects')}</Text>
-          </Show>
-          <FormField label={t('browse.fileNameLabel')}>
-            <Input
-              value={current().fileName}
-              onInput={(event) => props.browse.editPanel({ fileName: event.currentTarget.value })}
-            />
-          </FormField>
-          <FormField label={t('browse.orCreate')}>
-            <Input
-              aria-label={t('browse.newProjectName')}
-              placeholder={t('browse.newProjectName')}
-              value={current().newName}
-              onInput={(event) =>
-                props.browse.editPanel({ newName: event.currentTarget.value, projectId: '' })
-              }
-            />
-          </FormField>
-          <Show when={isArchiveName(current().fileName)}>
-            <Text variant="small">{t('browse.archiveLocal')}</Text>
-          </Show>
-          <div class="flex flex-wrap gap-2">
-            <Button
-              variant="primary"
-              loading={current().busy}
-              disabled={current().projectId === '' && current().newName.trim() === ''}
-              onClick={() => void props.browse.land()}
+          <div class="flex flex-col gap-4">
+            <Text variant="label">{truncateForDisplay(current().download.fileName)}</Text>
+            {/* Where it came from, which is also what the suggestion below was matched on. */}
+            <Show
+              when={current().download.pageUrl}
+              fallback={<Text variant="small">{t('browse.fromNoPage')}</Text>}
             >
-              {current().projectId === '' ? t('browse.createAndAdd') : t('browse.addHere')}
-            </Button>
-            <Button variant="secondary" onClick={() => props.browse.closePanel()}>
-              {t('browse.cancel')}
-            </Button>
+              {(page) => (
+                <Text variant="small">
+                  {t('browse.fromPage', { url: truncateForDisplay(page()) })}
+                </Text>
+              )}
+            </Show>
+            <Show when={current().suggested.length > 0}>
+              <Alert variant="info" title={t('browse.suggested')}>
+                {t('browse.suggestedLead')}
+              </Alert>
+            </Show>
+            <Show when={current().error}>
+              {(error) => <Alert variant="danger">{error()}</Alert>}
+            </Show>
+            <FormField label={t('browse.chooseProject')}>
+              <Select
+                placeholder={t('browse.chooseProjectPlaceholder')}
+                value={current().projectId || undefined}
+                options={props.browse.projects().map((project) => ({
+                  value: project.id,
+                  label: current().suggested.includes(project.id)
+                    ? `${truncateForDisplay(project.name)} (${t('browse.suggested')})`
+                    : truncateForDisplay(project.name),
+                }))}
+                onChange={(projectId) => props.browse.editPanel({ projectId })}
+              />
+            </FormField>
+            <Show when={props.browse.projects().length === 0}>
+              <Text variant="muted">{t('browse.noProjects')}</Text>
+            </Show>
+            <FormField label={t('browse.orCreate')}>
+              <Input
+                aria-label={t('browse.newProjectName')}
+                placeholder={t('browse.newProjectName')}
+                value={current().newName}
+                onInput={(event) =>
+                  props.browse.editPanel({ newName: event.currentTarget.value, projectId: '' })
+                }
+              />
+            </FormField>
+            <FormField label={t('browse.fileNameLabel')}>
+              <Input
+                value={current().fileName}
+                onInput={(event) => props.browse.editPanel({ fileName: event.currentTarget.value })}
+              />
+            </FormField>
+            <Show when={isArchiveName(current().fileName)}>
+              <Text variant="small">{t('browse.archiveLocal')}</Text>
+            </Show>
           </div>
-        </div>
+        </Dialog>
       )}
     </Show>
   )

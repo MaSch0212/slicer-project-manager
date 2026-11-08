@@ -452,6 +452,37 @@ pub async fn desktop_browse_discard(
     browsing(&ctx, move |commands| commands.discard(download_id.as_ref())).await
 }
 
+/// Where this download's bytes go when they arrive: an existing project, under this name.
+///
+/// The choice is recorded in the shell, not in the page, because the page stops existing when
+/// the user leaves the browser and the file still has to land.
+#[tauri::command]
+pub async fn desktop_browse_decide(
+    ctx: State<'_, AppCtx>,
+    download_id: Option<Value>,
+    project_id: Option<Value>,
+    file_name: Option<Value>,
+) -> Result<(), CommandError> {
+    browsing(&ctx, move |commands| {
+        commands.decide(
+            download_id.as_ref(),
+            project_id.as_ref(),
+            file_name.as_ref(),
+        )
+    })
+    .await
+}
+
+/// The user does not want this file. One already on disk is deleted now; one still coming down
+/// is deleted when it arrives, since nothing can stop a WebView2 download once it has started.
+#[tauri::command]
+pub async fn desktop_browse_cancel(
+    ctx: State<'_, AppCtx>,
+    download_id: Option<Value>,
+) -> Result<(), CommandError> {
+    browsing(&ctx, move |commands| commands.cancel(download_id.as_ref())).await
+}
+
 /// Which of the user's projects a page may be the source of, by `website` and the match key.
 /// `url` is `null` for a download no page is known for. An empty answer is the honest one.
 #[tauri::command]

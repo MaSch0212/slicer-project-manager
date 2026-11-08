@@ -14,6 +14,8 @@ export function ViewportSlot(props: {
   label: string
   /** Takes whatever height is left instead of a fixed share of the viewport. */
   fill?: boolean
+  /** No padding and no centring: what is inside fills it (the still picture of the view). */
+  bare?: boolean
   class?: string
   children?: JSX.Element
 }) {
@@ -23,7 +25,8 @@ export function ViewportSlot(props: {
       role="region"
       aria-label={props.label}
       class={cx(
-        'flex items-center justify-center bg-surface-2 p-6 text-center text-sm text-fg-muted',
+        'flex bg-surface-2 text-sm text-fg-muted',
+        props.bare ? 'overflow-hidden' : 'items-center justify-center p-6 text-center',
         props.fill ? 'min-h-0 flex-1' : 'h-[60dvh] min-h-96 rounded-card border border-border',
         props.class,
       )}

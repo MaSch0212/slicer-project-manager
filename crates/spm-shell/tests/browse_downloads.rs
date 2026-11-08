@@ -17,7 +17,7 @@ use spm_core::AppErrorCode;
 use spm_core::dto::{BrowseDownloadState, BrowseNoticeDto, BrowseNoticeKind};
 use spm_shell::browse::downloads::{
     DOWNLOAD_RECORD_NAME, Decision, DownloadRequest, Downloads, DownloadsOptions,
-    FALLBACK_DOWNLOAD_NAME, Limits, MAX_RECORDED_TEXT, staged_file_name,
+    FALLBACK_DOWNLOAD_NAME, Finished, Limits, MAX_RECORDED_TEXT, Plan, staged_file_name,
 };
 use spm_shell::browse::notices::BrowseNotices;
 use spm_shell::browse::registry::SiteRegistry;
@@ -166,6 +166,27 @@ impl Rig {
         std::fs::write(path, bytes).unwrap();
         self.downloads
             .on_finished(&request.url, Some(path), success);
+    }
+
+    /// The same, giving back what the caller has to act on.
+    fn finish_with(
+        &self,
+        request: &DownloadRequest,
+        path: &Path,
+        bytes: &[u8],
+        success: bool,
+    ) -> Option<Finished> {
+        std::fs::write(path, bytes).unwrap();
+        self.downloads
+            .on_finished(&request.url, Some(path), success)
+    }
+
+    fn listed(&self) -> Vec<String> {
+        self.downloads
+            .list()
+            .into_iter()
+            .map(|item| item.download_id)
+            .collect()
     }
 
     /// A complete download, watched to the end.
@@ -963,3 +984,127 @@ fn find_answers_the_path_and_the_verdict_and_nothing_for_an_id_it_does_not_know(
 // - "will-download is registered on the session once, however often attachTo is called": the
 //   `on_download` hook is set once, on the one webview builder; there is no session to attach to.
 // - "hadUserGesture ... a webContents that has not committed": covered above through `page_url`.
+
+// ---- the decision the user makes when a download starts ----------------------------------------
+//
+// Deciding up front is what lets the file file itself: the choice is kept here, beside the
+// download, rather than in a page that stops existing the moment the user leaves the browser.
+
+#[test]
+fn a_download_starts_undecided_and_says_so() {
+    let rig = rig();
+    let request = request("dragon.3mf");
+    let (id, _) = rig.start(&request);
+
+    let listed = rig.downloads.list();
+    assert_eq!(listed.len(), 1);
+    assert!(!listed[0].is_decided, "nobody has chosen a home for it yet");
+    assert_eq!(listed[0].download_id, id);
+}
+
+#[test]
+fn a_decision_is_handed_back_once_when_the_bytes_arrive() {
+    let rig = rig();
+    let request = request("dragon.3mf");
+    let (id, path) = rig.start(&request);
+    rig.downloads.decide(&id, "p-1", "dragon.3mf").unwrap();
+    assert!(rig.downloads.list()[0].is_decided);
+
+    let finished = rig.finish_with(&request, &path, b"bytes", true).unwrap();
+
+    assert_eq!(finished.download_id, id);
+    assert!(finished.completed);
+    assert_eq!(
+        finished.plan,
+        Some(Plan::Land {
+            project_id: "p-1".to_owned(),
+            file_name: "dragon.3mf".to_owned(),
+        })
+    );
+    // Taken, not copied: a second finish for the same download carries nothing to act on again.
+    assert!(!rig.downloads.list()[0].is_decided);
+}
+
+#[test]
+fn deciding_refuses_an_unusable_name_and_an_id_that_is_not_there() {
+    let rig = rig();
+    let request = request("dragon.3mf");
+    let (id, _) = rig.start(&request);
+
+    for bad in ["..", "a/b.3mf", "", "con"] {
+        let error = rig.downloads.decide(&id, "p-1", bad).unwrap_err();
+        assert_eq!(error.code, AppErrorCode::Validation, "{bad}");
+    }
+    let error = rig.downloads.decide("dl-nope", "p-1", "x.3mf").unwrap_err();
+    assert_eq!(error.code, AppErrorCode::NotFound);
+    assert!(!rig.downloads.list()[0].is_decided);
+}
+
+#[test]
+fn cancelling_a_download_that_is_still_coming_down_hides_it_and_deletes_it_when_it_lands() {
+    let rig = rig();
+    let request = request("dragon.3mf");
+    let (id, path) = rig.start(&request);
+
+    rig.downloads.cancel(&id).unwrap();
+
+    // Gone as far as anyone looking is concerned, though the bytes are still arriving: nothing
+    // can stop a WebView2 download once it has started.
+    assert!(rig.listed().is_empty());
+    assert!(
+        rig.staging.join(&id).is_dir(),
+        "the file is still being written"
+    );
+
+    let finished = rig.finish_with(&request, &path, b"bytes", true).unwrap();
+    assert_eq!(finished.plan, Some(Plan::Cancel));
+    assert!(rig.listed().is_empty(), "and it never comes back");
+    assert!(
+        !rig.staging.join(&id).exists(),
+        "the bytes nobody wanted are deleted as they land"
+    );
+}
+
+#[test]
+fn cancelling_one_that_has_already_landed_deletes_it_now() {
+    let rig = rig();
+    let id = rig.complete("dragon.3mf", b"bytes");
+    assert!(rig.staging.join(&id).is_dir());
+
+    rig.downloads.cancel(&id).unwrap();
+
+    assert!(rig.listed().is_empty());
+    assert!(!rig.staging.join(&id).exists(), "the staged file is gone");
+    assert_eq!(
+        rig.downloads.cancel(&id).unwrap_err().code,
+        AppErrorCode::NotFound
+    );
+}
+
+#[test]
+fn a_download_that_files_itself_raises_no_background_notice() {
+    let rig = rig();
+    // Nobody is watching: the usual case for the "this finished in the background" notice.
+    rig.attached.store(false, Ordering::SeqCst);
+    let request = request("dragon.3mf");
+    let (id, path) = rig.start(&request);
+    rig.downloads.decide(&id, "p-1", "dragon.3mf").unwrap();
+
+    rig.finish_with(&request, &path, b"bytes", true).unwrap();
+
+    assert_eq!(
+        rig.notice_count(),
+        0,
+        "a file with a home needs no notice; the one that gets it is the undecided one"
+    );
+}
+
+#[test]
+fn a_download_nobody_decided_still_raises_the_background_notice() {
+    let rig = rig();
+    rig.attached.store(false, Ordering::SeqCst);
+    rig.complete("dragon.3mf", b"bytes");
+
+    assert_eq!(rig.notice_count(), 1);
+    assert_eq!(rig.last_notice().kind, BrowseNoticeKind::Completed);
+}

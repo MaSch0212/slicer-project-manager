@@ -115,7 +115,13 @@ export const defaultBrowseDeps = (): BrowseDeps => ({
 /** What the page says after a landing. */
 export type Landed = { name: string; project: string; archive: 'local' | 'remote' | null }
 
-/** The panel that adds one download to a project. */
+/**
+ * The dialog that decides where one download goes.
+ *
+ * It opens the moment a download starts, before the bytes are there, so the choice is made once
+ * and the file files itself when it arrives. For a download that is *already* complete — one a
+ * previous run left behind — there is nothing left to wait for and confirming lands it at once.
+ */
 export type LandingPanel = {
   download: BrowseDownloadDto
   /** Projects whose website is the page this came from: a suggestion, never applied silently. */
@@ -155,6 +161,17 @@ export function createBrowse(depsOverride: Partial<BrowseDeps> = {}) {
   const [verifying, setVerifying] = createSignal(false)
   const [panel, setPanel] = createSignal<LandingPanel | null>(null)
   const [landed, setLanded] = createSignal<Landed | null>(null)
+  /** A picture of the front tab, shown in the view's place while the dialog is over it. */
+  const [still, setStill] = createSignal<string | null>(null)
+
+  /**
+   * The project each decided download is going to, by id, so that when the shell has filed one
+   * and it leaves the list the page can say where it went. The shell knows the project's id; the
+   * name is the page's, from the dialog the user just confirmed.
+   */
+  const going = new Map<string, string>()
+  /** Which downloads the dialog has already been opened for, so it opens once per download. */
+  const asked = new Set<string>()
 
   let destroyed = false
   let attached = false
@@ -183,8 +200,10 @@ export function createBrowse(depsOverride: Partial<BrowseDeps> = {}) {
       ])
       if (destroyed) return
       setTabs(nextTabs)
+      announceLandings(nextDownloads)
       setDownloads(nextDownloads)
       setNotices(nextNotices)
+      void askAboutNewDownloads(nextDownloads)
       const front = nextTabs.tabs.find((tab) => tab.tabId === nextTabs.activeTabId)
       loadingTicks = front?.isLoading ? loadingTicks + 1 : 0
       setVerifying(loadingTicks >= deps.interstitialTicks)
@@ -193,9 +212,86 @@ export function createBrowse(depsOverride: Partial<BrowseDeps> = {}) {
     }
   }
 
+  /**
+   * A download the shell has filed has simply left the list. Say where it went, once, using the
+   * project the user chose in the dialog.
+   */
+  function announceLandings(next: readonly BrowseDownloadDto[]): void {
+    if (going.size === 0) return
+    const here = new Set(next.map((item) => item.downloadId))
+    // A snapshot on purpose: the loop deletes from the map it is walking.
+    for (const [downloadId, project] of Array.from(going)) {
+      if (here.has(downloadId)) continue
+      const name = downloads().find((item) => item.downloadId === downloadId)?.fileName
+      going.delete(downloadId)
+      if (name === undefined) continue
+      void (async () => {
+        const mode = isArchiveName(name)
+          ? await deps.libraryMode().catch((): LibraryMode => 'local')
+          : null
+        if (!destroyed) setLanded({ name, project, archive: mode })
+      })()
+    }
+  }
+
+  /**
+   * Opens the dialog for a download nobody has decided about yet: the one that just started.
+   *
+   * One at a time and once each — a site that starts three downloads gets three dialogs in turn,
+   * not three at once. An orphan from a previous run is left alone; it is listed, and the user
+   * can file it by hand, but it must not throw a dialog in front of somebody who has just opened
+   * the page.
+   */
+  async function askAboutNewDownloads(next: readonly BrowseDownloadDto[]): Promise<void> {
+    if (panel() !== null) return
+    const waiting = next.find(
+      (item) => !item.isDecided && !item.isOrphan && !asked.has(item.downloadId),
+    )
+    if (!waiting) return
+    asked.add(waiting.downloadId)
+    await openPanelFor(waiting)
+  }
+
+  /** The dialog's own body: the suggestions, and the picture it will be drawn over. */
+  async function openPanelFor(item: BrowseDownloadDto): Promise<void> {
+    setLanded(null)
+    let list = projects()
+    let suggested: string[] = []
+    try {
+      if (list.length === 0) {
+        list = await deps.projects.list({ includeArchived: true, limit: PROJECT_LIMIT_MAX })
+        setProjects(list)
+      }
+      const match = await deps.browse.match(item.pageUrl)
+      suggested = match.projects.map((project) => project.id)
+    } catch {
+      // No suggestion is an honest answer; choosing by hand still works.
+    }
+    if (destroyed) return
+    // Taken **before** the dialog opens, so the picture is in the page by the time the views are
+    // hidden for it. A capture that cannot be taken is not an error: the slot shows its own
+    // surface, which is what it did every time before this existed.
+    try {
+      setStill(await deps.browse.capture())
+    } catch {
+      setStill(null)
+    }
+    if (destroyed) return
+    setPanel({
+      download: item,
+      suggested,
+      projectId: suggested[0] ?? '',
+      fileName: item.fileName,
+      newName: '',
+      busy: false,
+      error: null,
+    })
+  }
+
   return {
     sites,
     tabs,
+    still,
     /** The tab in front: what the address, the history buttons and the still picture are about. */
     state: active,
     downloads,
@@ -355,42 +451,48 @@ export function createBrowse(depsOverride: Partial<BrowseDeps> = {}) {
     // --- landing -------------------------------------------------------------------------------
 
     /**
-     * Opens the panel for one download. **Lands nothing.** The projects (archived included) come
-     * from the library the app is on, and the shell answers which of them the page the download
-     * came from may be the source of: a suggestion, preselected, and the user confirms.
+     * Opens the dialog for one download by hand — the way to file an orphan a previous run left.
+     * **Lands nothing.** The projects (archived included) come from the library the app is on,
+     * and the shell answers which of them the page the download came from may be the source of:
+     * a suggestion, preselected, and the user confirms.
      */
     async openPanel(item: BrowseDownloadDto) {
-      setLanded(null)
-      let list = projects()
-      let suggested: string[] = []
-      try {
-        if (list.length === 0) {
-          list = await deps.projects.list({ includeArchived: true, limit: PROJECT_LIMIT_MAX })
-          setProjects(list)
-        }
-        const match = await deps.browse.match(item.pageUrl)
-        suggested = match.projects.map((project) => project.id)
-      } catch {
-        // No suggestion is an honest answer; choosing by hand still works.
-      }
-      if (destroyed) return
-      setPanel({
-        download: item,
-        suggested,
-        projectId: suggested[0] ?? '',
-        fileName: item.fileName,
-        newName: '',
-        busy: false,
-        error: null,
-      })
+      asked.add(item.downloadId)
+      await openPanelFor(item)
     },
-    closePanel: () => setPanel(null),
+
+    /**
+     * Closing the dialog without choosing cancels the download — but only the one that opened
+     * it. A download that is still coming down was never asked for by name, and a file nobody
+     * has a use for must not sit in the staging directory waiting to be noticed. One that is
+     * already on disk was opened by hand from the tray, and backing out of that dialog has to
+     * leave the file where it was.
+     */
+    async closePanel() {
+      const current = panel()
+      setPanel(null)
+      setStill(null)
+      if (!current || !isStillDownloading(current.download)) return
+      try {
+        await deps.browse.cancel(current.download.downloadId)
+      } catch {
+        // Already gone, which is the same outcome.
+      }
+      await poll()
+    },
     editPanel(patch: Partial<Pick<LandingPanel, 'projectId' | 'fileName' | 'newName'>>) {
       const current = panel()
       if (current) setPanel({ ...current, ...patch })
     },
 
-    /** Lands into the chosen project, or creates the named one first. */
+    /**
+     * Confirms the dialog: the file goes to the chosen project, or to the one named here, which
+     * is created now so that it exists the moment the user asked for it.
+     *
+     * A download still coming down is **decided**, and the shell files it when it arrives —
+     * which is why this works even if the user leaves the page. One that is already on disk (an
+     * orphan from a previous run) has nothing to wait for and is landed here.
+     */
     async land(): Promise<void> {
       const current = panel()
       if (!current || current.busy) return
@@ -409,10 +511,30 @@ export function createBrowse(depsOverride: Partial<BrowseDeps> = {}) {
           const chosen = projects().find((entry) => entry.id === current.projectId)
           project = { id: current.projectId, name: chosen?.name ?? '' }
         }
+        const downloadId = current.download.downloadId
+        if (isStillDownloading(current.download)) {
+          try {
+            await deps.browse.decide(downloadId, project.id, current.fileName)
+          } catch (error) {
+            setPanel({
+              ...current,
+              projectId: project.id,
+              newName: '',
+              busy: false,
+              error: errorSentence(error, false),
+            })
+            return
+          }
+          going.set(downloadId, project.name)
+          setPanel(null)
+          setStill(null)
+          await poll()
+          return
+        }
         let file: FileDto
         try {
           file = await deps.browse.land(
-            current.download.downloadId,
+            downloadId,
             project.id,
             current.fileName === current.download.fileName ? null : current.fileName,
           )
@@ -431,11 +553,23 @@ export function createBrowse(depsOverride: Partial<BrowseDeps> = {}) {
           ? await deps.libraryMode().catch((): LibraryMode => 'local')
           : null
         setPanel(null)
+        setStill(null)
         setLanded({ name: file.name, project: project.name, archive: mode })
         await poll()
       } catch (error) {
         setPanel({ ...current, busy: false, error: errorSentence(error, creating) })
       }
+    },
+
+    /** Stops caring about a download from the chip, without opening the dialog for it. */
+    async cancelDownload(item: BrowseDownloadDto) {
+      try {
+        await deps.browse.cancel(item.downloadId)
+      } catch {
+        // Already gone.
+      }
+      going.delete(item.downloadId)
+      await poll()
     },
 
     /** Stops everything: the page is gone. Nothing may start after this. */

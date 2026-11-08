@@ -404,6 +404,11 @@ hadUserGesture: boolean, startedAt: number,
  */
 isOrphan: boolean, 
 /**
+ * Whether the user has already said where this file goes. A download with no decision is
+ * one the app is still waiting on, which is what makes the dialog open for it.
+ */
+isDecided: boolean, 
+/**
  * The record vouches for the bytes (5.3). `land` refuses a `false`.
  */
 isVerifiable: boolean, };

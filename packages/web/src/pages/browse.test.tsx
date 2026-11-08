@@ -82,6 +82,7 @@ function download(over: Partial<BrowseDownloadDto> = {}): BrowseDownloadDto {
     startedAt: 0,
     isOrphan: false,
     isVerifiable: true,
+    isDecided: true,
     ...over,
   }
 }
@@ -119,6 +120,8 @@ type Browse = {
   notices: Mock
   dismissNotice: Mock
   land: Mock
+  decide: Mock
+  cancel: Mock
   match: Mock
 }
 
@@ -156,6 +159,8 @@ function setup(options: Options = {}) {
     notices: vi.fn().mockResolvedValue(options.notices ?? []),
     dismissNotice: vi.fn().mockResolvedValue(undefined),
     land: vi.fn().mockResolvedValue(landedFile()),
+    decide: vi.fn().mockResolvedValue(undefined),
+    cancel: vi.fn().mockResolvedValue(undefined),
     match: vi.fn().mockResolvedValue({
       url: THING_URL,
       key: 'thingiverse:1234',
@@ -182,6 +187,24 @@ async function ready(browse: Browse) {
 }
 
 const press = (name: string) => fireEvent.click(screen.getByRole('button', { name }))
+
+/** Opens the tray, which is where everything about downloads now lives. */
+const openTray = () => press('Downloads')
+
+/**
+ * The way to the dialog for a download that is already on disk: open the tray and file it. A
+ * download that is still coming down opens it by itself, which is the point of the redesign.
+ */
+function fileIt() {
+  openTray()
+  press('File…')
+}
+
+/**
+ * The whole document, not the page's own element: the dialog is in a portal, and the tray's rows
+ * are the page's but easier to read for as one text.
+ */
+const bodyText = () => document.body.textContent ?? ''
 
 beforeEach(async () => {
   vi.clearAllMocks()
@@ -277,7 +300,7 @@ describe('the native view is not a DOM element', () => {
     const list = vi.fn().mockReturnValue(new Promise<ProjectDto[]>((resolve) => (finish = resolve)))
     const { browse, unmount } = setup({ downloads: [download()], list })
     await ready(browse)
-    press('Add to a project')
+    fileIt()
     await waitFor(() => expect(list).toHaveBeenCalled())
     unmount()
     const polls = browse.tabs.mock.calls.length
@@ -343,7 +366,7 @@ describe('site-controlled strings', () => {
       matches: ['p1'],
     })
     await ready(browse)
-    press('Add to a project')
+    fileIt()
     await waitFor(() => screen.getByRole('button', { name: 'Add it to this project' }))
     press('Add it to this project')
     await waitFor(() => expect(container.textContent).toContain('was added to'))
@@ -456,7 +479,7 @@ describe('the landing UI', () => {
       matches: ['p1'],
     })
     await ready(browse)
-    press('Add to a project')
+    fileIt()
     await waitFor(() => expect(screen.getByLabelText('Choose a project')).toBeTruthy())
     expect((screen.getByLabelText('Choose a project') as HTMLSelectElement).value).toBe('p1')
     expect(
@@ -486,7 +509,7 @@ describe('the landing UI', () => {
       matches: ['a', 'z'],
     })
     await ready(browse)
-    press('Add to a project')
+    fileIt()
     await waitFor(() => screen.getByLabelText('Choose a project'))
     const options = [...(screen.getByLabelText('Choose a project') as HTMLSelectElement).options]
     expect(options.filter((option) => option.textContent?.includes('(Suggested)'))).toHaveLength(2)
@@ -496,7 +519,7 @@ describe('the landing UI', () => {
   it('offers creating a project beside choosing one, with nothing reported as an error', async () => {
     const { browse, container } = setup({ downloads: [download()], projects: [] })
     await ready(browse)
-    press('Add to a project')
+    fileIt()
     await waitFor(() => screen.getByLabelText('New project name'))
     expect(screen.getByText('There are no projects yet. Create one below.')).toBeTruthy()
     expect(container.querySelector('[role="alert"]')).toBeNull()
@@ -509,7 +532,7 @@ describe('the landing UI', () => {
   it('sets a new project website to the page the download came from, then lands into it', async () => {
     const { browse, create } = setup({ downloads: [download()] })
     await ready(browse)
-    press('Add to a project')
+    fileIt()
     await waitFor(() => screen.getByLabelText('New project name'))
     fireEvent.input(screen.getByLabelText('New project name'), { target: { value: 'Benchy' } })
     press('Create it and add the file')
@@ -519,16 +542,15 @@ describe('the landing UI', () => {
   })
 
   it('says a popup download named no page, rather than rendering a blank field or the word null', async () => {
-    const { browse, container, create } = setup({
+    const { browse, create } = setup({
       downloads: [download({ pageUrl: null, siteId: null })],
     })
     await ready(browse)
-    await waitFor(() =>
-      expect(container.textContent).toContain('came down through a pop-up window'),
-    )
-    expect(container.textContent).not.toMatch(/\bnull\b/)
-    press('Add to a project')
+    fileIt()
     await waitFor(() => screen.getByLabelText('New project name'))
+    // The dialog says where it came from, and 'nowhere' is a sentence, not an empty field.
+    expect(bodyText()).toContain('came down through a pop-up window')
+    expect(bodyText()).not.toMatch(/[^a-z]null[^a-z]/)
     expect(browse.match).toHaveBeenCalledWith(null)
     fireEvent.input(screen.getByLabelText('New project name'), { target: { value: 'Mystery' } })
     press('Create it and add the file')
@@ -541,7 +563,7 @@ describe('the landing UI', () => {
       downloads: [download({ pageUrl: 'data:text/html,<b>x</b>' })],
     })
     await ready(browse)
-    press('Add to a project')
+    fileIt()
     await waitFor(() => screen.getByLabelText('New project name'))
     fireEvent.input(screen.getByLabelText('New project name'), { target: { value: 'Data' } })
     press('Create it and add the file')
@@ -550,15 +572,15 @@ describe('the landing UI', () => {
   })
 
   it('reports a failed project creation in words about a project, not about a file', async () => {
-    const { browse, create, container } = setup({ downloads: [download()] })
+    const { browse, create } = setup({ downloads: [download()] })
     create.mockRejectedValue(new ApiError('Validation', 'name'))
     await ready(browse)
-    press('Add to a project')
+    fileIt()
     await waitFor(() => screen.getByLabelText('New project name'))
     fireEvent.input(screen.getByLabelText('New project name'), { target: { value: ' ' } })
     fireEvent.input(screen.getByLabelText('New project name'), { target: { value: 'x'.repeat(5) } })
     press('Create it and add the file')
-    await waitFor(() => expect(container.textContent).toContain('not a name a project can have'))
+    await waitFor(() => expect(bodyText()).toContain('not a name a project can have'))
     expect(browse.land).not.toHaveBeenCalled()
   })
 
@@ -567,10 +589,13 @@ describe('the landing UI', () => {
       downloads: [download({ isVerifiable: false, isOrphan: true, state: 'interrupted' })],
     })
     await ready(browse)
-    await waitFor(() => screen.getByRole('button', { name: 'Discard' }))
-    expect(screen.queryByRole('button', { name: 'Add to a project' })).toBeNull()
-    expect(screen.getByText(/Nothing can vouch for these bytes/)).toBeTruthy()
-    press('Discard')
+    openTray()
+    await waitFor(() => screen.getByRole('button', { name: 'Discard benchy.zip' }))
+    // Nothing offers to file bytes the record cannot vouch for.
+    expect(screen.queryByRole('button', { name: 'File…' })).toBeNull()
+    expect(bodyText()).toContain('Nothing can vouch for these bytes')
+
+    press('Discard benchy.zip')
     await waitFor(() => expect(browse.discard).toHaveBeenCalledWith('d1'))
   })
 
@@ -579,17 +604,17 @@ describe('the landing UI', () => {
       .fn()
       .mockRejectedValueOnce(new ApiError('Conflict', 'exists'))
       .mockResolvedValue(landedFile({ name: 'benchy-2.zip' }))
-    const { browse, container } = setup({
+    const { browse } = setup({
       downloads: [download()],
       projects: [project()],
       matches: ['p1'],
       overrides: { land },
     })
     await ready(browse)
-    press('Add to a project')
+    fileIt()
     await waitFor(() => screen.getByRole('button', { name: 'Add it to this project' }))
     press('Add it to this project')
-    await waitFor(() => expect(container.textContent).toContain('nothing is renamed for you'))
+    await waitFor(() => expect(bodyText()).toContain('nothing is renamed for you'))
     fireEvent.input(screen.getByLabelText('File name'), { target: { value: 'benchy-2.zip' } })
     press('Add it to this project')
     await waitFor(() => expect(land).toHaveBeenLastCalledWith('d1', 'p1', 'benchy-2.zip'))
@@ -602,35 +627,30 @@ describe('the landing UI', () => {
       ['NotFound', 'not there any more'],
       ['Internal', 'cannot be added'],
     ] as const) {
-      const { browse, container, unmount } = setup({
+      const { browse, unmount } = setup({
         downloads: [download()],
         projects: [project()],
         matches: ['p1'],
         overrides: { land: vi.fn().mockRejectedValue(new ApiError(code, 'x')) },
       })
       await ready(browse)
-      press('Add to a project')
+      fileIt()
       await waitFor(() => screen.getByRole('button', { name: 'Add it to this project' }))
       press('Add it to this project')
-      await waitFor(() => expect(container.textContent).toContain(sentence))
+      await waitFor(() => expect(bodyText()).toContain(sentence))
       unmount()
     }
   })
 
-  it('scrolls an opened panel into view, past the screenful of placeholder above it', async () => {
+  it('asks in a real modal dialog, which is what hides the view behind it', async () => {
     const { browse } = setup({ downloads: [download()] })
     await ready(browse)
-    press('Add to a project')
-    await waitFor(() => expect(Element.prototype.scrollIntoView).toHaveBeenCalled())
-  })
+    fileIt()
 
-  it('labels the landing panel as a region and claims no modality it does not implement', async () => {
-    const { browse, container } = setup({ downloads: [download()] })
-    await ready(browse)
-    press('Add to a project')
-    await waitFor(() => screen.getByRole('region', { name: 'Add to a project' }))
-    expect(container.querySelector('[aria-modal]')).toBeNull()
-    expect(container.querySelector('[role="dialog"]')).toBeNull()
+    // A modal over the page is what makes the shell take the native views off screen; the old
+    // inline panel claimed no modality and so never did.
+    await screen.findByRole('dialog', { name: 'Add to a project' })
+    await waitFor(() => expect(browse.hide).toHaveBeenCalled())
   })
 })
 
@@ -643,7 +663,7 @@ describe('the archive obligation', () => {
       ...options,
     })
     await ready(view.browse)
-    press('Add to a project')
+    fileIt()
     await waitFor(() => screen.getByRole('button', { name: 'Add it to this project' }))
     press('Add it to this project')
     await waitFor(() => expect(view.container.textContent).toContain('was added to'))
@@ -678,7 +698,7 @@ describe('the archive obligation', () => {
 
 describe('staged downloads', () => {
   it('offers discard for an orphan whose record still says progressing, and does not call it running', async () => {
-    const { browse, container } = setup({
+    const { browse } = setup({
       downloads: [
         download({
           state: 'progressing',
@@ -690,13 +710,14 @@ describe('staged downloads', () => {
       ],
     })
     await ready(browse)
-    await waitFor(() => screen.getByRole('button', { name: 'Discard' }))
-    expect(container.textContent).not.toContain('Still downloading')
-    expect(container.textContent).toContain('Downloaded by an earlier run')
+    openTray()
+    await waitFor(() => screen.getByRole('button', { name: 'Discard benchy.zip' }))
+    expect(bodyText()).not.toContain('Still downloading')
+    expect(bodyText()).toContain('Downloaded by an earlier run')
   })
 
   it('still refuses to offer discard for a download this process is writing', async () => {
-    const { browse, container } = setup({
+    const { browse } = setup({
       downloads: [
         download({
           state: 'progressing',
@@ -707,20 +728,24 @@ describe('staged downloads', () => {
       ],
     })
     await ready(browse)
-    await waitFor(() => expect(container.textContent).toContain('Still downloading'))
-    expect(screen.queryByRole('button', { name: 'Discard' })).toBeNull()
-    expect(screen.queryByRole('button', { name: 'Add to a project' })).toBeNull()
+    openTray()
+    await waitFor(() => expect(bodyText()).toContain('Still downloading'))
+    // It can be cancelled, but not discarded and not filed: it is not there yet.
+    expect(screen.queryByRole('button', { name: 'Discard benchy.zip' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'File…' })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Cancel the download benchy.zip' })).toBeTruthy()
   })
 
   it('says how much has arrived, not "of 0 B", when the server named no size', async () => {
-    const { browse, container } = setup({
+    const { browse } = setup({
       downloads: [
         download({ state: 'progressing', isVerifiable: false, receivedBytes: 2048, totalBytes: 0 }),
       ],
     })
     await ready(browse)
-    await waitFor(() => expect(container.textContent).toContain('did not say how big the file is'))
-    expect(container.textContent).not.toContain('of 0')
+    openTray()
+    await waitFor(() => expect(bodyText()).toContain('did not say how big the file is'))
+    expect(bodyText()).not.toContain('of 0')
   })
 })
 
@@ -735,18 +760,19 @@ describe('notices', () => {
   })
 
   it('renders a notice, dismisses it, and offers to make room beside a refusal', async () => {
-    const { browse, container } = setup({
+    const { browse } = setup({
       notices: [notice()],
       downloads: [download({ downloadId: 'old1' }), download({ downloadId: 'old2' })],
     })
     await ready(browse)
-    await waitFor(() => expect(container.textContent).toContain('huge.zip'))
-    expect(container.textContent).toContain('wait for one to finish')
+    openTray()
+    await waitFor(() => expect(bodyText()).toContain('huge.zip'))
+    expect(bodyText()).toContain('wait for one to finish')
     press('Discard the 2 downloads that are not still running')
     await waitFor(() => expect(browse.discard).toHaveBeenCalledTimes(2))
-    press('Dismiss')
+    press('Dismiss huge.zip')
     await waitFor(() => expect(browse.dismissNotice).toHaveBeenCalledWith('n1'))
-    await waitFor(() => expect(container.textContent).not.toContain('huge.zip'))
+    await waitFor(() => expect(bodyText()).not.toContain('huge.zip'))
   })
 
   it('leaves a still-running download out of the make-room control', async () => {
@@ -758,6 +784,7 @@ describe('notices', () => {
       ],
     })
     await ready(browse)
+    openTray()
     await waitFor(() =>
       screen.getByRole('button', { name: 'Discard the 1 downloads that are not still running' }),
     )
@@ -772,7 +799,146 @@ describe('notices', () => {
       downloads: [download()],
     })
     await ready(browse)
-    await waitFor(() => screen.getByRole('button', { name: 'Dismiss' }))
+    openTray()
+    await waitFor(() => screen.getByRole('button', { name: 'Dismiss huge.zip' }))
     expect(screen.queryByRole('button', { name: /Discard the/ })).toBeNull()
+  })
+})
+
+/**
+ * The whole point of the redesign: a download is decided when it *starts*, so the file files
+ * itself when it arrives — including when the user has walked away from the page by then.
+ */
+describe('deciding where a download goes, when it starts', () => {
+  const arriving = (over: Partial<BrowseDownloadDto> = {}) =>
+    download({
+      state: 'progressing',
+      isVerifiable: false,
+      isDecided: false,
+      receivedBytes: 2048,
+      totalBytes: 0,
+      ...over,
+    })
+
+  it('opens the dialog by itself for a download that has just started', async () => {
+    const { browse } = setup({ downloads: [arriving()], projects: [project()] })
+    await ready(browse)
+
+    await screen.findByRole('dialog', { name: 'Add to a project' })
+    expect(bodyText()).toContain('it will be added when the download finishes')
+  })
+
+  it('leaves an already-decided download alone, and an orphan from a previous run too', async () => {
+    const { browse } = setup({
+      downloads: [arriving({ isDecided: true }), download({ downloadId: 'old', isOrphan: true })],
+    })
+    await ready(browse)
+    await new Promise((resolve) => setTimeout(resolve, 40))
+
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
+
+  it('takes a picture of the view first, and shows it where the view was', async () => {
+    const capture = vi.fn().mockResolvedValue('data:image/png;base64,iVBORw==')
+    const { browse } = setup({
+      downloads: [arriving()],
+      projects: [project()],
+      overrides: { capture },
+    })
+    await ready(browse)
+
+    await screen.findByRole('dialog', { name: 'Add to a project' })
+    expect(capture).toHaveBeenCalledTimes(1)
+    const still = screen.getByRole('img', { name: 'The page, while this dialog is open' })
+    expect(still.getAttribute('src')).toBe('data:image/png;base64,iVBORw==')
+  })
+
+  it('opens the dialog anyway when the picture cannot be taken', async () => {
+    const capture = vi.fn().mockRejectedValue(new Error('no'))
+    const { browse } = setup({
+      downloads: [arriving()],
+      projects: [project()],
+      overrides: { capture },
+    })
+    await ready(browse)
+
+    await screen.findByRole('dialog', { name: 'Add to a project' })
+    expect(screen.queryByRole('img')).toBeNull()
+  })
+
+  it('records the choice with the shell rather than landing bytes that are not there yet', async () => {
+    const { browse } = setup({
+      downloads: [arriving()],
+      projects: [project()],
+      matches: ['p1'],
+    })
+    await ready(browse)
+    await screen.findByRole('button', { name: 'Add it to this project' })
+
+    press('Add it to this project')
+
+    await waitFor(() => expect(browse.decide).toHaveBeenCalledWith('d1', 'p1', 'benchy.zip'))
+    expect(browse.land).not.toHaveBeenCalled()
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+  })
+
+  it('creates the project the user named before recording the choice against it', async () => {
+    const { browse, create } = setup({ downloads: [arriving()] })
+    await ready(browse)
+    await screen.findByLabelText('New project name')
+
+    fireEvent.input(screen.getByLabelText('New project name'), { target: { value: 'Dragons' } })
+    press('Create it and add the file')
+
+    await waitFor(() =>
+      expect(create).toHaveBeenCalledWith({ name: 'Dragons', website: THING_URL }),
+    )
+    await waitFor(() => expect(browse.decide).toHaveBeenCalledWith('d1', 'new', 'benchy.zip'))
+  })
+
+  it('cancels the download when the dialog is closed without an answer', async () => {
+    const { browse } = setup({ downloads: [arriving()] })
+    await ready(browse)
+    await screen.findByRole('button', { name: 'Cancel the download' })
+
+    press('Cancel the download')
+
+    await waitFor(() => expect(browse.cancel).toHaveBeenCalledWith('d1'))
+    expect(browse.land).not.toHaveBeenCalled()
+    expect(browse.decide).not.toHaveBeenCalled()
+  })
+
+  it('leaves a file that is already on disk alone when its dialog is closed', async () => {
+    // Opened by hand from the tray: backing out must not delete what is already there.
+    const { browse } = setup({ downloads: [download()] })
+    await ready(browse)
+    fileIt()
+    await screen.findByRole('button', { name: 'Cancel' })
+
+    press('Cancel')
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(browse.cancel).not.toHaveBeenCalled()
+    expect(browse.discard).not.toHaveBeenCalled()
+  })
+
+  it('says where a file went once the shell has filed it', async () => {
+    const downloads = vi.fn().mockResolvedValue([arriving()])
+    const { browse, container } = setup({
+      downloads: [arriving()],
+      projects: [project()],
+      matches: ['p1'],
+      overrides: { downloads },
+    })
+    await ready(browse)
+    await screen.findByRole('button', { name: 'Add it to this project' })
+    press('Add it to this project')
+    await waitFor(() => expect(browse.decide).toHaveBeenCalled())
+
+    // The shell filed it, so it leaves the list: that is the page's cue.
+    downloads.mockResolvedValue([])
+
+    await waitFor(() => expect(container.textContent).toContain('was added to'))
+    expect(container.textContent).toContain('Benchy')
   })
 })

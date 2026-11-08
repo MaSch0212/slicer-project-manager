@@ -141,6 +141,16 @@ impl BrowseBackend for Recorder {
         Ok(())
     }
 
+    fn decide(&self, download_id: &str, project_id: &str, file_name: &str) -> Result<(), AppError> {
+        self.note(format!("decide {download_id} {project_id} {file_name}"));
+        Ok(())
+    }
+
+    fn cancel(&self, download_id: &str) -> Result<(), AppError> {
+        self.note(format!("cancel {download_id}"));
+        Ok(())
+    }
+
     fn match_page(&self, url: Option<&str>) -> Result<BrowseMatchDto, AppError> {
         self.note(format!("match {url:?}"));
         Ok(BrowseMatchDto {
@@ -206,6 +216,10 @@ fn every_browse_command_forwards_its_arguments_in_order_including_rectangles() {
         .unwrap();
     commands.discard(Some(&json!("dl"))).unwrap();
     commands
+        .decide(Some(&json!("dl")), Some(&json!("p")), Some(&json!("x.zip")))
+        .unwrap();
+    commands.cancel(Some(&json!("dl"))).unwrap();
+    commands
         .match_page(Some(&json!("https://example.com/m")))
         .unwrap();
     commands.match_page(Some(&Value::Null)).unwrap();
@@ -236,6 +250,8 @@ fn every_browse_command_forwards_its_arguments_in_order_including_rectangles() {
             "land dl p Some(\"x.zip\")".into(),
             "land dl p None".into(),
             "discard dl".into(),
+            "decide dl p x.zip".into(),
+            "cancel dl".into(),
             "match Some(\"https://example.com/m\")".into(),
             "match None".into(),
         ]
@@ -280,6 +296,22 @@ fn a_browse_command_rejects_a_wrong_argument_with_validation_and_calls_nothing()
     for bad in [None, Some(json!(5)), Some(json!("")), Some(Value::Null)] {
         assert!(refused(commands.select_tab(bad.as_ref())), "{bad:?}");
         assert!(refused(commands.close_tab(bad.as_ref())), "{bad:?}");
+    }
+    // A decision names two ids and a file name, each bounded like every other.
+    for bad in [None, Some(json!(5)), Some(json!("")), Some(Value::Null)] {
+        assert!(refused(commands.cancel(bad.as_ref())), "{bad:?}");
+        assert!(
+            refused(commands.decide(bad.as_ref(), Some(&json!("p")), Some(&json!("x.zip")))),
+            "{bad:?}"
+        );
+        assert!(
+            refused(commands.decide(Some(&json!("dl")), bad.as_ref(), Some(&json!("x.zip")))),
+            "{bad:?}"
+        );
+        assert!(
+            refused(commands.decide(Some(&json!("dl")), Some(&json!("p")), bad.as_ref())),
+            "{bad:?}"
+        );
     }
     assert!(refused(commands.match_page(None)), "absent is not null");
     assert!(refused(commands.match_page(Some(&json!(7)))));

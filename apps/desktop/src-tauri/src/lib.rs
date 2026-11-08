@@ -152,6 +152,8 @@ pub fn run() {
             commands::desktop_browse_dismiss_notice,
             commands::desktop_browse_land,
             commands::desktop_browse_discard,
+            commands::desktop_browse_decide,
+            commands::desktop_browse_cancel,
             commands::desktop_browse_match,
         ])
         .setup(setup)

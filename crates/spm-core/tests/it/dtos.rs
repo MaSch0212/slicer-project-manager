@@ -296,6 +296,7 @@ fn a_download_dto_round_trips() {
         started_at: 9,
         is_orphan: false,
         is_verifiable: true,
+        is_decided: false,
     };
     let value = serde_json::to_value(&download).unwrap();
     assert_eq!(value["pageUrl"], json!(null));

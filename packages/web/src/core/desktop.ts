@@ -176,6 +176,17 @@ export function createDesktopClient(invokeFn: InvokeFn = tauriInvoke) {
       land: (downloadId: string, projectId: string, name: string | null = null) =>
         call<FileDto>('desktop_browse_land', { downloadId, projectId, name }),
       discard: (downloadId: string) => call<void>('desktop_browse_discard', { downloadId }),
+      /**
+       * Where this download's bytes go when they arrive. The project must already exist; the
+       * page creates one first when the user named a new one, so it appears at once.
+       */
+      decide: (downloadId: string, projectId: string, fileName: string) =>
+        call<void>('desktop_browse_decide', { downloadId, projectId, fileName }),
+      /**
+       * The user does not want this file. One already on disk is deleted now; one still coming
+       * down is deleted when it arrives, because nothing can stop a WebView2 download.
+       */
+      cancel: (downloadId: string) => call<void>('desktop_browse_cancel', { downloadId }),
       /** Which projects a page may be the source of. `null` for a download no page is known for. */
       match: (url: string | null) => call<BrowseMatchDto>('desktop_browse_match', { url }),
     },

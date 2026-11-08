@@ -352,6 +352,17 @@ Cancelling needs the same place: `discard` refuses a running download today, by 
 cancelling is a separate command that marks the record and deletes the file when it arrives
 (§6.1a).
 
+**As built**, two details are worth recording because they were decided while writing it:
+
+- The *project* is created by the page, before it decides, and the decision names only an id.
+  Creating one is the library API's job, and doing it up front means a project the user has just
+  named appears at once rather than minutes later when the file lands. The cost: cancel the
+  download afterwards and an empty project is left behind, which the user can see and delete.
+- **Closing the dialog cancels only the download that opened it.** A dialog opened by hand from
+  the tray — the way to file what a previous run left — must leave that file alone when the user
+  backs out of it. Only the dialog that opened by itself, for a download still on its way, treats
+  closing as "I don't want this".
+
 ### 6.1a What "cancel" actually does
 
 **The transfer is not stopped; the file is deleted when it arrives.** `DownloadEvent` has two arms,
@@ -420,6 +431,12 @@ chip counts bytes up against an indeterminate bar, and the existing
 Cancelling from the chip does what §6.1a describes: the entry disappears and the file is deleted
 when it lands.
 
+**As built, the chip opens a tray in the page's flow rather than a floating list.** A popover is a
+layer over the page, so it would be drawn under the native view like every other layer, and would
+need the view hidden and replaced by a picture for the sake of a three-line list. The tray sits
+under the address row and pushes the view down a few pixels, which the view reports like any
+other change of its rectangle.
+
 ### 6.4 Telling the user what happened
 
 A toast is not available on this page: toasts do not claim an overlay — deliberately, because a
@@ -428,7 +445,8 @@ native view and never seen.
 
 So everything reports through the chip of §6.3:
 
-- A finished download shows a short-lived success state on its entry, then the entry goes.
+- A finished download leaves the list, and the page says where it went, using the project the
+  user chose in the dialog (the shell knows only its id).
 - A failure, a cap refusal, a sweep orphan, or a landing the library API rejects becomes an entry
   that stays until the user deals with it. Pressing it opens the dialog with the explanation and
   whatever choices are left — retry the landing, pick a different project, discard.

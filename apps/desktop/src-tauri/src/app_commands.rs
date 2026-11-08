@@ -55,5 +55,7 @@ pub const APP_COMMANDS: &[&str] = &[
     "desktop_browse_dismiss_notice",
     "desktop_browse_land",
     "desktop_browse_discard",
+    "desktop_browse_decide",
+    "desktop_browse_cancel",
     "desktop_browse_match",
 ];

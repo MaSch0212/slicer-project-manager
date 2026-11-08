@@ -22,6 +22,7 @@ const row = (over: Partial<BrowseDownloadDto>): BrowseDownloadDto => ({
   startedAt: 0,
   isOrphan: false,
   isVerifiable: true,
+  isDecided: true,
   ...over,
 })
 

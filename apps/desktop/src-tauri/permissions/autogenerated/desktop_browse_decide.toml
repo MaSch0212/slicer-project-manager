@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-desktop-browse-decide"
+description = "Enables the desktop_browse_decide command without any pre-configured scope."
+commands.allow = ["desktop_browse_decide"]
+
+[[permission]]
+identifier = "deny-desktop-browse-decide"
+description = "Denies the desktop_browse_decide command without any pre-configured scope."
+commands.deny = ["desktop_browse_decide"]

@@ -61,6 +61,8 @@ pub trait BrowseBackend: Send + Sync {
         name: Option<&str>,
     ) -> Result<FileDto, AppError>;
     fn discard(&self, download_id: &str) -> Result<(), AppError>;
+    fn decide(&self, download_id: &str, project_id: &str, file_name: &str) -> Result<(), AppError>;
+    fn cancel(&self, download_id: &str) -> Result<(), AppError>;
     fn match_page(&self, url: Option<&str>) -> Result<BrowseMatchDto, AppError>;
 }
 
@@ -255,6 +257,25 @@ impl BrowseCommands {
     pub fn discard(&self, download_id: Option<&Value>) -> Result<(), AppError> {
         self.backend
             .discard(bounded(download_id, "downloadId", MAX_DOWNLOAD_ID_LENGTH)?)
+    }
+
+    /// Where this download's bytes go when they arrive. The project must already exist.
+    pub fn decide(
+        &self,
+        download_id: Option<&Value>,
+        project_id: Option<&Value>,
+        file_name: Option<&Value>,
+    ) -> Result<(), AppError> {
+        let download_id = bounded(download_id, "downloadId", MAX_DOWNLOAD_ID_LENGTH)?;
+        let project_id = bounded(project_id, "projectId", MAX_ID_LENGTH)?;
+        let file_name = bounded(file_name, "fileName", MAX_NAME_LENGTH)?;
+        self.backend.decide(download_id, project_id, file_name)
+    }
+
+    /// The user does not want this file. See `downloads::Plan::Cancel` for what that can mean.
+    pub fn cancel(&self, download_id: Option<&Value>) -> Result<(), AppError> {
+        self.backend
+            .cancel(bounded(download_id, "downloadId", MAX_DOWNLOAD_ID_LENGTH)?)
     }
 
     /// `url` is `null` to match nothing (a download no page is known for).

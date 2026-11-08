@@ -267,6 +267,9 @@ pub struct BrowseDownloadDto {
     /// True for a download staged by a previous run of the app. `state` alone does not say
     /// whether a row is running; this is the other half.
     pub is_orphan: bool,
+    /// Whether the user has already said where this file goes. A download with no decision is
+    /// one the app is still waiting on, which is what makes the dialog open for it.
+    pub is_decided: bool,
     /// The record vouches for the bytes (5.3). `land` refuses a `false`.
     pub is_verifiable: bool,
 }
