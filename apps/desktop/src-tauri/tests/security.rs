@@ -122,14 +122,17 @@ fn the_handler_registers_exactly_the_manifest_commands_so_none_is_callable_witho
         "the handler and the app manifest disagree"
     );
 
-    // And every one of them is a `#[tauri::command]` that exists.
+    // And every one of them is a `#[tauri::command]` that exists. Either arity of `fn`, and
+    // either a plain parameter list or a generic one: the window commands are generic over the
+    // runtime because they take an `AppHandle` rather than the app's own state.
     let commands = read("src/commands.rs");
     for name in &manifest {
-        assert!(
-            commands.contains(&format!("pub fn {name}("))
-                || commands.contains(&format!("pub async fn {name}(")),
-            "{name} is not a command"
-        );
+        let declared = ["pub fn ", "pub async fn "].iter().any(|prefix| {
+            ['(', '<']
+                .iter()
+                .any(|open| commands.contains(&format!("{prefix}{name}{open}")))
+        });
+        assert!(declared, "{name} is not a command");
     }
     // The build script reads the same list the capability does.
     let build = read("build.rs");
