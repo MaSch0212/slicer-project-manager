@@ -104,6 +104,13 @@
 
 :root {
   color-scheme: light dark;
+  /*
+   * How much chrome the shell draws above the scrolling page: the desktop app's own title bar,
+   * since its window has no system one. `AppShell` raises it to the bar's height when there is a
+   * bar; in a browser there is nothing above the page, so everything that sticks to the top
+   * sticks to 0 as it always did.
+   */
+  --chrome-top: 0px;
 }
 :root[data-theme='light'] {
   color-scheme: light;

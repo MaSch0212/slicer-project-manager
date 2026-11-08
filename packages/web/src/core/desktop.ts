@@ -171,8 +171,31 @@ export function createDesktopClient(invokeFn: InvokeFn = tauriInvoke) {
       /** Forgets the remembered last page. */
       clearLastPage: () => call<void>('desktop_browse_clear_last_page'),
     },
+
+    /**
+     * The window, because the page draws its own title bar. These are app commands rather than
+     * Tauri's own window plugin: the capability grants this app's commands and nothing else.
+     */
+    window: {
+      /** Whether it is maximised. Asked after a resize, which is the only thing that changes it. */
+      state: () => call<WindowStateDto>('desktop_window_state'),
+      /**
+       * Hands the window to the system's drag loop from a press in the bar. Everything
+       * drag-related — snapping to an edge, the shake gesture — is the system's from here.
+       */
+      startDrag: () => call<void>('desktop_window_start_drag'),
+      minimize: () => call<void>('desktop_window_minimize'),
+      /** Maximise or restore, and say which it ended up as. */
+      toggleMaximize: () => call<WindowStateDto>('desktop_window_toggle_maximize'),
+      close: () => call<void>('desktop_window_close'),
+      /** `Ctrl+Shift+I`, which used to be a menu item. */
+      toggleDevtools: () => call<void>('desktop_window_toggle_devtools'),
+    },
   }
 }
+
+/** What the title bar needs to know about the window it is drawing. */
+export type WindowStateDto = { isMaximized: boolean }
 
 export type DesktopClient = ReturnType<typeof createDesktopClient>
 

@@ -3,6 +3,12 @@
     "title": "Slicer Project Manager",
     "signOut": "Sign out"
   },
+  "window": {
+    "minimize": "Minimise",
+    "maximize": "Maximise",
+    "restore": "Restore down",
+    "close": "Close"
+  },
   "nav": {
     "label": "Main navigation",
     "toggle": "Collapse or expand the navigation",

@@ -34,6 +34,26 @@ vi.mock('../core/api/client', () => ({ api }))
 const notify = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn(), info: vi.fn() }))
 vi.mock('../core/notify', () => ({ notify }))
 
+/**
+ * Whether this is the desktop app, per test. The window bar exists only there, and the sidebar's
+ * brand row exists only where it does not.
+ */
+const shellHost = vi.hoisted(() => ({
+  isDesktop: false,
+  window: {
+    state: vi.fn(),
+    startDrag: vi.fn(),
+    minimize: vi.fn(),
+    toggleMaximize: vi.fn(),
+    close: vi.fn(),
+    toggleDevtools: vi.fn(),
+  },
+}))
+vi.mock('../core/desktop', () => ({
+  isDesktop: () => shellHost.isDesktop,
+  desktop: { window: shellHost.window },
+}))
+
 import { auth, capabilities, settings } from '../core/stores'
 import { Shell } from './shell'
 
@@ -79,6 +99,63 @@ beforeEach(() => {
   vi.clearAllMocks()
   settings.reset()
   auth.setUser(null)
+  shellHost.isDesktop = false
+  shellHost.window.state.mockResolvedValue({ isMaximized: false })
+  shellHost.window.toggleMaximize.mockResolvedValue({ isMaximized: true })
+  for (const command of ['startDrag', 'minimize', 'close', 'toggleDevtools'] as const) {
+    shellHost.window[command].mockResolvedValue(undefined)
+  }
+})
+
+/**
+ * The window frame the desktop app draws for itself, because its window has no system one. The
+ * point of the whole change is that the app's name appears once: in the bar, not also at the head
+ * of the sidebar.
+ */
+describe('Shell window bar', () => {
+  const brandLink = () => screen.queryByRole('link', { name: 'Slicer Project Manager' })
+
+  it('draws none in a browser, where the sidebar keeps the brand', async () => {
+    await setup()
+
+    expect(screen.queryByRole('button', { name: 'Minimise' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Close' })).toBeNull()
+    expect(brandLink()).not.toBeNull()
+  })
+
+  it('draws the three window buttons in the desktop app, and drops the sidebar brand', async () => {
+    shellHost.isDesktop = true
+    await setup()
+
+    expect(screen.getByRole('button', { name: 'Minimise' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Maximise' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Close' })).toBeTruthy()
+    // The name is in the bar now, so the sidebar's copy of it is gone.
+    expect(brandLink()).toBeNull()
+  })
+
+  it('asks the window whether it is maximised, and renames the button to match', async () => {
+    shellHost.isDesktop = true
+    await setup()
+    await waitFor(() => expect(shellHost.window.state).toHaveBeenCalled())
+
+    fireEvent.click(screen.getByRole('button', { name: 'Maximise' }))
+
+    await waitFor(() => expect(shellHost.window.toggleMaximize).toHaveBeenCalled())
+    await screen.findByRole('button', { name: 'Restore down' })
+    expect(screen.queryByRole('button', { name: 'Maximise' })).toBeNull()
+  })
+
+  it('closes and minimises through the shell rather than the page', async () => {
+    shellHost.isDesktop = true
+    await setup()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Minimise' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }))
+
+    expect(shellHost.window.minimize).toHaveBeenCalledOnce()
+    expect(shellHost.window.close).toHaveBeenCalledOnce()
+  })
 })
 
 // Ported from app.spec.ts (the navigation gates themselves are covered as `navEntriesFor`).

@@ -3,6 +3,12 @@
     "title": "Slicer-Projektverwaltung",
     "signOut": "Abmelden"
   },
+  "window": {
+    "minimize": "Minimieren",
+    "maximize": "Maximieren",
+    "restore": "Verkleinern",
+    "close": "Schließen"
+  },
   "nav": {
     "label": "Hauptnavigation",
     "toggle": "Navigation ein- oder ausklappen",

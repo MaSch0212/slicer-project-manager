@@ -12,6 +12,12 @@
 //! line over `SlicerCommands` (which validates every argument), an executable dialog, and the sweep
 //! at start and the close at exit in [`run`].
 //!
+//! # The window
+//!
+//! The main window is undecorated and the page draws its own title bar, so the three window
+//! buttons, the drag and the developer tools are `desktop_window_*` commands. There is no
+//! application menu any more; [`window`] says what moved where and what that costs.
+//!
 //! The model browser is `spm_shell::browse` (the four sites, the policy, the bounds, the staging
 //! directory and its record, the landing, the page-to-project match), and here it is the
 //! `desktop_browse_*` commands, over `BrowseCommands`, plus [`browse`]: the **child webview**
@@ -58,9 +64,7 @@ use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 use crate::browse::{BROWSE_PROFILE_DIR, TauriViewFactory, TauriWindow};
 use crate::commands::AppCtx;
 use crate::prompts::TauriPrompts;
-use crate::window::{
-    CHOOSE_LIBRARY_ITEM, DEVTOOLS_ITEM, RELOAD_ITEM, TauriEvents, build_menu, create_main_window,
-};
+use crate::window::{TauriEvents, create_main_window};
 
 /// Names a directory for everything the shell keeps (state file, webview data) in place of the
 /// per-user application data directory. For tests and for running a second instance.
@@ -106,6 +110,12 @@ pub fn run() {
         // without a prompt a user could be talked into accepting.
         .on_permission_request(|_webview, _kind| tauri::webview::PermissionResponse::Deny)
         .invoke_handler(tauri::generate_handler![
+            commands::desktop_window_state,
+            commands::desktop_window_start_drag,
+            commands::desktop_window_minimize,
+            commands::desktop_window_toggle_maximize,
+            commands::desktop_window_close,
+            commands::desktop_window_toggle_devtools,
             commands::desktop_library_state,
             commands::desktop_library_pick,
             commands::desktop_library_connect,
@@ -354,33 +364,6 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
             _ => {}
         });
     }
-    if !hidden {
-        app.set_menu(build_menu(&handle, language)?)?;
-        app.on_menu_event(move |app, event| {
-            let id = event.id().as_ref();
-            if id == CHOOSE_LIBRARY_ITEM {
-                if let Some(ctx) = app.try_state::<AppCtx>() {
-                    let shell = Arc::clone(&ctx.shell);
-                    std::thread::spawn(move || {
-                        shell.ask_for_mode(PromptTrigger::User);
-                    });
-                }
-            } else if id == RELOAD_ITEM {
-                if let Some(window) = app.get_webview_window(security::MAIN_WEBVIEW) {
-                    let _ = window.eval("window.location.reload()");
-                }
-            } else if id == DEVTOOLS_ITEM
-                && let Some(window) = app.get_webview_window(security::MAIN_WEBVIEW)
-            {
-                if window.is_devtools_open() {
-                    window.close_devtools();
-                } else {
-                    window.open_devtools();
-                }
-            }
-        });
-    }
-
     // A remembered folder that is gone or will not open: say which, with a dialog, once the
     // window is there to sit behind it. Cancelling leaves the connect page, which is usable.
     if let StartOutcome::Ask(Some(reason)) = outcome

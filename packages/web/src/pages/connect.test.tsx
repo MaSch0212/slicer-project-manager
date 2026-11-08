@@ -19,6 +19,7 @@ function fakeClient(overrides: Partial<DesktopClient> = {}): DesktopClient {
     // Not what these tests are about; the slicers have their own suites.
     slicers: {} as DesktopClient['slicers'],
     browse: {} as DesktopClient['browse'],
+    window: {} as DesktopClient['window'],
     ...overrides,
   }
 }

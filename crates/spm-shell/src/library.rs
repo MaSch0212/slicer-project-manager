@@ -360,14 +360,6 @@ pub fn confirmed_at(index: usize) -> bool {
     index == 1
 }
 
-/// The application menu's two labels this shell writes itself.
-pub fn menu_strings(language: PickerLanguage) -> (&'static str, &'static str) {
-    match language {
-        PickerLanguage::En => ("Library", "Choose library…"),
-        PickerLanguage::De => ("Bibliothek", "Bibliothek auswählen…"),
-    }
-}
-
 /// Whether the shell or the user raised a prompt: a startup prompt has no window to be modal to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PromptTrigger {

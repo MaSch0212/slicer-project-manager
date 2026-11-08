@@ -9,6 +9,15 @@
 
 /// Every app command, by its Rust function name.
 pub const APP_COMMANDS: &[&str] = &[
+    // The window, since the page draws its own title bar: the three buttons, the drag, and the
+    // developer tools the menu used to open. App commands rather than a `core:window:*` grant,
+    // so the ACL stays "the app's own commands and nothing else" (see `crate::security`).
+    "desktop_window_state",
+    "desktop_window_start_drag",
+    "desktop_window_minimize",
+    "desktop_window_toggle_maximize",
+    "desktop_window_close",
+    "desktop_window_toggle_devtools",
     "desktop_library_state",
     "desktop_library_pick",
     "desktop_library_connect",

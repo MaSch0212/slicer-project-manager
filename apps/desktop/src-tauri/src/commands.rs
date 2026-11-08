@@ -25,7 +25,7 @@ use spm_shell::library::PromptTrigger;
 use spm_shell::shell::{ActiveMode, Shell};
 use spm_shell::slicers::api::SlicerCommands;
 use spm_shell::slicers::service::SlicerServices;
-use tauri::State;
+use tauri::{Manager, State};
 
 /// What the app keeps for its commands.
 pub struct AppCtx {
@@ -440,4 +440,97 @@ pub async fn desktop_browse_clear_last_page(ctx: State<'_, AppCtx>) -> Result<()
         Ok(())
     })
     .await
+}
+
+// ---------------------------------------------------------------------------------------------
+// The window. The page draws the title bar, so the three buttons, the drag and the developer
+// tools are commands; `crate::window` explains why they are app commands rather than a `core:*`
+// grant. Every one of them acts on the main window by label: the page never names a window.
+// ---------------------------------------------------------------------------------------------
+
+/// What the title bar has to draw differently: the maximise button becomes restore, and a
+/// maximised window on Windows needs no rounded corners under its top row.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WindowStateDto {
+    pub is_maximized: bool,
+}
+
+fn main_window<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+) -> Result<tauri::WebviewWindow<R>, CommandError> {
+    app.get_webview_window(crate::security::MAIN_WEBVIEW)
+        .ok_or_else(|| internal("there is no main window"))
+}
+
+/// Whether the window is maximised. The page asks after every resize; there is no event channel
+/// to the page, and a resize is the only thing that can change the answer.
+#[tauri::command]
+pub fn desktop_window_state<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+) -> Result<WindowStateDto, CommandError> {
+    let window = main_window(&app)?;
+    Ok(WindowStateDto {
+        is_maximized: window.is_maximized().map_err(internal)?,
+    })
+}
+
+/// Hands the window to the system's own drag loop, from a press in the title bar.
+///
+/// **Not a manual move-the-window-to-the-pointer loop**, on purpose: this is what keeps
+/// drag-to-snap, the shake gesture and the monitor-edge behaviour working, because from here on
+/// it is Windows moving the window and not us.
+#[tauri::command]
+pub fn desktop_window_start_drag<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+) -> Result<(), CommandError> {
+    main_window(&app)?.start_dragging().map_err(internal)
+}
+
+#[tauri::command]
+pub fn desktop_window_minimize<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+) -> Result<(), CommandError> {
+    main_window(&app)?.minimize().map_err(internal)
+}
+
+/// Maximise or restore, whichever the window is not. One command rather than two because the
+/// button is one button, and because asking first would race the answer.
+#[tauri::command]
+pub fn desktop_window_toggle_maximize<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+) -> Result<WindowStateDto, CommandError> {
+    let window = main_window(&app)?;
+    if window.is_maximized().map_err(internal)? {
+        window.unmaximize().map_err(internal)?;
+    } else {
+        window.maximize().map_err(internal)?;
+    }
+    Ok(WindowStateDto {
+        is_maximized: window.is_maximized().map_err(internal)?,
+    })
+}
+
+/// Closes the window, which ends the app. It goes through the window's own close so the exit
+/// handler still runs (the listener is stopped, the slicer watchers are closed).
+#[tauri::command]
+pub fn desktop_window_close<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+) -> Result<(), CommandError> {
+    main_window(&app)?.close().map_err(internal)
+}
+
+/// `Ctrl+Shift+I`, which used to be a menu item. `devtools` is a feature of the release build
+/// here, as it was in the Electron app.
+#[tauri::command]
+pub fn desktop_window_toggle_devtools<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+) -> Result<(), CommandError> {
+    let window = main_window(&app)?;
+    if window.is_devtools_open() {
+        window.close_devtools();
+    } else {
+        window.open_devtools();
+    }
+    Ok(())
 }

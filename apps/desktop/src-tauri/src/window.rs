@@ -1,27 +1,42 @@
-//! The main window: how it is built, where it may go, and the application menu.
+//! The main window: how it is built and where it may go.
+//!
+//! # No decorations, and no menu
+//!
+//! The window is created undecorated: the system title bar is gone and the page draws its own
+//! (`ui/window-bar.tsx`), which is why the app's own colours reach the top of the window instead
+//! of a grey caption sitting above them.
+//!
+//! What the system no longer gives us for free, and where each went instead:
+//!
+//! - **Dragging, double-click to maximise, drag-to-snap** — `desktop_window_start_drag` hands the
+//!   window to the system drag loop (`WM_NCLBUTTONDOWN`/`HTCAPTION` under the hood), so Aero Snap
+//!   and the shake gesture behave exactly as they did. The double-click is
+//!   `desktop_window_toggle_maximize`.
+//! - **The resize border** is still the window's own: `tao` keeps `WS_THICKFRAME` on an
+//!   undecorated resizable window, so the eight edges work untouched.
+//! - **The buttons** are three app commands, drawn by the page.
+//!
+//! The application menu is gone with it. Choose-library was its only unique entry and the
+//! settings page has offered that for a while; reload and the developer tools keep their chords
+//! (`Ctrl+R`, `Ctrl+Shift+I`) as key handlers in the page, over
+//! `desktop_window_toggle_devtools`. **The chords only fire while the focus is in the app's own
+//! webview**: a key pressed inside the model browser's child view belongs to that view, which has
+//! no capability and so can call nothing. That is the accepted cost of having no menu; the way to
+//! the developer tools from there is to click the app's chrome first.
 
 use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
 
 use spm_shell::gate::LaunchGate;
-use spm_shell::library::{PickerLanguage, menu_strings};
 use spm_shell::nav::{NavigationPolicy, is_openable_externally, navigation_policy};
 use spm_shell::shell::{ShellEvents, ShellRoute};
-use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::webview::NewWindowResponse;
 use tauri::{AppHandle, Manager, Runtime, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 
 use crate::security::MAIN_WEBVIEW;
 
-/// What the title bar and the taskbar say.
+/// What the taskbar says, and the window title a screen reader reads.
 pub const APP_NAME: &str = "Slicer Project Manager";
-
-/// The menu item that asks where the library is.
-pub const CHOOSE_LIBRARY_ITEM: &str = "spm-choose-library";
-/// The menu item that opens the developer tools.
-pub const DEVTOOLS_ITEM: &str = "spm-devtools";
-/// The menu item that reloads the page.
-pub const RELOAD_ITEM: &str = "spm-reload";
 
 /// Hands a web page to the system browser. Only `http(s)`: a `file:` or custom-scheme URL given to
 /// the shell would execute things.
@@ -55,6 +70,8 @@ pub fn create_main_window<R: Runtime>(
     let popup_origin = origin.to_owned();
     let mut builder = WebviewWindowBuilder::new(app, MAIN_WEBVIEW, WebviewUrl::External(parsed))
         .title(APP_NAME)
+        // The page draws the title bar; see the module docs for what moves to commands with it.
+        .decorations(false)
         .inner_size(1280.0, 860.0)
         .min_inner_size(900.0, 600.0)
         .visible(!hidden)
@@ -91,75 +108,6 @@ pub fn create_main_window<R: Runtime>(
             });
     }
     builder.build()
-}
-
-/// The application menu: where the library is chosen (the way back from a server, where the
-/// settings card is hidden), the editing shortcuts, a reload, and the developer tools.
-pub fn build_menu<R: Runtime>(
-    app: &AppHandle<R>,
-    language: PickerLanguage,
-) -> tauri::Result<Menu<R>> {
-    let (library_label, choose_label) = menu_strings(language);
-    let (edit, view, window, reload, devtools) = match language {
-        PickerLanguage::En => ("Edit", "View", "Window", "Reload", "Toggle Developer Tools"),
-        PickerLanguage::De => (
-            "Bearbeiten",
-            "Ansicht",
-            "Fenster",
-            "Neu laden",
-            "Entwicklertools umschalten",
-        ),
-    };
-    let library = Submenu::with_items(
-        app,
-        library_label,
-        true,
-        &[
-            &MenuItem::with_id(app, CHOOSE_LIBRARY_ITEM, choose_label, true, None::<&str>)?,
-            &PredefinedMenuItem::separator(app)?,
-            &PredefinedMenuItem::quit(app, None)?,
-        ],
-    )?;
-    let edit = Submenu::with_items(
-        app,
-        edit,
-        true,
-        &[
-            &PredefinedMenuItem::undo(app, None)?,
-            &PredefinedMenuItem::redo(app, None)?,
-            &PredefinedMenuItem::separator(app)?,
-            &PredefinedMenuItem::cut(app, None)?,
-            &PredefinedMenuItem::copy(app, None)?,
-            &PredefinedMenuItem::paste(app, None)?,
-            &PredefinedMenuItem::select_all(app, None)?,
-        ],
-    )?;
-    let view = Submenu::with_items(
-        app,
-        view,
-        true,
-        &[
-            &MenuItem::with_id(app, RELOAD_ITEM, reload, true, Some("CmdOrCtrl+R"))?,
-            &MenuItem::with_id(
-                app,
-                DEVTOOLS_ITEM,
-                devtools,
-                true,
-                Some("CmdOrCtrl+Shift+I"),
-            )?,
-        ],
-    )?;
-    let window = Submenu::with_items(
-        app,
-        window,
-        true,
-        &[
-            &PredefinedMenuItem::minimize(app, None)?,
-            &PredefinedMenuItem::maximize(app, None)?,
-            &PredefinedMenuItem::close_window(app, None)?,
-        ],
-    )?;
-    Menu::with_items(app, &[&library, &edit, &view, &window])
 }
 
 /// Turns the shell's "the target moved" and "the data changed" into what the main webview does.

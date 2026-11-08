@@ -15,8 +15,7 @@ use spm_shell::library::{
     ConfirmOptions, FOLDER_PICKER_TITLE, LibraryHost, LibraryHostOptions, OpenFailure,
     PickerLanguage, PlanSource, PreviewRunner, PromptReason, PromptTrigger, StartPreviews,
     StartupPlan, confirm_remote_options, confirmed_at, explain_reason, folder_picker_options,
-    menu_strings, mode_choice_at, mode_picker_options, picker_language, plan_startup,
-    resolve_library_dir,
+    mode_choice_at, mode_picker_options, picker_language, plan_startup, resolve_library_dir,
 };
 use spm_shell::state::{read_remembered_dir, remember_dir};
 use spm_shell::sync::Done;
@@ -183,10 +182,6 @@ fn every_native_dialog_in_the_shell_speaks_the_same_set_of_languages() {
     );
     assert_ne!(en.message, de.message);
     assert_ne!(en.detail, de.detail);
-    assert_ne!(
-        menu_strings(PickerLanguage::En),
-        menu_strings(PickerLanguage::De)
-    );
     assert_eq!(mode_choice_at(2), spm_shell::library::ModeChoice::Cancel);
     assert_eq!(mode_choice_at(99), spm_shell::library::ModeChoice::Cancel);
     assert!(confirmed_at(1) && !confirmed_at(0));

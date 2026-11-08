@@ -1,6 +1,7 @@
 import { useLocation, useNavigate, type RouteSectionProps } from '@solidjs/router'
-import { createEffect, createSignal, For, on, Show } from 'solid-js'
+import { createEffect, createSignal, For, on, onCleanup, onMount, Show } from 'solid-js'
 import type { Theme } from '../api/generated'
+import { desktop, isDesktop } from '../core/desktop'
 import { errorMessage } from '../core/i18n/errors'
 import { t, type TranslationKey } from '../core/i18n'
 import { navEntries, navLabel } from '../core/nav'
@@ -24,6 +25,7 @@ import {
   Sun,
   ToastRegion,
   MenuIcon,
+  WindowBar,
   type IconComponent,
 } from '../ui'
 
@@ -42,6 +44,68 @@ export function Shell(props: RouteSectionProps) {
   const navigate = useNavigate()
   const location = useLocation()
   const [drawerOpen, setDrawerOpen] = createSignal(false)
+  const [maximized, setMaximized] = createSignal(false)
+
+  /**
+   * The window's own bar, in the desktop app only. The maximised state is asked for after every
+   * resize rather than listened for: there is no event channel to the page (the capability grants
+   * commands and nothing else), and nothing but a resize can change the answer.
+   */
+  onMount(() => {
+    if (!isDesktop()) return
+    const read = () => {
+      void desktop.window
+        .state()
+        .then((state) => setMaximized(state.isMaximized))
+        .catch(() => {})
+    }
+    read()
+    window.addEventListener('resize', read)
+    onCleanup(() => window.removeEventListener('resize', read))
+  })
+
+  /**
+   * What the View menu used to hold. It only fires while the focus is in this webview: a key
+   * pressed inside the model browser's child view belongs to that view, which can call nothing.
+   */
+  onMount(() => {
+    if (!isDesktop()) return
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!event.ctrlKey || event.altKey || event.metaKey) return
+      const key = event.key.toLowerCase()
+      if (key === 'r' && !event.shiftKey) {
+        event.preventDefault()
+        window.location.reload()
+      } else if (key === 'i' && event.shiftKey) {
+        event.preventDefault()
+        void desktop.window.toggleDevtools().catch(() => {})
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    onCleanup(() => window.removeEventListener('keydown', onKeyDown))
+  })
+
+  const windowBar = () => (
+    <WindowBar
+      title={t('app.title')}
+      isMaximized={maximized()}
+      labels={{
+        minimize: t('window.minimize'),
+        maximize: t('window.maximize'),
+        restore: t('window.restore'),
+        close: t('window.close'),
+      }}
+      onDragStart={() => void desktop.window.startDrag().catch(() => {})}
+      onToggleMaximize={() =>
+        void desktop.window
+          .toggleMaximize()
+          .then((state) => setMaximized(state.isMaximized))
+          .catch(() => {})
+      }
+      onMinimize={() => void desktop.window.minimize().catch(() => {})}
+      onClose={() => void desktop.window.close().catch(() => {})}
+    />
+  )
 
   const collapsed = () => settings.settings().navCollapsed
   // The connect page is a question, not a place in the app: no library exists yet for the
@@ -116,12 +180,18 @@ export function Shell(props: RouteSectionProps) {
   return (
     <>
       <AppShell
+        topBar={isDesktop() ? windowBar() : undefined}
         sidebar={
           <Show when={hasNav()}>
             <Sidebar
               label={t('nav.label')}
               collapsed={collapsed()}
-              brand={<Brand name={t('app.title')} href="/projects" collapsed={collapsed()} />}
+              // In the desktop app the window bar above carries the mark and the name already.
+              brand={
+                isDesktop() ? undefined : (
+                  <Brand name={t('app.title')} href="/projects" collapsed={collapsed()} />
+                )
+              }
               footer={
                 <>
                   {themeMenu()}
