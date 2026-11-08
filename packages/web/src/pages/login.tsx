@@ -1,18 +1,41 @@
 import { Navigate, useNavigate } from '@solidjs/router'
 import { createSignal, Show } from 'solid-js'
 import { api } from '../core/api/client'
+import { desktop, isDesktop, type DesktopClient } from '../core/desktop'
 import { t } from '../core/i18n'
+import { notify } from '../core/notify'
 import { hasSession, signedIn } from '../core/session'
 import { hasErrors, validateLogin } from '../core/validation'
-import { Alert, Button, Card, FormField, Heading, Input } from '../ui'
+import { Alert, Button, Card, FormField, FolderOpen, Heading, Input, Text } from '../ui'
 
-export default function LoginPage() {
+export default function LoginPage(props: { client?: DesktopClient }) {
   const navigate = useNavigate()
   const [username, setUsername] = createSignal('')
   const [password, setPassword] = createSignal('')
   const [errors, setErrors] = createSignal<ReturnType<typeof validateLogin>>({})
   const [failed, setFailed] = createSignal(false)
   const [busy, setBusy] = createSignal(false)
+  const [choosing, setChoosing] = createSignal(false)
+
+  /**
+   * The way out of a server whose password you do not have.
+   *
+   * Without it the desktop app is a trap: `/settings` is behind the auth guard, the connect page
+   * is switched off in remote mode (`canPickLocalFolder` is false there), and since the
+   * application menu went there is no other door. The shell loads whatever is chosen into this
+   * window itself, so nothing here navigates afterwards.
+   */
+  async function chooseLibrary() {
+    setChoosing(true)
+    try {
+      await (props.client ?? desktop).chooseLibrary()
+    } catch (error) {
+      console.error('could not change the library', error)
+      notify.error(t('settings.libraryFailed'))
+    } finally {
+      setChoosing(false)
+    }
+  }
 
   async function submit(event: SubmitEvent) {
     event.preventDefault()
@@ -67,6 +90,19 @@ export default function LoginPage() {
             </Button>
           </form>
         </Card>
+        <Show when={isDesktop()}>
+          <div class="flex flex-col items-center gap-2">
+            <Text variant="small">{t('auth.otherLibraryLead')}</Text>
+            <Button
+              variant="ghost"
+              icon={FolderOpen}
+              loading={choosing()}
+              onClick={() => void chooseLibrary()}
+            >
+              {t('settings.chooseLibrary')}
+            </Button>
+          </div>
+        </Show>
       </div>
     </Show>
   )

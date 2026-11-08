@@ -20,6 +20,7 @@
     "confirmPassword": "Passwort bestätigen",
     "signIn": "Anmelden",
     "signInFailed": "Benutzername oder Passwort ist falsch",
+    "otherLibraryLead": "Nicht Ihr Server?",
     "activateTitle": "Passwort festlegen",
     "activateInvalid": "Dieser Aktivierungslink ist ungültig oder abgelaufen",
     "activateSubmit": "Konto aktivieren",

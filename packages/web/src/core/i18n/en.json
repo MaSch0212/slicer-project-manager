@@ -20,6 +20,7 @@
     "confirmPassword": "Confirm password",
     "signIn": "Sign in",
     "signInFailed": "Username or password is not correct",
+    "otherLibraryLead": "Not your server?",
     "activateTitle": "Choose a password",
     "activateInvalid": "This activation link is not valid or has expired",
     "activateSubmit": "Activate account",

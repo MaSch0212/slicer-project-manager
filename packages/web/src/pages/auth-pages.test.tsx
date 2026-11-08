@@ -25,6 +25,17 @@ vi.mock('../core/api/client', () => ({ api }))
 const signedIn = vi.hoisted(() => vi.fn())
 vi.mock('../core/session', () => ({ signedIn, hasSession: () => false }))
 
+// Whether this is the desktop app, which is the only place the login page offers a way out to
+// another library.
+const host = vi.hoisted(() => ({ isDesktop: false, chooseLibrary: vi.fn() }))
+vi.mock('../core/desktop', () => ({
+  isDesktop: () => host.isDesktop,
+  desktop: { chooseLibrary: host.chooseLibrary },
+}))
+
+const notify = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn(), info: vi.fn() }))
+vi.mock('../core/notify', () => ({ notify }))
+
 import ActivatePage from './activate'
 import LoginPage from './login'
 
@@ -43,7 +54,41 @@ function renderAt(path: string) {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  host.isDesktop = false
+  host.chooseLibrary.mockResolvedValue(undefined)
   vi.spyOn(console, 'error').mockImplementation(() => {})
+})
+
+/**
+ * The one door out of a desktop app pointed at a server whose password the user does not have.
+ * Settings is behind the auth guard and the connect page is off in remote mode, so without this
+ * — and since the application menu was deleted — there is no way back to another library.
+ */
+describe('LoginPage, the way out to another library', () => {
+  it('is not offered in a browser, where there is no library to choose', () => {
+    renderAt('/login')
+    expect(screen.queryByRole('button', { name: 'Choose another library…' })).toBeNull()
+  })
+
+  it('asks the shell for another library in the desktop app', async () => {
+    host.isDesktop = true
+    renderAt('/login')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Choose another library…' }))
+
+    await waitFor(() => expect(host.chooseLibrary).toHaveBeenCalledTimes(1))
+    expect(notify.error).not.toHaveBeenCalled()
+  })
+
+  it('says so when the shell refuses, rather than leaving the button spinning', async () => {
+    host.isDesktop = true
+    host.chooseLibrary.mockRejectedValue(new Error('no'))
+    renderAt('/login')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Choose another library…' }))
+
+    await waitFor(() => expect(notify.error).toHaveBeenCalledTimes(1))
+  })
 })
 
 // Ported from login.page.spec.ts.
