@@ -5,6 +5,7 @@ import type {
   BrowseDownloadDto,
   BrowseNoticeDto,
   BrowseStateDto,
+  BrowseTabsDto,
   FileDto,
   ModelSiteDto,
   ProjectDto,
@@ -31,7 +32,7 @@ const SITES: ModelSiteDto[] = [
 const THING_URL = 'https://www.thingiverse.com/thing:1234'
 
 const IDLE: BrowseStateDto = {
-  attached: true,
+  tabId: 'tab-1',
   url: THING_URL,
   title: 'A thing',
   isLoading: false,
@@ -39,6 +40,17 @@ const IDLE: BrowseStateDto = {
   canGoForward: false,
   siteId: 'thingiverse',
   lastError: null,
+}
+
+/** One tab, in front, as the shell reports the set of them. */
+function tabsOf(...states: BrowseStateDto[]): BrowseTabsDto {
+  const tabs = states.length > 0 ? states : [IDLE]
+  return {
+    attached: true,
+    tabs,
+    activeTabId: tabs[0]!.tabId,
+    canOpenMore: true,
+  }
 }
 
 function project(over: Partial<ProjectDto> = {}): ProjectDto {
@@ -97,8 +109,11 @@ type Browse = {
   back: Mock
   forward: Mock
   reload: Mock
-  state: Mock
-  clearLastPage: Mock
+  tabs: Mock
+  openTab: Mock
+  selectTab: Mock
+  closeTab: Mock
+  capture: Mock
   downloads: Mock
   discard: Mock
   notices: Mock
@@ -122,17 +137,20 @@ type Options = {
 function setup(options: Options = {}) {
   const browse: Browse = {
     sites: vi.fn().mockResolvedValue(SITES),
-    attach: vi.fn().mockResolvedValue(options.state ?? IDLE),
+    attach: vi.fn().mockResolvedValue(tabsOf(options.state ?? IDLE)),
     detach: vi.fn().mockResolvedValue(undefined),
     hide: vi.fn().mockResolvedValue(undefined),
-    show: vi.fn().mockResolvedValue(options.state ?? IDLE),
+    show: vi.fn().mockResolvedValue(tabsOf(options.state ?? IDLE)),
     setBounds: vi.fn().mockResolvedValue(undefined),
-    navigate: vi.fn().mockResolvedValue(options.state ?? IDLE),
-    back: vi.fn().mockResolvedValue(options.state ?? IDLE),
-    forward: vi.fn().mockResolvedValue(options.state ?? IDLE),
-    reload: vi.fn().mockResolvedValue(options.state ?? IDLE),
-    state: vi.fn().mockResolvedValue(options.state ?? IDLE),
-    clearLastPage: vi.fn().mockResolvedValue(undefined),
+    navigate: vi.fn().mockResolvedValue(tabsOf(options.state ?? IDLE)),
+    back: vi.fn().mockResolvedValue(tabsOf(options.state ?? IDLE)),
+    forward: vi.fn().mockResolvedValue(tabsOf(options.state ?? IDLE)),
+    reload: vi.fn().mockResolvedValue(tabsOf(options.state ?? IDLE)),
+    tabs: vi.fn().mockResolvedValue(tabsOf(options.state ?? IDLE)),
+    openTab: vi.fn().mockResolvedValue(tabsOf(options.state ?? IDLE)),
+    selectTab: vi.fn().mockResolvedValue(tabsOf(options.state ?? IDLE)),
+    closeTab: vi.fn().mockResolvedValue(tabsOf(options.state ?? IDLE)),
+    capture: vi.fn().mockResolvedValue(null),
     downloads: vi.fn().mockResolvedValue(options.downloads ?? []),
     discard: vi.fn().mockResolvedValue(undefined),
     notices: vi.fn().mockResolvedValue(options.notices ?? []),
@@ -185,8 +203,8 @@ describe('the native view is not a DOM element', () => {
     const { browse, unmount } = setup()
     await ready(browse)
     expect(browse.attach).toHaveBeenCalledTimes(1)
-    expect(browse.attach.mock.calls[0]).toHaveLength(2)
-    expect(browse.attach.mock.calls[0]![1]).toBeNull()
+    // Only the rectangle: where to open is the shell's, and the tabs are already there.
+    expect(browse.attach.mock.calls[0]).toHaveLength(1)
     expect(browse.detach).not.toHaveBeenCalled()
     unmount()
     await waitFor(() => expect(browse.detach).toHaveBeenCalledTimes(1))
@@ -224,7 +242,7 @@ describe('the native view is not a DOM element', () => {
     )
     const { browse } = setup()
     await ready(browse)
-    await waitFor(() => expect(browse.attach).toHaveBeenCalledWith(rect, null))
+    await waitFor(() => expect(browse.attach).toHaveBeenCalledWith(rect))
     // A scroll that moved nothing is not a report.
     fireEvent.scroll(window)
     await new Promise((resolve) => setTimeout(resolve, 20))
@@ -240,17 +258,17 @@ describe('the native view is not a DOM element', () => {
   })
 
   it('detaches again, and loads nothing, when the page is destroyed while attach is outstanding', async () => {
-    let finish: (state: BrowseStateDto) => void = () => {}
+    let finish: (tabs: BrowseTabsDto) => void = () => {}
     const attach = vi
       .fn()
-      .mockReturnValue(new Promise<BrowseStateDto>((resolve) => (finish = resolve)))
+      .mockReturnValue(new Promise<BrowseTabsDto>((resolve) => (finish = resolve)))
     const { browse, unmount } = setup({ overrides: { attach } })
     await waitFor(() => expect(attach).toHaveBeenCalled())
     unmount()
-    finish(IDLE)
+    finish(tabsOf())
     await waitFor(() => expect(browse.detach).toHaveBeenCalledTimes(1))
     await new Promise((resolve) => setTimeout(resolve, 50))
-    expect(browse.state).not.toHaveBeenCalled()
+    expect(browse.tabs).not.toHaveBeenCalled()
     expect(browse.downloads).not.toHaveBeenCalled()
   })
 
@@ -262,10 +280,10 @@ describe('the native view is not a DOM element', () => {
     press('Add to a project')
     await waitFor(() => expect(list).toHaveBeenCalled())
     unmount()
-    const polls = browse.state.mock.calls.length
+    const polls = browse.tabs.mock.calls.length
     finish([project()])
     await new Promise((resolve) => setTimeout(resolve, 60))
-    expect(browse.state.mock.calls.length).toBe(polls)
+    expect(browse.tabs.mock.calls.length).toBe(polls)
     expect(browse.land).not.toHaveBeenCalled()
   })
 })
@@ -380,11 +398,22 @@ describe('site-controlled strings', () => {
     expect(browse.reload).toHaveBeenCalledTimes(1)
   })
 
-  it('forgets the last page when asked', async () => {
+  it('opens, selects and closes tabs through the shell', async () => {
     const { browse } = setup()
     await ready(browse)
-    press('Forget the last page')
-    await waitFor(() => expect(browse.clearLastPage).toHaveBeenCalledTimes(1))
+
+    press('New tab')
+    await waitFor(() => expect(browse.openTab).toHaveBeenCalledTimes(1))
+    press('Close A thing')
+    await waitFor(() => expect(browse.closeTab).toHaveBeenCalledWith('tab-1'))
+  })
+
+  it('names a tab after the page, falling back to its host', async () => {
+    const { browse } = setup({
+      state: { ...IDLE, title: null, url: 'https://www.printables.com/model/1' },
+    })
+    await ready(browse)
+    await waitFor(() => expect(screen.getByRole('tab').textContent).toContain('www.printables.com'))
   })
 })
 
@@ -395,7 +424,8 @@ describe('loading and the interstitial', () => {
       interstitialTicks: 6,
     })
     await ready(browse)
-    await waitFor(() => expect(container.textContent).toContain('Loading…'))
+    // The tab itself says it is loading; the sentence below the address only appears later.
+    expect(screen.getByRole('status', { name: 'Loading…' })).toBeTruthy()
     expect(container.textContent).not.toContain('checking the connection')
     await waitFor(() => expect(container.textContent).toContain('checking the connection'))
     // Nothing gave up: the view was not reloaded, retried or detached.
@@ -405,16 +435,16 @@ describe('loading and the interstitial', () => {
   })
 
   it('drops the interstitial the moment the page finishes loading', async () => {
-    const state = vi.fn().mockResolvedValue({ ...IDLE, isLoading: true })
+    const tabs = vi.fn().mockResolvedValue(tabsOf({ ...IDLE, isLoading: true }))
     const { browse, container } = setup({
       state: { ...IDLE, isLoading: true },
-      overrides: { state },
+      overrides: { tabs },
     })
     await ready(browse)
     await waitFor(() => expect(container.textContent).toContain('checking the connection'))
-    state.mockResolvedValue(IDLE)
+    tabs.mockResolvedValue(tabsOf())
     await waitFor(() => expect(container.textContent).not.toContain('checking the connection'))
-    expect(container.textContent).not.toContain('Loading…')
+    expect(screen.queryByRole('status', { name: 'Loading…' })).toBeNull()
   })
 })
 

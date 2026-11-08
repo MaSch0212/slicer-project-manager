@@ -372,13 +372,15 @@ const BROWSE_CHECKS: &[&str] = &[
     "browse: discard removes a staged download",
     "browse: a page is matched to the project whose website has its key, and nothing else matches (the honest answer)",
     "browse: landing refuses an unsafe name and an id it never staged, then lands through the loopback API with the bytes in the project and the staging directory gone",
-    "browse: detach destroys the view, a second attach remembers the last page, and clearing forgets it",
+    "browse: leaving the route takes the tabs off screen and keeps them, and coming back finds the same tab on the same page",
+    "browse: a second tab is its own webview, selecting goes back to the first, and closing leaves one",
+    "browse: the front tab can be captured as a still picture for a dialog to be drawn over",
     "browse security: an invoke from the browse webview is refused (an app command, a browse command, a plugin command), though the bridge object is there",
     "browse security: the loopback API refuses the browse webview (no launch secret, so no request passed the gate), while the main webview's identical request does",
     "browse security: a permission request from the browse webview is denied",
     "browse security: its storage is isolated from the main webview's profile, both ways (same origin, different data directory)",
     "browse: the view has a persistent profile directory of its own beside the main webview's",
-    "browse: the view is gone when the route is (no browse webview is left)",
+    "browse: the tabs outlive the route and die with the app (no browse webview is left)",
 ];
 
 /// **The model browser, hidden, against a fixture site.** The real child webview is created inside
@@ -432,18 +434,15 @@ fn the_model_browser_the_real_child_webview_against_a_fixture_site_hidden() {
             );
         }
     }
-    // The view's profile is the app's own directory, and the last page it was on is remembered in
-    // a file beside it (cleared once by the page, then written again by the later navigations).
+    // The views' profile is the app's own directory, shared by every tab so a sign-in in one is
+    // a sign-in in the next.
     assert!(root.path().join("data").join("browse-profile").is_dir());
-    let remembered: Value = serde_json::from_str(
-        &std::fs::read_to_string(root.path().join("data").join("browse.json")).unwrap(),
-    )
-    .unwrap();
+    // And **nothing is written down about where the user was.** The tabs live as long as the
+    // process; `browse.json` went with the feature that wrote it, and a run that recreated it
+    // would be a run that had started keeping a browsing history again.
     assert!(
-        remembered["lastUrl"]
-            .as_str()
-            .is_some_and(|url| url.starts_with("http://127.0.0.1:")),
-        "{remembered}"
+        !root.path().join("data").join("browse.json").exists(),
+        "a run left a record of the pages the user visited"
     );
     drop(fixture);
 }

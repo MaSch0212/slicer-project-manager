@@ -4,7 +4,7 @@ import type { Theme } from '../api/generated'
 import { desktop, isDesktop } from '../core/desktop'
 import { errorMessage } from '../core/i18n/errors'
 import { t, type TranslationKey } from '../core/i18n'
-import { navEntries, navLabel } from '../core/nav'
+import { isFullBleed, navEntries, navLabel } from '../core/nav'
 import { notify } from '../core/notify'
 import { signOut } from '../core/session'
 import { settings } from '../core/stores'
@@ -181,6 +181,7 @@ export function Shell(props: RouteSectionProps) {
     <>
       <AppShell
         topBar={isDesktop() ? windowBar() : undefined}
+        fullBleed={isFullBleed(location.pathname)}
         sidebar={
           <Show when={hasNav()}>
             <Sidebar

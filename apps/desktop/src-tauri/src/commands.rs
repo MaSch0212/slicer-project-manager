@@ -15,7 +15,7 @@ use serde::Serialize;
 use serde_json::{Map, Value};
 use spm_core::AppError;
 use spm_core::dto::{
-    BrowseDownloadDto, BrowseMatchDto, BrowseNoticeDto, BrowseStateDto, DiscardedSessionsDto,
+    BrowseDownloadDto, BrowseMatchDto, BrowseNoticeDto, BrowseTabsDto, DiscardedSessionsDto,
     FileDto, LibraryMode, LibraryStateDto, LocalLibraryDto, RemoteLibraryDto, SlicerConfigDto,
     SlicerLaunchDto, SlicerSessionDto,
 };
@@ -297,20 +297,16 @@ pub async fn desktop_browse_sites(
     browsing(&ctx, |commands| Ok(commands.sites())).await
 }
 
-/// Creates the view where the page's placeholder is. `url` is `null` for the remembered page.
+/// The page is on screen at this placeholder. Puts the tabs back, or opens a first one.
 #[tauri::command]
 pub async fn desktop_browse_attach(
     ctx: State<'_, AppCtx>,
     bounds: Option<Value>,
-    url: Option<Value>,
-) -> Result<BrowseStateDto, CommandError> {
-    browsing(&ctx, move |commands| {
-        commands.attach(bounds.as_ref(), url.as_ref())
-    })
-    .await
+) -> Result<BrowseTabsDto, CommandError> {
+    browsing(&ctx, move |commands| commands.attach(bounds.as_ref())).await
 }
 
-/// Leaves the route: destroys the view (parks it while a download is still coming down).
+/// Leaves the route. The tabs stay alive and hidden; none of them may start a download.
 #[tauri::command]
 pub async fn desktop_browse_detach(ctx: State<'_, AppCtx>) -> Result<(), CommandError> {
     browsing(&ctx, |commands| {
@@ -331,7 +327,7 @@ pub async fn desktop_browse_hide(ctx: State<'_, AppCtx>) -> Result<(), CommandEr
 }
 
 #[tauri::command]
-pub async fn desktop_browse_show(ctx: State<'_, AppCtx>) -> Result<BrowseStateDto, CommandError> {
+pub async fn desktop_browse_show(ctx: State<'_, AppCtx>) -> Result<BrowseTabsDto, CommandError> {
     browsing(&ctx, |commands| Ok(commands.show())).await
 }
 
@@ -348,31 +344,65 @@ pub async fn desktop_browse_set_bounds(
 pub async fn desktop_browse_navigate(
     ctx: State<'_, AppCtx>,
     url: Option<Value>,
-) -> Result<BrowseStateDto, CommandError> {
+) -> Result<BrowseTabsDto, CommandError> {
     browsing(&ctx, move |commands| commands.navigate(url.as_ref())).await
 }
 
 #[tauri::command]
-pub async fn desktop_browse_back(ctx: State<'_, AppCtx>) -> Result<BrowseStateDto, CommandError> {
+pub async fn desktop_browse_back(ctx: State<'_, AppCtx>) -> Result<BrowseTabsDto, CommandError> {
     browsing(&ctx, |commands| commands.back()).await
 }
 
 #[tauri::command]
-pub async fn desktop_browse_forward(
-    ctx: State<'_, AppCtx>,
-) -> Result<BrowseStateDto, CommandError> {
+pub async fn desktop_browse_forward(ctx: State<'_, AppCtx>) -> Result<BrowseTabsDto, CommandError> {
     browsing(&ctx, |commands| commands.forward()).await
 }
 
 #[tauri::command]
-pub async fn desktop_browse_reload(ctx: State<'_, AppCtx>) -> Result<BrowseStateDto, CommandError> {
+pub async fn desktop_browse_reload(ctx: State<'_, AppCtx>) -> Result<BrowseTabsDto, CommandError> {
     browsing(&ctx, |commands| commands.reload()).await
 }
 
-/// What the chrome polls while `/browse` is mounted.
+/// Every tab and which one is in front: what the chrome polls while `/browse` is mounted.
 #[tauri::command]
-pub async fn desktop_browse_state(ctx: State<'_, AppCtx>) -> Result<BrowseStateDto, CommandError> {
-    browsing(&ctx, |commands| Ok(commands.state())).await
+pub async fn desktop_browse_tabs(ctx: State<'_, AppCtx>) -> Result<BrowseTabsDto, CommandError> {
+    browsing(&ctx, |commands| Ok(commands.tabs())).await
+}
+
+/// Opens a tab. `url` is `null` for the registry's start page.
+#[tauri::command]
+pub async fn desktop_browse_open_tab(
+    ctx: State<'_, AppCtx>,
+    url: Option<Value>,
+) -> Result<BrowseTabsDto, CommandError> {
+    browsing(&ctx, move |commands| commands.open_tab(url.as_ref())).await
+}
+
+/// Brings a tab to the front.
+#[tauri::command]
+pub async fn desktop_browse_select_tab(
+    ctx: State<'_, AppCtx>,
+    tab_id: Option<Value>,
+) -> Result<BrowseTabsDto, CommandError> {
+    browsing(&ctx, move |commands| commands.select_tab(tab_id.as_ref())).await
+}
+
+/// Closes a tab. Closing the last one leaves a fresh tab, never an empty browser.
+#[tauri::command]
+pub async fn desktop_browse_close_tab(
+    ctx: State<'_, AppCtx>,
+    tab_id: Option<Value>,
+) -> Result<BrowseTabsDto, CommandError> {
+    browsing(&ctx, move |commands| commands.close_tab(tab_id.as_ref())).await
+}
+
+/// A PNG of the front tab as a `data:` URL, for the still picture the download dialog is drawn
+/// over. `null` where the platform cannot capture: the dialog opens against the empty slot.
+#[tauri::command]
+pub async fn desktop_browse_capture(
+    ctx: State<'_, AppCtx>,
+) -> Result<Option<String>, CommandError> {
+    browsing(&ctx, |commands| Ok(commands.capture_active())).await
 }
 
 /// Everything staged, including what previous runs left.
@@ -430,16 +460,6 @@ pub async fn desktop_browse_match(
     url: Value,
 ) -> Result<BrowseMatchDto, CommandError> {
     browsing(&ctx, move |commands| commands.match_page(Some(&url))).await
-}
-
-/// Forgets the remembered last page. The only thing that does.
-#[tauri::command]
-pub async fn desktop_browse_clear_last_page(ctx: State<'_, AppCtx>) -> Result<(), CommandError> {
-    browsing(&ctx, |commands| {
-        commands.clear_last_page();
-        Ok(())
-    })
-    .await
 }
 
 // ---------------------------------------------------------------------------------------------

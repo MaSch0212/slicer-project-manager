@@ -125,7 +125,6 @@ describe('the model browser commands', () => {
     const bounds = { x: 1, y: 2, width: 3, height: 4 }
     await browse.sites()
     await browse.attach(bounds)
-    await browse.attach(bounds, 'https://example.com/')
     await browse.detach()
     await browse.hide()
     await browse.show()
@@ -134,7 +133,12 @@ describe('the model browser commands', () => {
     await browse.back()
     await browse.forward()
     await browse.reload()
-    await browse.state()
+    await browse.tabs()
+    await browse.openTab()
+    await browse.openTab('https://example.com/')
+    await browse.selectTab('tab-2')
+    await browse.closeTab('tab-2')
+    await browse.capture()
     await browse.downloads()
     await browse.notices()
     await browse.dismissNotice('n-1')
@@ -143,11 +147,9 @@ describe('the model browser commands', () => {
     await browse.discard('dl-1')
     await browse.match('https://example.com/m')
     await browse.match(null)
-    await browse.clearLastPage()
     expect(invoke.mock.calls).toEqual([
       ['desktop_browse_sites', undefined],
-      ['desktop_browse_attach', { bounds, url: null }],
-      ['desktop_browse_attach', { bounds, url: 'https://example.com/' }],
+      ['desktop_browse_attach', { bounds }],
       ['desktop_browse_detach', undefined],
       ['desktop_browse_hide', undefined],
       ['desktop_browse_show', undefined],
@@ -156,7 +158,12 @@ describe('the model browser commands', () => {
       ['desktop_browse_back', undefined],
       ['desktop_browse_forward', undefined],
       ['desktop_browse_reload', undefined],
-      ['desktop_browse_state', undefined],
+      ['desktop_browse_tabs', undefined],
+      ['desktop_browse_open_tab', { url: null }],
+      ['desktop_browse_open_tab', { url: 'https://example.com/' }],
+      ['desktop_browse_select_tab', { tabId: 'tab-2' }],
+      ['desktop_browse_close_tab', { tabId: 'tab-2' }],
+      ['desktop_browse_capture', undefined],
       ['desktop_browse_downloads', undefined],
       ['desktop_browse_notices', undefined],
       ['desktop_browse_dismiss_notice', { id: 'n-1' }],
@@ -165,7 +172,6 @@ describe('the model browser commands', () => {
       ['desktop_browse_discard', { downloadId: 'dl-1' }],
       ['desktop_browse_match', { url: 'https://example.com/m' }],
       ['desktop_browse_match', { url: null }],
-      ['desktop_browse_clear_last_page', undefined],
     ])
   })
 

@@ -23,6 +23,12 @@ export function AppShell(props: {
    * is no window to frame, so there is none and `--chrome-top` stays `0px`.
    */
   topBar?: JSX.Element
+  /**
+   * The route wants the whole frame: no centred column, no padding, and the page is exactly as
+   * tall as what is left rather than as tall as its content. The model browser needs it, because
+   * the native view it is a placeholder for should run to the window's edges.
+   */
+  fullBleed?: boolean
   /** The app's name, shown in the phone top bar. */
   title: string
   /** The phone top bar's leading control, normally the button that opens the drawer. */
@@ -39,7 +45,12 @@ export function AppShell(props: {
             {props.menuButton}
             <span class="px-1 text-sm font-semibold tracking-tight text-fg">{props.title}</span>
           </header>
-          <main class="mx-auto w-full max-w-6xl flex-1 px-4 py-6 md:px-8 md:py-8">
+          <main
+            class={cx(
+              'flex w-full min-w-0 flex-1 flex-col',
+              props.fullBleed ? 'min-h-0' : 'mx-auto max-w-6xl px-4 py-6 md:px-8 md:py-8',
+            )}
+          >
             {props.children}
           </main>
         </div>

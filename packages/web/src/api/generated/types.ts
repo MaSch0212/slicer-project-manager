@@ -339,11 +339,15 @@ export type ModelSiteDto = { id: string, displayName: string, homeUrl: string, }
 export type BrowseBounds = { x: number, y: number, width: number, height: number, };
 
 /**
- * What the browse chrome polls. **Every string here was written by a stranger** (`url`, `title`
+ * One tab of the model browser. **Every string here was written by a stranger** (`url`, `title`
  * and `lastError` come from whatever site the view is on) and is rendered as text only: never
  * into HTML, an `href`, a `src` or a CSS `url()`, and truncated for display.
  */
-export type BrowseStateDto = { attached: boolean, url: string | null, title: string | null, isLoading: boolean, canGoBack: boolean, canGoForward: boolean, 
+export type BrowseStateDto = { 
+/**
+ * The shell's own id for this tab. Not a stranger's string; the page passes it back.
+ */
+tabId: string, url: string | null, title: string | null, isLoading: boolean, canGoBack: boolean, canGoForward: boolean, 
 /**
  * The registry row this URL belongs to, or `null`. Drives attribution, not permission (4.4).
  */
@@ -352,6 +356,20 @@ siteId: string | null,
  * Set when the last navigation failed, so the UI can say what happened rather than spin.
  */
 lastError: string | null, };
+
+/**
+ * Every tab and which one is in front: what the browse chrome polls.
+ *
+ * The tabs outlive the route — leaving `/browse` and coming back finds them where they were —
+ * and die with the process. `attached` is whether the page is on screen now, which is what
+ * decides whether a background tab may start a download at all.
+ */
+export type BrowseTabsDto = { attached: boolean, tabs: Array<BrowseStateDto>, activeTabId: string | null, 
+/**
+ * False at the cap. Each tab is a live webview of its own, so there is a limit, and the page
+ * disables the control rather than letting a click fail.
+ */
+canOpenMore: boolean, };
 
 export type BrowseDownloadState = "progressing" | "completed" | "cancelled" | "interrupted";
 

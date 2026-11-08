@@ -325,6 +325,10 @@
   "browse": {
     "title": "Modelle finden",
     "lead": "Durchsuchen Sie eine Modellseite in diesem Fenster und fügen Sie Heruntergeladenes einem Projekt hinzu.",
+    "tabs": "Geöffnete Seiten",
+    "newTab": "Neuer Tab",
+    "closeTab": "Schließen",
+    "tabCap": "Mehr Tabs sind nicht möglich. Schließen Sie zuerst einen.",
     "openFailed": "Der Modellbrowser konnte nicht geöffnet werden.",
     "startOn": "Auf einer Seite beginnen",
     "addressLabel": "Adresse",

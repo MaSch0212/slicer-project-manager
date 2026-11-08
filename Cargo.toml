@@ -5,6 +5,7 @@ members = [
   "crates/spm-http",
   "crates/spm-server",
   "crates/spm-shell",
+  "crates/spm-win32",
   "apps/desktop/src-tauri",
 ]
 
@@ -18,6 +19,7 @@ publish = false
 spm-core = { path = "crates/spm-core" }
 spm-http = { path = "crates/spm-http" }
 spm-shell = { path = "crates/spm-shell" }
+spm-win32 = { path = "crates/spm-win32" }
 axum = "0.8.9"
 tokio = { version = "1.54.1", features = [
   "macros",

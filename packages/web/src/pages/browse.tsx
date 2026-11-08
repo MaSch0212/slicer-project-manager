@@ -15,35 +15,38 @@ import { t } from '../core/i18n'
 import {
   Alert,
   ArrowLeft,
+  ArrowRight,
   Badge,
+  BrowserChrome,
+  BrowserNotice,
+  BrowserPanel,
+  BrowserTabStrip,
   Button,
   Card,
   FormField,
-  Heading,
   Globe,
+  Heading,
   IconButton,
   Input,
   overlayOpen,
-  PageHeader,
   Progress,
   RefreshCw,
   Select,
-  Spinner,
   Text,
   ViewportSlot,
-  ArrowRight,
 } from '../ui'
 
 /**
- * The model browser: a native view laid over this page, with the app's own controls around it.
+ * The model browser: several sites open at once, each a native view laid over this page, with the
+ * app's own chrome around them.
  *
- * **The view is not in this document**, so everything else on the page lives outside the
- * placeholder's rectangle: the controls above it, the downloads below it. The page reports the
- * placeholder's bounds (mount, resize, scroll, a sidebar collapsing), hides the view while a dialog
- * or menu is open, and destroys it when the route goes.
+ * **The views are not in this document**, so everything the page draws lives outside their
+ * rectangle: the tab strip and the address row above it. The page reports the placeholder's
+ * bounds (mount, resize, scroll, a sidebar collapsing), hides the views while a dialog or menu is
+ * open, and takes them off screen — but does not destroy them — when the route goes.
  *
  * **Every string a site chose is rendered as text**, bounded, and never as markup or a link: the
- * way to go somewhere is the address field and the start-site picker, which ask the shell.
+ * way to go somewhere is the address field, the start-site picker or a tab, which ask the shell.
  */
 export default function BrowsePage(props: { deps?: Partial<BrowseDeps> }) {
   const browse = createBrowse(props.deps)
@@ -64,7 +67,7 @@ export default function BrowsePage(props: { deps?: Partial<BrowseDeps> }) {
     browse.dispose()
   })
 
-  // A dialog or menu opened over the page hides the native view, and closing it puts it back.
+  // A dialog or menu opened over the page hides the views, and closing it puts the front one back.
   createEffect(() => {
     overlayOpen()
     void browse.syncOverlay()
@@ -76,49 +79,49 @@ export default function BrowsePage(props: { deps?: Partial<BrowseDeps> }) {
   })
 
   const state = () => browse.state()
+  const tabs = () => browse.tabs()
   const go = (event: SubmitEvent) => {
     event.preventDefault()
     if (address().trim() !== '') void browse.navigate(address())
     setEditing(false)
   }
 
+  /** A tab's name: what the page calls itself, else its host, else the placeholder. */
+  const tabLabel = (tab: { title: string | null; url: string | null }) => {
+    if (tab.title) return truncateForDisplay(tab.title, 60)
+    if (tab.url) {
+      try {
+        return new URL(tab.url).host
+      } catch {
+        return truncateForDisplay(tab.url, 60)
+      }
+    }
+    return t('browse.newTab')
+  }
+
   return (
-    <div class="flex flex-col gap-4">
-      <PageHeader title={t('browse.title')} description={t('browse.lead')} />
+    <div class="flex min-h-0 flex-1 flex-col">
+      <BrowserTabStrip
+        label={t('browse.tabs')}
+        tabs={(tabs()?.tabs ?? []).map((tab) => ({
+          id: tab.tabId,
+          label: tabLabel(tab),
+          loading: tab.isLoading,
+        }))}
+        activeId={tabs()?.activeTabId ?? null}
+        canOpenMore={tabs()?.canOpenMore ?? false}
+        labels={{
+          newTab: t('browse.newTab'),
+          atCap: t('browse.tabCap'),
+          close: t('browse.closeTab'),
+          loading: t('browse.loading'),
+        }}
+        onSelect={(id) => void browse.selectTab(id)}
+        onClose={(id) => void browse.closeTab(id)}
+        onOpen={() => void browse.openTab()}
+      />
 
-      <Show when={browse.failure()}>
-        {(message) => <Alert variant="danger">{truncateForDisplay(message())}</Alert>}
-      </Show>
-
-      <For each={browse.notices()}>
-        {(notice) => (
-          <Alert
-            variant={notice.kind === 'refused' ? 'warning' : 'info'}
-            title={t('browse.noticesTitle')}
-          >
-            <Text as="span">{truncateForDisplay(notice.fileName)}</Text>
-            <Text as="span" variant="muted">
-              {truncateForDisplay(notice.detail)}
-            </Text>
-            <div class="mt-2 flex flex-wrap gap-2">
-              <Button
-                size="sm"
-                variant="secondary"
-                onClick={() => void browse.dismissNotice(notice.id)}
-              >
-                {t('browse.dismiss')}
-              </Button>
-              <Show when={notice.kind === 'refused' && browse.roomMakers().length > 0}>
-                <Button size="sm" variant="secondary" onClick={() => void browse.makeRoom()}>
-                  {t('browse.makeRoom', { count: browse.roomMakers().length })}
-                </Button>
-              </Show>
-            </div>
-          </Alert>
-        )}
-      </For>
-
-      <form class="flex flex-wrap items-center gap-2" onSubmit={go} aria-label={t('browse.title')}>
+      <BrowserChrome label={t('browse.title')} onSubmit={go}>
         <IconButton
           icon={ArrowLeft}
           label={t('browse.back')}
@@ -134,20 +137,8 @@ export default function BrowsePage(props: { deps?: Partial<BrowseDeps> }) {
         <IconButton
           icon={RefreshCw}
           label={t('browse.reload')}
-          disabled={!state()?.attached}
+          disabled={!tabs()?.attached}
           onClick={() => void browse.reload()}
-        />
-        <Select
-          class="w-44"
-          aria-label={t('browse.startOn')}
-          leading={Globe}
-          placeholder={t('browse.startOn')}
-          value={undefined}
-          options={browse.sites().map((site) => ({ value: site.id, label: site.displayName }))}
-          onChange={(id) => {
-            const site = browse.sites().find((entry) => entry.id === id)
-            if (site) void browse.goToSite(site)
-          }}
         />
         <div class="min-w-48 flex-1">
           <Input
@@ -162,79 +153,120 @@ export default function BrowsePage(props: { deps?: Partial<BrowseDeps> }) {
             autocomplete="off"
           />
         </div>
-        <Button type="submit" variant="secondary">
-          {t('browse.go')}
-        </Button>
-      </form>
+        <Select
+          class="w-44"
+          aria-label={t('browse.startOn')}
+          leading={Globe}
+          placeholder={t('browse.startOn')}
+          value={undefined}
+          options={browse.sites().map((site) => ({ value: site.id, label: site.displayName }))}
+          onChange={(id) => {
+            const site = browse.sites().find((entry) => entry.id === id)
+            if (site) void browse.goToSite(site)
+          }}
+        />
+      </BrowserChrome>
 
-      <div class="flex min-h-6 flex-wrap items-center gap-2">
-        <Show when={state()?.isLoading}>
-          <Spinner label={t('browse.loading')} />
-          <Text variant="small">
-            {browse.verifying() ? t('browse.verifying') : t('browse.loading')}
-          </Text>
-        </Show>
-        <Show when={!state()?.isLoading && state()?.title}>
-          {(title) => <Text variant="small">{truncateForDisplay(title(), BROWSE_TEXT_MAX)}</Text>}
-        </Show>
-        <Show when={state()?.siteId}>
-          {(siteId) => (
-            <Badge variant="accent">
-              {browse.sites().find((site) => site.id === siteId())?.displayName ?? ''}
-            </Badge>
-          )}
-        </Show>
-        <Show when={state()?.lastError}>
-          {(error) => (
-            <Text variant="danger">
-              {t('browse.pageFailed')} {truncateForDisplay(error())}
-            </Text>
-          )}
-        </Show>
-      </div>
+      <Show when={browse.failure()}>
+        {(message) => (
+          <BrowserNotice>
+            <Alert variant="danger">{truncateForDisplay(message())}</Alert>
+          </BrowserNotice>
+        )}
+      </Show>
+      <Show when={state()?.lastError}>
+        {(error) => (
+          <BrowserNotice>
+            <Alert variant="warning">
+              {t('browse.pageFailed')} {truncateForDisplay(error(), BROWSE_TEXT_MAX)}
+            </Alert>
+          </BrowserNotice>
+        )}
+      </Show>
+      {/*
+        Two of the four sites answer with a challenge that clears itself after several seconds.
+        Nothing gives up when this appears; it exists so that a long wait does not look broken.
+      */}
+      <Show when={browse.verifying()}>
+        <BrowserNotice>
+          <Alert variant="info">{t('browse.verifying')}</Alert>
+        </BrowserNotice>
+      </Show>
 
-      <ViewportSlot ref={(element: HTMLDivElement) => (slot = element)} label={t('browse.title')}>
+      <ViewportSlot
+        ref={(element: HTMLDivElement) => (slot = element)}
+        label={t('browse.title')}
+        fill
+      >
         {t('browse.noPage')}
       </ViewportSlot>
 
-      <div class="flex flex-wrap items-center gap-3">
-        <Button size="sm" variant="ghost" onClick={() => void browse.forgetLastPage()}>
-          {t('browse.forgetLastPage')}
-        </Button>
-        <Text variant="small">{t('browse.forgetLastPageHint')}</Text>
-      </div>
-
-      <Show when={browse.landed()}>
-        {(landed) => (
-          <div class="flex flex-col gap-2">
-            <Alert variant="success">
-              {t('browse.landed', {
-                name: truncateForDisplay(landed().name),
-                project: truncateForDisplay(landed().project),
-              })}
-            </Alert>
-            <Show when={landed().archive}>
-              {(mode) => (
-                <Alert variant="warning">
-                  {mode() === 'remote' ? t('browse.archiveRemote') : t('browse.archiveLocal')}
-                </Alert>
-              )}
-            </Show>
-          </div>
-        )}
-      </Show>
-
-      <section class="flex flex-col gap-3" aria-label={t('browse.downloadsTitle')}>
-        <Heading level={2}>{t('browse.downloadsTitle')}</Heading>
-        <Show when={browse.downloads().length === 0}>
-          <Text variant="muted">{t('browse.downloadsNone')}</Text>
-        </Show>
-        <ul class="m-0 flex list-none flex-col gap-3 p-0">
-          <For each={browse.downloads()}>
-            {(item) => <DownloadRow item={item} browse={browse} />}
+      {/*
+        The downloads, still a list under the view. The decide-when-it-starts dialog that replaces
+        this needs the choice to live in the shell rather than here (a file has to land even if
+        you left the page while it was coming down), which is its own piece of work; until then
+        this is the only way to file what a site sent, so it stays.
+      */}
+      <Show when={browse.notices().length > 0 || browse.downloads().length > 0 || browse.landed()}>
+        <BrowserPanel label={t('browse.downloadsTitle')}>
+          <For each={browse.notices()}>
+            {(notice) => (
+              <Alert
+                variant={notice.kind === 'refused' ? 'warning' : 'info'}
+                title={t('browse.noticesTitle')}
+              >
+                <Text as="span">{truncateForDisplay(notice.fileName)}</Text>
+                <Text as="span" variant="muted">
+                  {truncateForDisplay(notice.detail)}
+                </Text>
+                <div class="mt-2 flex flex-wrap gap-2">
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={() => void browse.dismissNotice(notice.id)}
+                  >
+                    {t('browse.dismiss')}
+                  </Button>
+                  <Show when={notice.kind === 'refused' && browse.roomMakers().length > 0}>
+                    <Button size="sm" variant="secondary" onClick={() => void browse.makeRoom()}>
+                      {t('browse.makeRoom', { count: browse.roomMakers().length })}
+                    </Button>
+                  </Show>
+                </div>
+              </Alert>
+            )}
           </For>
-        </ul>
-      </section>
+
+          <Show when={browse.landed()}>
+            {(landed) => (
+              <>
+                <Alert variant="success">
+                  {t('browse.landed', {
+                    name: truncateForDisplay(landed().name),
+                    project: truncateForDisplay(landed().project),
+                  })}
+                </Alert>
+                <Show when={landed().archive}>
+                  {(mode) => (
+                    <Alert variant="warning">
+                      {mode() === 'remote' ? t('browse.archiveRemote') : t('browse.archiveLocal')}
+                    </Alert>
+                  )}
+                </Show>
+              </>
+            )}
+          </Show>
+
+          <Show when={browse.downloads().length > 0}>
+            <Heading level={2}>{t('browse.downloadsTitle')}</Heading>
+            <ul class="m-0 flex list-none flex-col gap-3 p-0">
+              <For each={browse.downloads()}>
+                {(item) => <DownloadRow item={item} browse={browse} />}
+              </For>
+            </ul>
+          </Show>
+        </BrowserPanel>
+      </Show>
     </div>
   )
 }

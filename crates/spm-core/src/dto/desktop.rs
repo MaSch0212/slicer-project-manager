@@ -193,13 +193,14 @@ pub struct BrowseBounds {
     pub height: f64,
 }
 
-/// What the browse chrome polls. **Every string here was written by a stranger** (`url`, `title`
+/// One tab of the model browser. **Every string here was written by a stranger** (`url`, `title`
 /// and `lastError` come from whatever site the view is on) and is rendered as text only: never
 /// into HTML, an `href`, a `src` or a CSS `url()`, and truncated for display.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct BrowseStateDto {
-    pub attached: bool,
+    /// The shell's own id for this tab. Not a stranger's string; the page passes it back.
+    pub tab_id: String,
     pub url: Option<String>,
     pub title: Option<String>,
     pub is_loading: bool,
@@ -209,6 +210,22 @@ pub struct BrowseStateDto {
     pub site_id: Option<String>,
     /// Set when the last navigation failed, so the UI can say what happened rather than spin.
     pub last_error: Option<String>,
+}
+
+/// Every tab and which one is in front: what the browse chrome polls.
+///
+/// The tabs outlive the route — leaving `/browse` and coming back finds them where they were —
+/// and die with the process. `attached` is whether the page is on screen now, which is what
+/// decides whether a background tab may start a download at all.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct BrowseTabsDto {
+    pub attached: bool,
+    pub tabs: Vec<BrowseStateDto>,
+    pub active_tab_id: Option<String>,
+    /// False at the cap. Each tab is a live webview of its own, so there is a limit, and the page
+    /// disables the control rather than letting a click fail.
+    pub can_open_more: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]

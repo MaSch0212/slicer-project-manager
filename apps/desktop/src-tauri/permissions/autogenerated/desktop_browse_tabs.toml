@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-desktop-browse-tabs"
+description = "Enables the desktop_browse_tabs command without any pre-configured scope."
+commands.allow = ["desktop_browse_tabs"]
+
+[[permission]]
+identifier = "deny-desktop-browse-tabs"
+description = "Denies the desktop_browse_tabs command without any pre-configured scope."
+commands.deny = ["desktop_browse_tabs"]

@@ -28,6 +28,7 @@ custom-protocol = ["tauri/custom-protocol"]
 spm-core.workspace = true
 spm-http.workspace = true
 spm-shell.workspace = true
+spm-win32.workspace = true
 # `unstable` is the multiwebview API (`Window::add_child`) the model browser needs in part 3;
 # `devtools` keeps the developer tools in the View menu in release builds, as the Electron app had.
 tauri = { version = "2.12.5", features = ["unstable", "devtools"] }

@@ -5,7 +5,7 @@ import {
   type BrowseDownloadDto,
   type BrowseMatchDto,
   type BrowseNoticeDto,
-  type BrowseStateDto,
+  type BrowseTabsDto,
   type DiscardedSessionsDto,
   type FileDto,
   type LibraryStateDto,
@@ -144,21 +144,31 @@ export function createDesktopClient(invokeFn: InvokeFn = tauriInvoke) {
      */
     browse: {
       sites: () => call<ModelSiteDto[]>('desktop_browse_sites'),
-      /** Creates the view where the placeholder is. `url` of `null` opens on the remembered page. */
-      attach: (bounds: BrowseBounds, url: string | null = null) =>
-        call<BrowseStateDto>('desktop_browse_attach', { bounds, url }),
-      /** Leaves the route: destroys the view. */
+      /** The page is on screen at this placeholder. Puts the tabs back, or opens a first one. */
+      attach: (bounds: BrowseBounds) => call<BrowseTabsDto>('desktop_browse_attach', { bounds }),
+      /** Leaves the route. The tabs stay alive and hidden, and none may start a download. */
       detach: () => call<void>('desktop_browse_detach'),
-      /** Stops the view painting, for a dialog or a menu; the page keeps its place. */
+      /** Stops the views painting, for a dialog or a menu; each page keeps its place. */
       hide: () => call<void>('desktop_browse_hide'),
-      show: () => call<BrowseStateDto>('desktop_browse_show'),
+      show: () => call<BrowseTabsDto>('desktop_browse_show'),
       /** Where the placeholder is, in CSS pixels. The shell intersects it with what it allows. */
       setBounds: (bounds: BrowseBounds) => call<void>('desktop_browse_set_bounds', { bounds }),
-      navigate: (url: string) => call<BrowseStateDto>('desktop_browse_navigate', { url }),
-      back: () => call<BrowseStateDto>('desktop_browse_back'),
-      forward: () => call<BrowseStateDto>('desktop_browse_forward'),
-      reload: () => call<BrowseStateDto>('desktop_browse_reload'),
-      state: () => call<BrowseStateDto>('desktop_browse_state'),
+      navigate: (url: string) => call<BrowseTabsDto>('desktop_browse_navigate', { url }),
+      back: () => call<BrowseTabsDto>('desktop_browse_back'),
+      forward: () => call<BrowseTabsDto>('desktop_browse_forward'),
+      reload: () => call<BrowseTabsDto>('desktop_browse_reload'),
+      /** Every tab and which one is in front. */
+      tabs: () => call<BrowseTabsDto>('desktop_browse_tabs'),
+      /** Opens a tab. `null` is the registry's start page. */
+      openTab: (url: string | null = null) =>
+        call<BrowseTabsDto>('desktop_browse_open_tab', { url }),
+      selectTab: (tabId: string) => call<BrowseTabsDto>('desktop_browse_select_tab', { tabId }),
+      closeTab: (tabId: string) => call<BrowseTabsDto>('desktop_browse_close_tab', { tabId }),
+      /**
+       * A PNG of the front tab as a `data:` URL, or `null` where it could not be taken. What the
+       * download dialog is drawn over, since nothing the page draws can cover a native view.
+       */
+      capture: () => call<string | null>('desktop_browse_capture'),
       downloads: () => call<BrowseDownloadDto[]>('desktop_browse_downloads'),
       notices: () => call<BrowseNoticeDto[]>('desktop_browse_notices'),
       dismissNotice: (id: string) => call<void>('desktop_browse_dismiss_notice', { id }),
@@ -168,8 +178,6 @@ export function createDesktopClient(invokeFn: InvokeFn = tauriInvoke) {
       discard: (downloadId: string) => call<void>('desktop_browse_discard', { downloadId }),
       /** Which projects a page may be the source of. `null` for a download no page is known for. */
       match: (url: string | null) => call<BrowseMatchDto>('desktop_browse_match', { url }),
-      /** Forgets the remembered last page. */
-      clearLastPage: () => call<void>('desktop_browse_clear_last_page'),
     },
 
     /**

@@ -56,5 +56,19 @@ export const navEntries = createRoot(() =>
   ),
 )
 
+/**
+ * The routes that want the whole frame rather than the shell's centred column.
+ *
+ * `/browse` is the only one: its page is a placeholder for a native view that is laid over the
+ * window, and a letterboxed rectangle in the middle of the page was the thing that made it look
+ * like a web page pretending to be a browser.
+ */
+const FULL_BLEED: readonly string[] = ['/browse']
+
+/** Whether this path is one of them. */
+export function isFullBleed(path: string): boolean {
+  return FULL_BLEED.includes(path)
+}
+
 /** The entry's label in the current language. */
 export const navLabel = (entry: NavEntry): string => t(entry.labelKey)

@@ -33,6 +33,7 @@
 
 pub mod app_commands;
 pub mod browse;
+pub mod capture;
 pub mod commands;
 mod hidden;
 mod hidden_browse;
@@ -141,14 +142,17 @@ pub fn run() {
             commands::desktop_browse_back,
             commands::desktop_browse_forward,
             commands::desktop_browse_reload,
-            commands::desktop_browse_state,
+            commands::desktop_browse_tabs,
+            commands::desktop_browse_open_tab,
+            commands::desktop_browse_select_tab,
+            commands::desktop_browse_close_tab,
+            commands::desktop_browse_capture,
             commands::desktop_browse_downloads,
             commands::desktop_browse_notices,
             commands::desktop_browse_dismiss_notice,
             commands::desktop_browse_land,
             commands::desktop_browse_discard,
             commands::desktop_browse_match,
-            commands::desktop_browse_clear_last_page,
         ])
         .setup(setup)
         .build(context)

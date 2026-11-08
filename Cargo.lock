@@ -3571,6 +3571,7 @@ dependencies = [
  "spm-core",
  "spm-http",
  "spm-shell",
+ "spm-win32",
  "sys-locale",
  "tauri",
  "tauri-build",
@@ -3634,6 +3635,14 @@ dependencies = [
  "tokio-util",
  "tower",
  "url",
+]
+
+[[package]]
+name = "spm-win32"
+version = "0.1.0"
+dependencies = [
+ "webview2-com",
+ "windows",
 ]
 
 [[package]]

@@ -29,7 +29,7 @@ use spm_shell::server::ServerHandle;
 use spm_shell::smoke::{Check, SmokeReport};
 use tauri::{AppHandle, Manager, Position, Runtime, Size, WebviewWindow};
 
-use crate::browse::BROWSE_WEBVIEW;
+use crate::browse::BROWSE_WEBVIEW_PREFIX;
 use crate::commands::AppCtx;
 use crate::hidden::Probes;
 
@@ -62,9 +62,15 @@ const BROWSE_MAIN_JS: &str = r#"
     }
   };
   const report = (value) => { document.title = 'PROBE:' + JSON.stringify(value); };
-  const state = async () => {
-    const answer = await call('desktop_browse_state');
+  const tabs = async () => {
+    const answer = await call('desktop_browse_tabs');
     return answer.ok ? answer.value : null;
+  };
+  const state = async () => {
+    const all = await tabs();
+    if (!all) return null;
+    const active = all.tabs.find((t) => t.tabId === all.activeTabId);
+    return active ? Object.assign({ attached: all.attached }, active) : null;
   };
   const settled = (title) => until(async () => {
     const s = await state();
@@ -79,20 +85,21 @@ const BROWSE_MAIN_JS: &str = r#"
   const phase = (name) => report({ step: 'phase', name, seconds: Math.round((Date.now() - started) / 1000) });
   const brief = (s) => s && {
     attached: s.attached, url: s.url, title: s.title, siteId: s.siteId, lastError: s.lastError,
+    tabId: s.tabId,
   };
 
   try {
   const sites = await call('desktop_browse_sites');
   out.sites = { ok: sites.ok, count: sites.ok ? sites.value.length : 0 };
   out.refusedWithNoView = await call('desktop_browse_navigate', { url: FIX + '/second' });
-  out.badBounds = await call('desktop_browse_attach', { bounds: { x: 'a' }, url: null });
+  out.badBounds = await call('desktop_browse_attach', { bounds: { x: 'a' } });
 
   // Bounds: a request for far more than the window is intersected, a 1x1 request applies nothing.
   const attach = await call('desktop_browse_attach', {
     bounds: { x: 0, y: 0, width: 6000, height: 6000 },
-    url: FIX + '/thing:7401409/files',
   });
-  out.attach = { ok: attach.ok, attached: attach.ok && attach.value.attached };
+  out.attach = { ok: attach.ok, attached: attach.ok && attach.value.attached, count: attach.ok ? attach.value.tabs.length : -1 };
+  await call('desktop_browse_navigate', { url: FIX + '/thing:7401409/files' });
   out.thing = brief(await settled('fixture:thing'));
   window.__spmGo = null;
   report({ step: 'bounds-whole' });
@@ -191,24 +198,40 @@ const BROWSE_MAIN_JS: &str = r#"
   phase('after landing');
   const notices = await call('desktop_browse_notices');
   out.notices = { ok: notices.ok, count: notices.ok ? notices.value.length : -1 };
-  // A quiet page to be remembered (the download page would download again when reopened).
+  // A quiet page to come back to (the download page would download again when reopened).
   await call('desktop_browse_navigate', { url: FIX + '/second' });
-  await settled('fixture:second');
+  const before = brief(await settled('fixture:second'));
   phase('detaching');
   out.detach = await call('desktop_browse_detach');
   phase('detached');
   out.afterDetach = brief(await state());
   phase('reattaching');
   out.reattach = await call('desktop_browse_attach', {
-    bounds: { x: 100, y: 200, width: 700, height: 400 }, url: null,
+    bounds: { x: 100, y: 200, width: 700, height: 400 },
   });
   phase('reattached');
-  out.remembered = brief(await until(async () => {
+  const kept = brief(await until(async () => {
     const s = await state();
-    return s && s.attached && s.url && s.url.startsWith(FIX) && s.title === 'fixture:second' ? s : null;
+    return s && s.attached && s.title === 'fixture:second' ? s : null;
   }));
+  out.kept = kept;
+  // The whole point of keeping them: the same tab, still on the same page.
+  out.sameTab = !!(kept && before && kept.tabId === before.tabId);
+
+  phase('tabs');
+  const opened = await call('desktop_browse_open_tab', { url: FIX + '/thing:7401409/files' });
+  out.opened = {
+    ok: opened.ok,
+    count: opened.ok ? opened.value.tabs.length : -1,
+    isNew: !!(opened.ok && before && opened.value.activeTabId !== before.tabId),
+  };
+  const second = opened.ok ? opened.value.activeTabId : null;
+  const back = before ? await call('desktop_browse_select_tab', { tabId: before.tabId }) : null;
+  out.selected = back && { ok: back.ok, active: !!(back.ok && back.value.activeTabId === before.tabId) };
+  out.capture = (await call('desktop_browse_capture')).ok;
+  const closed = second ? await call('desktop_browse_close_tab', { tabId: second }) : null;
+  out.closed = closed && { ok: closed.ok, count: closed.ok ? closed.value.tabs.length : -1 };
   out.detachAgain = await call('desktop_browse_detach');
-  out.cleared = await call('desktop_browse_clear_last_page');
   } catch (error) {
     out.crash = String((error && error.stack) || error);
   }
@@ -220,7 +243,7 @@ const BROWSE_MAIN_JS: &str = r#"
     'browse-idioms': ['idioms', 'afterDiscards'],
     'browse-landing': ['landed', 'match', 'matchNone', 'matchNull', 'badLand', 'unknownLand', 'land'],
     'browse-project': ['projectAfter', 'downloadsAfterLand', 'landAgain'],
-    'browse-end': ['notices', 'detach', 'afterDetach', 'remembered', 'detachAgain', 'cleared', 'crash'],
+    'browse-end': ['notices', 'detach', 'afterDetach', 'kept', 'sameTab', 'opened', 'selected', 'capture', 'closed', 'detachAgain', 'crash'],
   };
   for (const [step, keys] of Object.entries(parts)) {
     const part = { step };
@@ -266,9 +289,33 @@ fn short(value: &Value) -> String {
     text.chars().take(600).collect()
 }
 
-/// The browse webview's rectangle in logical pixels: `(x, y, width, height)`.
+/// The tab in front, as the host reports it.
+fn active_tab(host: &spm_shell::browse::host::BrowseHost) -> Option<spm_core::dto::BrowseStateDto> {
+    let tabs = host.tabs();
+    let active = tabs.active_tab_id?;
+    tabs.tabs.into_iter().find(|tab| tab.tab_id == active)
+}
+
+/// Any browse webview there is. Each tab has a label of its own, so the smoke run asks by the
+/// prefix rather than by a name only the host knows.
+fn a_browse_webview<R: Runtime>(app: &AppHandle<R>) -> Option<tauri::Webview<R>> {
+    app.webviews()
+        .into_iter()
+        .find(|(label, _)| label.starts_with(BROWSE_WEBVIEW_PREFIX))
+        .map(|(_, webview)| webview)
+}
+
+/// How many browse webviews exist, which is how many tabs have a live view.
+fn browse_webview_count<R: Runtime>(app: &AppHandle<R>) -> usize {
+    app.webviews()
+        .into_keys()
+        .filter(|label| label.starts_with(BROWSE_WEBVIEW_PREFIX))
+        .count()
+}
+
+/// The front browse webview's rectangle in logical pixels: `(x, y, width, height)`.
 fn view_rect<R: Runtime>(app: &AppHandle<R>) -> Option<(f64, f64, f64, f64)> {
-    let webview = app.get_webview(BROWSE_WEBVIEW)?;
+    let webview = a_browse_webview(app)?;
     let rect = webview.bounds().ok()?;
     let scale = webview.window().scale_factor().ok()?;
     let (x, y) = match rect.position {
@@ -511,15 +558,34 @@ pub async fn run<R: Runtime>(
     );
     check(
         report,
-        "browse: detach destroys the view, a second attach remembers the last page, and clearing forgets it",
+        "browse: leaving the route takes the tabs off screen and keeps them, and coming back finds the same tab on the same page",
         ok_value(&a, "detach").is_some()
             && a["afterDetach"]["attached"] == false
-            && a["remembered"]["url"]
+            && a["kept"]["url"]
                 .as_str()
                 .is_some_and(|url| url.starts_with(fixture))
-            && ok_value(&a, "cleared").is_some()
-            && app.get_webview(BROWSE_WEBVIEW).is_none(),
-        short(&json!({"afterDetach": a["afterDetach"], "remembered": a["remembered"]})),
+            && a["sameTab"] == true
+            && browse_webview_count(app) > 0,
+        short(
+            &json!({"afterDetach": a["afterDetach"], "kept": a["kept"], "sameTab": a["sameTab"]}),
+        ),
+    );
+    check(
+        report,
+        "browse: a second tab is its own webview, selecting goes back to the first, and closing leaves one",
+        a["opened"]["ok"] == true
+            && a["opened"]["count"] == 2
+            && a["opened"]["isNew"] == true
+            && a["selected"]["active"] == true
+            && a["closed"]["ok"] == true
+            && a["closed"]["count"] == 1,
+        short(&json!({"opened": a["opened"], "selected": a["selected"], "closed": a["closed"]})),
+    );
+    check(
+        report,
+        "browse: the front tab can be captured as a still picture for a dialog to be drawn over",
+        a["capture"] == true,
+        short(&a["capture"]),
     );
 
     note("part B");
@@ -535,11 +601,15 @@ pub async fn run<R: Runtime>(
         height: 400.0,
     };
     let hits_before = handle.hits().len();
-    let attached = host.attach(
-        bounds,
-        Some(&format!("{fixture}/bridge?main={main_origin}")),
-    );
-    let bridge = probes.wait_step("browse", "bridge", STEP_WAIT).await;
+    let attached = host
+        .attach(bounds)
+        .and_then(|_| host.navigate(&format!("{fixture}/bridge?main={main_origin}")));
+    // Each tab's webview has a label of its own now, and the probes are keyed by label, so the
+    // front tab's is what the waits below listen on.
+    let view_label = active_tab(&host)
+        .map(|tab| crate::browse::browse_label(&tab.tab_id))
+        .unwrap_or_default();
+    let bridge = probes.wait_step(&view_label, "bridge", STEP_WAIT).await;
     let hits = handle.hits();
     let from_child = hits[hits_before.min(hits.len())..]
         .iter()
@@ -589,7 +659,7 @@ pub async fn run<R: Runtime>(
     );
 
     let _ = host.navigate(&format!("{fixture}/geo"));
-    let geo = probes.wait_step("browse", "geo", STEP_WAIT).await;
+    let geo = probes.wait_step(&view_label, "geo", STEP_WAIT).await;
     check(
         report,
         "browse security: a permission request from the browse webview is denied",
@@ -600,7 +670,9 @@ pub async fn run<R: Runtime>(
 
     // Storage: the browse webview's own profile, in both directions, and persistent.
     let _ = host.navigate(&format!("{fixture}/storage-set"));
-    let set = probes.wait_step("browse", "storage-set", STEP_WAIT).await;
+    let set = probes
+        .wait_step(&view_label, "storage-set", STEP_WAIT)
+        .await;
     let opened = open_probe_window(
         "probe-storage",
         &format!("{fixture}/storage-get?then=set-side&report=side"),
@@ -609,7 +681,9 @@ pub async fn run<R: Runtime>(
         .wait_step("probe-storage", "storage-side", STEP_WAIT)
         .await;
     let _ = host.navigate(&format!("{fixture}/storage-get?report=child"));
-    let child = probes.wait_step("browse", "storage-child", STEP_WAIT).await;
+    let child = probes
+        .wait_step(&view_label, "storage-child", STEP_WAIT)
+        .await;
     check(
         report,
         "browse security: its storage is isolated from the main webview's profile, both ways (same origin, different data directory)",
@@ -648,18 +722,22 @@ pub async fn run<R: Runtime>(
         format!("{user_data:?}"),
     );
 
+    // Leaving the route keeps the tabs; what ends them is the app ending.
     host.detach();
+    let kept_after_detach = browse_webview_count(app) > 0;
+    host.destroy_all();
     check(
         report,
-        "browse: the view is gone when the route is (no browse webview is left)",
-        tokio::time::timeout(Duration::from_secs(5), async {
-            while app.get_webview(BROWSE_WEBVIEW).is_some() {
-                tokio::time::sleep(Duration::from_millis(100)).await;
-            }
-        })
-        .await
-        .is_ok(),
-        "",
+        "browse: the tabs outlive the route and die with the app (no browse webview is left)",
+        kept_after_detach
+            && tokio::time::timeout(Duration::from_secs(5), async {
+                while browse_webview_count(app) > 0 {
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                }
+            })
+            .await
+            .is_ok(),
+        format!("kept after detach: {kept_after_detach}"),
     );
 }
 
@@ -692,28 +770,32 @@ pub async fn probe_real_sites<R: Runtime>(report: &mut SmokeReport, app: &AppHan
             .to_owned();
         let mut seen = json!({"site": site.id, "title": null, "url": null, "seconds": null});
         let started = std::time::Instant::now();
-        let attached = if app.get_webview(BROWSE_WEBVIEW).is_some() {
+        let attached = if a_browse_webview(app).is_some() {
             host.navigate(&site.home_url)
         } else {
-            host.attach(bounds, Some(&site.home_url))
+            host.attach(bounds)
+                .and_then(|_| host.navigate(&site.home_url))
         };
         if attached.is_ok() {
             // A managed challenge clears itself in a few seconds; waiting is all that is done.
             while started.elapsed() < Duration::from_secs(45) {
                 tokio::time::sleep(Duration::from_secs(1)).await;
-                let state = host.state();
-                let title = state.title.unwrap_or_default();
+                let state = active_tab(&host);
+                let title = state
+                    .as_ref()
+                    .and_then(|tab| tab.title.clone())
+                    .unwrap_or_default();
                 let there = state
-                    .url
-                    .as_deref()
+                    .as_ref()
+                    .and_then(|tab| tab.url.as_deref())
                     .is_some_and(|url| url.contains(&site_host));
                 if there
-                    && !state.is_loading
+                    && !state.as_ref().is_some_and(|tab| tab.is_loading)
                     && !title.is_empty()
                     && !title.starts_with("Just a moment")
                 {
                     seen["title"] = json!(title);
-                    seen["url"] = json!(state.url);
+                    seen["url"] = json!(state.as_ref().and_then(|tab| tab.url.clone()));
                     seen["seconds"] = json!(started.elapsed().as_secs());
                     break;
                 }

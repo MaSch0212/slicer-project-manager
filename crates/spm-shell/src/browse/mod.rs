@@ -12,12 +12,11 @@
 //! | [`registry`] | the four sites as measured: hosts, home pages, the identity a model URL carries |
 //! | [`policy`] | what the view may navigate to, what a new-window request becomes, the refusal sentences |
 //! | [`bounds`] | the rectangle the view is allowed, computed by the shell and never named by the page |
-//! | [`last_page`] | `browse.json`: the page the browser was last sitting on |
 //! | [`notices`] | what the app has to say about downloads nobody was watching |
 //! | [`downloads`] | the staging directory, its record, the caps and the sweep |
 //! | [`land`] | a staged download becoming a file of a project, through the library API |
 //! | [`api`] | the library API as the shell reaches it, in both library modes |
-//! | [`host`] | the view's lifecycle, behind a seam |
+//! | [`host`] | the tabs and their views' lifecycle, behind a seam |
 //! | [`commands`] | the commands, with every argument validated |
 //! | [`service`] | the assembled subsystem |
 //!
@@ -33,7 +32,6 @@ pub mod commands;
 pub mod downloads;
 pub mod host;
 pub mod land;
-pub mod last_page;
 pub mod notices;
 pub mod policy;
 pub mod registry;

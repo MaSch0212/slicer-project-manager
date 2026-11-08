@@ -325,6 +325,10 @@
   "browse": {
     "title": "Find models",
     "lead": "Browse a model site in this window, then add what you download to a project.",
+    "tabs": "Open sites",
+    "newTab": "New tab",
+    "closeTab": "Close",
+    "tabCap": "That is as many tabs as this can hold. Close one first.",
     "openFailed": "The model browser could not be opened.",
     "startOn": "Start on a site",
     "addressLabel": "Address",

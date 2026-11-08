@@ -232,18 +232,22 @@ fn the_build_generated_a_permission_for_every_app_command_and_for_nothing_else()
 }
 
 #[test]
-fn the_browse_webview_is_named_by_no_capability_and_its_source_grants_it_nothing() {
-    use spm_desktop::browse::BROWSE_WEBVIEW;
-    assert_eq!(BROWSE_WEBVIEW, "browse");
-    assert_ne!(BROWSE_WEBVIEW, MAIN_WEBVIEW);
+fn no_browse_webview_is_named_by_any_capability_and_their_source_grants_them_nothing() {
+    use spm_desktop::browse::{BROWSE_WEBVIEW_PREFIX, browse_label};
+    // Every tab gets a label of its own, all under one prefix, and the main webview's is not one
+    // of them. Asserted by prefix rather than by a name, so that a tab cannot be granted
+    // something by being new.
+    assert_eq!(BROWSE_WEBVIEW_PREFIX, "browse-");
+    assert_eq!(browse_label("tab-7"), "browse-tab-7");
+    assert!(!MAIN_WEBVIEW.starts_with(BROWSE_WEBVIEW_PREFIX));
     let capability = main_capability("http://127.0.0.1:41234");
     // Not by webview, not by window (a window-scoped capability would reach every webview the
-    // window hosts, the child included), and its origin is nobody's `remote.urls`.
+    // window hosts, the children included), and their origin is nobody's `remote.urls`.
     for key in ["webviews", "windows"] {
         assert!(
             !strings(&capability[key])
                 .iter()
-                .any(|label| label == BROWSE_WEBVIEW),
+                .any(|label| label.starts_with(BROWSE_WEBVIEW_PREFIX)),
             "{key}"
         );
     }

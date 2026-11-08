@@ -10,7 +10,7 @@ use std::sync::{Arc, OnceLock};
 
 use spm_core::AppError;
 use spm_core::dto::{
-    BrowseBounds, BrowseDownloadDto, BrowseMatchDto, BrowseNoticeDto, BrowseStateDto, FileDto,
+    BrowseBounds, BrowseDownloadDto, BrowseMatchDto, BrowseNoticeDto, BrowseTabsDto, FileDto,
     ModelSiteDto,
 };
 
@@ -19,7 +19,6 @@ use super::commands::BrowseBackend;
 use super::downloads::{Decision, Downloads, DownloadsOptions, MODEL_DOWNLOADS_DIR};
 use super::host::{BrowseHost, BrowseHostOptions, HostWindow, ViewFactory};
 use super::land::{BrowseLanding, match_projects};
-use super::last_page::BROWSE_FILE_NAME;
 use super::notices::{BrowseNotices, Notify};
 use super::registry::SiteRegistry;
 
@@ -28,7 +27,7 @@ pub type TuneDownloads = Box<dyn FnOnce(&mut DownloadsOptions)>;
 
 /// Where the pieces are.
 pub struct BrowseServicesParts {
-    /// The app's data directory: `model-downloads/` and `browse.json` live here.
+    /// The app's data directory: `model-downloads/` lives here.
     pub data_dir: PathBuf,
     pub registry: SiteRegistry,
     pub library: LibrarySource,
@@ -61,7 +60,6 @@ impl BrowseServices {
         let host = BrowseHost::new(BrowseHostOptions {
             factory: parts.factory,
             window: parts.window,
-            last_page_file: parts.data_dir.join(BROWSE_FILE_NAME),
             registry: Arc::clone(&registry),
             downloads_running: Arc::new(move || {
                 running
@@ -124,9 +122,9 @@ impl BrowseServices {
         self.host.release_parked();
     }
 
-    /// The shell is going away.
+    /// The shell is going away. Every tab goes with it; nothing of where the user was is kept.
     pub fn close(&self) {
-        self.host.on_window_closed();
+        self.host.destroy_all();
     }
 }
 
@@ -135,8 +133,8 @@ impl BrowseBackend for BrowseServices {
         self.host.sites()
     }
 
-    fn attach(&self, bounds: BrowseBounds, url: Option<&str>) -> Result<BrowseStateDto, AppError> {
-        self.host.attach(bounds, url)
+    fn attach(&self, bounds: BrowseBounds) -> Result<BrowseTabsDto, AppError> {
+        self.host.attach(bounds)
     }
 
     fn detach(&self) {
@@ -147,7 +145,7 @@ impl BrowseBackend for BrowseServices {
         self.host.hide();
     }
 
-    fn show(&self) -> BrowseStateDto {
+    fn show(&self) -> BrowseTabsDto {
         self.host.show()
     }
 
@@ -155,24 +153,40 @@ impl BrowseBackend for BrowseServices {
         self.host.set_bounds(bounds);
     }
 
-    fn navigate(&self, url: &str) -> Result<BrowseStateDto, AppError> {
+    fn navigate(&self, url: &str) -> Result<BrowseTabsDto, AppError> {
         self.host.navigate(url)
     }
 
-    fn back(&self) -> Result<BrowseStateDto, AppError> {
+    fn back(&self) -> Result<BrowseTabsDto, AppError> {
         self.host.back()
     }
 
-    fn forward(&self) -> Result<BrowseStateDto, AppError> {
+    fn forward(&self) -> Result<BrowseTabsDto, AppError> {
         self.host.forward()
     }
 
-    fn reload(&self) -> Result<BrowseStateDto, AppError> {
+    fn reload(&self) -> Result<BrowseTabsDto, AppError> {
         self.host.reload()
     }
 
-    fn state(&self) -> BrowseStateDto {
-        self.host.state()
+    fn tabs(&self) -> BrowseTabsDto {
+        self.host.tabs()
+    }
+
+    fn open_tab(&self, url: Option<&str>) -> Result<BrowseTabsDto, AppError> {
+        self.host.open_tab(url)
+    }
+
+    fn select_tab(&self, tab_id: &str) -> BrowseTabsDto {
+        self.host.select_tab(tab_id)
+    }
+
+    fn close_tab(&self, tab_id: &str) -> Result<BrowseTabsDto, AppError> {
+        self.host.close_tab(tab_id)
+    }
+
+    fn capture_active(&self) -> Option<Vec<u8>> {
+        self.host.capture_active()
     }
 
     fn downloads(&self) -> Vec<BrowseDownloadDto> {
@@ -204,9 +218,5 @@ impl BrowseBackend for BrowseServices {
 
     fn match_page(&self, url: Option<&str>) -> Result<BrowseMatchDto, AppError> {
         match_projects(&self.registry, &self.library, url)
-    }
-
-    fn clear_last_page(&self) {
-        self.host.clear_last_page();
     }
 }

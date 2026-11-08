@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 
 use serde_json::{Value, json};
 use spm_core::dto::{
-    BrowseBounds, BrowseDownloadDto, BrowseMatchDto, BrowseNoticeDto, BrowseStateDto, FileDto,
+    BrowseBounds, BrowseDownloadDto, BrowseMatchDto, BrowseNoticeDto, BrowseTabsDto, FileDto,
     ModelSiteDto,
 };
 use spm_core::{AppError, AppErrorCode};
@@ -16,16 +16,12 @@ struct Recorder {
     calls: Mutex<Vec<String>>,
 }
 
-fn idle() -> BrowseStateDto {
-    BrowseStateDto {
+fn idle() -> BrowseTabsDto {
+    BrowseTabsDto {
         attached: false,
-        url: None,
-        title: None,
-        is_loading: false,
-        can_go_back: false,
-        can_go_forward: false,
-        site_id: None,
-        last_error: None,
+        tabs: Vec::new(),
+        active_tab_id: None,
+        can_open_more: true,
     }
 }
 
@@ -49,8 +45,8 @@ impl BrowseBackend for Recorder {
         Vec::new()
     }
 
-    fn attach(&self, bounds: BrowseBounds, url: Option<&str>) -> Result<BrowseStateDto, AppError> {
-        self.note(format!("attach {bounds:?} {url:?}"));
+    fn attach(&self, bounds: BrowseBounds) -> Result<BrowseTabsDto, AppError> {
+        self.note(format!("attach {bounds:?}"));
         Ok(idle())
     }
 
@@ -62,7 +58,7 @@ impl BrowseBackend for Recorder {
         self.note("hide".into());
     }
 
-    fn show(&self) -> BrowseStateDto {
+    fn show(&self) -> BrowseTabsDto {
         self.note("show".into());
         idle()
     }
@@ -71,29 +67,49 @@ impl BrowseBackend for Recorder {
         self.note(format!("set_bounds {bounds:?}"));
     }
 
-    fn navigate(&self, url: &str) -> Result<BrowseStateDto, AppError> {
+    fn navigate(&self, url: &str) -> Result<BrowseTabsDto, AppError> {
         self.note(format!("navigate {url}"));
         Ok(idle())
     }
 
-    fn back(&self) -> Result<BrowseStateDto, AppError> {
+    fn back(&self) -> Result<BrowseTabsDto, AppError> {
         self.note("back".into());
         Ok(idle())
     }
 
-    fn forward(&self) -> Result<BrowseStateDto, AppError> {
+    fn forward(&self) -> Result<BrowseTabsDto, AppError> {
         self.note("forward".into());
         Ok(idle())
     }
 
-    fn reload(&self) -> Result<BrowseStateDto, AppError> {
+    fn reload(&self) -> Result<BrowseTabsDto, AppError> {
         self.note("reload".into());
         Ok(idle())
     }
 
-    fn state(&self) -> BrowseStateDto {
-        self.note("state".into());
+    fn tabs(&self) -> BrowseTabsDto {
+        self.note("tabs".into());
         idle()
+    }
+
+    fn open_tab(&self, url: Option<&str>) -> Result<BrowseTabsDto, AppError> {
+        self.note(format!("open_tab {url:?}"));
+        Ok(idle())
+    }
+
+    fn select_tab(&self, tab_id: &str) -> BrowseTabsDto {
+        self.note(format!("select_tab {tab_id}"));
+        idle()
+    }
+
+    fn close_tab(&self, tab_id: &str) -> Result<BrowseTabsDto, AppError> {
+        self.note(format!("close_tab {tab_id}"));
+        Ok(idle())
+    }
+
+    fn capture_active(&self) -> Option<Vec<u8>> {
+        self.note("capture".into());
+        Some(vec![0x89, b'P', b'N', b'G'])
     }
 
     fn downloads(&self) -> Vec<BrowseDownloadDto> {
@@ -133,10 +149,6 @@ impl BrowseBackend for Recorder {
             projects: Vec::new(),
         })
     }
-
-    fn clear_last_page(&self) {
-        self.note("clear".into());
-    }
 }
 
 fn rig() -> (BrowseCommands, Arc<Recorder>) {
@@ -160,11 +172,7 @@ fn rect() -> Value {
 fn every_browse_command_forwards_its_arguments_in_order_including_rectangles() {
     let (commands, recorder) = rig();
     commands.sites();
-    commands
-        .attach(Some(&rect()), Some(&json!("https://example.com/")))
-        .unwrap();
-    commands.attach(Some(&rect()), None).unwrap();
-    commands.attach(Some(&rect()), Some(&Value::Null)).unwrap();
+    commands.attach(Some(&rect())).unwrap();
     commands.detach();
     commands.hide();
     commands.show();
@@ -175,7 +183,18 @@ fn every_browse_command_forwards_its_arguments_in_order_including_rectangles() {
     commands.back().unwrap();
     commands.forward().unwrap();
     commands.reload().unwrap();
-    commands.state();
+    commands.tabs();
+    commands
+        .open_tab(Some(&json!("https://example.com/")))
+        .unwrap();
+    commands.open_tab(None).unwrap();
+    commands.open_tab(Some(&Value::Null)).unwrap();
+    commands.select_tab(Some(&json!("tab-2"))).unwrap();
+    commands.close_tab(Some(&json!("tab-2"))).unwrap();
+    assert_eq!(
+        commands.capture_active().as_deref(),
+        Some("data:image/png;base64,iVBORw==")
+    );
     commands.downloads();
     commands.notices();
     commands.dismiss_notice(Some(&json!("n-1"))).unwrap();
@@ -190,15 +209,12 @@ fn every_browse_command_forwards_its_arguments_in_order_including_rectangles() {
         .match_page(Some(&json!("https://example.com/m")))
         .unwrap();
     commands.match_page(Some(&Value::Null)).unwrap();
-    commands.clear_last_page();
     let bounds = "BrowseBounds { x: 10.0, y: 120.5, width: 800.0, height: 600.0 }";
     assert_eq!(
         calls(&recorder),
         [
             "sites".to_owned(),
-            format!("attach {bounds} Some(\"https://example.com/\")"),
-            format!("attach {bounds} None"),
-            format!("attach {bounds} None"),
+            format!("attach {bounds}"),
             "detach".into(),
             "hide".into(),
             "show".into(),
@@ -207,7 +223,13 @@ fn every_browse_command_forwards_its_arguments_in_order_including_rectangles() {
             "back".into(),
             "forward".into(),
             "reload".into(),
-            "state".into(),
+            "tabs".into(),
+            "open_tab Some(\"https://example.com/\")".into(),
+            "open_tab None".into(),
+            "open_tab None".into(),
+            "select_tab tab-2".into(),
+            "close_tab tab-2".into(),
+            "capture".into(),
             "downloads".into(),
             "notices".into(),
             "dismiss n-1".into(),
@@ -216,7 +238,6 @@ fn every_browse_command_forwards_its_arguments_in_order_including_rectangles() {
             "discard dl".into(),
             "match Some(\"https://example.com/m\")".into(),
             "match None".into(),
-            "clear".into(),
         ]
     );
 }
@@ -240,7 +261,7 @@ fn a_browse_command_rejects_a_wrong_argument_with_validation_and_calls_nothing()
         Some(json!({"x": 1, "y": 2, "width": 3, "height": 4, "zoom": 2})),
     ] {
         assert!(refused(commands.set_bounds(bad.as_ref())), "{bad:?}");
-        assert!(refused(commands.attach(bad.as_ref(), None)), "{bad:?}");
+        assert!(refused(commands.attach(bad.as_ref())), "{bad:?}");
     }
     // URLs.
     for bad in [
@@ -253,8 +274,13 @@ fn a_browse_command_rejects_a_wrong_argument_with_validation_and_calls_nothing()
     ] {
         assert!(refused(commands.navigate(bad.as_ref())), "{bad:?}");
     }
-    assert!(refused(commands.attach(Some(&rect()), Some(&json!(5)))));
-    assert!(refused(commands.attach(Some(&rect()), Some(&json!("")))));
+    assert!(refused(commands.open_tab(Some(&json!(5)))));
+    assert!(refused(commands.open_tab(Some(&json!("")))));
+    // A tab id is an id this process minted, so the same bounds apply as to any other.
+    for bad in [None, Some(json!(5)), Some(json!("")), Some(Value::Null)] {
+        assert!(refused(commands.select_tab(bad.as_ref())), "{bad:?}");
+        assert!(refused(commands.close_tab(bad.as_ref())), "{bad:?}");
+    }
     assert!(refused(commands.match_page(None)), "absent is not null");
     assert!(refused(commands.match_page(Some(&json!(7)))));
     // Ids, which are looked up and never joined onto a path.

@@ -5,6 +5,7 @@ import {
   type BrowseDownloadDto,
   type BrowseNoticeDto,
   type BrowseStateDto,
+  type BrowseTabsDto,
   type FileDto,
   type ModelSiteDto,
   type ProjectDto,
@@ -19,13 +20,20 @@ import { t } from './i18n'
  * The model browser's page logic: a native view laid over the page, its downloads, and landing one
  * of them in a project.
  *
- * ## The view is not an element
+ * ## The views are not elements
  *
- * It is a native webview the shell lays over the window; it paints over whatever the page draws
- * and CSS cannot place it. So the page only *describes* where it should be: it reports the
- * placeholder's rectangle (see `browse-bounds.ts`), the shell intersects that with an area it
- * computes itself, and the page hides the view (`hide`) for as long as a dialog or menu is open
- * ({@link overlayOpen}) and destroys it (`detach`) when the route goes.
+ * Each tab is a native webview the shell lays over the window; it paints over whatever the page
+ * draws and CSS cannot place it. So the page only *describes* where they should be: it reports
+ * the placeholder's rectangle (see `browse-bounds.ts`), the shell intersects that with an area it
+ * computes itself, shows the front tab's view there and hides the rest, and the page hides them
+ * all (`hide`) for as long as a dialog or menu is open ({@link overlayOpen}).
+ *
+ * ## The tabs outlive the route
+ *
+ * Leaving `/browse` (`detach`) takes them off screen and keeps them, so coming back finds the
+ * same pages; they die with the app, and nothing about where the user was is written down. While
+ * the page is gone the shell refuses any download a tab tries to start, which is what used to be
+ * guaranteed by destroying the view.
  *
  * ## Site strings are text
  *
@@ -139,7 +147,7 @@ function errorSentence(error: unknown, creating: boolean): string {
 export function createBrowse(depsOverride: Partial<BrowseDeps> = {}) {
   const deps: BrowseDeps = { ...defaultBrowseDeps(), ...depsOverride }
   const [sites, setSites] = createSignal<ModelSiteDto[]>([])
-  const [state, setState] = createSignal<BrowseStateDto | null>(null)
+  const [tabs, setTabs] = createSignal<BrowseTabsDto | null>(null)
   const [downloads, setDownloads] = createSignal<BrowseDownloadDto[]>([])
   const [notices, setNotices] = createSignal<BrowseNoticeDto[]>([])
   const [projects, setProjects] = createSignal<ProjectDto[]>([])
@@ -155,22 +163,30 @@ export function createBrowse(depsOverride: Partial<BrowseDeps> = {}) {
   let lastBounds: BrowseBounds | null = null
   let overlayHidden = false
 
+  /** The tab in front, which is the one every control on the page drives. */
+  const active = (): BrowseStateDto | null => {
+    const all = tabs()
+    if (!all) return null
+    return all.tabs.find((tab) => tab.tabId === all.activeTabId) ?? null
+  }
+
   const same = (a: BrowseBounds | null, b: BrowseBounds) =>
     a !== null && a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height
 
   async function poll(): Promise<void> {
     if (destroyed || !attached) return
     try {
-      const [nextState, nextDownloads, nextNotices] = await Promise.all([
-        deps.browse.state(),
+      const [nextTabs, nextDownloads, nextNotices] = await Promise.all([
+        deps.browse.tabs(),
         deps.browse.downloads(),
         deps.browse.notices(),
       ])
       if (destroyed) return
-      setState(nextState)
+      setTabs(nextTabs)
       setDownloads(nextDownloads)
       setNotices(nextNotices)
-      loadingTicks = nextState.isLoading ? loadingTicks + 1 : 0
+      const front = nextTabs.tabs.find((tab) => tab.tabId === nextTabs.activeTabId)
+      loadingTicks = front?.isLoading ? loadingTicks + 1 : 0
       setVerifying(loadingTicks >= deps.interstitialTicks)
     } catch {
       // A poll that fails is the next poll's to repeat; the page has nothing better to say.
@@ -179,7 +195,9 @@ export function createBrowse(depsOverride: Partial<BrowseDeps> = {}) {
 
   return {
     sites,
-    state,
+    tabs,
+    /** The tab in front: what the address, the history buttons and the still picture are about. */
+    state: active,
     downloads,
     notices,
     projects,
@@ -189,15 +207,15 @@ export function createBrowse(depsOverride: Partial<BrowseDeps> = {}) {
     landed,
 
     /**
-     * Creates the view where the placeholder is and starts polling. If the page is destroyed
-     * while this is still waiting for the shell, the view is detached again and nothing starts.
+     * Puts the tabs on screen at the placeholder and starts polling. If the page is destroyed
+     * while this is still waiting for the shell, they are taken off again and nothing starts.
      */
     async open(bounds: BrowseBounds): Promise<void> {
       try {
         lastBounds = bounds
         const [siteList, first] = await Promise.all([
           deps.browse.sites(),
-          deps.browse.attach(bounds, null),
+          deps.browse.attach(bounds),
         ])
         if (destroyed) {
           void deps.browse.detach().catch(() => {})
@@ -205,7 +223,7 @@ export function createBrowse(depsOverride: Partial<BrowseDeps> = {}) {
         }
         attached = true
         setSites(siteList)
-        setState(first)
+        setTabs(first)
         timer = setInterval(() => void poll(), deps.pollMs)
         void poll()
         if (overlayOpen()) void this.syncOverlay()
@@ -234,7 +252,7 @@ export function createBrowse(depsOverride: Partial<BrowseDeps> = {}) {
       try {
         if (open) await deps.browse.hide()
         else {
-          setState(await deps.browse.show())
+          setTabs(await deps.browse.show())
           // The rectangle may have changed while it was hidden; the shell reapplied the last one.
         }
       } catch {
@@ -245,7 +263,7 @@ export function createBrowse(depsOverride: Partial<BrowseDeps> = {}) {
     async navigate(url: string): Promise<void> {
       setFailure(null)
       try {
-        setState(await deps.browse.navigate(url.trim()))
+        setTabs(await deps.browse.navigate(url.trim()))
       } catch (error) {
         setFailure(isApiError(error) ? error.message : t('browse.pageFailed'))
         void poll()
@@ -256,27 +274,51 @@ export function createBrowse(depsOverride: Partial<BrowseDeps> = {}) {
     },
     async back() {
       try {
-        setState(await deps.browse.back())
+        setTabs(await deps.browse.back())
       } catch {
         /* nothing to go back to */
       }
     },
     async forward() {
       try {
-        setState(await deps.browse.forward())
+        setTabs(await deps.browse.forward())
       } catch {
         /* nothing to go forward to */
       }
     },
     async reload() {
       try {
-        setState(await deps.browse.reload())
+        setTabs(await deps.browse.reload())
       } catch {
         /* nothing open */
       }
     },
-    async forgetLastPage() {
-      await deps.browse.clearLastPage()
+
+    // --- the tabs ------------------------------------------------------------------------------
+
+    /** Opens a tab on the registry's start page and brings it to the front. */
+    async openTab(): Promise<void> {
+      setFailure(null)
+      try {
+        setTabs(await deps.browse.openTab(null))
+      } catch (error) {
+        // The cap is the one refusal a user can cause, and it has a sentence of its own.
+        setFailure(isApiError(error) ? t('browse.tabCap') : t('browse.openFailed'))
+      }
+    },
+    async selectTab(tabId: string): Promise<void> {
+      try {
+        setTabs(await deps.browse.selectTab(tabId))
+      } catch {
+        // Gone between the render and the click; the next poll says so.
+      }
+    },
+    async closeTab(tabId: string): Promise<void> {
+      try {
+        setTabs(await deps.browse.closeTab(tabId))
+      } catch {
+        // As above.
+      }
     },
 
     // --- notices and the staged downloads ------------------------------------------------------

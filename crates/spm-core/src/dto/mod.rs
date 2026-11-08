@@ -25,9 +25,9 @@ use ts_rs::TS;
 pub use core_dtos::{CoreFileDto, CoreProjectDetailDto, CoreProjectDto};
 pub use desktop::{
     BrowseBounds, BrowseDownloadDto, BrowseDownloadState, BrowseMatchDto, BrowseMatchProjectDto,
-    BrowseNoticeDto, BrowseNoticeKind, BrowseStateDto, DiscardedSessionsDto, EntryDiff, FileState,
-    ModelSiteDto, SlicerConfigDto, SlicerInstallDto, SlicerInstallOrigin, SlicerInstallState,
-    SlicerLaunchDto, SlicerLaunchMode, SlicerLaunchOptions, SlicerSessionDto,
+    BrowseNoticeDto, BrowseNoticeKind, BrowseStateDto, BrowseTabsDto, DiscardedSessionsDto,
+    EntryDiff, FileState, ModelSiteDto, SlicerConfigDto, SlicerInstallDto, SlicerInstallOrigin,
+    SlicerInstallState, SlicerLaunchDto, SlicerLaunchMode, SlicerLaunchOptions, SlicerSessionDto,
 };
 pub(crate) use serde_helpers::double_option;
 

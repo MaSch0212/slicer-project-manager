@@ -1,0 +1,29 @@
+[package]
+name = "spm-win32"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+# Deliberately NOT `[lints] workspace = true`.
+#
+# The workspace sets `unsafe_code = "forbid"`, which an inner `#[allow]` cannot lift, and this
+# crate exists so that it does not have to be lifted anywhere else: every `unsafe` call the
+# desktop app needs is in here, behind a safe function, and every other crate keeps `forbid`
+# untouched. Clippy's own lints still apply at the workspace's level.
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+undocumented_unsafe_blocks = "warn"
+
+[dependencies]
+
+[target.'cfg(windows)'.dependencies]
+# Already in the lock file as a transitive dependency of `wry`; named here because this crate
+# calls into it directly.
+webview2-com = "0.39.1"
+windows = { version = "0.62.2", features = [
+  "Win32_Foundation",
+  "Win32_System_Com",
+  "Win32_System_Com_StructuredStorage",
+  "Win32_System_Memory",
+] }

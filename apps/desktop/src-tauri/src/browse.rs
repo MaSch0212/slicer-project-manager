@@ -1,11 +1,13 @@
 //! The model browser's child webview: the glue between `spm_shell::browse` (which owns every
 //! decision) and Tauri's multiwebview API (`Window::add_child`, Cargo feature `unstable`).
 //!
-//! # The view
+//! # The views
 //!
-//! A child webview of the **main window**, labelled [`BROWSE_WEBVIEW`], on its own
-//! `data_directory` (`<data dir>/browse-profile`, persistent: the user signs in to a site once).
-//! It is not the main webview and it is never named by [`crate::security::main_capability`]:
+//! One child webview of the **main window** per tab, labelled `browse-<tab id>`
+//! ([`BROWSE_WEBVIEW_PREFIX`]), all on the same `data_directory`
+//! (`<data dir>/browse-profile`, persistent and shared: the user signs in to a site once, in any
+//! tab). None of them is the main webview and none is ever named by
+//! [`crate::security::main_capability`]:
 //! Tauri injects its bridge into every page a webview loads, so what keeps a model site out of
 //! the app's commands is the capability ACL alone, by label and by origin. The hidden smoke run
 //! proves it from inside the view (see `hidden.rs`).
@@ -46,8 +48,14 @@ use tauri::{
 
 use crate::window::TitleSink;
 
-/// The label of the browse child webview. **Never granted anything** (`security`).
-pub const BROWSE_WEBVIEW: &str = "browse";
+/// What every browse child webview's label starts with. **Never granted anything** (`security`),
+/// which is checked by prefix so that no tab can ever be granted something by being new.
+pub const BROWSE_WEBVIEW_PREFIX: &str = "browse-";
+
+/// The webview label for a tab.
+pub fn browse_label(tab_id: &str) -> String {
+    format!("{BROWSE_WEBVIEW_PREFIX}{tab_id}")
+}
 
 /// The persistent profile, beside `webview/` (the main webview's) under the data directory.
 pub const BROWSE_PROFILE_DIR: &str = "browse-profile";
@@ -66,6 +74,7 @@ pub type ServicesCell = Arc<OnceLock<Arc<BrowseServices>>>;
 
 pub struct TauriView<R: Runtime> {
     webview: Webview<R>,
+    label: String,
     meta: Arc<Mutex<ViewMeta>>,
     closed: AtomicBool,
 }
@@ -160,13 +169,13 @@ impl<R: Runtime> BrowseView for TauriView<R> {
         let _ = self.webview.close();
     }
 
+    fn capture_png(&self) -> Option<Vec<u8>> {
+        crate::capture::capture_webview_png(&self.webview)
+    }
+
     fn is_alive(&self) -> bool {
         !self.closed.load(Ordering::SeqCst)
-            && self
-                .webview
-                .app_handle()
-                .get_webview(BROWSE_WEBVIEW)
-                .is_some()
+            && self.webview.app_handle().get_webview(&self.label).is_some()
     }
 }
 
@@ -187,7 +196,12 @@ fn logical(rect: Rect) -> (LogicalPosition<f64>, LogicalSize<f64>) {
 }
 
 impl<R: Runtime> ViewFactory for TauriViewFactory<R> {
-    fn create(&self, start_url: &str, rect: Option<Rect>) -> Result<Arc<dyn BrowseView>, AppError> {
+    fn create(
+        &self,
+        tab_id: &str,
+        start_url: &str,
+        rect: Option<Rect>,
+    ) -> Result<Arc<dyn BrowseView>, AppError> {
         let window = self
             .app
             .get_window(crate::security::MAIN_WEBVIEW)
@@ -198,15 +212,17 @@ impl<R: Runtime> ViewFactory for TauriViewFactory<R> {
         let meta = Arc::new(Mutex::new(ViewMeta::default()));
 
         let services = Arc::clone(&self.services);
+        let nav_tab = tab_id.to_owned();
         let on_navigation = move |url: &tauri::Url| {
             services
                 .get()
-                .is_none_or(|services| services.host().on_navigation(url.as_str()))
+                .is_none_or(|services| services.host().on_navigation(&nav_tab, url.as_str()))
         };
         let services = Arc::clone(&self.services);
+        let open_tab = tab_id.to_owned();
         let on_new_window = move |url: tauri::Url, _features| {
             if let Some(services) = services.get() {
-                services.host().on_new_window(url.as_str());
+                services.host().on_new_window(&open_tab, url.as_str());
             }
             NewWindowResponse::Deny
         };
@@ -247,12 +263,15 @@ impl<R: Runtime> ViewFactory for TauriViewFactory<R> {
         };
         let page_meta = Arc::clone(&meta);
         let services = Arc::clone(&self.services);
+        let load_tab = tab_id.to_owned();
         let on_page_load =
             move |_webview: Webview<R>, payload: tauri::webview::PageLoadPayload<'_>| {
                 let started = matches!(payload.event(), PageLoadEvent::Started);
                 page_meta.lock().unwrap_or_else(|e| e.into_inner()).loading = started;
                 if !started && let Some(services) = services.get() {
-                    services.host().on_committed(payload.url().as_str());
+                    services
+                        .host()
+                        .on_committed(&load_tab, payload.url().as_str());
                 }
             };
         let title_meta = Arc::clone(&meta);
@@ -264,7 +283,8 @@ impl<R: Runtime> ViewFactory for TauriViewFactory<R> {
             title_meta.lock().unwrap_or_else(|e| e.into_inner()).title = Some(title);
         };
 
-        let builder = WebviewBuilder::new(BROWSE_WEBVIEW, WebviewUrl::External(url))
+        let label = browse_label(tab_id);
+        let builder = WebviewBuilder::new(&label, WebviewUrl::External(url))
             .data_directory(self.profile_dir.clone())
             .on_navigation(on_navigation)
             .on_new_window(on_new_window)
@@ -289,6 +309,7 @@ impl<R: Runtime> ViewFactory for TauriViewFactory<R> {
         }
         Ok(Arc::new(TauriView {
             webview,
+            label,
             meta,
             closed: AtomicBool::new(false),
         }))

@@ -12,6 +12,8 @@ import { cx } from './cx'
 export function ViewportSlot(props: {
   ref?: (element: HTMLDivElement) => void
   label: string
+  /** Takes whatever height is left instead of a fixed share of the viewport. */
+  fill?: boolean
   class?: string
   children?: JSX.Element
 }) {
@@ -21,7 +23,8 @@ export function ViewportSlot(props: {
       role="region"
       aria-label={props.label}
       class={cx(
-        'flex h-[60dvh] min-h-96 items-center justify-center rounded-card border border-border bg-surface-2 p-6 text-center text-sm text-fg-muted',
+        'flex items-center justify-center bg-surface-2 p-6 text-center text-sm text-fg-muted',
+        props.fill ? 'min-h-0 flex-1' : 'h-[60dvh] min-h-96 rounded-card border border-border',
         props.class,
       )}
     >

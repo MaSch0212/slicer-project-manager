@@ -22,7 +22,7 @@ use ts_rs::{Config, TS};
 
 use crate::dto::{
     BrowseBounds, BrowseDownloadDto, BrowseDownloadState, BrowseMatchDto, BrowseMatchProjectDto,
-    BrowseNoticeDto, BrowseNoticeKind, BrowseStateDto, Capabilities, CoreFileDto,
+    BrowseNoticeDto, BrowseNoticeKind, BrowseStateDto, BrowseTabsDto, Capabilities, CoreFileDto,
     CoreProjectDetailDto, CoreProjectDto, DEFAULT_SETTINGS, DiscardedSessionsDto, EntryDiff,
     FileCounts, FileDto, FileKind, FileState, Language, LibraryMode, LibraryStateDto,
     LocalLibraryDto, ModelSiteDto, PreviewState, ProjectDetailDto, ProjectDto, ProjectQuery,
@@ -128,6 +128,7 @@ fn types_ts() -> String {
         ModelSiteDto,
         BrowseBounds,
         BrowseStateDto,
+        BrowseTabsDto,
         BrowseDownloadState,
         BrowseDownloadDto,
         BrowseNoticeKind,

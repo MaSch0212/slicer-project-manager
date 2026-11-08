@@ -336,6 +336,22 @@ new one that is refused.
 The user is never held in the dialog while bytes transfer. The decision is the only thing the
 dialog is for.
 
+**The decision belongs to the shell, not to the page.** This was not obvious when the sequence
+above was written and it is the main thing the builder has to get right. The page stops polling
+the moment you leave `/browse`, so a decision held in page state is a decision that evaporates
+while the file is still coming down — and "it files itself when it arrives" then quietly fails
+for exactly the case the up-front choice exists to serve. So:
+
+- a command records the choice against the staged download (project id or a new project's name,
+  and the file name), beside the download's own record;
+- `on_download_finished` lands it, and because landing can be a remote upload it is handed to the
+  runtime rather than run on the main thread in the hook;
+- a landing that fails leaves the download staged with its reason, which the chip then reports.
+
+Cancelling needs the same place: `discard` refuses a running download today, by design, so
+cancelling is a separate command that marks the record and deletes the file when it arrives
+(§6.1a).
+
 ### 6.1a What "cancel" actually does
 
 **The transfer is not stopped; the file is deleted when it arrives.** `DownloadEvent` has two arms,

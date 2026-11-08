@@ -20,10 +20,14 @@ use spm_core::{AppError, content_type_for, validate};
 
 use super::api::LibrarySource;
 use super::downloads::{Downloads, StagedDownload};
-use super::last_page::MAX_REMEMBERED_URL;
 use super::policy::is_http_url;
 use super::registry::SiteRegistry;
 use crate::slicers::remote_files::{failure_of, remote_upload};
+
+/// The longest page URL the match will look at. Not a limit any site approaches (the longest the
+/// spike recorded is 66 characters): a bound on what a *stranger's string* can make the shell do,
+/// since both the download's page URL and a project's stored website go through it.
+pub const MAX_PAGE_URL: usize = 2048;
 
 pub struct BrowseLanding {
     downloads: Arc<Downloads>,
@@ -128,7 +132,7 @@ pub fn match_projects(
     library: &LibrarySource,
     url: Option<&str>,
 ) -> Result<BrowseMatchDto, AppError> {
-    let url = url.filter(|url| is_http_url(url, MAX_REMEMBERED_URL));
+    let url = url.filter(|url| is_http_url(url, MAX_PAGE_URL));
     let Some(url) = url else {
         return Ok(BrowseMatchDto {
             url: None,
@@ -152,7 +156,7 @@ pub fn match_projects(
         .filter_map(|project| {
             let website = project.get("website")?.as_str()?;
             // Only a project whose own website is a page this could key.
-            (is_http_url(website, MAX_REMEMBERED_URL) && registry.match_key(website) == key)
+            (is_http_url(website, MAX_PAGE_URL) && registry.match_key(website) == key)
                 .then(|| {
                     Some(BrowseMatchProjectDto {
                         id: project.get("id")?.as_str()?.to_owned(),

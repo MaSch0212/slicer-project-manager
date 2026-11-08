@@ -16,7 +16,7 @@ use std::sync::Arc;
 use serde_json::Value;
 use spm_core::AppError;
 use spm_core::dto::{
-    BrowseBounds, BrowseDownloadDto, BrowseMatchDto, BrowseNoticeDto, BrowseStateDto, FileDto,
+    BrowseBounds, BrowseDownloadDto, BrowseMatchDto, BrowseNoticeDto, BrowseTabsDto, FileDto,
     ModelSiteDto,
 };
 
@@ -26,6 +26,9 @@ pub const MAX_ID_LENGTH: usize = 64;
 pub const MAX_DOWNLOAD_ID_LENGTH: usize = 128;
 /// Longest URL the page may hand over: comfortably past anything a site produces.
 pub const MAX_URL_LENGTH: usize = 8192;
+/// Longest tab id. The shell mints these (`tab-7`); the bound is only so a page cannot send a
+/// megabyte where an id belongs.
+pub const MAX_TAB_ID_LENGTH: usize = 64;
 /// Longest file name (`fileNameSchema`).
 pub const MAX_NAME_LENGTH: usize = 255;
 /// Beyond this a rectangle is not a rectangle of a screen.
@@ -34,16 +37,20 @@ pub const MAX_COORDINATE: f64 = 1_000_000.0;
 /// What the commands need from the browser: the one seam between "arguments are valid" and "do it".
 pub trait BrowseBackend: Send + Sync {
     fn sites(&self) -> Vec<ModelSiteDto>;
-    fn attach(&self, bounds: BrowseBounds, url: Option<&str>) -> Result<BrowseStateDto, AppError>;
+    fn attach(&self, bounds: BrowseBounds) -> Result<BrowseTabsDto, AppError>;
     fn detach(&self);
     fn hide(&self);
-    fn show(&self) -> BrowseStateDto;
+    fn show(&self) -> BrowseTabsDto;
     fn set_bounds(&self, bounds: BrowseBounds);
-    fn navigate(&self, url: &str) -> Result<BrowseStateDto, AppError>;
-    fn back(&self) -> Result<BrowseStateDto, AppError>;
-    fn forward(&self) -> Result<BrowseStateDto, AppError>;
-    fn reload(&self) -> Result<BrowseStateDto, AppError>;
-    fn state(&self) -> BrowseStateDto;
+    fn navigate(&self, url: &str) -> Result<BrowseTabsDto, AppError>;
+    fn back(&self) -> Result<BrowseTabsDto, AppError>;
+    fn forward(&self) -> Result<BrowseTabsDto, AppError>;
+    fn reload(&self) -> Result<BrowseTabsDto, AppError>;
+    fn tabs(&self) -> BrowseTabsDto;
+    fn open_tab(&self, url: Option<&str>) -> Result<BrowseTabsDto, AppError>;
+    fn select_tab(&self, tab_id: &str) -> BrowseTabsDto;
+    fn close_tab(&self, tab_id: &str) -> Result<BrowseTabsDto, AppError>;
+    fn capture_active(&self) -> Option<Vec<u8>>;
     fn downloads(&self) -> Vec<BrowseDownloadDto>;
     fn notices(&self) -> Vec<BrowseNoticeDto>;
     fn dismiss_notice(&self, id: &str);
@@ -55,7 +62,6 @@ pub trait BrowseBackend: Send + Sync {
     ) -> Result<FileDto, AppError>;
     fn discard(&self, download_id: &str) -> Result<(), AppError>;
     fn match_page(&self, url: Option<&str>) -> Result<BrowseMatchDto, AppError>;
-    fn clear_last_page(&self);
 }
 
 fn missing(name: &str) -> AppError {
@@ -149,18 +155,9 @@ impl BrowseCommands {
         self.backend.sites()
     }
 
-    /// `url` is `null` to open on the remembered page.
-    pub fn attach(
-        &self,
-        bounds: Option<&Value>,
-        url: Option<&Value>,
-    ) -> Result<BrowseStateDto, AppError> {
-        let bounds = parse_bounds(bounds)?;
-        let url = match url {
-            None | Some(Value::Null) => None,
-            some => Some(url_arg(some, "url")?),
-        };
-        self.backend.attach(bounds, url)
+    /// The page is on screen. Puts the tabs back where they were, or opens a first one.
+    pub fn attach(&self, bounds: Option<&Value>) -> Result<BrowseTabsDto, AppError> {
+        self.backend.attach(parse_bounds(bounds)?)
     }
 
     pub fn detach(&self) {
@@ -171,7 +168,7 @@ impl BrowseCommands {
         self.backend.hide();
     }
 
-    pub fn show(&self) -> BrowseStateDto {
+    pub fn show(&self) -> BrowseTabsDto {
         self.backend.show()
     }
 
@@ -180,24 +177,52 @@ impl BrowseCommands {
         Ok(())
     }
 
-    pub fn navigate(&self, url: Option<&Value>) -> Result<BrowseStateDto, AppError> {
+    pub fn navigate(&self, url: Option<&Value>) -> Result<BrowseTabsDto, AppError> {
         self.backend.navigate(url_arg(url, "url")?)
     }
 
-    pub fn back(&self) -> Result<BrowseStateDto, AppError> {
+    pub fn back(&self) -> Result<BrowseTabsDto, AppError> {
         self.backend.back()
     }
 
-    pub fn forward(&self) -> Result<BrowseStateDto, AppError> {
+    pub fn forward(&self) -> Result<BrowseTabsDto, AppError> {
         self.backend.forward()
     }
 
-    pub fn reload(&self) -> Result<BrowseStateDto, AppError> {
+    pub fn reload(&self) -> Result<BrowseTabsDto, AppError> {
         self.backend.reload()
     }
 
-    pub fn state(&self) -> BrowseStateDto {
-        self.backend.state()
+    pub fn tabs(&self) -> BrowseTabsDto {
+        self.backend.tabs()
+    }
+
+    /// `url` is `null` for a tab on the registry's start page.
+    pub fn open_tab(&self, url: Option<&Value>) -> Result<BrowseTabsDto, AppError> {
+        let url = match url {
+            None | Some(Value::Null) => None,
+            some => Some(url_arg(some, "url")?),
+        };
+        self.backend.open_tab(url)
+    }
+
+    pub fn select_tab(&self, tab_id: Option<&Value>) -> Result<BrowseTabsDto, AppError> {
+        Ok(self
+            .backend
+            .select_tab(bounded(tab_id, "tabId", MAX_TAB_ID_LENGTH)?))
+    }
+
+    pub fn close_tab(&self, tab_id: Option<&Value>) -> Result<BrowseTabsDto, AppError> {
+        self.backend
+            .close_tab(bounded(tab_id, "tabId", MAX_TAB_ID_LENGTH)?)
+    }
+
+    /// A PNG of the active tab as a `data:` URL, for the still picture a modal is drawn over.
+    /// `None` where the platform cannot capture: the dialog opens anyway.
+    pub fn capture_active(&self) -> Option<String> {
+        self.backend
+            .capture_active()
+            .map(|png| format!("data:image/png;base64,{}", base64_png(&png)))
     }
 
     pub fn downloads(&self) -> Vec<BrowseDownloadDto> {
@@ -241,8 +266,55 @@ impl BrowseCommands {
         };
         self.backend.match_page(url)
     }
+}
 
-    pub fn clear_last_page(&self) {
-        self.backend.clear_last_page();
+/// Base64 for the one place that needs it: the capture's `data:` URL. Standard alphabet, padded.
+fn base64_png(bytes: &[u8]) -> String {
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let b = [
+            chunk[0],
+            chunk.get(1).copied().unwrap_or(0),
+            chunk.get(2).copied().unwrap_or(0),
+        ];
+        let n = (u32::from(b[0]) << 16) | (u32::from(b[1]) << 8) | u32::from(b[2]);
+        let digits = [
+            ALPHABET[(n >> 18) as usize & 63],
+            ALPHABET[(n >> 12) as usize & 63],
+            ALPHABET[(n >> 6) as usize & 63],
+            ALPHABET[n as usize & 63],
+        ];
+        out.push(digits[0] as char);
+        out.push(digits[1] as char);
+        out.push(if chunk.len() > 1 {
+            digits[2] as char
+        } else {
+            '='
+        });
+        out.push(if chunk.len() > 2 {
+            digits[3] as char
+        } else {
+            '='
+        });
+    }
+    out
+}
+
+#[cfg(test)]
+mod base64_tests {
+    use super::base64_png;
+
+    #[test]
+    fn encodes_every_tail_length() {
+        assert_eq!(base64_png(b""), "");
+        assert_eq!(base64_png(b"f"), "Zg==");
+        assert_eq!(base64_png(b"fo"), "Zm8=");
+        assert_eq!(base64_png(b"foo"), "Zm9v");
+        assert_eq!(base64_png(b"foob"), "Zm9vYg==");
+        assert_eq!(base64_png(b"fooba"), "Zm9vYmE=");
+        assert_eq!(base64_png(b"foobar"), "Zm9vYmFy");
+        // The bytes a PNG actually starts with, which exercise the high bits.
+        assert_eq!(base64_png(&[0x89, b'P', b'N', b'G']), "iVBORw==");
     }
 }
