@@ -40,6 +40,8 @@ vi.mock('../core/notify', () => ({ notify }))
  */
 const shellHost = vi.hoisted(() => ({
   isDesktop: false,
+  chooseLibrary: vi.fn(),
+  browse: { sites: vi.fn(), openTab: vi.fn() },
   window: {
     state: vi.fn(),
     startDrag: vi.fn(),
@@ -51,7 +53,11 @@ const shellHost = vi.hoisted(() => ({
 }))
 vi.mock('../core/desktop', () => ({
   isDesktop: () => shellHost.isDesktop,
-  desktop: { window: shellHost.window },
+  desktop: {
+    window: shellHost.window,
+    browse: shellHost.browse,
+    chooseLibrary: shellHost.chooseLibrary,
+  },
 }))
 
 import { auth, capabilities, settings } from '../core/stores'
@@ -89,7 +95,6 @@ async function setup(
 }
 
 const sidebar = () => screen.getAllByRole('navigation', { name: 'Main navigation' })[0]!
-const toggle = () => screen.getByRole('button', { name: 'Collapse or expand the navigation' })
 const labels = (nav: HTMLElement) =>
   within(nav)
     .getAllByRole('listitem')
@@ -105,6 +110,9 @@ beforeEach(() => {
   for (const command of ['startDrag', 'minimize', 'close', 'toggleDevtools'] as const) {
     shellHost.window[command].mockResolvedValue(undefined)
   }
+  shellHost.chooseLibrary.mockResolvedValue(undefined)
+  shellHost.browse.sites.mockResolvedValue([])
+  shellHost.browse.openTab.mockResolvedValue(undefined)
 })
 
 /**
@@ -144,6 +152,46 @@ describe('Shell window bar', () => {
     await waitFor(() => expect(shellHost.window.toggleMaximize).toHaveBeenCalled())
     await screen.findByRole('button', { name: 'Restore down' })
     expect(screen.queryByRole('button', { name: 'Maximise' })).toBeNull()
+  })
+
+  it('puts the app menu on the name and settings in the bar', async () => {
+    shellHost.isDesktop = true
+    await setup()
+
+    // The name is a menu, not a link home: everything the app can do is behind it.
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Application menu' }), { key: 'Enter' })
+    await waitFor(() => expect(screen.getByRole('menuitem', { name: 'Settings' })).toBeTruthy())
+    expect(screen.getByRole('menuitem', { name: 'Choose another library…' })).toBeTruthy()
+
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' })
+    await waitFor(() => expect(screen.queryByRole('menuitem')).toBeNull())
+    // And settings is one press from anywhere, as it is in the app this is modelled on.
+    expect(screen.getAllByRole('button', { name: 'Settings' }).length).toBeGreaterThan(0)
+  })
+
+  it('offers the model sites behind a plus, each opening a tab of the browser', async () => {
+    shellHost.isDesktop = true
+    shellHost.browse.sites.mockResolvedValue([
+      { id: 'printables', displayName: 'Printables', homeUrl: 'https://www.printables.com/' },
+    ])
+    const { history } = await setup()
+    await waitFor(() => screen.getByRole('button', { name: 'Open a model site' }))
+
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Open a model site' }), { key: 'Enter' })
+    fireEvent.pointerUp(await screen.findByRole('menuitem', { name: 'Printables' }), {
+      pointerType: 'mouse',
+      button: 0,
+    })
+
+    await waitFor(() => expect(history.get()).toBe('/browse'))
+    expect(shellHost.browse.openTab).toHaveBeenCalledWith('https://www.printables.com/')
+  })
+
+  it('offers no plus where the shell cannot browse model sites', async () => {
+    shellHost.isDesktop = true
+    await setup({ caps: { ...EVERY_ENTRY, canBrowseModelSites: false } })
+
+    expect(screen.queryByRole('button', { name: 'Open a model site' })).toBeNull()
   })
 
   it('closes and minimises through the shell rather than the page', async () => {
@@ -207,34 +255,23 @@ describe('Shell on the desktop connect page', () => {
   })
 })
 
+/**
+ * The sidebar still collapses; what is gone is the pair of buttons under it. The theme has lived
+ * in settings for a while and the collapse is a setting too, so a footer of controls duplicating
+ * them was two rows of furniture under an already compact menu.
+ */
 describe('Shell collapse', () => {
-  it('persists a collapse through the settings API rather than the browser', async () => {
-    await setup()
-    fireEvent.click(toggle())
-    await waitFor(() => expect(api.settings.put).toHaveBeenCalledWith({ navCollapsed: true }))
-  })
-
   it('draws the collapsed sidebar the setting describes and keeps every name', async () => {
     await setup({ navCollapsed: true })
-    expect(toggle().getAttribute('aria-expanded')).toBe('false')
     // The labels are visually hidden, never removed: an icon with no name is the failure to avoid.
     expect(within(sidebar()).getByRole('link', { name: 'Projects' })).toBeTruthy()
   })
 
-  it('names the collapse control the same in both states', async () => {
+  it('offers no theme or collapse control of its own under the navigation', async () => {
     await setup()
-    expect(toggle().getAttribute('aria-expanded')).toBe('true')
-    fireEvent.click(toggle())
-    await waitFor(() => expect(toggle().getAttribute('aria-expanded')).toBe('false'))
-  })
 
-  it('returns to the stored state when the save is refused, and says so', async () => {
-    await setup()
-    api.settings.put.mockRejectedValue(new ApiError('Internal', 'nope'))
-    fireEvent.click(toggle())
-    await waitFor(() => expect(notify.error).toHaveBeenCalledWith('Something went wrong'))
-    expect(settings.settings().navCollapsed).toBe(false)
-    expect(toggle().getAttribute('aria-expanded')).toBe('true')
+    expect(screen.queryByRole('button', { name: 'Collapse or expand the navigation' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Theme' })).toBeNull()
   })
 })
 

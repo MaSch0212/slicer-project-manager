@@ -1,13 +1,15 @@
 {
   "app": {
     "title": "Slicer-Projektverwaltung",
-    "signOut": "Abmelden"
+    "signOut": "Abmelden",
+    "menu": "Anwendungsmenü"
   },
   "window": {
     "minimize": "Minimieren",
     "maximize": "Maximieren",
     "restore": "Verkleinern",
-    "close": "Schließen"
+    "close": "Schließen",
+    "exit": "Beenden"
   },
   "nav": {
     "label": "Hauptnavigation",
@@ -385,7 +387,8 @@
     "errorGone": "Diesen Download oder dieses Projekt gibt es nicht mehr.",
     "errorRefused": "Dieser Download kann nicht hinzugefügt werden.",
     "errorCreateName": "So darf ein Projekt nicht heißen. Der Name muss zwischen 1 und 200 Zeichen lang sein.",
-    "errorCreateRefused": "Das Projekt konnte nicht angelegt werden, es wurde also nichts hinzugefügt. Der Download ist noch da — versuchen Sie es erneut oder fügen Sie ihn zu einem vorhandenen Projekt hinzu."
+    "errorCreateRefused": "Das Projekt konnte nicht angelegt werden, es wurde also nichts hinzugefügt. Der Download ist noch da — versuchen Sie es erneut oder fügen Sie ihn zu einem vorhandenen Projekt hinzu.",
+    "openSite": "Modellseite öffnen"
   },
   "errors": {
     "quotaExceeded": "Dieser Upload würde das Kontingent überschreiten ({{ usage }} von {{ quota }} belegt)",

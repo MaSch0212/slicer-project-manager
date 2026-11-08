@@ -1,13 +1,15 @@
 {
   "app": {
     "title": "Slicer Project Manager",
-    "signOut": "Sign out"
+    "signOut": "Sign out",
+    "menu": "Application menu"
   },
   "window": {
     "minimize": "Minimise",
     "maximize": "Maximise",
     "restore": "Restore down",
-    "close": "Close"
+    "close": "Close",
+    "exit": "Exit"
   },
   "nav": {
     "label": "Main navigation",
@@ -385,7 +387,8 @@
     "errorGone": "That download or that project is not there any more.",
     "errorRefused": "That download cannot be added.",
     "errorCreateName": "That is not a name a project can have. It has to be between 1 and 200 characters.",
-    "errorCreateRefused": "The project could not be created, so nothing was added. The download is still here — try again, or add it to a project that already exists."
+    "errorCreateRefused": "The project could not be created, so nothing was added. The download is still here — try again, or add it to a project that already exists.",
+    "openSite": "Open a model site"
   },
   "errors": {
     "quotaExceeded": "This upload would exceed your quota ({{ usage }} of {{ quota }} used)",

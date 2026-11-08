@@ -93,20 +93,6 @@ test('the theme switch applies at once, in both schemes, and survives a reload',
   await expect(page.locator('body')).toHaveCSS('background-color', BG.light)
 })
 
-test('the theme menu in the sidebar changes the same setting', async ({ page }) => {
-  await page.emulateMedia({ colorScheme: 'light' })
-  await open(page, state.server, '/projects')
-  await expectHeading(page, 'Projects')
-  await page.getByRole('button', { name: 'Theme' }).click()
-  const saved = settingsSaved(page)
-  await page.getByRole('menuitem', { name: 'Dark' }).click()
-  await saved
-  await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark')
-
-  await settingsPage(page)
-  await expect(page.getByRole('radio', { name: 'Dark' })).toBeChecked()
-})
-
 test('the default project view is a setting and the projects page follows it', async ({ page }) => {
   await settingsPage(page)
   const saved = settingsSaved(page)
@@ -119,21 +105,21 @@ test('the default project view is a setting and the projects page follows it', a
   await expect(page.getByRole('radio', { name: 'List' })).toBeChecked()
 })
 
-// Ported from smoke.spec.ts: the collapsed sidebar keeps its names, and a collapse is still there
-// after the window reloads (spec G 9.2) -- from the sidebar's own toggle and from the settings page.
+// Ported from smoke.spec.ts: the collapsed sidebar keeps its names, and a collapse is still
+// there after the window reloads (spec G 9.2). The sidebar's own toggle is gone -- the setting
+// is the one way to it now -- so this drives the setting.
 test('collapsing the navigation keeps every name, and survives a reload', async ({ page }) => {
-  const toggle = page.getByRole('button', { name: 'Collapse or expand the navigation' })
   await open(page, state.server, '/projects')
   await expectHeading(page, 'Projects')
   const width = async () => (await page.locator('aside').boundingBox())!.width
   const expanded = await width()
-  await expect(toggle).toHaveAttribute('aria-expanded', 'true')
 
+  await settingsPage(page)
   const saved = settingsSaved(page)
-  await toggle.click()
-  await expect(toggle).toHaveAttribute('aria-expanded', 'false')
+  await page.getByRole('switch', { name: 'Collapse the navigation' }).click({ force: true })
   await saved
   await expect.poll(width).toBeLessThan(expanded / 2)
+
   // Same names, with no visible text: an icon with no name is the failure this guards against.
   await expect(page.getByRole('link', { name: 'Slicer Project Manager', exact: true })).toHaveCount(
     1,
@@ -141,20 +127,7 @@ test('collapsing the navigation keeps every name, and survives a reload', async 
   await expect(sidebarNav(page).getByRole('link', { name: 'Projects', exact: true })).toHaveCount(1)
 
   await page.reload()
-  await expectHeading(page, 'Projects')
-  await expect(toggle).toHaveAttribute('aria-expanded', 'false')
   await expect.poll(width).toBeLessThan(expanded / 2)
-
-  // The setting on the settings page is the same state.
-  await settingsPage(page)
-  const sw = page.getByRole('switch', { name: 'Collapse the navigation' })
-  await expect(sw).toBeChecked()
-  const restored = settingsSaved(page)
-  await sw.uncheck({ force: true })
-  await restored
-  await expect(sw).not.toBeChecked()
-  await expect(toggle).toHaveAttribute('aria-expanded', 'true')
-  await expect.poll(width).toBe(expanded)
 })
 
 test('the web build has no Slicers section, and its old route lands on the settings page', async ({

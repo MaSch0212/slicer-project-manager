@@ -12,10 +12,11 @@
  * pins one. "system" removes the attribute.
  *
  * Contrast (WCAG AA, measured): fg and fg-muted are 4.5:1 or better on bg, surface and surface-2 in
- * both schemes; `accent-solid` carries `accent-fg` text at 4.5:1 or better. `accent` itself
- * (#ea580c / #f97316) is for focus rings, indicators and tints, which need 3:1, not for text:
- * text in the accent hue uses `accent-text`. fg-subtle is for disabled controls only, which WCAG
- * exempts; never use it for text a user needs to read.
+ * both schemes; `accent-solid` carries `accent-fg` text at 4.5:1 or better (5.58 light, 9.46
+ * dark). `accent` itself (#0a56fd / #2ec8fc) is for focus rings, indicators and tints, which need
+ * 3:1, not for text: text in the accent hue uses `accent-text` (6.17 light / 11.97 dark on bg).
+ * fg-subtle is for disabled controls only, which WCAG exempts; never use it for text a user needs
+ * to read.
  */
 @theme static {
   /* Drop Tailwind's default palette, radii and shadows: only the tokens below exist. */
@@ -48,14 +49,22 @@
   --color-fg-muted: light-dark(#5c616b, #9a9fa9);
   --color-fg-subtle: light-dark(#9a9ea6, #5b6069);
 
-  /* The one accent */
-  --color-accent: light-dark(#ea580c, #f97316);
-  --color-accent-solid: light-dark(#c2410c, #f97316);
-  --color-accent-solid-hover: light-dark(#9a3412, #fb923c);
-  --color-accent-fg: light-dark(#ffffff, #1a0d04);
-  --color-accent-text: light-dark(#c2410c, #fb923c);
-  --color-accent-soft: light-dark(#fff1e6, #2a1a0e);
-  --color-accent-soft-fg: light-dark(#c2410c, #fdba74);
+  /*
+   * The one accent: the application's own icon.
+   *
+   * The mark is three blues — #0a56fd deep, #2ec8fc sky, #cae6fb ice — and these are taken from
+   * it rather than chosen beside it, which is what the orange it replaced never was. The light
+   * accent is the deep blue exactly: unlike the old orange it already carries white text at
+   * 5.58:1, so a filled button needs no darker variant to reach AA. The dark accent is the sky,
+   * which is the one of the three that holds up on a near-black background.
+   */
+  --color-accent: light-dark(#0a56fd, #2ec8fc);
+  --color-accent-solid: light-dark(#0a56fd, #2ec8fc);
+  --color-accent-solid-hover: light-dark(#0b4ee0, #6bd8fd);
+  --color-accent-fg: light-dark(#ffffff, #04161f);
+  --color-accent-text: light-dark(#0b4ee0, #8fd3ff);
+  --color-accent-soft: light-dark(#e8f0ff, #0d2444);
+  --color-accent-soft-fg: light-dark(#0f47c7, #8fd3ff);
 
   /* Status */
   --color-danger-solid: light-dark(#dc2626, #dc2626);
@@ -104,13 +113,6 @@
 
 :root {
   color-scheme: light dark;
-  /*
-   * How much chrome the shell draws above the scrolling page: the desktop app's own title bar,
-   * since its window has no system one. `AppShell` raises it to the bar's height when there is a
-   * bar; in a browser there is nothing above the page, so everything that sticks to the top
-   * sticks to 0 as it always did.
-   */
-  --chrome-top: 0px;
 }
 :root[data-theme='light'] {
   color-scheme: light;

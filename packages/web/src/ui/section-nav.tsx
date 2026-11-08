@@ -25,7 +25,7 @@ export function SectionNav(props: {
     <nav
       aria-label={props.label}
       class={cx(
-        'sticky top-[var(--chrome-top)] z-10 -mx-4 shrink-0 overflow-x-auto bg-bg px-4 py-2 md:top-[calc(var(--chrome-top)+1.5rem)] md:mx-0 md:w-48 md:self-start md:overflow-visible md:bg-transparent md:px-0 md:py-0',
+        'sticky top-0 z-10 -mx-4 shrink-0 overflow-x-auto bg-bg px-4 py-2 md:top-6 md:mx-0 md:w-48 md:self-start md:overflow-visible md:bg-transparent md:px-0 md:py-0',
         props.class,
       )}
     >

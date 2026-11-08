@@ -1,9 +1,18 @@
 import { useLocation, useNavigate, type RouteSectionProps } from '@solidjs/router'
-import { createEffect, createSignal, For, on, onCleanup, onMount, Show } from 'solid-js'
-import type { Theme } from '../api/generated'
+import {
+  createEffect,
+  createResource,
+  createSignal,
+  For,
+  on,
+  onCleanup,
+  onMount,
+  Show,
+} from 'solid-js'
 import { desktop, isDesktop } from '../core/desktop'
+import { capabilities } from '../core/stores'
 import { errorMessage } from '../core/i18n/errors'
-import { t, type TranslationKey } from '../core/i18n'
+import { t } from '../core/i18n'
 import { isFullBleed, navEntries, navLabel } from '../core/nav'
 import { notify } from '../core/notify'
 import { signOut } from '../core/session'
@@ -14,26 +23,22 @@ import {
   Brand,
   Drawer,
   IconButton,
-  Menu,
-  Monitor,
-  Moon,
   NavItem,
   NavList,
-  PanelLeftClose,
-  PanelLeftOpen,
   Sidebar,
-  Sun,
   ToastRegion,
   MenuIcon,
+  X,
+  FolderOpen,
+  Globe,
+  MenuTrigger,
+  Plus,
+  Settings as SettingsIcon,
+  TitleBarButton,
   WindowBar,
-  type IconComponent,
+  WindowBarBrand,
+  type MenuEntry,
 } from '../ui'
-
-const THEMES: readonly { value: Theme; labelKey: TranslationKey; icon: IconComponent }[] = [
-  { value: 'system', labelKey: 'settings.themeSystem', icon: Monitor },
-  { value: 'light', labelKey: 'settings.themeLight', icon: Sun },
-  { value: 'dark', labelKey: 'settings.themeDark', icon: Moon },
-]
 
 /**
  * The app shell (subsystem G): sidebar from `md` up, a drawer below it, the notification surface,
@@ -85,10 +90,93 @@ export function Shell(props: RouteSectionProps) {
     onCleanup(() => window.removeEventListener('keydown', onKeyDown))
   })
 
+  /**
+   * The model sites, for the plus button. Loaded once and only where there is a browser to open
+   * them in; a shell that cannot browse has no list and no button.
+   */
+  const [sites] = createResource(
+    () => capabilities.capabilities().canBrowseModelSites && isDesktop(),
+    async (can) => (can ? await desktop.browse.sites().catch(() => []) : []),
+  )
+
+  /**
+   * Everything the app can do, in one place, the way a desktop application's own menu used to
+   * be. It duplicates what the pages offer rather than replacing it: the point of a menu on the
+   * title is that you do not have to know which page a thing lives on.
+   */
+  const appMenu = (): MenuEntry[] => [
+    {
+      label: t('projects.newProject'),
+      icon: Plus,
+      onSelect: () => navigate('/projects?new=1'),
+    },
+    { type: 'separator' },
+    {
+      label: t('settings.chooseLibrary'),
+      icon: FolderOpen,
+      onSelect: () => void desktop.chooseLibrary().catch(() => {}),
+    },
+    { type: 'separator' },
+    {
+      label: t('settings.title'),
+      icon: SettingsIcon,
+      onSelect: () => navigate('/settings'),
+    },
+    {
+      label: t('window.exit'),
+      icon: X,
+      onSelect: () => void desktop.window.close().catch(() => {}),
+    },
+  ]
+
+  /** The start sites, each opening a tab of the model browser on it. */
+  const sitesMenu = (): MenuEntry[] =>
+    (sites() ?? []).map((site) => ({
+      label: site.displayName,
+      icon: Globe,
+      onSelect: () => {
+        navigate('/browse')
+        void desktop.browse.openTab(site.homeUrl).catch(() => {})
+      },
+    }))
+
   const windowBar = () => (
     <WindowBar
-      title={t('app.title')}
       isMaximized={maximized()}
+      brand={
+        <MenuTrigger label={t('app.menu')} items={appMenu()}>
+          {({ trigger, expanded }) => (
+            <WindowBarBrand
+              name={t('app.title')}
+              label={t('app.menu')}
+              expanded={expanded}
+              trigger={trigger}
+            />
+          )}
+        </MenuTrigger>
+      }
+      tools={
+        <Show when={(sites() ?? []).length > 0}>
+          <MenuTrigger label={t('browse.openSite')} items={sitesMenu()}>
+            {({ trigger, expanded }) => (
+              <TitleBarButton
+                icon={Plus}
+                label={t('browse.openSite')}
+                expanded={expanded}
+                trigger={trigger}
+              />
+            )}
+          </MenuTrigger>
+        </Show>
+      }
+      trailing={
+        <TitleBarButton
+          icon={SettingsIcon}
+          label={t('settings.title')}
+          current={location.pathname === '/settings'}
+          onClick={() => navigate('/settings')}
+        />
+      }
       labels={{
         minimize: t('window.minimize'),
         maximize: t('window.maximize'),
@@ -125,15 +213,6 @@ export function Shell(props: RouteSectionProps) {
     ),
   )
 
-  async function patchSettings(patch: Parameters<typeof settings.patch>[0]) {
-    try {
-      await settings.patch(patch)
-    } catch (error) {
-      // The store has already put the old value back; say why.
-      notify.error(errorMessage(error))
-    }
-  }
-
   async function onSignOut() {
     try {
       await signOut()
@@ -141,24 +220,6 @@ export function Shell(props: RouteSectionProps) {
       notify.error(errorMessage(error))
     }
     navigate('/login')
-  }
-
-  const themeMenu = () => {
-    const current = THEMES.find((theme) => theme.value === settings.settings().theme) ?? THEMES[0]!
-    return (
-      <Menu
-        iconOnly
-        icon={current.icon}
-        label={t('settings.theme')}
-        placement="bottom-start"
-        items={THEMES.map((theme) => ({
-          label: t(theme.labelKey),
-          icon: theme.icon,
-          checked: theme.value === current.value,
-          onSelect: () => void patchSettings({ theme: theme.value }),
-        }))}
-      />
-    )
   }
 
   const entries = (isCollapsed: boolean) => (
@@ -193,18 +254,6 @@ export function Shell(props: RouteSectionProps) {
                   <Brand name={t('app.title')} href="/projects" collapsed={collapsed()} />
                 )
               }
-              footer={
-                <>
-                  {themeMenu()}
-                  <IconButton
-                    icon={collapsed() ? PanelLeftOpen : PanelLeftClose}
-                    // One name in both states; aria-expanded says which it is.
-                    label={t('nav.toggle')}
-                    aria-expanded={!collapsed()}
-                    onClick={() => void patchSettings({ navCollapsed: !collapsed() })}
-                  />
-                </>
-              }
             >
               {entries(collapsed())}
             </Sidebar>
@@ -232,7 +281,6 @@ export function Shell(props: RouteSectionProps) {
           closeLabel={t('common.close')}
         >
           <nav aria-label={t('nav.label')}>{entries(false)}</nav>
-          <div class="mt-auto">{themeMenu()}</div>
         </Drawer>
       </Show>
       <ToastRegion label={t('common.notifications')} />

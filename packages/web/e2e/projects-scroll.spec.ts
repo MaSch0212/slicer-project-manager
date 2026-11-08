@@ -82,7 +82,7 @@ test('search and the tag filter apply to the whole library, not to the pages loa
   await expect(loadMore(page)).toBeHidden()
 })
 
-test('the sidebar runs the full height of a long page and stays in reach while it scrolls', async ({
+test('the page scrolls inside the frame, and the sidebar does not move with it', async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1280, height: 720 })
@@ -94,25 +94,29 @@ test('the sidebar runs the full height of a long page and stays in reach while i
   const geometry = () =>
     page.evaluate(() => {
       const aside = document.querySelector('aside')!.getBoundingClientRect()
-      const panel = document.querySelector('aside > div')!.getBoundingClientRect()
+      const main = document.querySelector('main')!
       return {
-        page: document.documentElement.scrollHeight,
-        viewport: window.innerHeight,
-        scrollY: window.scrollY,
+        documentScroll: document.documentElement.scrollHeight - window.innerHeight,
+        windowScrollY: window.scrollY,
+        mainScrollTop: main.scrollTop,
+        mainOverflow: main.scrollHeight - main.clientHeight,
+        asideTop: aside.top,
         asideHeight: aside.height,
-        panelTop: panel.top,
-        panelHeight: panel.height,
+        viewport: window.innerHeight,
       }
     })
 
   const scrolled = await geometry()
-  // Taller than the window, or this proves nothing.
-  expect(scrolled.page).toBeGreaterThan(scrolled.viewport * 2)
-  expect(scrolled.scrollY).toBeGreaterThan(0)
-  // The column fills the page (its background reaches the foot), not just the first screenful...
-  expect(Math.abs(scrolled.asideHeight - scrolled.page)).toBeLessThanOrEqual(1)
-  // ...and the panel with the entries stays at the top of the window while the page scrolls.
-  expect(scrolled.panelTop).toBeCloseTo(0, 0)
-  expect(scrolled.panelHeight).toBeCloseTo(scrolled.viewport, 0)
-  await expect(page.getByRole('link', { name: 'Slicer Project Manager' })).toBeInViewport()
+  // The content is what scrolled, and it is genuinely longer than the frame...
+  expect(scrolled.mainOverflow).toBeGreaterThan(scrolled.viewport)
+  expect(scrolled.mainScrollTop).toBeGreaterThan(0)
+  // ...while the document itself does not scroll at all, which is what keeps the scrollbar out
+  // of the window bar.
+  expect(scrolled.documentScroll).toBe(0)
+  expect(scrolled.windowScrollY).toBe(0)
+  // The sidebar is beside the scroller, not inside it: it never moves and never grows past the
+  // frame, so the navigation is always in reach.
+  expect(scrolled.asideTop).toBeLessThanOrEqual(1)
+  expect(scrolled.asideHeight).toBeLessThanOrEqual(scrolled.viewport + 1)
+  await expect(page.getByRole('link', { name: 'Projects' })).toBeInViewport()
 })
