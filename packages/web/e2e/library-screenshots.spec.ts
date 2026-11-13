@@ -43,6 +43,42 @@ test.describe('library screenshots', () => {
   const setView = (viewMode: 'grid' | 'list') =>
     server.request('PUT', '/api/account/settings', { viewMode })
 
+  /** A few saved views, so the sidebar has something to show in the shot. */
+  const setViews = (views: unknown[]) => server.request('PUT', '/api/account/settings', { views })
+
+  const VIEWS = [
+    {
+      id: 'view-1',
+      name: 'Everything',
+      icon: 'layers',
+      viewMode: 'grid',
+      sort: 'updatedAt',
+      dir: 'desc',
+      includeArchived: false,
+      tags: [],
+    },
+    {
+      id: 'view-2',
+      name: 'Gadgets',
+      icon: 'box',
+      viewMode: 'grid',
+      sort: 'name',
+      dir: 'asc',
+      includeArchived: false,
+      tags: ['gadgets'],
+    },
+    {
+      id: 'view-3',
+      name: 'Old prints',
+      icon: 'archive',
+      viewMode: 'list',
+      sort: 'updatedAt',
+      dir: 'desc',
+      includeArchived: true,
+      tags: [],
+    },
+  ]
+
   for (const scheme of ['light', 'dark'] as const) {
     for (const [size, viewport] of Object.entries(SIZES)) {
       const shot = (name: string) => `${dir}/${name}-${scheme}-${size}.png`
@@ -84,6 +120,38 @@ test.describe('library screenshots', () => {
           await page.getByRole('listbox').waitFor()
           await page.waitForTimeout(300)
           await page.screenshot({ path: shot('projects-tags-open') })
+        })
+
+        test('saved views in the sidebar, and the editor', async ({ page }) => {
+          await setView('grid')
+          await setViews(VIEWS)
+          await page.goto(`${server.origin}/projects`)
+          await expect(page.getByRole('heading', { name: 'Benchy' })).toBeVisible()
+          // Below `md` there is no sidebar: the same rows are in the drawer instead.
+          const phone = size === 'phone'
+          if (phone) await page.getByRole('button', { name: 'Open the navigation' }).click()
+          const nav = (phone ? page.getByRole('dialog') : page)
+            .getByRole('navigation', { name: 'Main navigation' })
+            .first()
+          const row = nav.getByRole('button', { name: /^Everything/ })
+          await expect(row).toHaveAttribute('aria-current', 'page')
+          await page.waitForLoadState('networkidle')
+          await page.waitForTimeout(300)
+          await page.screenshot({ path: shot('projects-views') })
+          if (phone) return
+
+          // The row's own menu, which is also where the editor is reached from.
+          await row.hover()
+          await nav.getByRole('button', { name: 'Options for Everything' }).click()
+          await page.getByRole('menuitem', { name: 'Edit views…' }).waitFor()
+          await page.waitForTimeout(300)
+          await page.screenshot({ path: shot('projects-views-menu') })
+
+          await page.getByRole('menuitem', { name: 'Edit views…' }).click()
+          await page.getByRole('dialog').waitFor()
+          await page.waitForTimeout(300)
+          await page.screenshot({ path: shot('projects-views-editor') })
+          await setViews([])
         })
 
         test('project detail: missing folder, empty, step', async ({ page }) => {
