@@ -795,3 +795,117 @@ fn a_progress_callback_may_use_the_library() {
     rescan(&lib, &ctx, Some(&mut probe)).unwrap();
     assert_eq!(seen_projects, 1);
 }
+
+// ---- a folder renamed in Explorer ------------------------------------------------------------------
+
+fn project_named<'a>(
+    projects: &'a [spm_core::dto::CoreProjectDto],
+    name: &str,
+) -> &'a spm_core::dto::CoreProjectDto {
+    projects
+        .iter()
+        .find(|project| project.name == name)
+        .unwrap_or_else(|| panic!("no project {name}"))
+}
+
+#[test]
+fn a_renamed_folder_keeps_its_project_with_its_notes_tags_and_files() {
+    let lib = TempLibrary::new();
+    let ctx = marc(&lib);
+    let old = root(&lib, "marc").join("Benchy");
+    fs::create_dir_all(old.join("parts")).unwrap();
+    fs::write(old.join("benchy.stl"), "solid benchy").unwrap();
+    fs::write(old.join("parts").join("hull.stl"), "solid hull").unwrap();
+    rescan(&lib, &ctx, None).unwrap();
+    let id = list(&lib, &ctx)[0].id.clone();
+    spm_core::add_tag(&lib, &ctx, &id, "boats").unwrap();
+    let file_ids: Vec<String> = {
+        let conn = lib.db();
+        let mut statement = conn
+            .prepare("SELECT id FROM files WHERE project_id = ? ORDER BY rel_path")
+            .unwrap();
+        statement
+            .query_map(params![id], |row| row.get(0))
+            .unwrap()
+            .map(Result::unwrap)
+            .collect()
+    };
+
+    fs::rename(&old, root(&lib, "marc").join("Benchy Boat")).unwrap();
+    let result = rescan(&lib, &ctx, None).unwrap();
+
+    assert_eq!(result.adopted, 0);
+    assert_eq!(result.marked_missing, 0);
+    let projects = list(&lib, &ctx);
+    assert_eq!(projects.len(), 1, "{projects:?}");
+    let project = project_named(&projects, "Benchy Boat");
+    assert_eq!(project.id, id);
+    assert_eq!(project.state, ProjectState::Ok);
+    assert_eq!(project.tags, ["boats"]);
+    let detail = spm_core::get_project(&lib, &ctx, &id).unwrap();
+    let mut ids: Vec<String> = detail.files.iter().map(|file| file.id.clone()).collect();
+    ids.sort();
+    let mut expected = file_ids.clone();
+    expected.sort();
+    assert_eq!(ids, expected, "the files keep their ids (and previews)");
+}
+
+#[test]
+fn a_renamed_folder_keeps_a_name_the_user_gave_and_an_empty_one_is_paired_too() {
+    let lib = TempLibrary::new();
+    let ctx = marc(&lib);
+    fs::create_dir_all(root(&lib, "marc").join("New Project")).unwrap();
+    fs::create_dir_all(root(&lib, "marc").join("robot")).unwrap();
+    fs::write(
+        root(&lib, "marc").join("robot").join("arm.stl"),
+        "solid arm",
+    )
+    .unwrap();
+    rescan(&lib, &ctx, None).unwrap();
+    let robot = project_named(&list(&lib, &ctx), "robot").id.clone();
+    spm_core::update_project(
+        &lib,
+        &ctx,
+        &robot,
+        spm_core::validate::ProjectPatch {
+            name: Some("My Robot".to_owned()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+
+    fs::rename(
+        root(&lib, "marc").join("New Project"),
+        root(&lib, "marc").join("Vase"),
+    )
+    .unwrap();
+    fs::rename(
+        root(&lib, "marc").join("robot"),
+        root(&lib, "marc").join("robot-v2"),
+    )
+    .unwrap();
+    rescan(&lib, &ctx, None).unwrap();
+
+    let projects = list(&lib, &ctx);
+    assert_eq!(projects.len(), 2, "{projects:?}");
+    // The empty project is the only empty one on both sides: paired, and named after the folder.
+    project_named(&projects, "Vase");
+    // A name the user typed is theirs: it stays.
+    assert_eq!(project_named(&projects, "My Robot").id, robot);
+}
+
+#[test]
+fn a_folder_whose_files_changed_too_or_two_lookalikes_stay_missing_and_new() {
+    let lib = TempLibrary::new();
+    let ctx = marc(&lib);
+    for name in ["A", "B"] {
+        fs::create_dir_all(root(&lib, "marc").join(name)).unwrap();
+    }
+    rescan(&lib, &ctx, None).unwrap();
+    // Two empty projects renamed at once: which is which cannot be known.
+    fs::rename(root(&lib, "marc").join("A"), root(&lib, "marc").join("C")).unwrap();
+    fs::rename(root(&lib, "marc").join("B"), root(&lib, "marc").join("D")).unwrap();
+    let result = rescan(&lib, &ctx, None).unwrap();
+    assert_eq!(result.adopted, 2);
+    assert_eq!(result.marked_missing, 2);
+}

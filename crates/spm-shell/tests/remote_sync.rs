@@ -175,6 +175,30 @@ async fn a_connected_server_is_synced_into_a_folder_both_ways_through_the_proxy(
     })
     .await;
 
+    // A folder renamed here keeps its project, which takes the new name.
+    std::fs::rename(root.join("Made Here"), root.join("Made Here, renamed")).unwrap();
+    let mut names: Vec<String> = Vec::new();
+    let started = Instant::now();
+    while started.elapsed() < Duration::from_secs(30) {
+        let projects = client.get("/api/projects").await.json();
+        names = projects
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|project| project["name"].as_str().unwrap().to_owned())
+            .collect();
+        if names.contains(&"Made Here, renamed".to_owned()) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    names.sort();
+    assert_eq!(names, ["Made Here, renamed", "Robot"]);
+    assert!(
+        on_server.is_file(),
+        "the server's folder and files stay where they were"
+    );
+
     // Signing out pauses it.
     let out = client.post_json("/api/auth/logout", &json!({})).await;
     assert!(out.status < 300, "{}", out.text());

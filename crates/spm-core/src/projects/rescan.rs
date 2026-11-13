@@ -3,7 +3,9 @@
 //! The disk is the truth for *which files exist*; the database is the truth for everything a user
 //! typed (names, notes, tags). A rescan therefore adopts folders it has no row for, marks projects
 //! whose folder vanished as `missing` (never deleting metadata: the drive may just be unmounted),
-//! and indexes, re-indexes and forgets files.
+//! and indexes, re-indexes and forgets files. A folder renamed in Explorer is neither: when a
+//! project's folder is gone and exactly one new folder holds exactly its files (same paths, sizes
+//! and modification times), the project moves to the new folder with its name, notes and tags.
 //!
 //! Hashing a real library takes minutes, so the database lock is held for one short statement
 //! group at a time and never across a read of file contents or a progress callback.
@@ -173,6 +175,70 @@ fn slicer_text(classification: &Classification) -> Option<&'static str> {
     classification.slicer.map(|slicer| slicer.as_str())
 }
 
+/// What identifies a folder's content without reading it: every file's path, size and modification
+/// time. A rename moves none of the three.
+type FolderSignature = Vec<(String, i64, i64)>;
+
+/// The pairs (old folder name, new folder name) of the projects whose folder was renamed: a project
+/// whose folder is gone, and a folder no project has whose files are exactly the project's files.
+/// Only a pairing that is unambiguous both ways counts; anything else stays "missing" and
+/// "adopted", as before.
+fn renamed_folders(
+    tx: &Transaction<'_>,
+    root: &Path,
+    by_dir_name: &HashMap<String, ProjectRef>,
+    on_disk: &BTreeSet<String>,
+) -> Result<Vec<(String, String)>> {
+    let gone: Vec<&ProjectRef> = by_dir_name
+        .values()
+        .filter(|project| !on_disk.contains(&project.dir_name))
+        .collect();
+    let new: Vec<&String> = on_disk
+        .iter()
+        .filter(|dir_name| !by_dir_name.contains_key(*dir_name))
+        .collect();
+    if gone.is_empty() || new.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut known: HashMap<FolderSignature, Vec<String>> = HashMap::new();
+    {
+        let mut statement = tx.prepare(
+            "SELECT rel_path, size_bytes, mtime_ms FROM files WHERE project_id = ? ORDER BY rel_path",
+        )?;
+        for project in gone {
+            let signature: FolderSignature = statement
+                .query_map(params![project.id], |row| {
+                    Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+                })?
+                .collect::<std::result::Result<_, _>>()?;
+            known
+                .entry(signature)
+                .or_default()
+                .push(project.dir_name.clone());
+        }
+    }
+    let mut found: HashMap<FolderSignature, Vec<String>> = HashMap::new();
+    for dir_name in new {
+        let mut files = Vec::new();
+        walk_files(&root.join(dir_name), "", &mut files)?;
+        let mut signature: FolderSignature = files
+            .into_iter()
+            .map(|file| (file.rel_path, file.size, file.mtime_ms))
+            .collect();
+        signature.sort();
+        found.entry(signature).or_default().push(dir_name.clone());
+    }
+    let mut pairs = Vec::new();
+    for (signature, olds) in known {
+        if let (Some(news), [old]) = (found.get(&signature), olds.as_slice())
+            && let [new] = news.as_slice()
+        {
+            pairs.push((old.clone(), new.clone()));
+        }
+    }
+    Ok(pairs)
+}
+
 /// Reconciles `ctx`'s user's library folder with the database. See the module docs.
 ///
 /// `on_progress`, when given, hears about every project and every file as it goes.
@@ -207,6 +273,40 @@ pub fn rescan(
                 let row = row?;
                 by_dir_name.insert(row.dir_name.clone(), row);
             }
+        }
+        // A folder renamed in Explorer keeps its project: a project whose folder is gone and a new
+        // folder holding exactly its files are one project under a new folder name.
+        for (old, new) in renamed_folders(&tx, &root, &by_dir_name, &on_disk)? {
+            let Some(mut project) = by_dir_name.remove(&old) else {
+                continue;
+            };
+            tx.execute(
+                "UPDATE projects SET dir_name = ?, state = 'ok', updated_at = ? WHERE id = ?",
+                params![new, now, project.id],
+            )?;
+            // The name follows the folder when it was the folder's name, and when no other project
+            // already has the new one.
+            let name_taken = tx
+                .query_row(
+                    "SELECT 1 FROM projects WHERE owner_id = ? AND id <> ? AND name = ? COLLATE NOCASE",
+                    params![ctx.user_id, project.id, new],
+                    |_| Ok(()),
+                )
+                .optional()?
+                .is_some();
+            if !name_taken {
+                tx.execute(
+                    "UPDATE projects SET name = ? WHERE id = ? AND name = ?",
+                    params![new, project.id, old],
+                )?;
+            }
+            lib.log().info(
+                "project folder renamed",
+                fields!["projectId" => &project.id, "from" => &old, "to" => &new],
+            );
+            project.dir_name = new.clone();
+            project.state = "ok".to_owned();
+            by_dir_name.insert(new, project);
         }
         for dir_name in &on_disk {
             if by_dir_name.contains_key(dir_name) {

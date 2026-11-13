@@ -22,7 +22,8 @@
 //! something through the proxy. Passes never overlap: one worker thread runs them.
 //!
 //! Projects map to top-level folders by id in the base, so a folder keeps its project even when the
-//! server's folder of the same project has another name. A folder whose project is gone from the
+//! server's folder of the same project has another name, and a folder renamed here keeps its
+//! project (recognised by holding exactly the files last agreed for it). A folder whose project is gone from the
 //! server is moved to the trash, unless something in it changed here, in which case it is uploaded
 //! again as a new project: nothing anybody changed is ever thrown away by a sync.
 
@@ -101,6 +102,8 @@ pub trait SyncServer: Send + Sync {
     fn manifest(&self) -> Result<SyncManifest, SyncError>;
     /// Creates a project for a folder made here; returns its id.
     fn create_project(&self, name: &str) -> Result<String, SyncError>;
+    /// Renames a project (its name; the server's folder never moves).
+    fn rename_project(&self, project_id: &str, name: &str) -> Result<(), SyncError>;
     /// Streams a file's bytes into `destination` (a new file).
     fn download(&self, file_id: &str, destination: &Path) -> Result<(), SyncError>;
     fn put_file(
@@ -199,6 +202,21 @@ impl SyncServer for ProxySyncServer {
             .as_str()
             .map(str::to_owned)
             .ok_or_else(|| SyncError::Other(AppError::internal("the new project has no id")))
+    }
+
+    fn rename_project(&self, project_id: &str, name: &str) -> Result<(), SyncError> {
+        let body =
+            serde_json::to_vec(&serde_json::json!({ "name": name })).map_err(AppError::internal)?;
+        let request = request(
+            "PATCH",
+            &format!("/api/projects/{}", percent_encode(project_id)),
+        )
+        .header("content-type", "application/json")
+        .header(UPLOAD_LENGTH_HEADER, body.len().to_string())
+        .body(Body::from(body))
+        .map_err(AppError::internal)?;
+        checked(self.call(request)?, "the project could not be renamed")?;
+        Ok(())
     }
 
     fn download(&self, file_id: &str, destination: &Path) -> Result<(), SyncError> {
@@ -552,6 +570,8 @@ pub struct SyncReport {
     pub deleted_there: usize,
     pub conflicts: usize,
     pub projects_created: usize,
+    /// Folders renamed here whose project went with them.
+    pub renamed: usize,
     /// Changes the server refused because it had moved on (409): the next pass decides again.
     pub deferred: usize,
 }
@@ -564,6 +584,7 @@ impl SyncReport {
             + self.deleted_there
             + self.conflicts
             + self.projects_created
+            + self.renamed
             > 0
     }
 }
@@ -618,6 +639,25 @@ pub fn sync_once(
         .iter()
         .map(|project| (project.id.as_str(), project))
         .collect();
+
+    // 0. Folders renamed here: the project goes with its folder.
+    for (id, new_dir) in renamed_dirs(root, state, &dirs)? {
+        let Some(base) = state.projects.get_mut(&id) else {
+            continue;
+        };
+        let old_dir = std::mem::replace(&mut base.dir, new_dir.clone());
+        pass.report.renamed += 1;
+        // The server's name follows when it was the folder's name, as a new folder's is.
+        if let Some(project) = remote.get(id.as_str())
+            && project.name == old_dir
+        {
+            match server.rename_project(&id, &new_dir) {
+                // A name another project has already: the project keeps its name.
+                Ok(()) | Err(SyncError::Conflict) => {}
+                Err(error) => return Err(error),
+            }
+        }
+    }
 
     // 1. The projects synced before. Every one of them is settled here, also the ones this step
     // deletes: the manifest still lists those, and step 2 must not bring them back.
@@ -726,6 +766,61 @@ pub fn sync_once(
     }
 
     Ok(pass.report)
+}
+
+/// What identifies a folder's content without reading it: every file's path, size and modification
+/// time. A rename moves none of the three.
+type FolderSignature = Vec<(String, u64, i64)>;
+
+/// The projects whose folder was renamed here, with their new folder: a synced project whose folder
+/// is gone, and a folder no project has whose files are exactly what was last agreed for it. Only a
+/// pairing that is unambiguous both ways counts; anything else is a deletion and a new folder, as
+/// before.
+fn renamed_dirs(
+    root: &Path,
+    state: &SyncState,
+    dirs: &BTreeSet<String>,
+) -> std::io::Result<Vec<(String, String)>> {
+    let known: HashSet<String> = state
+        .projects
+        .values()
+        .map(|project| project.dir.to_lowercase())
+        .collect();
+    let mut gone: HashMap<FolderSignature, Vec<String>> = HashMap::new();
+    for (id, project) in &state.projects {
+        if dirs.contains(&project.dir) {
+            continue;
+        }
+        let signature: FolderSignature = project
+            .files
+            .iter()
+            .map(|(rel, file)| (rel.clone(), file.size, file.mtime_ms))
+            .collect();
+        gone.entry(signature).or_default().push(id.clone());
+    }
+    if gone.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut new: HashMap<FolderSignature, Vec<String>> = HashMap::new();
+    for dir in dirs {
+        if known.contains(&dir.to_lowercase()) {
+            continue;
+        }
+        let signature: FolderSignature = scan(&root.join(dir))?
+            .into_iter()
+            .map(|(rel, file)| (rel, file.size, file.mtime_ms))
+            .collect();
+        new.entry(signature).or_default().push(dir.clone());
+    }
+    let mut pairs = Vec::new();
+    for (signature, ids) in gone {
+        if let (Some(dirs), [id]) = (new.get(&signature), ids.as_slice())
+            && let [dir] = dirs.as_slice()
+        {
+            pairs.push((id.clone(), dir.clone()));
+        }
+    }
+    Ok(pairs)
 }
 
 /// The server's folder name, unless another synced project already has it here: then ` (2)` and

@@ -51,6 +51,19 @@ impl SyncServer for CoreServer {
         .map(|project| project.id)
         .map_err(mapped)
     }
+    fn rename_project(&self, project_id: &str, name: &str) -> Result<(), SyncError> {
+        spm_core::update_project(
+            &self.lib,
+            &self.ctx,
+            project_id,
+            spm_core::validate::ProjectPatch {
+                name: Some(name.to_owned()),
+                ..Default::default()
+            },
+        )
+        .map(|_| ())
+        .map_err(mapped)
+    }
     fn download(&self, file_id: &str, destination: &Path) -> Result<(), SyncError> {
         let resolved = resolve_file_path(&self.lib, &self.ctx, file_id).map_err(mapped)?;
         fs::copy(resolved.abs_path, destination)?;
@@ -453,4 +466,56 @@ fn the_engine_waits_for_a_sign_in_then_follows_the_folder_by_its_watcher() {
         engine.status().phase == SyncPhase::Idle
     });
     drop(engine);
+}
+
+#[test]
+fn a_folder_renamed_here_keeps_its_project_and_the_project_takes_the_new_name() {
+    let mut world = World::new();
+    let id = world.server_project("Robot", &[("arm.stl", "arm"), ("parts/leg.stl", "leg")]);
+    world.server_project("Other", &[("x.stl", "x")]);
+    world.sync();
+
+    fs::rename(world.root().join("Robot"), world.root().join("Robot Mk2")).unwrap();
+    let report = world.sync();
+    assert_eq!(report.renamed, 1);
+    assert_eq!(report.deleted_there, 0);
+    assert_eq!(report.projects_created, 0);
+    assert_eq!(report.uploaded, 0, "nothing is uploaded again");
+
+    let manifest = sync_manifest(&world.server.lib, &world.server.ctx).unwrap();
+    let project = manifest.projects.iter().find(|p| p.id == id).unwrap();
+    assert_eq!(project.name, "Robot Mk2");
+    // The server's folder never moves: the project is mapped by id.
+    assert_eq!(project.dir_name, "Robot");
+    assert_eq!(project.files.len(), 2);
+    assert_eq!(manifest.projects.len(), 2);
+    assert!(!world.sync().changed_anything());
+
+    // And it goes on syncing under the new folder.
+    later();
+    world.write_local("Robot Mk2/arm.stl", "arm, edited");
+    assert_eq!(world.sync().uploaded, 1);
+    assert!(
+        world
+            .server_files()
+            .contains(&("Robot/arm.stl".to_owned(), "arm, edited".to_owned()))
+    );
+}
+
+#[test]
+fn a_renamed_folder_whose_project_has_a_name_of_its_own_keeps_that_name() {
+    let mut world = World::new();
+    let id = world.server_project("Robot", &[("arm.stl", "arm")]);
+    world.server.rename_project(&id, "The Robot").unwrap();
+    world.sync();
+
+    fs::rename(
+        world.root().join("Robot"),
+        world.root().join("robot-folder"),
+    )
+    .unwrap();
+    assert_eq!(world.sync().renamed, 1);
+    let manifest = sync_manifest(&world.server.lib, &world.server.ctx).unwrap();
+    assert_eq!(manifest.projects.len(), 1);
+    assert_eq!(manifest.projects[0].name, "The Robot");
 }
