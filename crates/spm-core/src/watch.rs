@@ -11,6 +11,8 @@
 //!
 //! **Settled** means no event for [`QUIET_MS`], or [`MAX_WAIT_MS`] since the first one, whichever
 //! comes first: a long copy into the library is indexed in instalments rather than not at all.
+//! With no event for [`FALLBACK_MS`] it counts as settled anyway, for the file systems that report
+//! nothing.
 //!
 //! Events under a dot-entry (the library's own `.spm` folder, whose database and previews change
 //! on every rescan and would otherwise feed the watcher its own output) and for transient files
@@ -21,12 +23,17 @@ use std::sync::mpsc::{self, RecvTimeoutError, Sender};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
-use notify::{RecommendedWatcher, RecursiveMode, Watcher};
+use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 
 /// How long the folder has to be quiet before it counts as settled.
 pub const QUIET_MS: u64 = 1_200;
 /// The longest a burst of events can put the answer off.
 pub const MAX_WAIT_MS: u64 = 8_000;
+/// How often the folder counts as settled anyway, with no event at all. Not every file system
+/// reports changes: a network share (SMB, NFS) usually does not, and neither does a Docker Desktop
+/// bind mount for a write made on the host. A rescan this often is cheap in its steady state (a
+/// stat per file) and is what makes such a library catch up at all.
+pub const FALLBACK_MS: u64 = 60_000;
 
 /// A file name that is somebody's work in progress rather than a file of the library: a partial
 /// download, a temporary an editor writes before renaming it over the real one, an Office lock
@@ -74,6 +81,22 @@ pub fn is_relevant_path(root: &Path, path: &Path) -> bool {
     true
 }
 
+/// Whether an event of this kind can mean the library changed. **Access is not a change**: on
+/// Linux, inotify reports every open, read and close, and the rescan this watch answers with opens
+/// every directory and reads every changed file. Counting those would make each rescan wake the
+/// watch for the next one, forever (seen in the Docker image: a rescan every 1.2 s while idle).
+///
+/// The one access that is a change is a file closed after writing (inotify's `IN_CLOSE_WRITE`):
+/// the end of a save.
+pub fn is_change(kind: &EventKind) -> bool {
+    use notify::event::{AccessKind, AccessMode};
+    match kind {
+        EventKind::Access(AccessKind::Close(AccessMode::Write)) => true,
+        EventKind::Access(_) => false,
+        _ => true,
+    }
+}
+
 /// A running watch. Dropping it stops the watch and its thread.
 pub struct LibraryWatch {
     // Dropped first, which closes the event channel and ends the thread's loop.
@@ -94,14 +117,16 @@ impl LibraryWatch {
         root: &Path,
         on_settled: impl Fn() + Send + 'static,
     ) -> notify::Result<LibraryWatch> {
-        Self::start_with(root, QUIET_MS, MAX_WAIT_MS, on_settled)
+        Self::start_with(root, QUIET_MS, MAX_WAIT_MS, Some(FALLBACK_MS), on_settled)
     }
 
-    /// [`LibraryWatch::start`] with the timings given, for tests.
+    /// [`LibraryWatch::start`] with the timings given, for tests. `fallback_ms: None` waits for
+    /// events only.
     pub fn start_with(
         root: &Path,
         quiet_ms: u64,
         max_wait_ms: u64,
+        fallback_ms: Option<u64>,
         on_settled: impl Fn() + Send + 'static,
     ) -> notify::Result<LibraryWatch> {
         let root: PathBuf = root.to_path_buf();
@@ -116,6 +141,9 @@ impl LibraryWatch {
                     let _ = events.send(WatchMessage::Event);
                     return;
                 };
+                if !is_change(&event.kind) {
+                    return;
+                }
                 if event.paths.is_empty()
                     || event
                         .paths
@@ -129,14 +157,23 @@ impl LibraryWatch {
 
         let quiet = Duration::from_millis(quiet_ms);
         let max_wait = Duration::from_millis(max_wait_ms);
+        let fallback = fallback_ms.map(Duration::from_millis);
         let thread = std::thread::Builder::new()
             .name("spm-library-watch".to_owned())
             .spawn(move || {
                 loop {
-                    // Wait for the first event of a burst.
-                    match receiver.recv() {
+                    // Wait for the first event of a burst, or for the fallback to come round.
+                    let first = match fallback {
+                        Some(fallback) => receiver.recv_timeout(fallback),
+                        None => receiver.recv().map_err(|_| RecvTimeoutError::Disconnected),
+                    };
+                    match first {
                         Ok(WatchMessage::Event) => {}
-                        Ok(WatchMessage::Stop) | Err(_) => return,
+                        Err(RecvTimeoutError::Timeout) => {
+                            on_settled();
+                            continue;
+                        }
+                        Ok(WatchMessage::Stop) | Err(RecvTimeoutError::Disconnected) => return,
                     }
                     let first = Instant::now();
                     // Then for the burst to end.
@@ -228,6 +265,36 @@ mod tests {
         assert!(!is_relevant_path(root, Path::new("/elsewhere/file.stl")));
     }
 
+    #[test]
+    fn reading_is_not_a_change_and_writing_is() {
+        use notify::event::{AccessKind, AccessMode, CreateKind, ModifyKind};
+        assert!(!is_change(&EventKind::Access(AccessKind::Open(
+            AccessMode::Read
+        ))));
+        assert!(!is_change(&EventKind::Access(AccessKind::Close(
+            AccessMode::Read
+        ))));
+        assert!(is_change(&EventKind::Access(AccessKind::Close(
+            AccessMode::Write
+        ))));
+        assert!(is_change(&EventKind::Create(CreateKind::File)));
+        assert!(is_change(&EventKind::Modify(ModifyKind::Any)));
+        assert!(is_change(&EventKind::Any));
+    }
+
+    #[test]
+    fn with_no_event_at_all_the_fallback_still_comes_round() {
+        let dir = tempfile::tempdir().unwrap();
+        let count = Arc::new(AtomicUsize::new(0));
+        let seen = Arc::clone(&count);
+        let watch = LibraryWatch::start_with(dir.path(), 50, 500, Some(200), move || {
+            seen.fetch_add(1, Ordering::SeqCst);
+        })
+        .unwrap();
+        assert!(wait_for(&count, 2));
+        drop(watch);
+    }
+
     fn wait_for(count: &AtomicUsize, at_least: usize) -> bool {
         let deadline = Instant::now() + Duration::from_secs(10);
         while Instant::now() < deadline {
@@ -245,7 +312,7 @@ mod tests {
         std::fs::create_dir_all(dir.path().join(".spm")).unwrap();
         let count = Arc::new(AtomicUsize::new(0));
         let seen = Arc::clone(&count);
-        let watch = LibraryWatch::start_with(dir.path(), 300, 3_000, move || {
+        let watch = LibraryWatch::start_with(dir.path(), 300, 3_000, None, move || {
             seen.fetch_add(1, Ordering::SeqCst);
         })
         .unwrap();
