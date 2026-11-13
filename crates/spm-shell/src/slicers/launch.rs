@@ -180,6 +180,9 @@ pub struct SlicerLauncherOptions {
     pub on_launched: Option<OnLaunched>,
     pub now: Arc<dyn Fn() -> i64 + Send + Sync>,
     pub new_launch_id: Arc<dyn Fn() -> String + Send + Sync>,
+    /// How long after the slicer's process has exited a new-project copy that nobody changed is
+    /// removed from the project folder again. Ten seconds, the settle the sessions use.
+    pub copy_settle_ms: u64,
 }
 
 impl SlicerLauncherOptions {
@@ -203,6 +206,7 @@ impl SlicerLauncherOptions {
             on_launched: None,
             now: Arc::new(now_ms),
             new_launch_id: Arc::new(spm_core::new_id),
+            copy_settle_ms: super::sessions::EXIT_SETTLE_MS,
         }
     }
 }
@@ -329,8 +333,13 @@ fn refusal_wording(reason: StripRefusalReason) -> &'static str {
 struct LaunchPlan {
     /// The exact path handed to the slicer.
     path: PathBuf,
-    /// The launch directory, or `None` for the two paths that copy nothing.
+    /// The launch directory, or `None` for the paths that build none.
     directory: Option<PathBuf>,
+    /// The path is a copy this launch wrote **into the project folder** (a new slicer project
+    /// started from a `.3mf` or a STEP file). It is a library file from the moment it exists; the
+    /// only thing special about it is that it is removed again if the slicer exits without anyone
+    /// having changed it.
+    library_copy: bool,
     stripped: bool,
     source: LaunchedSource,
 }
@@ -440,10 +449,10 @@ impl SlicerLauncher {
             None => self.prepare_remote(opts.mode, &source, file_id, &directory)?,
             Some(abs_path) => self.prepare(
                 opts.mode,
+                slicer_id,
                 &source.indexed,
                 &source.name,
                 abs_path,
-                &directory,
             )?,
         };
 
@@ -480,8 +489,24 @@ impl SlicerLauncher {
             write_record(&plan_directory.join(LAUNCH_RECORD_NAME), &record)?;
         }
 
-        let child = self.spawn_or_clean(&executable, slicer_id, &plan)?;
+        // Hashed before the spawn: the slicer may save over the copy the moment it has it.
+        let copy_hash = if plan.library_copy {
+            Some(spm_core::files::hash::file_content_hash(&plan.path)?)
+        } else {
+            None
+        };
+        let mut child = self.spawn_or_clean(&executable, slicer_id, &plan)?;
         let pid = child.pid.map(i64::from);
+        if let Some(copy_hash) = copy_hash
+            && let Some(exit) = child.exit.take()
+        {
+            remove_unchanged_copy_after_exit(
+                exit,
+                plan.path.clone(),
+                copy_hash,
+                self.options.copy_settle_ms,
+            );
+        }
         if let Some(plan_directory) = &plan.directory
             && let Some(on_launched) = &self.options.on_launched
         {
@@ -615,6 +640,7 @@ impl SlicerLauncher {
             return Ok(LaunchPlan {
                 path: target.clone(),
                 directory: Some(directory.to_path_buf()),
+                library_copy: false,
                 stripped: false,
                 source: LaunchedSource {
                     classification: classify_file(&target),
@@ -628,6 +654,7 @@ impl SlicerLauncher {
                 Ok(LaunchPlan {
                     path: target,
                     directory: Some(directory.to_path_buf()),
+                    library_copy: false,
                     stripped: result.stripped,
                     source: LaunchedSource {
                         classification: result.classification,
@@ -651,10 +678,10 @@ impl SlicerLauncher {
     fn prepare(
         &self,
         mode: SlicerLaunchMode,
+        slicer_id: SlicerId,
         indexed: &Classification,
         name: &str,
         abs_path: &Path,
-        directory: &Path,
     ) -> Result<LaunchPlan, AppError> {
         let extension = extension_of(name);
         if mode == SlicerLaunchMode::AsIs {
@@ -669,6 +696,7 @@ impl SlicerLauncher {
             return Ok(LaunchPlan {
                 path: abs_path.to_path_buf(),
                 directory: None,
+                library_copy: false,
                 stripped: false,
                 source: LaunchedSource {
                     classification: *indexed,
@@ -681,6 +709,7 @@ impl SlicerLauncher {
             return Ok(LaunchPlan {
                 path: abs_path.to_path_buf(),
                 directory: None,
+                library_copy: false,
                 stripped: false,
                 source: LaunchedSource {
                     classification: classify_file(abs_path),
@@ -689,47 +718,57 @@ impl SlicerLauncher {
             });
         }
 
-        // `base_name`, not `name`: the copy must land inside the launch directory whatever the row
-        // in the database says. Kept otherwise verbatim, because the basename is what four of five
-        // slicers propose on the first save and what Cura carries into its Save-As dialog.
-        let file_name = base_name(name);
-        refuse_record_name(&file_name)?;
-        std::fs::create_dir_all(directory).map_err(AppError::internal)?;
-        let copy = directory.join(&file_name);
-        if extension != ".3mf" {
-            if let Err(error) = std::fs::copy(abs_path, &copy) {
-                remove_directory(directory);
+        // Everything else is copied **into the project folder, under a name of its own**: the
+        // `.3mf` stripped of the configuration its slicer embedded, anything else verbatim. The
+        // slicer then saves in place, beside the project's other files, and the library watcher
+        // indexes the result like any other file: nothing has to be brought back from anywhere.
+        //
+        // The name is derived (`benchy (prusaslicer).3mf`), never the source's own: launched in
+        // place, a `.3mf` gets the slicer's project proposed over the user's file (constraint 8),
+        // and a STEP file's slicer proposes `<stem>.3mf` beside it, which must not be the source.
+        let folder = abs_path
+            .parent()
+            .ok_or_else(|| AppError::internal("the file has no folder"))?;
+        let taken: std::collections::HashSet<String> = std::fs::read_dir(folder)
+            .map_err(AppError::internal)?
+            .filter_map(|entry| entry.ok())
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .collect();
+        let copy_name = super::sessions::derived_name(&base_name(name), Some(slicer_id), &taken)?;
+        let copy = folder.join(&copy_name);
+        // Written under a hidden name and renamed into place, so the watcher (which ignores dot
+        // names) never indexes half a copy.
+        let partial = folder.join(format!(".{copy_name}{DOWNLOAD_SUFFIX}"));
+        let finish = |stripped: bool, classification: Classification| {
+            if let Err(error) = std::fs::rename(&partial, &copy) {
+                let _ = std::fs::remove_file(&partial);
                 return Err(AppError::internal(error));
             }
-            return Ok(LaunchPlan {
-                path: copy,
-                directory: Some(directory.to_path_buf()),
-                stripped: false,
+            Ok(LaunchPlan {
+                path: copy.clone(),
+                directory: None,
+                library_copy: true,
+                stripped,
                 source: LaunchedSource {
-                    classification: classify_file(abs_path),
-                    is_3mf: false,
+                    classification,
+                    is_3mf: extension == ".3mf",
                 },
-            });
+            })
+        };
+        if extension != ".3mf" {
+            if let Err(error) = std::fs::copy(abs_path, &partial) {
+                let _ = std::fs::remove_file(&partial);
+                return Err(AppError::internal(error));
+            }
+            return finish(false, classify_file(abs_path));
         }
         // Always writes the output (a verbatim copy where there was nothing to strip), so this one
         // call covers both halves of "the stripped copy where there is something to strip, a
         // verbatim copy where there is not".
-        match strip3mf(abs_path, &copy) {
-            Ok(result) => Ok(LaunchPlan {
-                path: copy,
-                directory: Some(directory.to_path_buf()),
-                stripped: result.stripped,
-                source: LaunchedSource {
-                    classification: result.classification,
-                    is_3mf: true,
-                },
-            }),
+        match strip3mf(abs_path, &partial) {
+            Ok(result) => finish(result.stripped, result.classification),
             Err(error) => {
-                // Nothing was handed to anything, so there is nothing this directory could ever
-                // explain and nothing a slicer could put back into it. That is what makes removing
-                // it here compatible with constraint 10, which is about directories a slicer has
-                // *seen*.
-                remove_directory(directory);
+                let _ = std::fs::remove_file(&partial);
                 Err(refuse_strip(error, name))
             }
         }
@@ -773,6 +812,31 @@ impl SlicerLauncher {
             error
         })
     }
+}
+
+/// Removes a new-project copy from the project folder once its slicer has exited, **only if it is
+/// still byte for byte what this launch wrote**. Anything else (the user saved over it, it was
+/// renamed, it is gone) is left exactly as it is: then it is the user's file.
+///
+/// Several slicers hand the file to an instance that is already running and exit at once, so this
+/// can fire while the file is still open in a slicer window. That costs nothing: no slicer keeps
+/// the file open after reading it, and saving writes it back, where the watcher finds it again.
+fn remove_unchanged_copy_after_exit(
+    exit: Box<dyn ExitWatch>,
+    path: PathBuf,
+    launched: [u8; 32],
+    settle_ms: u64,
+) {
+    exit.on_exit(Box::new(move || {
+        let _ = std::thread::Builder::new()
+            .name("spm-copy-settle".to_owned())
+            .spawn(move || {
+                std::thread::sleep(std::time::Duration::from_millis(settle_ms));
+                if spm_core::files::hash::file_content_hash(&path).ok() == Some(launched) {
+                    let _ = std::fs::remove_file(&path);
+                }
+            });
+    }));
 }
 
 fn write_record(path: &Path, record: &SlicerLaunchRecord) -> Result<(), AppError> {

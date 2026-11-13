@@ -3542,6 +3542,7 @@ dependencies = [
  "flate2",
  "getrandom 0.4.3",
  "memchr",
+ "notify",
  "pbkdf2",
  "peak_alloc",
  "regex",

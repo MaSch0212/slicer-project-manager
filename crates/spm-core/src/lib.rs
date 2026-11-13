@@ -33,6 +33,7 @@ pub mod projects;
 pub mod tsgen;
 pub mod users;
 pub mod validate;
+pub mod watch;
 
 #[cfg(feature = "testing")]
 pub mod testing;

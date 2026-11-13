@@ -21,14 +21,11 @@ use serde_json::Value;
 use spm_core::AppErrorCode;
 use spm_core::dto::{FileKind, SlicerId, SlicerLaunchMode, SlicerLaunchOptions};
 use spm_core::files::classify::{Classification, classify_file};
-use spm_core::files::entry_hash::{entry_digests, entry_hash};
-use spm_shell::slicers::launch::{
-    LAUNCH_RECORD_NAME, LaunchedSource, SLICER_CWD_DIR, SLICER_SESSIONS_DIR, SlicerLaunchRecord,
-    notices,
-};
+use spm_core::files::entry_hash::entry_hash;
+use spm_shell::slicers::launch::{LaunchedSource, SLICER_CWD_DIR, SLICER_SESSIONS_DIR, notices};
 use spm_shell::slicers::registry::{SLICER_IDS, slicer};
 use support::slicers::{
-    ANYCUBIC_EXE, BAMBU_EXE, CURA_12, CURA_12_EXE, CURA_13_EXE, Env, Harness, HarnessOptions, ORCA,
+    ANYCUBIC_EXE, BAMBU_EXE, CURA_12, CURA_12_EXE, CURA_13_EXE, Env, Harness, HarnessOptions,
     ORCA_EXE, PRUSA_EXE, install, machine, step_bytes, stl_bytes,
 };
 use support::threemf::{
@@ -50,11 +47,6 @@ fn as_is(slicer_id: Option<SlicerId>) -> SlicerLaunchOptions {
     }
 }
 
-fn read_record(directory: &Path) -> SlicerLaunchRecord {
-    serde_json::from_str(&std::fs::read_to_string(directory.join(LAUNCH_RECORD_NAME)).unwrap())
-        .unwrap()
-}
-
 fn cura_bytes(path: &Path) {
     cura_project(path, None);
 }
@@ -69,7 +61,7 @@ fn classified(path: &Path) -> (FileKind, Option<SlicerId>) {
 // ---------------------------------------------------------------------------------------------
 
 #[test]
-fn a_model_kind_3mf_is_copied_into_a_launch_directory_and_its_own_path_is_never_spawned() {
+fn a_model_kind_3mf_is_copied_into_the_project_folder_and_its_own_path_is_never_spawned() {
     let env = Env::new();
     let h = Harness::new(&env, HarnessOptions::default());
     let project_id = env.project("Mesh");
@@ -83,26 +75,26 @@ fn a_model_kind_3mf_is_copied_into_a_launch_directory_and_its_own_path_is_never_
         std::fs::metadata(&abs_path).unwrap().modified().unwrap(),
     );
 
-    let result = h
-        .launcher
+    h.launcher
         .open(&file_id, &project_id, &new_project(None))
         .unwrap();
 
     assert_eq!(h.spawner.count(), 1);
     let spawned = PathBuf::from(&h.spawner.paths()[0]);
-    assert_eq!(
-        spawned,
-        h.sessions_dir.join(&result.launch_id).join("mesh.3mf")
-    );
+    // Beside the source, under a name of its own: the slicer saves in place, into the project.
+    assert_eq!(spawned, abs_path.parent().unwrap().join("mesh (orca).3mf"));
     assert_ne!(spawned, abs_path);
     assert!(
         spawned.exists(),
         "the copy the slicer was handed is not there"
     );
+    assert!(
+        h.sessions().is_empty(),
+        "no launch directory is built any more"
+    );
 
     // The source is untouched, bytes and mtime both. The slicer's first save proposes
-    // `<basename>.3mf`, which for this source *is* the source, so "we did not launch it in place"
-    // and "the source is unchanged" are two different claims and both are worth making.
+    // `<basename>.3mf`, which for the copy is the copy, never the source.
     assert_eq!(std::fs::read(&abs_path).unwrap(), before.0);
     assert_eq!(
         std::fs::metadata(&abs_path).unwrap().modified().unwrap(),
@@ -245,15 +237,9 @@ fn as_is_refuses_a_file_that_is_not_a_slicer_project_and_points_at_the_other_pat
 // ---------------------------------------------------------------------------------------------
 
 #[test]
-fn a_slicer_project_handed_to_another_slicer_is_stripped_into_a_launch_directory() {
+fn a_slicer_project_handed_to_another_slicer_is_stripped_into_the_project_folder() {
     let env = Env::new();
-    let h = Harness::new(
-        &env,
-        HarnessOptions {
-            launch_id: Some("strip-me".to_owned()),
-            ..HarnessOptions::default()
-        },
-    );
+    let h = Harness::new(&env, HarnessOptions::default());
     let project_id = env.project("Strip");
     let (file_id, abs_path) = env.add_file(&project_id, "bracket.3mf", cura_bytes);
 
@@ -266,32 +252,28 @@ fn a_slicer_project_handed_to_another_slicer_is_stripped_into_a_launch_directory
         )
         .unwrap();
 
-    let copy = h.sessions_dir.join("strip-me").join("bracket.3mf");
+    let copy = abs_path.parent().unwrap().join("bracket (anycubic).3mf");
     let spawned = h.spawner.spawned();
     assert_eq!(spawned.len(), 1);
     assert_eq!(spawned[0].command, ANYCUBIC_EXE);
     assert_eq!(spawned[0].args, [copy.to_string_lossy().into_owned()]);
-    assert_eq!(spawned[0].cwd, h.sessions_dir.join("strip-me"));
-    assert!(spawned[0].cwd_existed);
+    // No launch directory: the scratch directory is the working directory, as for a mesh.
+    assert_eq!(spawned[0].cwd, h.scratch_cwd_dir);
     assert!(result.stripped);
-    // The copy keeps the source's basename, because that is what four of five slicers propose on
-    // the first save and what Cura carries into its Save-As dialog.
-    assert_eq!(copy.file_name(), abs_path.file_name());
     // Stripped means stripped: nothing in the copy still says Cura.
     assert_eq!(classified(&copy), (FileKind::Model, None));
     assert_ne!(entry_hash(&copy).unwrap(), entry_hash(&abs_path).unwrap());
+    // And the source still does.
+    assert_eq!(
+        classified(&abs_path),
+        (FileKind::SlicerProject, Some(SlicerId::Cura))
+    );
 }
 
 #[test]
 fn a_source_with_nothing_to_strip_is_copied_verbatim_and_says_it_was_not_stripped() {
     let env = Env::new();
-    let h = Harness::new(
-        &env,
-        HarnessOptions {
-            launch_id: Some("verbatim".to_owned()),
-            ..HarnessOptions::default()
-        },
-    );
+    let h = Harness::new(&env, HarnessOptions::default());
     let project_id = env.project("Verbatim");
     let (file_id, abs_path) = env.add_file(&project_id, "mesh.3mf", plain_mesh_3mf);
 
@@ -300,7 +282,7 @@ fn a_source_with_nothing_to_strip_is_copied_verbatim_and_says_it_was_not_strippe
         .open(&file_id, &project_id, &new_project(None))
         .unwrap();
 
-    let copy = h.sessions_dir.join("verbatim").join("mesh.3mf");
+    let copy = abs_path.parent().unwrap().join("mesh (orca).3mf");
     assert_eq!(h.spawner.paths()[0], copy.to_string_lossy());
     assert!(!result.stripped);
     assert_eq!(
@@ -310,100 +292,98 @@ fn a_source_with_nothing_to_strip_is_copied_verbatim_and_says_it_was_not_strippe
 }
 
 #[test]
-fn a_source_called_launch_json_is_refused_rather_than_overwritten_by_its_own_record() {
+fn a_new_project_copy_never_takes_a_name_already_in_the_folder_and_leaves_no_partial_file() {
     let env = Env::new();
     let h = Harness::new(&env, HarnessOptions::default());
-    let project_id = env.project("Collision");
-    // `.json` takes the plain-copy branch, and the copy keeps the source's basename, which for this
-    // one name is the name of the record written beside it a moment later. Left alone, the record
-    // replaces the copy, and the slicer is handed a record whose `launched_hash` describes the file
-    // it has just overwritten.
-    let (file_id, abs_path) = env.add_file(&project_id, "launch.json", |path| {
-        std::fs::write(path, "{\"mine\": true}").unwrap();
-    });
-
-    let error = h
-        .launcher
-        .open(&file_id, &project_id, &new_project(None))
-        .unwrap_err();
-
-    assert_eq!(error.code, AppErrorCode::Validation);
-    assert!(
-        error
-            .message
-            .contains("a file called launch.json cannot be prepared for a new project"),
-        "{}",
-        error.message
-    );
-    assert_eq!(h.spawner.count(), 0);
-    assert!(
-        h.sessions().is_empty(),
-        "the refusal must not leave a launch directory behind"
-    );
-    // And the user's own file is exactly as it was.
-    assert_eq!(
-        std::fs::read_to_string(&abs_path).unwrap(),
-        "{\"mine\": true}"
-    );
-
-    // Spelled differently, and on the platform this ships to it is the same file. The comparison is
-    // case-insensitive for that reason, and refusing it on a case-sensitive filesystem too costs
-    // nothing: it is one basename, and no slicer can do anything with a `.json` anyway.
-    let other = env.project("CollisionCase");
-    let (shouty, _) = env.add_file(&other, "Launch.JSON", |path| {
-        std::fs::write(path, "{}").unwrap()
-    });
-    let second = h
-        .launcher
-        .open(&shouty, &other, &new_project(None))
-        .unwrap_err();
-    assert_eq!(second.code, AppErrorCode::Validation);
-    assert_eq!(h.spawner.count(), 0);
-}
-
-#[test]
-fn a_launch_directory_holds_the_copy_and_the_record_and_nothing_named_like_the_other() {
-    let env = Env::new();
-    let h = Harness::new(
-        &env,
-        HarnessOptions {
-            launch_id: Some("two-entries".to_owned()),
-            ..HarnessOptions::default()
-        },
-    );
-    let project_id = env.project("TwoEntries");
-    let (file_id, _) = env.add_file(&project_id, "plate.3mf", cura_bytes);
+    let project_id = env.project("Taken");
+    let (file_id, abs_path) = env.add_file(&project_id, "plate.3mf", cura_bytes);
+    let folder = abs_path.parent().unwrap().to_path_buf();
+    // Somebody's earlier new project from the same file, already saved and kept.
+    std::fs::write(folder.join("plate (orca).3mf"), b"mine").unwrap();
 
     h.launcher
         .open(&file_id, &project_id, &new_project(None))
         .unwrap();
 
-    let directory = h.sessions_dir.join("two-entries");
-    let mut names: Vec<String> = std::fs::read_dir(&directory)
+    assert_eq!(
+        h.spawner.paths()[0],
+        folder.join("plate (orca) (2).3mf").to_string_lossy()
+    );
+    assert_eq!(
+        std::fs::read(folder.join("plate (orca).3mf")).unwrap(),
+        b"mine"
+    );
+    let mut names: Vec<String> = std::fs::read_dir(&folder)
         .unwrap()
         .flatten()
         .map(|entry| entry.file_name().to_string_lossy().into_owned())
         .collect();
     names.sort();
-    assert_eq!(names, ["launch.json", "plate.3mf"]);
-    // The invariant the refusal above exists to keep: the record still describes the copy.
-    let record = read_record(&directory);
+    // The copy was written under a hidden name and renamed: nothing half-written stays behind.
     assert_eq!(
-        record.launched_hash,
-        entry_hash(&directory.join(&record.file_name)).unwrap()
+        names,
+        ["plate (orca) (2).3mf", "plate (orca).3mf", "plate.3mf"]
     );
 }
 
 #[test]
-fn a_file_that_is_neither_a_mesh_nor_a_3mf_is_copied_into_a_launch_directory_unchanged() {
+fn a_new_project_copy_nobody_changed_is_removed_again_once_the_slicer_has_exited() {
     let env = Env::new();
-    let h = Harness::new(
-        &env,
-        HarnessOptions {
-            launch_id: Some("other".to_owned()),
-            ..HarnessOptions::default()
-        },
+    let h = Harness::new(&env, HarnessOptions::default());
+    let project_id = env.project("Abandoned");
+    let (file_id, abs_path) = env.add_file(&project_id, "plate.3mf", cura_bytes);
+
+    h.launcher
+        .open(&file_id, &project_id, &new_project(None))
+        .unwrap();
+    let copy = abs_path.parent().unwrap().join("plate (orca).3mf");
+    assert!(copy.exists());
+
+    h.spawner.exit(0);
+
+    assert!(
+        eventually(|| !copy.exists()),
+        "an untouched copy must not stay in the project"
     );
+    assert!(abs_path.exists(), "the source is never removed");
+}
+
+#[test]
+fn a_new_project_copy_the_slicer_saved_over_stays_in_the_project() {
+    let env = Env::new();
+    let h = Harness::new(&env, HarnessOptions::default());
+    let project_id = env.project("Kept");
+    let (file_id, abs_path) = env.add_file(&project_id, "plate.3mf", cura_bytes);
+
+    h.launcher
+        .open(&file_id, &project_id, &new_project(None))
+        .unwrap();
+    let copy = abs_path.parent().unwrap().join("plate (orca).3mf");
+    // What Ctrl+S in the slicer does.
+    std::fs::write(&copy, b"the user's own work").unwrap();
+
+    h.spawner.exit(0);
+    std::thread::sleep(std::time::Duration::from_millis(300));
+
+    assert_eq!(std::fs::read(&copy).unwrap(), b"the user's own work");
+}
+
+/// Polls `condition` for up to five seconds: the removal after an exit runs on a thread.
+fn eventually(condition: impl Fn() -> bool) -> bool {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while std::time::Instant::now() < deadline {
+        if condition() {
+            return true;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    false
+}
+
+#[test]
+fn a_file_that_is_neither_a_mesh_nor_a_3mf_is_copied_into_the_project_folder_unchanged() {
+    let env = Env::new();
+    let h = Harness::new(&env, HarnessOptions::default());
     let project_id = env.project("Other");
     let (file_id, abs_path) = env.add_file(&project_id, "notes.gcode", |path| {
         std::fs::write(path, ";G-code\n").unwrap()
@@ -414,7 +394,7 @@ fn a_file_that_is_neither_a_mesh_nor_a_3mf_is_copied_into_a_launch_directory_unc
         .open(&file_id, &project_id, &new_project(None))
         .unwrap();
 
-    let copy = h.sessions_dir.join("other").join("notes.gcode");
+    let copy = abs_path.parent().unwrap().join("notes (orca).gcode");
     assert_eq!(h.spawner.paths()[0], copy.to_string_lossy());
     assert!(!result.stripped);
     assert_eq!(
@@ -427,88 +407,21 @@ fn a_file_that_is_neither_a_mesh_nor_a_3mf_is_copied_into_a_launch_directory_unc
 // The launch record
 // ---------------------------------------------------------------------------------------------
 
-/// The canonical form of a folder, computed here independently of the code under test: on Windows
-/// a temporary directory can carry an 8.3 short name, and a plain absolute path would then
-/// disagree with what the launcher records for the very same folder.
-fn independent_key(dir: &Path) -> String {
-    let canonical = std::fs::canonicalize(dir)
-        .unwrap()
-        .to_string_lossy()
-        .into_owned();
-    format!(
-        "local:{}",
-        canonical.strip_prefix("\\\\?\\").unwrap_or(&canonical)
-    )
-}
-
 #[test]
-fn launch_json_records_the_launch_with_launched_hash_equal_to_entry_hash_of_what_was_launched() {
+fn a_new_project_copy_writes_no_record_and_starts_no_session() {
     let env = Env::new();
-    let h = Harness::new(
-        &env,
-        HarnessOptions {
-            launch_id: Some("recorded".to_owned()),
-            now: Some(1_756_400_000_123),
-            ..HarnessOptions::default()
-        },
-    );
+    let h = Harness::new(&env, HarnessOptions::default());
     let project_id = env.project("Recorded");
-    let (file_id, abs_path) = env.add_file(&project_id, "bracket.3mf", cura_bytes);
+    let (file_id, _) = env.add_file(&project_id, "bracket.3mf", cura_bytes);
 
-    let result = h
-        .launcher
+    h.launcher
         .open(&file_id, &project_id, &new_project(Some(SlicerId::Orca)))
         .unwrap();
 
-    let directory = h.sessions_dir.join("recorded");
-    let copy = directory.join("bracket.3mf");
-    let record = read_record(&directory);
-    let expected = SlicerLaunchRecord {
-        launch_id: "recorded".to_owned(),
-        mode: SlicerLaunchMode::NewProject,
-        project_id: project_id.clone(),
-        file_id: file_id.clone(),
-        slicer_id: SlicerId::Orca,
-        install_id: ORCA.to_owned(),
-        file_name: "bracket.3mf".to_owned(),
-        launched_hash: entry_hash(&copy).unwrap(),
-        started_at: 1_756_400_000_123,
-        // Which library this came out of. `slicer-sessions/` is per-machine and every id above is
-        // per-library, so without this a session survives a folder switch as an unanswerable row.
-        library: Some(independent_key(env.library.path())),
-        // Three facts the reconcile cannot recover afterwards: four of five slicers save back
-        // *over* this file, so once the first Ctrl+S lands nothing on disk can still say what it
-        // was, how big it was, or what was in it.
-        source_slicer: Some(SlicerId::Cura),
-        source_size_bytes: Some(i64::try_from(std::fs::metadata(&copy).unwrap().len()).unwrap()),
-        launched_entries: Some(entry_digests(&copy).unwrap()),
-        swept_at: None,
-    };
-    assert_eq!(record, expected);
-    // Not the source's digests: the copy was stripped, so a diff against the original would blame
-    // the slicer for entries this app removed.
-    assert_ne!(
-        record.launched_entries.as_ref().unwrap(),
-        &entry_digests(&abs_path).unwrap(),
-        "the record kept the source digests rather than those of the launched copy"
-    );
-    assert_eq!(record.launch_id, result.launch_id);
-    // The hash is of the *stripped copy*, which is the file the slicer has: not of the source.
-    assert_ne!(record.launched_hash, entry_hash(&abs_path).unwrap());
-    // The directory holds the file and the record, and nothing else.
-    let mut names: Vec<String> = std::fs::read_dir(&directory)
-        .unwrap()
-        .flatten()
-        .map(|entry| entry.file_name().to_string_lossy().into_owned())
-        .collect();
-    names.sort();
-    assert_eq!(names, ["bracket.3mf", "launch.json"]);
-    // And the watch is told about it.
-    let launched = h.launched.lock().unwrap();
-    assert_eq!(launched.len(), 1);
-    assert_eq!(launched[0].launch_id, "recorded");
-    assert_eq!(launched[0].path, copy);
-    assert_eq!(launched[0].launched_hash, record.launched_hash);
+    // The copy is a file of the project from the start: there is nothing to bring back, so
+    // there is no record to explain it and nothing for the sessions list to show.
+    assert!(h.sessions().is_empty());
+    assert!(h.launched.lock().unwrap().is_empty());
 }
 
 #[test]
@@ -911,15 +824,9 @@ fn argv_is_exactly_the_registry_row_which_is_one_bare_positional_argument() {
 // ---------------------------------------------------------------------------------------------
 
 #[test]
-fn a_launch_that_builds_a_directory_hands_the_slicer_that_directory_as_its_cwd() {
+fn a_new_project_copy_is_launched_from_the_scratch_directory() {
     let env = Env::new();
-    let h = Harness::new(
-        &env,
-        HarnessOptions {
-            launch_id: Some("cwd-directory".to_owned()),
-            ..HarnessOptions::default()
-        },
-    );
+    let h = Harness::new(&env, HarnessOptions::default());
     let project_id = env.project("CwdDirectory");
     let (file_id, _) = env.add_file(&project_id, "plate.3mf", cura_bytes);
 
@@ -927,13 +834,11 @@ fn a_launch_that_builds_a_directory_hands_the_slicer_that_directory_as_its_cwd()
         .open(&file_id, &project_id, &new_project(Some(SlicerId::Orca)))
         .unwrap();
 
-    let directory = h.sessions_dir.join("cwd-directory");
     let spawned = &h.spawner.spawned()[0];
-    assert_eq!(spawned.cwd, directory);
+    // Never the project folder, where a cwd-relative export would land as a stray library file,
+    // and never whatever this process inherited.
+    assert_eq!(spawned.cwd, h.scratch_cwd_dir);
     assert!(spawned.cwd_existed);
-    // The whole point of preferring the launch directory: a cwd-relative write lands beside the
-    // copy, where the session scan can see it, rather than anywhere else on the machine.
-    assert_eq!(Path::new(&spawned.args[0]).parent().unwrap(), directory);
 }
 
 #[test]
@@ -1180,15 +1085,9 @@ fn a_step_opens_in_orca_which_was_measured_reading_both_extensions() {
 }
 
 #[test]
-fn a_step_goes_through_a_launch_directory_keeping_its_own_basename() {
+fn a_step_is_copied_into_the_project_folder_under_a_name_of_its_own() {
     let env = Env::new();
-    let h = Harness::new(
-        &env,
-        HarnessOptions {
-            launch_id: Some("step-copied".to_owned()),
-            ..HarnessOptions::default()
-        },
-    );
+    let h = Harness::new(&env, HarnessOptions::default());
     let project_id = env.project("StepCopied");
     let (file_id, abs_path) = env.add_file(&project_id, "bracket.step", step_bytes);
 
@@ -1200,15 +1099,16 @@ fn a_step_goes_through_a_launch_directory_keeping_its_own_basename() {
         )
         .unwrap();
 
-    // Asserted as a path rather than trusted as a paragraph: a STEP moved onto the in-place branch
-    // would spawn exactly as successfully from the library path, and nothing has measured what the
-    // four capable slicers propose on the first save from a STEP input.
-    let copy = h.sessions_dir.join("step-copied").join("bracket.step");
+    // Asserted as a path rather than trusted as a paragraph: nothing has measured what the four
+    // capable slicers propose on the first save from a STEP input, so the slicer is never handed
+    // the source itself; whatever it proposes beside the copy is not the user's file.
+    let copy = abs_path
+        .parent()
+        .unwrap()
+        .join("bracket (prusaslicer).step");
     let spawned = &h.spawner.spawned()[0];
     assert_eq!(spawned.args[0], copy.to_string_lossy());
     assert_ne!(spawned.args[0], abs_path.to_string_lossy());
-    assert_eq!(copy.file_name(), abs_path.file_name());
-    assert_eq!(spawned.cwd, h.sessions_dir.join("step-copied"));
     assert_eq!(
         std::fs::read(&copy).unwrap(),
         std::fs::read(&abs_path).unwrap()

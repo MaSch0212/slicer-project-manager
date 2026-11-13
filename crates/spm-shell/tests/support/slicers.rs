@@ -590,6 +590,9 @@ impl Harness {
         );
         let now = options.now.unwrap_or(1_756_382_400_000);
         launcher_options.now = Arc::new(move || now);
+        // An abandoned new-project copy is removed as soon as its slicer has exited, not ten
+        // seconds later: the tests drive the exit themselves.
+        launcher_options.copy_settle_ms = 0;
         let launch_id = options.launch_id.clone();
         let counter = Arc::new(AtomicUsize::new(0));
         launcher_options.new_launch_id = Arc::new(move || match &launch_id {

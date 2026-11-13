@@ -1,6 +1,7 @@
 import { useNavigate, useParams } from '@solidjs/router'
 import { createEffect, createSignal, For, onCleanup, Show } from 'solid-js'
 import { t } from '../core/i18n'
+import { onLibraryChanged } from '../core/library-events'
 import { errorMessage } from '../core/i18n/errors'
 import { notify } from '../core/notify'
 import { createProjectsStore, isFiltered } from '../core/projects-store'
@@ -111,6 +112,9 @@ export default function ProjectsPage() {
    * because the settings had not loaded yet when the page mounted.
    */
   createEffect(() => store.applyShape(shapeOf(settings.settings())))
+
+  // A folder made in Explorer, a file a slicer saved, a change synced down: the list follows.
+  onLibraryChanged(() => void store.refreshInPlace())
 
   // Covers are made after a project is found, so a fresh library shows "Preview pending" on every
   // card. While any card still waits for one, ask again now and then, as the project panel does

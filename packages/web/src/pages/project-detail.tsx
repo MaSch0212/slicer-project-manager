@@ -3,6 +3,7 @@ import type { FileDto } from '../api/generated'
 import { api } from '../core/api/client'
 import { formatBytes } from '../core/format-bytes'
 import { t } from '../core/i18n'
+import { onLibraryChanged } from '../core/library-events'
 import { filesViewMode, setFilesViewMode } from '../core/files-view'
 import {
   createProjectDetail,
@@ -169,6 +170,9 @@ export function ProjectDetail(props: {
     ),
   )
   createEffect(() => setTags(detail.detail()?.tags ?? []))
+
+  // A file saved next to this project's others by a slicer, or synced down, appears in place.
+  onLibraryChanged(() => void detail.load())
 
   // Poll while a preview is pending, then stop.
   let polls = 0

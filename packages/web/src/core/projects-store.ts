@@ -187,6 +187,9 @@ export function createProjectsStore(deps: Partial<ProjectsStoreDeps> = {}) {
         const fresh = new Map(page.map((project) => [project.id, project]))
         setFirstPage(page)
         setAppended((rows) => rows.map((row) => fresh.get(row.id) ?? row))
+        // A folder made in Explorer can bring tags with nothing, but a project deleted on disk can
+        // take the last use of one away.
+        void loadTags()
       } catch {
         // A refresh that fails leaves the list as it was; the next one may well work.
       }

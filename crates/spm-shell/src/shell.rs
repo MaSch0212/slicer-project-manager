@@ -52,6 +52,11 @@ pub trait ShellEvents: Send + Sync {
     /// The library under the page changed (a folder was opened, or a rescan adopted projects):
     /// reload what is on screen.
     fn reload(&self);
+    /// Files changed on disk or on the server and have been indexed: refresh the lists on screen
+    /// without rebuilding the page (a dialog the user has open survives it).
+    fn updated(&self) {
+        self.reload();
+    }
 }
 
 /// The mode the shell is in right now.
@@ -113,6 +118,11 @@ impl LibraryEvents for LibraryChanges {
     fn changed(&self) {
         if let Some(shell) = self.0.upgrade() {
             shell.library_changed();
+        }
+    }
+    fn updated(&self) {
+        if let Some(shell) = self.0.upgrade() {
+            shell.library_updated();
         }
     }
 }
@@ -247,6 +257,12 @@ impl Shell {
             return;
         }
         self.events.reload();
+    }
+
+    /// Files changed and were indexed: the page refreshes what it lists. Not declined in server
+    /// mode, where the synced folder is what changed and the server now has it too.
+    pub fn library_updated(&self) {
+        self.events.updated();
     }
 
     /// Asks for a folder and opens it. `Ok(None)` is a cancelled dialog.

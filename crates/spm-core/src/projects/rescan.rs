@@ -74,6 +74,12 @@ fn walk_files(dir: &Path, prefix: &str, found: &mut Vec<DiskFile>) -> Result<()>
         if is_hidden(&name) {
             continue;
         }
+        // Somebody's save in progress (`benchy.3mf.tmp`, a partial download): not a file of the
+        // project until it has been renamed into place, which the next rescan sees.
+        let file_type = entry.file_type()?;
+        if file_type.is_file() && crate::watch::is_transient_name(&name) {
+            continue;
+        }
         let abs_path = entry.path();
         let rel_path = if prefix.is_empty() {
             name
@@ -81,7 +87,6 @@ fn walk_files(dir: &Path, prefix: &str, found: &mut Vec<DiskFile>) -> Result<()>
             format!("{prefix}{RELATIVE_PATH_SEPARATOR}{name}")
         };
         // `file_type` does not follow symlinks: a link is neither a file nor a folder here.
-        let file_type = entry.file_type()?;
         if file_type.is_dir() {
             walk_files(&abs_path, &rel_path, found)?;
         } else if file_type.is_file() {
@@ -462,4 +467,32 @@ pub fn rescan(
         ],
     );
     Ok(result)
+}
+
+/// [`rescan`] for every user who can sign in, which is what a change somewhere under a shared
+/// library root calls for: the server's watcher knows *that* something moved, not whose folder it
+/// was in, and a rescan with nothing to do is a stat per file. A failure for one user is reported
+/// and the others still run.
+pub fn rescan_every_user(lib: &Library) -> Result<Vec<(String, Result<RescanResultDto>)>> {
+    let users: Vec<(String, bool)> = {
+        let db = lib.db();
+        let mut statement =
+            db.prepare("SELECT id, is_admin FROM users WHERE status <> 'disabled' ORDER BY id")?;
+        statement
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, bool>(1)?))
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?
+    };
+    Ok(users
+        .into_iter()
+        .map(|(user_id, is_admin)| {
+            let ctx = Ctx {
+                user_id: user_id.clone(),
+                is_admin,
+            };
+            let result = rescan(lib, &ctx, None);
+            (user_id, result)
+        })
+        .collect())
 }

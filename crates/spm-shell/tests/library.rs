@@ -735,3 +735,32 @@ impl<F: std::future::Future<Output = ()>> AwaitBlocking for F {
             .block_on(self);
     }
 }
+
+#[test]
+fn a_folder_made_after_opening_becomes_a_project_without_a_rescan_and_the_page_is_told() {
+    let world = World::new();
+    let dir = world.folder("lib");
+    world.shell.library().open(&dir, true).unwrap();
+    world.shell.library().settle();
+    let reloads_before = world.events.reloads();
+
+    // Made "in Explorer", after the folder was opened: only the watcher can notice.
+    let project = dir.join("Made Outside");
+    fs::create_dir_all(&project).unwrap();
+    fs::write(project.join("cube.stl"), fixtures::cube_stl()).unwrap();
+
+    let names = || {
+        let session = world.shell.session().unwrap();
+        spm_core::list_projects(&session.lib, &session.ctx, &Default::default())
+            .unwrap()
+            .into_iter()
+            .map(|project| project.name)
+            .collect::<Vec<_>>()
+    };
+    let started = std::time::Instant::now();
+    while started.elapsed() < Duration::from_secs(20) && !names().contains(&"Made Outside".into()) {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    assert_eq!(names(), ["Made Outside"]);
+    wait_until(|| world.events.reloads() > reloads_before);
+}

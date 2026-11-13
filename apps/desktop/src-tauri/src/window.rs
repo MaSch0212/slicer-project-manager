@@ -158,4 +158,13 @@ impl<R: Runtime> ShellEvents for TauriEvents<R> {
             let _ = webview.eval("window.location.reload()");
         }
     }
+
+    fn updated(&self) {
+        let Some(webview) = self.webview() else {
+            return;
+        };
+        // A DOM event rather than a Tauri one: the page needs no IPC permission to hear it, and a
+        // page that is not listening (the connect page) simply ignores it.
+        let _ = webview.eval("window.dispatchEvent(new CustomEvent('spm:library-changed'))");
+    }
 }

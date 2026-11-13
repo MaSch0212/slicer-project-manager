@@ -298,20 +298,19 @@ endsolid cube
         "the report has no passing {LAUNCH_CHECK:?}"
     );
 
-    // What the stand-in was handed by the *second* launch (the 3MF): a copy in a launch directory
-    // under the data directory, stripped of the slicer configuration it came with.
+    // What the stand-in was handed by the *second* launch (the 3MF): a copy beside the source in
+    // the project folder, under a name of its own, stripped of the slicer configuration it came
+    // with; the process runs in the data directory's scratch folder.
     let record = stub::record_of(&exe);
     let handed = std::path::PathBuf::from(record["args"][0].as_str().unwrap());
-    let sessions = data.join("slicer-sessions");
-    assert_eq!(handed.file_name().unwrap(), "bracket.3mf");
-    let launch_directory = handed.parent().unwrap();
+    assert_eq!(handed.file_name().unwrap(), "bracket (orca).3mf");
     assert_eq!(
-        std::fs::canonicalize(launch_directory.parent().unwrap()).unwrap(),
-        std::fs::canonicalize(&sessions).unwrap()
+        std::fs::canonicalize(handed.parent().unwrap()).unwrap(),
+        std::fs::canonicalize(&project).unwrap()
     );
     assert_eq!(
         std::fs::canonicalize(record["cwd"].as_str().unwrap()).unwrap(),
-        std::fs::canonicalize(launch_directory).unwrap()
+        std::fs::canonicalize(data.join("slicer-cwd")).unwrap()
     );
     let copy = std::path::PathBuf::from(format!("{}.arg-copy.3mf", exe.display()));
     assert!(
@@ -343,16 +342,14 @@ endsolid cube
         "the child inherited {names:?}"
     );
     assert_eq!(record["stdinEof"], true);
-    // And the launch record names the library it came from.
-    let launch_record: Value = serde_json::from_str(
-        &std::fs::read_to_string(launch_directory.join("launch.json")).unwrap(),
-    )
-    .unwrap();
+    // And a local launch leaves no session to track: the copy is a library file.
     assert!(
-        launch_record["library"]
-            .as_str()
-            .unwrap()
-            .starts_with("local:")
+        !data.join("slicer-sessions").exists()
+            || std::fs::read_dir(data.join("slicer-sessions"))
+                .unwrap()
+                .next()
+                .is_none(),
+        "a local launch made a session directory"
     );
 }
 

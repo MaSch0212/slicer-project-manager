@@ -202,6 +202,10 @@ pub async fn run(
         tokio::spawn(prune_loop(lib.clone(), log.clone())),
     ];
 
+    // A project folder copied onto the share, or a file a desktop synced up by hand, is indexed
+    // without anybody pressing rescan. Kept alive for as long as the server runs.
+    let _watch = watch_library(&lib, &log);
+
     let app =
         router(app_state(&lib, env, &log)).into_make_service_with_connect_info::<SocketAddr>();
     let served = axum::serve(listener, app)
@@ -212,6 +216,43 @@ pub async fn run(
         task.abort();
     }
     served
+}
+
+/// Rescans every user's projects whenever the library folder settles after a change on disk.
+///
+/// `None` (logged) where the folder cannot be watched: some network filesystems mounted into a
+/// container deliver no change notifications at all, and the server then behaves as it always
+/// did, with the rescan button.
+pub fn watch_library(lib: &Library, log: &Logger) -> Option<spm_core::watch::LibraryWatch> {
+    let (watched, events) = (lib.clone(), log.clone());
+    let started = spm_core::watch::LibraryWatch::start(lib.dir(), move || {
+        match spm_core::projects::rescan::rescan_every_user(&watched) {
+            Ok(results) => {
+                for (user_id, result) in results {
+                    if let Err(error) = result {
+                        events.warn(
+                            "rescan after a change in the library failed",
+                            fields!["userId" => user_id, "error" => error.message],
+                        );
+                    }
+                }
+            }
+            Err(error) => events.warn(
+                "rescan after a change in the library failed",
+                fields!["error" => error.message],
+            ),
+        }
+    });
+    match started {
+        Ok(watch) => Some(watch),
+        Err(error) => {
+            log.warn(
+                "the library folder cannot be watched; new files need a rescan",
+                fields!["error" => error.to_string()],
+            );
+            None
+        }
+    }
 }
 
 /// Resolves on Ctrl-C, or SIGTERM where there is one (what `docker stop` sends).

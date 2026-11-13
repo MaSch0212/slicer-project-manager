@@ -454,12 +454,20 @@ struct OpenFolder {
     runner: Box<dyn PreviewRunner>,
     /// The rescan that adopts what is already in the folder.
     adopt: Option<JoinHandle<()>>,
+    /// The watch that rescans whenever the folder changes on disk. Dropped first on release, so no
+    /// rescan starts against a library that is being let go of.
+    watch: Option<spm_core::watch::LibraryWatch>,
 }
 
 /// What the host tells its owner. Both are "something under the page changed".
 pub trait LibraryEvents: Send + Sync {
     /// The library on screen changed, or a rescan found something in it.
     fn changed(&self);
+    /// Files or folders changed on disk and have been indexed: the lists on screen want refreshing,
+    /// the page itself does not want rebuilding.
+    fn updated(&self) {
+        self.changed();
+    }
 }
 
 impl<F: Fn() + Send + Sync> LibraryEvents for F {
@@ -514,6 +522,9 @@ pub struct LibraryHost {
     /// Bumped on every open and close; a rescan that finishes after the library it adopted is gone
     /// has nobody to tell.
     generation: Arc<AtomicU64>,
+    /// One rescan at a time: the adopting one and the watcher's would otherwise both insert the
+    /// same new file and one of them would fail on the unique index.
+    rescanning: Arc<Mutex<()>>,
     asking: SingleFlight<Option<LocalLibraryDto>>,
     last_release: Mutex<Option<Arc<Done>>>,
 }
@@ -530,6 +541,7 @@ impl LibraryHost {
             on_released: options.on_released,
             current: Mutex::new(None),
             generation: Arc::new(AtomicU64::new(0)),
+            rescanning: Arc::new(Mutex::new(())),
             asking: SingleFlight::default(),
             last_release: Mutex::new(None),
         })
@@ -570,12 +582,14 @@ impl LibraryHost {
         let runner = (self.start_previews)(&session.lib);
         let router = (self.make_router)(&session);
         let adopt = self.adopt(&session, generation);
+        let watch = self.watch(&resolved, &session, generation);
         let previous = self.current().replace(OpenFolder {
             dir: resolved.clone(),
             session,
             router,
             runner,
             adopt,
+            watch,
         });
         if let Some(previous) = previous {
             self.release(previous);
@@ -595,6 +609,52 @@ impl LibraryHost {
         }
     }
 
+    /// Rescans whenever the folder settles after a change on disk: a project folder made in
+    /// Explorer, a file a slicer saved, one deleted by hand. The owner hears about it as an update,
+    /// which refreshes lists rather than rebuilding the page. A folder that cannot be watched (a
+    /// network share without change notifications) still works; it just needs the rescan button.
+    fn watch(
+        self: &Arc<Self>,
+        dir: &Path,
+        session: &DesktopSession,
+        generation: u64,
+    ) -> Option<spm_core::watch::LibraryWatch> {
+        let (lib, ctx) = (session.lib.clone(), session.ctx.clone());
+        let host = Arc::downgrade(self);
+        let rescanning = Arc::clone(&self.rescanning);
+        let started = spm_core::watch::LibraryWatch::start(dir, move || {
+            let Some(host) = host.upgrade() else {
+                return;
+            };
+            if host.generation.load(Ordering::SeqCst) != generation {
+                return;
+            }
+            let result = {
+                let _one_at_a_time = rescanning.lock().unwrap_or_else(|e| e.into_inner());
+                rescan(&lib, &ctx, None)
+            };
+            match result {
+                Ok(_) if host.generation.load(Ordering::SeqCst) == generation => {
+                    host.events.updated();
+                }
+                Ok(_) => {}
+                Err(error) => diag::error(&format!(
+                    "rescan after a change in the library failed: {}",
+                    error.cause.as_deref().unwrap_or(&error.message)
+                )),
+            }
+        });
+        match started {
+            Ok(watch) => Some(watch),
+            Err(error) => {
+                diag::error(&format!(
+                    "the library folder cannot be watched, changes need a rescan: {error}"
+                ));
+                None
+            }
+        }
+    }
+
     /// Reconciles the folder with the database in the background, and tells the owner if it found
     /// anything (the page is showing a list that does not have it yet).
     fn adopt(
@@ -604,26 +664,33 @@ impl LibraryHost {
     ) -> Option<JoinHandle<()>> {
         let (lib, ctx) = (session.lib.clone(), session.ctx.clone());
         let host = Arc::downgrade(self);
+        let rescanning = Arc::clone(&self.rescanning);
         thread::Builder::new()
             .name("spm-rescan".to_owned())
-            .spawn(move || match rescan(&lib, &ctx, None) {
-                Ok(result) => {
-                    let changed = result.adopted
-                        + result.marked_missing
-                        + result.files_added
-                        + result.files_removed
-                        > 0;
-                    if changed
-                        && let Some(host) = host.upgrade()
-                        && host.generation.load(Ordering::SeqCst) == generation
-                    {
-                        host.events.changed();
+            .spawn(move || {
+                let result = {
+                    let _one_at_a_time = rescanning.lock().unwrap_or_else(|e| e.into_inner());
+                    rescan(&lib, &ctx, None)
+                };
+                match result {
+                    Ok(result) => {
+                        let changed = result.adopted
+                            + result.marked_missing
+                            + result.files_added
+                            + result.files_removed
+                            > 0;
+                        if changed
+                            && let Some(host) = host.upgrade()
+                            && host.generation.load(Ordering::SeqCst) == generation
+                        {
+                            host.events.changed();
+                        }
                     }
+                    Err(error) => diag::error(&format!(
+                        "rescan after opening the library failed: {}",
+                        error.cause.as_deref().unwrap_or(&error.message)
+                    )),
                 }
-                Err(error) => diag::error(&format!(
-                    "rescan after opening the library failed: {}",
-                    error.cause.as_deref().unwrap_or(&error.message)
-                )),
             })
             .ok()
     }
@@ -738,7 +805,10 @@ impl LibraryHost {
                         router,
                         runner,
                         adopt,
+                        watch,
                     } = previous;
+                    // Before anything else: no rescan may start against a folder on its way out.
+                    drop(watch);
                     // Told to stop at once, so a second switch does not wait behind the first.
                     runner.stop();
                     if let Some(adopt) = adopt {
