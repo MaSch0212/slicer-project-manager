@@ -65,6 +65,9 @@ import { ProjectDetail } from './project-detail'
 import { ProjectFormDialog } from './project-form-dialog'
 
 export const SEARCH_DEBOUNCE_MS = 250
+const COVER_POLL_MS = 4000
+/** About three minutes: a cover still missing by then is not coming while the page is open. */
+const COVER_MAX_POLLS = 45
 /** Tags shown on a card before the rest collapse into "+n". */
 const CARD_TAGS = 3
 
@@ -108,6 +111,26 @@ export default function ProjectsPage() {
    * because the settings had not loaded yet when the page mounted.
    */
   createEffect(() => store.applyShape(shapeOf(settings.settings())))
+
+  // Covers are made after a project is found, so a fresh library shows "Preview pending" on every
+  // card. While any card still waits for one, ask again now and then, as the project panel does
+  // for its files, and stop once none does or after a few minutes.
+  let coverPolls = 0
+  createEffect(() => {
+    const waiting = store
+      .items()
+      .some(
+        (project) =>
+          !project.coverThumbUrl && coverPlaceholderKey(project) === 'projects.previewPending',
+      )
+    if (!waiting) coverPolls = 0
+    if (!waiting || coverPolls >= COVER_MAX_POLLS) return
+    const timer = setTimeout(() => {
+      coverPolls++
+      void store.refreshInPlace()
+    }, COVER_POLL_MS)
+    onCleanup(() => clearTimeout(timer))
+  })
 
   const [creating, setCreating] = createSignal(false)
   const [rescanning, setRescanning] = createSignal(false)
@@ -260,7 +283,7 @@ export default function ProjectsPage() {
 
   const listClass = () =>
     viewMode() === 'grid'
-      ? 'm-0 grid list-none grid-cols-1 gap-4 p-0 @md:grid-cols-2 @3xl:grid-cols-3 @5xl:grid-cols-4'
+      ? 'm-0 grid list-none grid-cols-[repeat(auto-fill,minmax(13rem,1fr))] gap-4 p-0'
       : 'm-0 flex list-none flex-col gap-2 p-0'
 
   return (

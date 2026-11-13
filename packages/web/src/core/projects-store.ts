@@ -173,6 +173,25 @@ export function createProjectsStore(deps: Partial<ProjectsStoreDeps> = {}) {
 
     reload: loadFirstPage,
 
+    /**
+     * Fetches page zero again **without** going back to "loading": the rows on screen are swapped
+     * for their newer selves where they changed (a cover that has been made since, a file count),
+     * and nothing else moves. Rows of later pages keep what they had. An answer that lands after
+     * the filter changed is dropped, like any other.
+     */
+    async refreshInPlace(): Promise<void> {
+      const mine = generation
+      try {
+        const page = await client.projects.list({ ...query(), limit: PROJECTS_PAGE_SIZE })
+        if (mine !== generation) return
+        const fresh = new Map(page.map((project) => [project.id, project]))
+        setFirstPage(page)
+        setAppended((rows) => rows.map((row) => fresh.get(row.id) ?? row))
+      } catch {
+        // A refresh that fails leaves the list as it was; the next one may well work.
+      }
+    },
+
     /** Narrows to a search term, cut to what the server accepts (a paste must not become a 400). */
     setSearch(term: string): void {
       const trimmed = term.trim().slice(0, SEARCH_MAX_LENGTH)

@@ -111,12 +111,12 @@
     "confirmDeleteAction": "Yes, delete",
     "slicerChoice": "Slicer",
     "slicerAutomatic": "Automatic",
-    "openInSlicer": "Open as it is in",
-    "newSlicerProject": "Start a new slicer project from",
+    "openInSlicer": "Open {{ file }} in {{ slicer }}",
+    "newSlicerProject": "Start a new slicer project from {{ file }}",
     "handedTo": "Handed {{ file }} to {{ slicer }}",
     "dismiss": "Dismiss",
     "curaHazardTitle": "Cura never saves over the file it opened",
-    "curaHazard": "Cura's Ctrl+S is always Save As, and it defaults to its own folder rather than this project's. On the machine this was measured on that folder sits inside the model library, so pressing Ctrl+S and then Enter writes a copy there instead of back into this project.",
+    "curaHazard": "Cura's Save always asks where to put the file, and starts in Cura's own folder rather than this project's. Choose this project's folder when it asks, or your work ends up somewhere this app does not look.",
     "curaHazardContinue": "Hand it to Cura anyway",
     "curaHazardDontShow": "Don't show this again",
     "noMatches": "No projects match your filter",
@@ -186,7 +186,9 @@
     "findOrAddTag": "Find or add a tag",
     "noProjectTags": "No tags yet",
     "addFiles": "Add files",
-    "dropToAdd": "Drop to add them to this project"
+    "dropToAdd": "Drop to add them to this project",
+    "openInAnySlicer": "Open {{ file }} in its slicer",
+    "newSlicerProjectIn": "Start a new {{ slicer }} project from {{ file }}"
   },
   "import": {
     "title": "Import",
@@ -298,7 +300,7 @@
   },
   "slicerSessions": {
     "title": "Files a slicer still has",
-    "lead": "Every file this app has handed to a slicer and not yet finished with. Nothing here is ever removed on its own — the app compares what is on disk and waits for you.",
+    "lead": "Copies this app handed to a slicer. One that comes back changed waits here until you add it to the project or throw it away; one that comes back unchanged is cleared once its slicer has closed.",
     "none": "No slicer has anything of yours open.",
     "orphan": "No record",
     "orphanLead": "This came back from a slicer, and nothing beside it says which project it belongs to.",

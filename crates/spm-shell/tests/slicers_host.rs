@@ -103,6 +103,37 @@ fn picks(path: Option<String>) -> spm_shell::slicers::host::ExecutablePicker {
 // ---------------------------------------------------------------------------------------------
 
 #[test]
+fn the_first_start_searches_on_its_own_and_never_again() {
+    let counter = Arc::new(AtomicUsize::new(0));
+    let runs = Arc::clone(&counter);
+    let case = Case::with(move |options| options.run = counting_runner(runs, FIXTURE));
+
+    // No file yet: nobody has configured anything, so it looks.
+    assert!(case.host.scan_on_first_start().unwrap());
+    assert_eq!(counter.load(Ordering::SeqCst), 1);
+    assert!(!case.host.get().installs.is_empty());
+
+    // The file exists from now on, even with every install removed: the user's to change.
+    for install in case.host.get().installs {
+        case.host.remove(&install.id).unwrap();
+    }
+    assert!(!case.host.scan_on_first_start().unwrap());
+    assert_eq!(counter.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn the_first_start_does_not_search_where_detection_cannot_run() {
+    let counter = Arc::new(AtomicUsize::new(0));
+    let runs = Arc::clone(&counter);
+    let case = Case::with(move |options| {
+        options.run = counting_runner(runs, FIXTURE);
+        options.detection_supported = false;
+    });
+    assert!(!case.host.scan_on_first_start().unwrap());
+    assert_eq!(counter.load(Ordering::SeqCst), 0);
+}
+
+#[test]
 fn a_product_can_be_unbound_and_a_default_can_be_cleared() {
     let case = Case::new();
     let scanned = case.host.scan().unwrap();

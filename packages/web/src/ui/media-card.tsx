@@ -8,7 +8,8 @@ export type MediaCardLayout = 'grid' | 'list'
 
 /**
  * The picture slot of a `MediaCard`: the image when there is one, otherwise a quiet placeholder
- * (an icon and a few words saying why there is no picture yet). Square, so a grid lines up.
+ * (an icon and a few words saying why there is no picture yet). Its shape is the caller's: square
+ * in a list row, 4:3 on a grid card, so a grid lines up and a card is not mostly picture.
  */
 export function Thumb(props: {
   src?: string
@@ -20,7 +21,12 @@ export function Thumb(props: {
   return (
     <div
       class={cx(
-        'flex aspect-square items-center justify-center overflow-hidden bg-surface-2',
+        'flex items-center justify-center overflow-hidden',
+        // A picture sits on the colour the thumbnails are drawn on, so a card that is wider than
+        // the picture is letterboxed in the same dark rather than in a pale band.
+        props.src ? 'bg-thumb' : 'bg-surface-2',
+        // Square unless the caller gives it a shape of its own.
+        !props.class?.includes('aspect-') && 'aspect-square',
         props.class,
       )}
     >
@@ -92,7 +98,11 @@ export function MediaCard(props: {
         alt={props.imageAlt ?? ''}
         placeholder={props.placeholder}
         placeholderIcon={props.placeholderIcon}
-        class={cx(list() ? 'size-16 shrink-0 rounded-control' : 'w-full border-b border-border')}
+        class={cx(
+          list()
+            ? 'aspect-square size-16 shrink-0 rounded-control'
+            : 'aspect-[4/3] w-full border-b border-border',
+        )}
       />
       <div class={cx('flex min-w-0 flex-col gap-1.5', list() ? 'flex-1 py-0.5' : 'p-3')}>
         <Dynamic

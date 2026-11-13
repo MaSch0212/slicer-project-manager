@@ -302,6 +302,16 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     // What a previous run left under `slicer-sessions/` is surfaced, and nothing that holds a file
     // is deleted: the slicer may well still have it open.
     slicers.sweep_at_start();
+    // A first start finds the installed slicers on its own, off the main thread (detection runs
+    // PowerShell and takes about a second). Not in a hidden test run: those bring their own.
+    if !hidden {
+        let first_start = slicers.clone();
+        std::thread::spawn(move || {
+            if let Err(error) = first_start.host().scan_on_first_start() {
+                eprintln!("slicers: detection on first start failed: {error}");
+            }
+        });
+    }
     let probes = hidden::Probes::from_env();
 
     // The model browser. The factory is built first because the services need it, and the

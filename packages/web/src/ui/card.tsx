@@ -84,7 +84,9 @@ export function SettingRow(props: {
           <span class="text-xs text-fg-muted">{props.hint}</span>
         </Show>
       </div>
-      <div class="shrink-0">{props.children}</div>
+      {/* Shrinks below its content only when it has to: a switch or a select keeps its size, a
+          long path wraps rather than pushing the whole page sideways. */}
+      <div class="min-w-0 sm:max-w-[60%]">{props.children}</div>
     </div>
   )
 }

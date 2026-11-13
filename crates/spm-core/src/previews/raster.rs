@@ -128,6 +128,7 @@ const AMBIENT: f64 = 0.28;
 const BASE: [f64; 3] = [224.0, 138.0, 60.0];
 
 /// Flat dark slate. Opaque, since the PNG encoder writes truecolour with no alpha channel.
+/// `--color-thumb` in the web app's styles.css letterboxes cards in this colour: change both.
 const BACKGROUND: [u8; 3] = [31, 35, 42];
 
 // --- Per-triangle scratch -----------------------------------------------------------------

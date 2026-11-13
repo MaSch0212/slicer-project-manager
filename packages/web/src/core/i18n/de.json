@@ -111,12 +111,12 @@
     "confirmDeleteAction": "Ja, löschen",
     "slicerChoice": "Slicer",
     "slicerAutomatic": "Automatisch",
-    "openInSlicer": "Unverändert öffnen in",
-    "newSlicerProject": "Neues Slicer-Projekt erstellen aus",
+    "openInSlicer": "{{ file }} in {{ slicer }} öffnen",
+    "newSlicerProject": "Neues Slicer-Projekt aus {{ file }} erstellen",
     "handedTo": "{{ file }} an {{ slicer }} übergeben",
     "dismiss": "Ausblenden",
     "curaHazardTitle": "Cura speichert nie über die geöffnete Datei",
-    "curaHazard": "Strg+S ist in Cura immer „Speichern unter“ und schlägt Curas eigenen Ordner vor, nicht den dieses Projekts. Auf dem vermessenen Rechner liegt dieser Ordner innerhalb der Modellbibliothek – wer Strg+S und dann Enter drückt, schreibt dort eine Kopie hin statt zurück in dieses Projekt.",
+    "curaHazard": "„Speichern“ fragt in Cura immer nach dem Ort und beginnt in Curas eigenem Ordner statt in dem dieses Projekts. Wählen Sie den Ordner dieses Projekts, wenn Cura fragt – sonst landet Ihre Arbeit dort, wo diese App nicht nachsieht.",
     "curaHazardContinue": "Trotzdem an Cura übergeben",
     "curaHazardDontShow": "Nicht mehr anzeigen",
     "noMatches": "Kein Projekt entspricht Ihrem Filter",
@@ -186,7 +186,9 @@
     "findOrAddTag": "Tag suchen oder hinzufügen",
     "noProjectTags": "Noch keine Tags",
     "addFiles": "Dateien hinzufügen",
-    "dropToAdd": "Loslassen, um sie diesem Projekt hinzuzufügen"
+    "dropToAdd": "Loslassen, um sie diesem Projekt hinzuzufügen",
+    "openInAnySlicer": "{{ file }} in seinem Slicer öffnen",
+    "newSlicerProjectIn": "Neues {{ slicer }}-Projekt aus {{ file }} erstellen"
   },
   "import": {
     "title": "Import",
@@ -298,7 +300,7 @@
   },
   "slicerSessions": {
     "title": "Dateien, die noch bei einem Slicer sind",
-    "lead": "Jede Datei, die diese App an einen Slicer übergeben und noch nicht abgeschlossen hat. Hier wird nie etwas von selbst entfernt — die App vergleicht, was auf der Festplatte liegt, und wartet auf Sie.",
+    "lead": "Kopien, die diese App an einen Slicer übergeben hat. Kommt eine verändert zurück, wartet sie hier, bis Sie sie dem Projekt hinzufügen oder verwerfen; eine unveränderte wird entfernt, sobald ihr Slicer beendet ist.",
     "none": "Kein Slicer hat etwas von Ihnen geöffnet.",
     "orphan": "Kein Eintrag",
     "orphanLead": "Das kam von einem Slicer zurück, und nichts daneben sagt, zu welchem Projekt es gehört.",

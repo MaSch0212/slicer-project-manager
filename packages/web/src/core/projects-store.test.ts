@@ -509,3 +509,84 @@ describe('projects store: following a chosen view', () => {
     expect(client.projects.list.mock.calls).toHaveLength(before)
   })
 })
+
+describe('projects store: refreshing in place', () => {
+  it('swaps rows for their newer selves without going back to loading', async () => {
+    const list = vi
+      .fn()
+      .mockResolvedValueOnce([project({ id: 'a' }), project({ id: 'b' })])
+      .mockResolvedValueOnce([
+        project({ id: 'a', coverThumbUrl: '/api/files/1/thumb' }),
+        project({ id: 'b' }),
+      ])
+    const { store } = setup({}, list)
+    await store.start()
+    expect(store.items()[0]!.coverThumbUrl).toBeUndefined()
+
+    const pending = store.refreshInPlace()
+    // The list stays on screen while the refresh is in flight.
+    expect(store.loadingFirst()).toBe(false)
+    expect(store.items()).toHaveLength(2)
+    await pending
+
+    expect(store.items()[0]!.coverThumbUrl).toBe('/api/files/1/thumb')
+    expect(list).toHaveBeenLastCalledWith(expect.objectContaining({ limit: PROJECTS_PAGE_SIZE }))
+  })
+
+  it('updates rows of later pages it finds again, and keeps the rest', async () => {
+    const first = fullPage('a')
+    const list = vi
+      .fn()
+      .mockResolvedValueOnce(first)
+      .mockResolvedValueOnce([project({ id: 'later' }), project({ id: 'gone-stale' })])
+      .mockResolvedValueOnce([
+        ...first.slice(1),
+        project({ id: 'later', coverThumbUrl: '/api/files/9/thumb' }),
+      ])
+    const { store } = setup({}, list)
+    await store.start()
+    await store.loadMore()
+
+    await store.refreshInPlace()
+
+    const later = store.items().find((row) => row.id === 'later')
+    expect(later?.coverThumbUrl).toBe('/api/files/9/thumb')
+    expect(ids(store.items())).toContain('gone-stale')
+  })
+
+  it('drops an answer that lands after the filter changed', async () => {
+    const late = deferred<ProjectDto[]>()
+    const list = vi
+      .fn()
+      .mockResolvedValueOnce([project({ id: 'a' })])
+      .mockReturnValueOnce(late.promise)
+      .mockResolvedValueOnce([project({ id: 'clip' })])
+    const { store } = setup({}, list)
+    await store.start()
+
+    const refresh = store.refreshInPlace()
+    store.setSearch('clip')
+    await waitForIdle()
+    late.resolve([project({ id: 'stale' })])
+    await refresh
+
+    expect(ids(store.items())).toEqual(['clip'])
+  })
+
+  it('leaves the list as it was when the refresh fails', async () => {
+    const list = vi
+      .fn()
+      .mockResolvedValueOnce([project({ id: 'a' })])
+      .mockRejectedValueOnce(new Error('offline'))
+    const { store } = setup({}, list)
+    await store.start()
+
+    await store.refreshInPlace()
+
+    expect(ids(store.items())).toEqual(['a'])
+    expect(store.loadFailed()).toBe(false)
+  })
+})
+
+/** Lets every already-resolved promise run its continuation. */
+const waitForIdle = () => new Promise((resolve) => setTimeout(resolve, 0))

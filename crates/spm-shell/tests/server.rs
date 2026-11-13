@@ -417,7 +417,7 @@ async fn every_response_carries_the_hardening_headers_and_none_carry_cors() {
         "connect-src 'self' ipc: http://ipc.localhost",
         "object-src 'none'",
         "frame-ancestors 'none'",
-        "base-uri 'none'",
+        "base-uri 'self'",
     ] {
         assert!(csp.contains(directive), "{directive} in {csp}");
     }

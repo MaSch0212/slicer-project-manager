@@ -43,6 +43,12 @@
    * and the shadowed one 2.5:1, on this one 10.4:1 and 5.9:1 (the e2e viewer spec asserts both).
    */
   --color-stage: #1c1f23;
+  /*
+   * What the server draws its thumbnails on (`BACKGROUND` in spm-core's previews/raster.rs), so a
+   * card wider than its picture is letterboxed in the picture's own colour rather than in a band of
+   * a slightly different dark. Change the two together.
+   */
+  --color-thumb: #1f232a;
 
   /* Text */
   --color-fg: light-dark(#111214, #e7e7ea);

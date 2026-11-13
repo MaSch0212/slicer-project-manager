@@ -44,11 +44,25 @@ export type PendingLaunch = { file: FileDto; mode: SlicerLaunchMode; chosen: Sli
 /** What was handed over: "Handed X to Y", and never that anything opened. */
 export type Handed = { launch: SlicerLaunchDto; fileName: string }
 
-/** The words for "Handed {file} to {slicer} ({install})". */
+/**
+ * The install's own label already starts with the product's name for most of them ("UltiMaker
+ * Cura 5.13.0", "Bambu Studio"): then it alone is the name, and "Bambu Studio (Bambu Studio)" was
+ * the same words twice. Where it does not ("AnycubicSlicerNext 2.0.0.3"), both are said.
+ */
+export function launchedSlicerName(slicerId: SlicerId, installLabel: string): string {
+  const product = slicerDisplayName(slicerId)
+  const squash = (value: string) => value.toLocaleLowerCase().replace(/\s+/g, '')
+  if (installLabel === '' || squash(installLabel).startsWith(squash(product))) {
+    return installLabel || product
+  }
+  return `${product} (${installLabel})`
+}
+
+/** The words for "Handed {file} to {slicer}". */
 export function handedMessage(handed: Handed): string {
   return t('projects.handedTo', {
     file: handed.fileName,
-    slicer: `${slicerDisplayName(handed.launch.slicerId)} (${handed.launch.installLabel})`,
+    slicer: launchedSlicerName(handed.launch.slicerId, handed.launch.installLabel),
   })
 }
 
@@ -156,6 +170,15 @@ export function createSlicerLaunch(
     dismissError: () => setError(null),
     busy,
     load,
+    /**
+     * The product a launch of this file would go to right now, by the same rule the shell
+     * applies, so a button can say "Open x in PrusaSlicer" rather than a bare verb. Null when
+     * nothing would be chosen (no pick, no default): the shell then refuses and says why.
+     */
+    targetName(file: FileDto, mode: SlicerLaunchMode): string | null {
+      const id = resolveLaunchSlicer(mode, file.slicer, chosen(), config()?.defaultSlicerId ?? null)
+      return id === null ? null : slicerDisplayName(id)
+    },
     /**
      * A launch the user asked for: held back once for Cura, and only once. The warning is a notice
      * with a way past it and not a gate (see `core/cura-hazard.ts`).

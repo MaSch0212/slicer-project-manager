@@ -55,10 +55,13 @@ pub enum Ui {
 /// `connect-src` names Tauri's IPC endpoints besides `'self'`: on Windows `invoke` is a `fetch` to
 /// `http://ipc.localhost`, and a policy that forbids it would fall back to a slower path on every
 /// call. Styles are `'unsafe-inline'` because the UI sets style attributes; scripts are not.
+/// `base-uri 'self'` rather than `'none'`: the page's own `<base href="/">` was being refused on
+/// every load, an error in the console of every window for no protection — a base on the app's own
+/// origin is all it allows.
 pub const CONTENT_SECURITY_POLICY: &str = "default-src 'self'; script-src 'self'; \
     style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; \
     connect-src 'self' ipc: http://ipc.localhost; worker-src 'self' blob:; object-src 'none'; \
-    base-uri 'none'; form-action 'self'; frame-ancestors 'none'";
+    base-uri 'self'; form-action 'self'; frame-ancestors 'none'";
 
 struct ServerContext {
     shell: Arc<Shell>,

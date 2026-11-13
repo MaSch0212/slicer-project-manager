@@ -154,11 +154,17 @@ async function open(caps: Capabilities = DESKTOP) {
 
 const ready = async () => {
   await waitFor(() => expect(slicers.get).toHaveBeenCalled())
-  await screen.findByRole('button', { name: `${en.projects.newSlicerProject} benchy.stl` })
+  await screen.findByRole('button', { name: NEW('benchy.stl') })
 }
-const press = (name: string) => fireEvent.click(screen.getByRole('button', { name }))
+const press = (name: string | RegExp) => fireEvent.click(screen.getByRole('button', { name }))
 const names = () =>
   screen.getAllByRole('button').map((button) => button.getAttribute('aria-label') ?? '')
+const escape = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+/** "Start a new … project from x", whichever slicer the label names right now. */
+const NEW = (file: string) => new RegExp(`^Start a new (.+ )?project from ${escape(file)}$`)
+/** "Open x in …", whichever slicer the label names right now. */
+const OPEN = (file: string) => new RegExp(`^Open ${escape(file)} in `)
+const hasButton = (pattern: RegExp) => names().some((name) => pattern.test(name))
 const text = () => document.body.textContent?.replace(/\s+/g, ' ') ?? ''
 
 beforeEach(async () => {
@@ -186,28 +192,69 @@ describe('handing a file to a slicer', () => {
     await open()
     await ready()
 
-    expect(names()).toContain(`${en.projects.openInSlicer} bracket.3mf`)
-    expect(names()).not.toContain(`${en.projects.openInSlicer} benchy.stl`)
-    expect(names()).toContain(`${en.projects.newSlicerProject} bracket.3mf`)
-    expect(names()).toContain(`${en.projects.newSlicerProject} benchy.stl`)
+    expect(hasButton(OPEN('bracket.3mf'))).toBe(true)
+    expect(hasButton(OPEN('benchy.stl'))).toBe(false)
+    expect(hasButton(NEW('bracket.3mf'))).toBe(true)
+    expect(hasButton(NEW('benchy.stl'))).toBe(true)
   })
 
   it('renders no launch control at all where the shell cannot launch one', async () => {
     await open(BROWSER)
 
-    expect(names()).not.toContain(`${en.projects.newSlicerProject} benchy.stl`)
-    expect(names()).not.toContain(`${en.projects.openInSlicer} bracket.3mf`)
+    expect(hasButton(NEW('benchy.stl'))).toBe(false)
+    expect(hasButton(OPEN('bracket.3mf'))).toBe(false)
     expect(screen.queryByLabelText(en.projects.slicerChoice)).toBeNull()
     // And nothing asked the shell anything.
     expect(slicers.get).not.toHaveBeenCalled()
   })
 
-  it('shows the unfinished-session card beside the launch controls', async () => {
+  it('names the file and the slicer each launch would go to', async () => {
+    await open()
+    await ready()
+
+    // The file names no slicer of its own: the default. A Cura project opens in Cura.
+    expect(names()).toContain('Start a new OrcaSlicer project from benchy.stl')
+    expect(names()).toContain('Open bracket.3mf in UltiMaker Cura')
+    expect(names()).toContain('Start a new OrcaSlicer project from bracket.3mf')
+  })
+
+  it('shows the unfinished-session card beside the launch controls once it has something', async () => {
+    slicers.sessions.mockResolvedValue([
+      {
+        launchId: 'launch-1',
+        projectId: 'p1',
+        fileId: 'f1',
+        fileName: 'bracket.3mf',
+        slicerId: 'orca',
+        startedAt: 1_756_000_000_000,
+        processAlive: false,
+        fileState: 'changed',
+        isOrphan: false,
+      },
+    ])
     await open()
     await ready()
 
     await screen.findByRole('heading', { name: en.slicerSessions.title })
     expect(slicers.sessions).toHaveBeenCalled()
+  })
+
+  it('leaves the session card out while no slicer has anything of this project', async () => {
+    await open()
+    await ready()
+
+    await waitFor(() => expect(slicers.sessions).toHaveBeenCalled())
+    expect(screen.queryByRole('heading', { name: en.slicerSessions.title })).toBeNull()
+  })
+
+  it('asks for the sessions again after a launch, which is when one appears', async () => {
+    await open()
+    await ready()
+    await waitFor(() => expect(slicers.sessions).toHaveBeenCalledTimes(1))
+
+    press(NEW('benchy.stl'))
+
+    await waitFor(() => expect(slicers.sessions).toHaveBeenCalledTimes(2))
   })
 
   it('shows no session card at all where the shell cannot launch anything', async () => {
@@ -223,7 +270,7 @@ describe('handing a file to a slicer', () => {
     await open()
     await ready()
 
-    press(`${en.projects.newSlicerProject} benchy.stl`)
+    press(NEW('benchy.stl'))
 
     await waitFor(() =>
       expect(slicers.open).toHaveBeenCalledWith('f1', 'p1', { mode: 'new-project' }),
@@ -239,7 +286,7 @@ describe('handing a file to a slicer', () => {
     await ready()
     fireEvent.change(screen.getByLabelText(en.projects.slicerChoice), { target: { value: 'cura' } })
     // Cura is warned about first, and this test is about what is sent after.
-    press(`${en.projects.openInSlicer} bracket.3mf`)
+    press(OPEN('bracket.3mf'))
     press(en.projects.curaHazardContinue)
 
     await waitFor(() =>
@@ -264,9 +311,9 @@ describe('handing a file to a slicer', () => {
     await open()
     await ready()
 
-    press(`${en.projects.newSlicerProject} benchy.stl`)
+    press(NEW('benchy.stl'))
 
-    await screen.findByText('Handed benchy.stl to OrcaSlicer (OrcaSlicer)')
+    await screen.findByText('Handed benchy.stl to OrcaSlicer')
     expect(text()).toContain('loading geometry data only')
     // Constraint 11, asserted as an absence because that is what the constraint is.
     expect(text().toLowerCase()).not.toContain('opened in')
@@ -286,7 +333,7 @@ describe('handing a file to a slicer', () => {
     await open()
     await ready()
 
-    press(`${en.projects.newSlicerProject} benchy.stl`)
+    press(NEW('benchy.stl'))
 
     await waitFor(() => expect(text()).toContain('stripping it left slicer configuration behind'))
     expect(text()).not.toContain(en.errors.generic)
@@ -298,7 +345,7 @@ describe('handing a file to a slicer', () => {
 
     // Cura is what the file itself names, so an as-is launch with no explicit choice is a Cura
     // launch, which the page has to work out for itself, before the call.
-    press(`${en.projects.openInSlicer} bracket.3mf`)
+    press(OPEN('bracket.3mf'))
 
     await screen.findByText(en.projects.curaHazardTitle)
     expect(slicers.open).not.toHaveBeenCalled()
@@ -312,7 +359,7 @@ describe('handing a file to a slicer', () => {
   it('lets the user back out of the warning, and launches nothing', async () => {
     await open()
     await ready()
-    press(`${en.projects.openInSlicer} bracket.3mf`)
+    press(OPEN('bracket.3mf'))
     await screen.findByText(en.projects.curaHazardTitle)
 
     press(en.common.cancel)
@@ -325,18 +372,18 @@ describe('handing a file to a slicer', () => {
     await open()
     await ready()
 
-    press(`${en.projects.openInSlicer} bracket.3mf`)
+    press(OPEN('bracket.3mf'))
     press(en.projects.curaHazardContinue)
     await waitFor(() => expect(slicers.open).toHaveBeenCalledTimes(1))
     // Not ticked, so the next Cura launch is held back again.
-    press(`${en.projects.openInSlicer} bracket.3mf`)
+    press(OPEN('bracket.3mf'))
     await screen.findByText(en.projects.curaHazardTitle)
     expect(slicers.open).toHaveBeenCalledTimes(1)
 
     fireEvent.click(screen.getByRole('checkbox', { name: en.projects.curaHazardDontShow }))
     press(en.projects.curaHazardContinue)
     await waitFor(() => expect(slicers.open).toHaveBeenCalledTimes(2))
-    press(`${en.projects.openInSlicer} bracket.3mf`)
+    press(OPEN('bracket.3mf'))
 
     await waitFor(() => expect(slicers.open).toHaveBeenCalledTimes(3))
     expect(screen.queryByText(en.projects.curaHazardTitle)).toBeNull()
@@ -350,7 +397,7 @@ describe('handing a file to a slicer', () => {
     // path handed it the file.
     fireEvent.change(screen.getByLabelText(en.projects.slicerChoice), { target: { value: 'cura' } })
 
-    press(`${en.projects.newSlicerProject} benchy.stl`)
+    press(NEW('benchy.stl'))
 
     await screen.findByText(en.projects.curaHazardTitle)
     expect(slicers.open).not.toHaveBeenCalled()
@@ -370,7 +417,7 @@ describe('handing a file to a slicer', () => {
     await ready()
     const picker = screen.getByLabelText(en.projects.slicerChoice)
     fireEvent.change(picker, { target: { value: 'cura' } })
-    press(`${en.projects.newSlicerProject} benchy.stl`)
+    press(NEW('benchy.stl'))
     await screen.findByText(en.projects.curaHazardTitle)
 
     // The picker is live behind the warning. "Hand it to Cura anyway" has to mean Cura.
@@ -392,7 +439,7 @@ describe('handing a file to a slicer', () => {
     // The same Cura-authored file down the other path: that one defaults to the configured default,
     // which is Orca, so there is nothing to warn about. This is the new-project path of the user's
     // rule: a copy of the .3mf with its slicer configuration stripped, handed to the default.
-    press(`${en.projects.newSlicerProject} bracket.3mf`)
+    press(NEW('bracket.3mf'))
 
     await waitFor(() =>
       expect(slicers.open).toHaveBeenCalledWith('f2', 'p1', { mode: 'new-project' }),
@@ -407,6 +454,6 @@ describe('handing a file to a slicer', () => {
     await waitFor(() => expect(slicers.get).toHaveBeenCalled())
     // Without the facts the shell reads the page cannot say which product a launch would use, and
     // so cannot warn before the call: it offers nothing instead of guessing.
-    expect(names()).not.toContain(`${en.projects.newSlicerProject} benchy.stl`)
+    expect(hasButton(NEW('benchy.stl'))).toBe(false)
   })
 })

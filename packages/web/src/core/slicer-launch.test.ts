@@ -7,6 +7,7 @@ import { setLanguage } from './i18n'
 import {
   createSlicerLaunch,
   handedMessage,
+  launchedSlicerName,
   launchErrorMessage,
   resolveLaunchSlicer,
 } from './slicer-launch'
@@ -60,6 +61,25 @@ const enabled = () => true
 beforeEach(async () => {
   vi.spyOn(console, 'error').mockImplementation(() => {})
   await setLanguage('en')
+})
+
+describe('launchedSlicerName', () => {
+  it('says an install once when its label already names the product', () => {
+    expect(launchedSlicerName('bambu', 'Bambu Studio')).toBe('Bambu Studio')
+    expect(launchedSlicerName('cura', 'UltiMaker Cura 5.13.0')).toBe('UltiMaker Cura 5.13.0')
+    expect(launchedSlicerName('prusaslicer', 'PrusaSlicer')).toBe('PrusaSlicer')
+  })
+  it('ignores spacing and case when comparing', () => {
+    expect(launchedSlicerName('anycubic', 'AnycubicSlicerNext 2.0.0.3')).toBe(
+      'AnycubicSlicerNext 2.0.0.3',
+    )
+  })
+  it('says both where the label is something else, such as a hand-added build', () => {
+    expect(launchedSlicerName('orca', 'Portable nightly')).toBe('OrcaSlicer (Portable nightly)')
+  })
+  it('falls back to the product when the install has no label', () => {
+    expect(launchedSlicerName('orca', '')).toBe('OrcaSlicer')
+  })
 })
 
 describe('resolveLaunchSlicer', () => {
@@ -127,7 +147,7 @@ describe('createSlicerLaunch', () => {
       mode: 'new-project',
       slicerId: 'bambu',
     })
-    expect(handedMessage(launch.launched()!)).toBe('Handed benchy.stl to OrcaSlicer (OrcaSlicer)')
+    expect(handedMessage(launch.launched()!)).toBe('Handed benchy.stl to OrcaSlicer')
   })
 
   it('holds a Cura launch back until the user answers, and remembers "do not show again"', async () => {

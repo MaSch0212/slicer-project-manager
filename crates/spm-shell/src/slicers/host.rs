@@ -144,6 +144,20 @@ impl SlicersHost {
         )
     }
 
+    /// Detection on the very first start: when there is no `slicers.json` at all, nobody has ever
+    /// configured anything, and a settings page saying "not found on this computer" for slicers that
+    /// are installed was simply wrong until someone thought to press the search button. Runs only
+    /// then: once the file exists (even empty, after the user removed every install) the user's
+    /// configuration is theirs and only their own search changes it.
+    ///
+    /// `Ok(true)` when it scanned.
+    pub fn scan_on_first_start(&self) -> Result<bool, AppError> {
+        if !self.detection_supported() || self.options.config_file.exists() {
+            return Ok(false);
+        }
+        self.scan().map(|_| true)
+    }
+
     /// One detection run, with its failures given an identity the page can act on.
     ///
     /// A timed-out PowerShell, a `powershell.exe` that is not where it should be and an output

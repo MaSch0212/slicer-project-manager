@@ -251,6 +251,20 @@ export function ProjectDetail(props: {
    * what the shell accepts on that path: for a mesh it would launch the file in place and let the
    * slicer propose its project over the top of it.
    */
+  /** "Open benchy.3mf in Bambu Studio": which file, and where it is going. */
+  const openLabel = (file: FileDto) => {
+    const slicer = slicerLaunch.targetName(file, 'as-is')
+    return slicer
+      ? t('projects.openInSlicer', { file: file.name, slicer })
+      : t('projects.openInAnySlicer', { file: file.name })
+  }
+  const newProjectLabel = (file: FileDto) => {
+    const slicer = slicerLaunch.targetName(file, 'new-project')
+    return slicer
+      ? t('projects.newSlicerProjectIn', { file: file.name, slicer })
+      : t('projects.newSlicerProject', { file: file.name })
+  }
+
   const fileActions = (file: FileDto, compact: boolean) => (
     <Show
       when={compact}
@@ -265,7 +279,7 @@ export function ProjectDetail(props: {
               {t('projects.openInSlicerShort')}
             </Button>
           </Show>
-          <Show when={slicerLaunch.available()}>
+          <Show when={slicerLaunch.available() && file.kind !== 'other'}>
             <Button
               icon={FilePlus}
               disabled={slicerLaunch.busy()}
@@ -290,19 +304,22 @@ export function ProjectDetail(props: {
         <Show when={file.kind === 'slicer_project'}>
           <IconButton
             icon={Printer}
-            label={`${t('projects.openInSlicer')} ${file.name}`}
+            label={openLabel(file)}
             size="sm"
             disabled={slicerLaunch.busy()}
             onClick={() => void slicerLaunch.request(file, 'as-is')}
           />
         </Show>
-        <IconButton
-          icon={FilePlus}
-          label={`${t('projects.newSlicerProject')} ${file.name}`}
-          size="sm"
-          disabled={slicerLaunch.busy()}
-          onClick={() => void slicerLaunch.request(file, 'new-project')}
-        />
+        {/* A text file or a picture is nothing a slicer can start a project from. */}
+        <Show when={file.kind !== 'other'}>
+          <IconButton
+            icon={FilePlus}
+            label={newProjectLabel(file)}
+            size="sm"
+            disabled={slicerLaunch.busy()}
+            onClick={() => void slicerLaunch.request(file, 'new-project')}
+          />
+        </Show>
       </Show>
       <IconLinkButton
         href={file.rawUrl}
@@ -331,7 +348,7 @@ export function ProjectDetail(props: {
 
   const listClass = () =>
     viewMode() === 'grid'
-      ? 'm-0 grid list-none grid-cols-1 gap-4 p-0 @md:grid-cols-2 @3xl:grid-cols-3 @5xl:grid-cols-4'
+      ? 'm-0 grid list-none grid-cols-[repeat(auto-fill,minmax(10rem,1fr))] gap-3 p-0'
       : 'm-0 flex list-none flex-col gap-2 p-0'
 
   // Every file opens its preview from its card, the ones with no 3D view included: the popup is
@@ -720,7 +737,12 @@ export function ProjectDetail(props: {
                     <Show when={slicerLaunch.available()}>
                       <SlicerSessionsCard
                         projectId={props.id}
-                        onImported={() => void detail.load()}
+                        hideWhenEmpty
+                        reloadOn={slicerLaunch.launched}
+                        onImported={() => {
+                          void detail.load()
+                          props.onChanged?.()
+                        }}
                       />
                     </Show>
 
