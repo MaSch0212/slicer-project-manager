@@ -120,7 +120,8 @@ test.describe('below the breakpoint', () => {
     await expectHeading(page, 'Projects')
     await page.getByRole('button', { name: 'Open the navigation' }).click()
     const links = await drawer(page).getByRole('link').allTextContents()
-    expect(links).toEqual(['Projects', 'Settings', 'Users'])
+    expect(links).toEqual(['Settings', 'Users'])
+    await expect(drawer(page).getByRole('button', { name: /^All projects/ })).toBeVisible()
     await expect(drawer(page).getByRole('button', { name: 'Sign out' })).toBeVisible()
     await page.keyboard.press('Escape')
     await expect(drawer(page)).toBeHidden()
@@ -164,8 +165,9 @@ test('the navigation lists the entries of an administrator, in order', async ({ 
   await open(page, state.server, '/projects')
   await expectHeading(page, 'Projects')
   const nav = sidebarNav(page)
+  // The views first, "All projects" at their head; the other places at the foot.
   expect(await nav.getByRole('listitem').allTextContents()).toEqual([
-    'Projects',
+    'All projects',
     'Settings',
     'Users',
     'Sign out',

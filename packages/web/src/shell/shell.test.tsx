@@ -302,7 +302,7 @@ describe('Shell collapse', () => {
   it('draws the collapsed sidebar the setting describes and keeps every name', async () => {
     await setup({ navCollapsed: true })
     // The labels are visually hidden, never removed: an icon with no name is the failure to avoid.
-    expect(within(sidebar()).getByRole('link', { name: 'Projects' })).toBeTruthy()
+    expect(within(sidebar()).getByRole('button', { name: 'All projects' })).toBeTruthy()
   })
 
   it('offers no theme or collapse control of its own under the navigation', async () => {
@@ -329,7 +329,7 @@ describe('Shell drawer', () => {
   it('offers the same entries in the drawer as in the sidebar', async () => {
     await setup()
     const fromSidebar = labels(sidebar())
-    expect(fromSidebar).toEqual(['Projects', 'Find models', 'Settings', 'Users', 'Sign out'])
+    expect(fromSidebar).toEqual(['All projects', 'Find models', 'Settings', 'Users', 'Sign out'])
     open()
     expect(labels(await drawerNav())).toEqual(fromSidebar)
   })
@@ -407,13 +407,53 @@ describe('Shell saved views', () => {
     expect(viewButton('Everything').getAttribute('aria-current')).toBeNull()
   })
 
-  it('marks none at all when nothing was picked and the list matches none', async () => {
+  it('marks no saved view when nothing was picked and the list matches none', async () => {
     await setup({ views: VIEWS })
 
     await settings.patch({ sort: 'createdAt' })
 
     expect(viewButton('Everything').getAttribute('aria-current')).toBeNull()
     expect(viewButton('Old prints').getAttribute('aria-current')).toBeNull()
+  })
+
+  it('marks "All projects" when no saved view is current, and clears the filters from it', async () => {
+    await setup({ views: VIEWS })
+    await settings.patch({ sort: 'createdAt', filterTags: ['petg'] })
+    // No view matches: the list is in "All projects", with a filter it does not have.
+    expect(viewButton('All projects').getAttribute('aria-current')).toBe('page')
+    expect(viewButton('All projects').textContent).toContain('Changed since it was saved')
+    vi.mocked(api.settings.put).mockClear()
+
+    fireEvent.click(viewButton('All projects'))
+
+    // The filters go; the sort and the layout are how the list is drawn, and stay.
+    await waitFor(() =>
+      expect(api.settings.put).toHaveBeenCalledWith({ filterTags: [], includeArchived: false }),
+    )
+    expect(viewButton('All projects').getAttribute('aria-current')).toBe('page')
+    expect(viewButton('Everything').getAttribute('aria-current')).toBeNull()
+  })
+
+  it('marks "All projects" over a saved view with the same filters once it is picked', async () => {
+    await setup({ views: VIEWS })
+    expect(viewButton('Everything').getAttribute('aria-current')).toBe('page')
+
+    fireEvent.click(viewButton('All projects'))
+
+    await waitFor(() =>
+      expect(viewButton('All projects').getAttribute('aria-current')).toBe('page'),
+    )
+    expect(viewButton('Everything').getAttribute('aria-current')).toBeNull()
+  })
+
+  it('marks no view at all on another page: that page is where you are', async () => {
+    await setup({ views: VIEWS, path: '/settings', ready: 'settings page' })
+
+    expect(viewButton('All projects').getAttribute('aria-current')).toBeNull()
+    expect(viewButton('Everything').getAttribute('aria-current')).toBeNull()
+    expect(
+      within(sidebar()).getByRole('link', { name: 'Settings' }).getAttribute('aria-current'),
+    ).toBe('page')
   })
 
   it('deletes one from its own menu, sending the whole shorter list', async () => {

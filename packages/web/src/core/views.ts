@@ -160,6 +160,12 @@ export function duplicateView(
   return next
 }
 
+/**
+ * The id of the view every list starts in: all projects, no filters. Built in rather than saved —
+ * it cannot be renamed or deleted — and never a saved view's id, which are all `view-<n>`.
+ */
+export const ALL_PROJECTS = 'all'
+
 /** The view the list belongs to, and whether it has been changed since it was picked. */
 export type CurrentView = { view: ProjectViewDto; modified: boolean }
 
@@ -180,6 +186,8 @@ export function currentView(
   shape: ViewShape,
   picked: string | null,
 ): CurrentView | null {
+  // "All projects" was picked: no saved view is current, whatever the filters match.
+  if (picked === ALL_PROJECTS) return null
   const chosen = picked === null ? undefined : views.find((view) => view.id === picked)
   if (chosen) return { view: chosen, modified: !matchesView(shape, chosen) }
   const matching = activeView(views, shape)

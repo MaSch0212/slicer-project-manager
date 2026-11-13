@@ -61,7 +61,7 @@ describe('navEntriesFor', () => {
     expect(ids(SERVED, anon)).toEqual([])
   })
   it('offers the navigation immediately where the shell requires no authentication', () => {
-    expect(ids(LOCAL, anon)).toEqual(['projects', 'settings'])
+    expect(ids(LOCAL, anon)).toEqual(['settings'])
   })
   it('offers the model browser only where the shell can embed one', () => {
     expect(ids(SERVED, user)).not.toContain('browse')
@@ -75,9 +75,9 @@ describe('navEntriesFor', () => {
   it('leaves Settings to the title bar where the window draws one', () => {
     const under = (settingsInTitleBar: boolean) =>
       navEntriesFor(LOCAL, anon, { settingsInTitleBar }).map((entry) => entry.id)
-    expect(under(true)).toEqual(['projects'])
+    expect(under(true)).toEqual([])
     // A browser has no title bar of the app's own: the sidebar is the way there.
-    expect(under(false)).toEqual(['projects', 'settings'])
+    expect(under(false)).toEqual(['settings'])
   })
   it('offers sign-out only where there is a session to end', () => {
     expect(ids(LOCAL, user)).not.toContain('sign-out')

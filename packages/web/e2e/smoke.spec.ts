@@ -39,18 +39,26 @@ test('the navigation reaches settings and, for an admin, the user list', async (
   await signInThroughForm(page, state.server, ADMIN_USERNAME, ADMIN_PASSWORD)
   await expectHeading(page, 'Projects')
   const nav = sidebarNav(page)
-  await expect(nav.getByRole('link', { name: 'Projects' })).toHaveAttribute('aria-current', 'page')
+  // The list is reached through its views: "All projects" is where a new session lands.
+  await expect(nav.getByRole('button', { name: /^All projects/ })).toHaveAttribute(
+    'aria-current',
+    'page',
+  )
 
   await nav.getByRole('link', { name: 'Settings' }).click()
   await expectHeading(page, 'Settings')
   await expect(nav.getByRole('link', { name: 'Settings' })).toHaveAttribute('aria-current', 'page')
+  // Only one row is where you are: off the list, no view is marked.
+  await expect(nav.getByRole('button', { name: /^All projects/ })).not.toHaveAttribute(
+    'aria-current',
+  )
 
   await nav.getByRole('link', { name: 'Users' }).click()
   await expectHeading(page, 'Users')
   // The user's own row: the username is what the row is about.
   await expect(page.locator('tr[data-username="admin"]')).toBeVisible()
 
-  await nav.getByRole('link', { name: 'Projects' }).click()
+  await nav.getByRole('button', { name: /^All projects/ }).click()
   await expectHeading(page, 'Projects')
 })
 

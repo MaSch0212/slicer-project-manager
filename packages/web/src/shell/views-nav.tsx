@@ -4,8 +4,10 @@ import { VIEW_NAME_MAX, VIEWS_MAX, type ProjectViewDto } from '../api/generated'
 import { t } from '../core/i18n'
 import { settings } from '../core/stores'
 import {
+  allProjectsFiltered,
   current,
   forgetPicked,
+  openAllProjects,
   openView,
   saveViews as save,
   setEditingViews,
@@ -29,6 +31,7 @@ import {
   ChevronDown,
   ChevronUp,
   Copy,
+  Layers,
   Dialog,
   FormField,
   IconButton,
@@ -63,10 +66,18 @@ export function ViewsNav(props: { collapsed?: boolean }) {
   const navigate = useNavigate()
   const location = useLocation()
   const views = () => settings.settings().views
+  // A view is where you are only while the list is on screen: on another page, such as Find
+  // models, that page's entry is the one marked, and only it.
+  const onList = () => location.pathname.startsWith('/projects')
+  const isCurrent = (id: string) => onList() && current()?.view.id === id
+
+  function toList(): void {
+    // Only from elsewhere: on the list already, a project open beside it stays open.
+    if (!onList()) navigate('/projects')
+  }
 
   function apply(view: ProjectViewDto): void {
-    // Only from elsewhere: on the list already, a project open beside it stays open.
-    if (!location.pathname.startsWith('/projects')) navigate('/projects')
+    toList()
     openView(view)
   }
 
@@ -123,13 +134,25 @@ export function ViewsNav(props: { collapsed?: boolean }) {
         {t('views.title')}
       </NavHeading>
       <NavList>
+        <NavViewItem
+          label={t('views.allProjects')}
+          icon={Layers}
+          active={onList() && current() === null}
+          modified={onList() && current() === null && allProjectsFiltered()}
+          modifiedLabel={t('views.modified')}
+          collapsed={props.collapsed}
+          onClick={() => {
+            toList()
+            openAllProjects()
+          }}
+        />
         <For each={views()}>
           {(view) => (
             <NavViewItem
               label={view.name}
               icon={viewIcon(view.icon)}
-              active={current()?.view.id === view.id}
-              modified={current()?.view.id === view.id && current()?.modified === true}
+              active={isCurrent(view.id)}
+              modified={isCurrent(view.id) && current()?.modified === true}
               modifiedLabel={t('views.modified')}
               collapsed={props.collapsed}
               onClick={() => apply(view)}

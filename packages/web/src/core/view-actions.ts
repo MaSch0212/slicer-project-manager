@@ -4,7 +4,7 @@ import { errorMessage } from './i18n/errors'
 import { notify } from './notify'
 import { settings } from './stores'
 import { pickedViewId, pickView } from './view-selection'
-import { currentView, reshapeView, shapeOf, type CurrentView } from './views'
+import { ALL_PROJECTS, currentView, reshapeView, shapeOf, type CurrentView } from './views'
 
 /**
  * What the sidebar, the app menu and the projects toolbar all do with saved views, in one place,
@@ -63,6 +63,29 @@ export function openView(view: ProjectViewDto): void {
   applyShapeOf(view)
 }
 
+/**
+ * Whether the list holds filters "All projects" does not have: a tag, or the archived ones. Sort
+ * and layout are how the list is drawn, not what is in it, so they do not count.
+ */
+export function allProjectsFiltered(): boolean {
+  const now = settings.settings()
+  return now.filterTags.length > 0 || now.includeArchived
+}
+
+/**
+ * Opens "All projects": every project, the archived ones aside, in the sort and layout the list
+ * already has. Like a saved view, picking it while the list is already in it keeps what was
+ * changed since; the filter pills clear that.
+ */
+export function openAllProjects(): void {
+  if (pickedViewId() === ALL_PROJECTS && current() === null) return
+  pickView(ALL_PROJECTS)
+  if (!allProjectsFiltered()) return
+  void settings
+    .patch({ filterTags: [], includeArchived: false })
+    .catch((error: unknown) => notify.error(errorMessage(error)))
+}
+
 /** Throws away the change to the current view and puts it back as it was saved. */
 export function resetCurrentView(): void {
   const now = current()
@@ -76,7 +99,7 @@ export function updateCurrentView(): Promise<boolean> {
   return saveViews(reshapeView(savedViews(), now.view.id, shapeOf(settings.settings())))
 }
 
-/** A deleted view cannot stay the picked one: the list falls back to matching. */
+/** A deleted view cannot stay the picked one: the list is back in "All projects". */
 export function forgetPicked(id: string): void {
-  if (pickedViewId() === id) pickView(null)
+  if (pickedViewId() === id) pickView(ALL_PROJECTS)
 }

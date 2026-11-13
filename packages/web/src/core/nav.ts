@@ -1,6 +1,6 @@
 import { createMemo, createRoot } from 'solid-js'
 import type { Capabilities } from '../api/generated'
-import { Layers, LogOut, Search, Settings, Users, type IconComponent } from '../ui/icons'
+import { LogOut, Search, Settings, Users, type IconComponent } from '../ui/icons'
 import { isDesktop } from './desktop'
 import { t, type TranslationKey } from './i18n'
 import { auth, capabilities } from './stores'
@@ -21,7 +21,9 @@ export type NavEntry = {
  * test can run every combination. Every gate is a capability or the session, never "which shell
  * is this" (parent spec 2.4).
  *
- * Import and Change-folder are not here: the settings page offers both.
+ * Import and Change-folder are not here: the settings page offers both. Nor is the project list:
+ * it is reached through the views above these entries, "All projects" first, so that one row and
+ * not two is marked as where you are.
  *
  * `settingsInTitleBar` drops the Settings entry where the window's own title bar already has a
  * button for it and the app menu an entry: a third way to the same page was just noise. It is
@@ -36,9 +38,7 @@ export function navEntriesFor(
   // The same expression as the auth guard, for the same reason: with nothing to sign in *to*,
   // the navigation must not wait for a user.
   if (caps.requiresAuth && !session.isAuthenticated) return []
-  const entries: NavEntry[] = [
-    { id: 'projects', labelKey: 'projects.title', icon: Layers, route: '/projects' },
-  ]
+  const entries: NavEntry[] = []
   if (caps.canBrowseModelSites) {
     entries.push({ id: 'browse', labelKey: 'browse.title', icon: Search, route: '/browse' })
   }

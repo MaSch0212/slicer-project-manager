@@ -53,7 +53,8 @@
     "resetTo": "Reset to {{ name }}",
     "saveChanges": "Save the changes",
     "updateNamed": "Update “{{ name }}”",
-    "saveAsNew": "Save as a new view…"
+    "saveAsNew": "Save as a new view…",
+    "allProjects": "All projects"
   },
   "auth": {
     "username": "Username",

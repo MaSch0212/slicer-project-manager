@@ -125,7 +125,7 @@ test('the page scrolls inside the frame, and the sidebar does not move with it',
   // frame, so the navigation is always in reach.
   expect(scrolled.asideTop).toBeLessThanOrEqual(1)
   expect(scrolled.asideHeight).toBeLessThanOrEqual(scrolled.viewport + 1)
-  await expect(page.getByRole('link', { name: 'Projects' })).toBeInViewport()
+  await expect(page.getByRole('button', { name: /^All projects/ })).toBeInViewport()
   // The toolbar sits above the scroller, not in it: with the list two pages down, search, the
   // filters and the sort are where they were.
   const toolbar = page.getByRole('group', { name: 'Project list' })

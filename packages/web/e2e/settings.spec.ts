@@ -44,7 +44,7 @@ test('the language switch takes effect at once, in both directions, and survives
   await expect(
     page
       .getByRole('navigation', { name: 'Hauptnavigation' })
-      .getByRole('link', { name: 'Projekte' }),
+      .getByRole('button', { name: 'Alle Projekte' }),
   ).toBeVisible()
   expect(await page.evaluate(() => document.documentElement.lang)).toBe('de')
 
@@ -124,7 +124,9 @@ test('collapsing the navigation keeps every name, and survives a reload', async 
   await expect(page.getByRole('link', { name: 'Slicer Project Manager', exact: true })).toHaveCount(
     1,
   )
-  await expect(sidebarNav(page).getByRole('link', { name: 'Projects', exact: true })).toHaveCount(1)
+  await expect(
+    sidebarNav(page).getByRole('button', { name: 'All projects', exact: true }),
+  ).toHaveCount(1)
 
   await page.reload()
   await expect.poll(width).toBeLessThan(expanded / 2)

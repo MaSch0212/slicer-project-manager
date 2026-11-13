@@ -239,22 +239,26 @@ export function Shell(props: RouteSectionProps) {
     navigate('/login')
   }
 
+  // The views — the list in its different shapes — come first; the other places (Find models,
+  // and in a browser Settings, Users and Sign out) sit at the foot of the column.
   const entries = (isCollapsed: boolean) => (
-    <div class="flex flex-col gap-4">
-      <NavList>
-        <For each={navEntries()}>
-          {(entry) => (
-            <NavItem
-              label={navLabel(entry)}
-              icon={entry.icon}
-              href={entry.route ?? undefined}
-              onClick={entry.route === null ? () => void onSignOut() : undefined}
-              collapsed={isCollapsed}
-            />
-          )}
-        </For>
-      </NavList>
+    <div class="flex min-h-full flex-col gap-4">
       <ViewsNav collapsed={isCollapsed} />
+      <div class="mt-auto">
+        <NavList>
+          <For each={navEntries()}>
+            {(entry) => (
+              <NavItem
+                label={navLabel(entry)}
+                icon={entry.icon}
+                href={entry.route ?? undefined}
+                onClick={entry.route === null ? () => void onSignOut() : undefined}
+                collapsed={isCollapsed}
+              />
+            )}
+          </For>
+        </NavList>
+      </div>
     </div>
   )
 

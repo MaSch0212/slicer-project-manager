@@ -53,7 +53,8 @@
     "resetTo": "Auf {{ name }} zurücksetzen",
     "saveChanges": "Änderungen speichern",
     "updateNamed": "„{{ name }}“ aktualisieren",
-    "saveAsNew": "Als neue Ansicht speichern…"
+    "saveAsNew": "Als neue Ansicht speichern…",
+    "allProjects": "Alle Projekte"
   },
   "auth": {
     "username": "Benutzername",
