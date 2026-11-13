@@ -525,6 +525,8 @@ pub struct HarnessOptions {
     pub launch_id: Option<String>,
     pub remote: Option<Arc<dyn RemoteLibrary>>,
     pub spawn_fails: bool,
+    /// Where a remote file is in a synced folder (see `SlicerLauncherOptions::synced_path`).
+    pub synced: Option<(String, PathBuf)>,
 }
 
 pub struct Harness {
@@ -593,6 +595,10 @@ impl Harness {
         // An abandoned new-project copy is removed as soon as its slicer has exited, not ten
         // seconds later: the tests drive the exit themselves.
         launcher_options.copy_settle_ms = 0;
+        if let Some((synced_id, synced_path)) = options.synced.clone() {
+            launcher_options.synced_path =
+                Arc::new(move |file_id| (file_id == synced_id).then(|| synced_path.clone()));
+        }
         let launch_id = options.launch_id.clone();
         let counter = Arc::new(AtomicUsize::new(0));
         launcher_options.new_launch_id = Arc::new(move || match &launch_id {

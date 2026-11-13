@@ -9,6 +9,7 @@ import {
   type DiscardedSessionsDto,
   type FileDto,
   type LibraryStateDto,
+  type LibrarySyncDto,
   type LocalLibraryDto,
   type ModelSiteDto,
   type RemoteLibraryDto,
@@ -87,6 +88,11 @@ export function createDesktopClient(invokeFn: InvokeFn = tauriInvoke) {
       call<RemoteLibraryDto | null>('desktop_library_connect', { url }),
     /** The application menu's "Choose library…": asks which mode, then does what the answer says. */
     chooseLibrary: () => call<void>('desktop_library_choose'),
+    /**
+     * With a server connected: asks (in the operating system's folder dialog) for the folder its
+     * library is synced into, and syncs there from now on. `null` is a cancelled dialog.
+     */
+    chooseSyncFolder: () => call<LibrarySyncDto | null>('desktop_library_sync_choose'),
 
     /**
      * Slicers (subsystem D): which slicers this computer has, handing a file to one, and what

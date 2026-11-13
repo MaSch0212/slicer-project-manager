@@ -26,6 +26,7 @@ pub mod db;
 pub mod dto;
 pub mod error;
 pub mod files;
+pub mod library_sync;
 pub mod log;
 pub mod match_key;
 pub mod previews;

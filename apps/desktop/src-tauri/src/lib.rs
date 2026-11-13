@@ -51,7 +51,9 @@ use spm_shell::browse::registry::SiteRegistry;
 use spm_shell::browse::service::{BrowseServices, BrowseServicesParts};
 use spm_shell::library::{PickerLanguage, PromptTrigger, picker_language};
 use spm_shell::server::{DesktopServer, Ui};
-use spm_shell::shell::{ActiveMode, Shell, ShellOptions, StartOutcome};
+use spm_shell::shell::{
+    ActiveMode, Shell, ShellOptions, StartOutcome, SyncSetup, sync_folder_name,
+};
 use spm_shell::slicers::api::SlicerCommands;
 use spm_shell::slicers::host::ExecutablePicker;
 use spm_shell::slicers::launch::library_key_of;
@@ -121,6 +123,7 @@ pub fn run() {
             commands::desktop_library_pick,
             commands::desktop_library_connect,
             commands::desktop_library_choose,
+            commands::desktop_library_sync_choose,
             commands::desktop_slicers_get,
             commands::desktop_slicers_scan,
             commands::desktop_slicers_add_manual,
@@ -257,6 +260,20 @@ fn setup(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
         }),
     );
     options.language = Arc::new(move || language);
+    // A connected server's library is synced into Documents\Slicer Project Manager\<server>, or
+    // under the data directory when one was named (a test run must never touch the real Documents).
+    let sync_base = match env_value(USER_DATA_ENV) {
+        Some(_) => user_data.join("sync"),
+        None => app
+            .path()
+            .document_dir()
+            .unwrap_or_else(|_| user_data.clone())
+            .join(window::APP_NAME),
+    };
+    options.sync = Some(SyncSetup::new(
+        tauri::async_runtime::handle().inner().clone(),
+        Arc::new(move |origin| sync_base.join(sync_folder_name(origin))),
+    ));
     let shell = Shell::new(options);
 
     let outcome = match shell.start(&env_value) {

@@ -16,6 +16,7 @@ function fakeClient(overrides: Partial<DesktopClient> = {}): DesktopClient {
     pickFolder: vi.fn().mockResolvedValue({ dir: 'C:\\Library' }),
     connectRemote: vi.fn().mockResolvedValue({ origin: 'https://print.example.com' }),
     chooseLibrary: vi.fn().mockResolvedValue(undefined),
+    chooseSyncFolder: vi.fn().mockResolvedValue(null),
     // Not what these tests are about; the slicers have their own suites.
     slicers: {} as DesktopClient['slicers'],
     browse: {} as DesktopClient['browse'],
@@ -138,6 +139,37 @@ describe('the library location card', () => {
     expect(screen.queryByRole('button', { name: 'Choose a folder…' })).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: 'Choose another library…' }))
     await waitFor(() => expect(client.chooseLibrary).toHaveBeenCalledTimes(1))
+  })
+
+  it('names the folder a server is synced into, how it is going, and lets the user move it', async () => {
+    const client = fakeClient({
+      libraryState: vi.fn().mockResolvedValue({
+        mode: 'remote',
+        dir: null,
+        origin: 'https://print.example.com',
+        sync: {
+          dir: 'D:/Sync/print.example.com',
+          phase: 'error',
+          lastSyncedAt: null,
+          lastError: 'the sync folder is empty',
+        },
+      }),
+    })
+    renderCard(client)
+    expect(await screen.findByText('D:/Sync/print.example.com')).toBeTruthy()
+    expect(screen.getByTestId('sync-status').textContent).toBe('Stopped: the sync folder is empty')
+    fireEvent.click(screen.getByRole('button', { name: 'Change sync folder…' }))
+    await waitFor(() => expect(client.chooseSyncFolder).toHaveBeenCalledTimes(1))
+  })
+
+  it('shows no sync rows for a local folder', async () => {
+    const client = fakeClient({
+      libraryState: vi.fn().mockResolvedValue({ mode: 'local', dir: 'D:/Library', origin: null }),
+    })
+    renderCard(client)
+    expect(await screen.findByText('D:/Library')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Change sync folder…' })).toBeNull()
+    expect(screen.queryByTestId('sync-status')).toBeNull()
   })
 
   it('reports a change that failed', async () => {

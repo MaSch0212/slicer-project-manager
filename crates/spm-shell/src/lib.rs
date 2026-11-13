@@ -18,6 +18,7 @@ pub mod diag;
 pub mod gate;
 pub mod json_store;
 pub mod library;
+pub mod library_sync;
 pub mod nav;
 pub mod permissions;
 pub mod remote;

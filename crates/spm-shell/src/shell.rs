@@ -16,13 +16,14 @@ use spm_core::dto::{LocalLibraryDto, RemoteLibraryDto};
 
 use crate::diag;
 use crate::library::{
-    DesktopSession, LibraryEvents, LibraryHost, LibraryHostOptions, MakeRouter, ModeChoice,
-    OpenFailure, PickerLanguage, PromptReason, PromptTrigger, Prompts, StartPreviews, StartupPlan,
-    confirm_remote_options, default_is_directory, default_make_router, default_start_previews,
-    mode_picker_options, plan_startup,
+    DesktopSession, FolderPickerOptions, LibraryEvents, LibraryHost, LibraryHostOptions,
+    MakeRouter, ModeChoice, OpenFailure, PickerLanguage, PromptReason, PromptTrigger, Prompts,
+    StartPreviews, StartupPlan, confirm_remote_options, default_is_directory, default_make_router,
+    default_start_previews, mode_picker_options, plan_startup,
 };
+use crate::library_sync::{POLL_INTERVAL, ProxySyncServer, SyncEngine, SyncStatus};
 use crate::remote::{RemoteHost, is_plaintext_to_another_machine, parse_remote_origin};
-use crate::state::{STATE_FILE_NAME, ShellMode, remember_choice};
+use crate::state::{STATE_FILE_NAME, ShellMode, read_sync_dir, remember_choice, remember_sync_dir};
 use crate::sync::SingleFlight;
 
 /// Where the main webview should go.
@@ -79,6 +80,50 @@ pub enum StartOutcome {
 
 pub type MakeRemote = Arc<dyn Fn(&str) -> Arc<RemoteHost> + Send + Sync>;
 
+/// How a connected server's library is synced into a folder here (see [`crate::library_sync`]).
+#[derive(Clone)]
+pub struct SyncSetup {
+    /// The runtime the proxy's requests run on.
+    pub handle: tokio::runtime::Handle,
+    /// The folder a server's library goes into when none was chosen for it, by origin.
+    pub default_root: Arc<dyn Fn(&str) -> PathBuf + Send + Sync>,
+    pub poll: Duration,
+}
+
+impl SyncSetup {
+    pub fn new(
+        handle: tokio::runtime::Handle,
+        default_root: Arc<dyn Fn(&str) -> PathBuf + Send + Sync>,
+    ) -> SyncSetup {
+        SyncSetup {
+            handle,
+            default_root,
+            poll: POLL_INTERVAL,
+        }
+    }
+}
+
+/// A folder name for a server: its host and port, with nothing a file system minds.
+pub fn sync_folder_name(origin: &str) -> String {
+    let host = origin
+        .split_once("://")
+        .map_or(origin, |(_, rest)| rest)
+        .trim_end_matches('/');
+    let name: String = host
+        .chars()
+        .map(|c| match c {
+            ':' => ' ',
+            '/' | '\\' | '*' | '?' | '"' | '<' | '>' | '|' => '_',
+            c => c,
+        })
+        .collect();
+    if name.trim().is_empty() {
+        "server".to_owned()
+    } else {
+        name
+    }
+}
+
 pub struct ShellOptions {
     pub state_file: PathBuf,
     pub prompts: Arc<dyn Prompts>,
@@ -89,6 +134,9 @@ pub struct ShellOptions {
     pub language: Arc<dyn Fn() -> PickerLanguage + Send + Sync>,
     /// See [`crate::library::LibraryHostOptions::on_released`].
     pub on_released: Arc<dyn Fn(&std::path::Path) + Send + Sync>,
+    /// Syncing a server's library into a folder; `None` leaves a connected server's files on the
+    /// server only (the tests that are not about the sync).
+    pub sync: Option<SyncSetup>,
 }
 
 impl ShellOptions {
@@ -107,6 +155,7 @@ impl ShellOptions {
             make_remote: Arc::new(|origin| Arc::new(RemoteHost::new(origin))),
             language: Arc::new(|| PickerLanguage::En),
             on_released: Arc::new(|_| {}),
+            sync: None,
         }
     }
 }
@@ -128,6 +177,7 @@ impl LibraryEvents for LibraryChanges {
 }
 
 pub struct Shell {
+    me: Weak<Shell>,
     state_file: PathBuf,
     library: Arc<LibraryHost>,
     prompts: Arc<dyn Prompts>,
@@ -138,6 +188,8 @@ pub struct Shell {
     asking: SingleFlight<ModeChoice>,
     connecting: SingleFlight<Result<Option<RemoteLibraryDto>, AppError>>,
     connecting_to: Mutex<Option<String>>,
+    sync_setup: Option<SyncSetup>,
+    sync: Mutex<Option<SyncEngine>>,
 }
 
 impl Shell {
@@ -151,6 +203,7 @@ impl Shell {
             library.language = Arc::clone(&options.language);
             library.on_released = options.on_released;
             Shell {
+                me: weak.clone(),
                 state_file: options.state_file,
                 library: LibraryHost::new(library),
                 prompts: options.prompts,
@@ -161,8 +214,138 @@ impl Shell {
                 asking: SingleFlight::default(),
                 connecting: SingleFlight::default(),
                 connecting_to: Mutex::new(None),
+                sync_setup: options.sync,
+                sync: Mutex::new(None),
             }
         })
+    }
+
+    fn sync_slot(&self) -> std::sync::MutexGuard<'_, Option<SyncEngine>> {
+        self.sync.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Where the connected server's library is synced, and how that is going; `None` when no server
+    /// is connected or the sync is off.
+    pub fn sync_status(&self) -> Option<SyncStatus> {
+        self.sync_slot().as_ref().map(SyncEngine::status)
+    }
+
+    /// Asks the sync for a pass now (the page just changed something on the server).
+    pub fn kick_sync(&self) {
+        if let Some(engine) = self.sync_slot().as_ref() {
+            engine.kick();
+        }
+    }
+
+    /// Where a server file is in the synced folder, if it is there.
+    pub fn synced_path_of(&self, file_id: &str) -> Option<PathBuf> {
+        self.sync_slot()
+            .as_ref()
+            .and_then(|engine| engine.local_path_of(file_id))
+    }
+
+    /// The synced folder of a server project, if it is there.
+    pub fn synced_dir_of(&self, project_id: &str) -> Option<PathBuf> {
+        self.sync_slot()
+            .as_ref()
+            .and_then(|engine| engine.local_dir_of(project_id))
+    }
+
+    /// The folder the connected server's library is synced into: the one chosen for it, or the
+    /// default.
+    pub fn sync_root_for(&self, origin: &str) -> Option<PathBuf> {
+        let setup = self.sync_setup.as_ref()?;
+        Some(
+            read_sync_dir(&self.state_file, origin)
+                .map(PathBuf::from)
+                .unwrap_or_else(|| (setup.default_root)(origin)),
+        )
+    }
+
+    /// Syncs the connected server into `dir` from now on, and remembers it for that server.
+    pub fn set_sync_dir(&self, dir: &std::path::Path) -> Result<SyncStatus, AppError> {
+        let remote = self
+            .remote()
+            .ok_or_else(|| AppError::conflict("no server is connected"))?;
+        if self.sync_setup.is_none() {
+            return Err(AppError::conflict("the library sync is off"));
+        }
+        let dir = std::path::absolute(dir).map_err(AppError::internal)?;
+        remember_sync_dir(
+            &self.state_file,
+            remote.origin(),
+            &dir.display().to_string(),
+        )
+        .map_err(AppError::internal)?;
+        self.stop_sync();
+        self.start_sync(&remote);
+        self.sync_status()
+            .ok_or_else(|| AppError::internal("the sync did not start"))
+    }
+
+    /// Asks for the folder the connected server's library is synced into, and syncs there from
+    /// now on. `Ok(None)` is a cancelled dialog.
+    pub fn pick_sync_dir(&self) -> Result<Option<SyncStatus>, AppError> {
+        if self.remote().is_none() {
+            return Err(AppError::conflict("no server is connected"));
+        }
+        let title = match (self.language)() {
+            PickerLanguage::De => "Ordner für die Synchronisation auswählen",
+            PickerLanguage::En => "Choose the folder to sync the library into",
+        };
+        let options = FolderPickerOptions {
+            title: title.to_owned(),
+            message: title.to_owned(),
+            button_label: match (self.language)() {
+                PickerLanguage::De => "Auswählen",
+                PickerLanguage::En => "Choose",
+            }
+            .to_owned(),
+            directory: true,
+            create_directory: true,
+        };
+        match self.prompts.pick_folder(&options, PromptTrigger::User) {
+            Some(dir) => self.set_sync_dir(&dir).map(Some),
+            None => Ok(None),
+        }
+    }
+
+    fn start_sync(&self, remote: &Arc<RemoteHost>) {
+        let (Some(setup), Some(root)) =
+            (self.sync_setup.clone(), self.sync_root_for(remote.origin()))
+        else {
+            return;
+        };
+        let me = self.me.clone();
+        let server = Arc::new(ProxySyncServer::new(
+            Arc::clone(remote),
+            setup.handle.clone(),
+        ));
+        match SyncEngine::start(
+            server,
+            root.clone(),
+            setup.poll,
+            Arc::new(move || {
+                if let Some(shell) = me.upgrade() {
+                    shell.library_updated();
+                }
+            }),
+        ) {
+            Ok(engine) => *self.sync_slot() = Some(engine),
+            Err(error) => diag::error(&format!(
+                "could not start syncing into {}: {error}",
+                root.display()
+            )),
+        }
+    }
+
+    /// Stops the sync without waiting for it: a pass in flight ends with the connection.
+    fn stop_sync(&self) {
+        if let Some(engine) = self.sync_slot().take() {
+            let _ = std::thread::Builder::new()
+                .name("spm-library-sync-stop".to_owned())
+                .spawn(move || drop(engine));
+        }
     }
 
     fn remote_slot(&self) -> std::sync::MutexGuard<'_, Option<Arc<RemoteHost>>> {
@@ -344,7 +527,9 @@ impl Shell {
         let was_remote = previous_origin.is_some();
         self.release_remote();
         self.library.close_current();
-        *self.remote_slot() = Some((self.make_remote)(origin));
+        let remote = (self.make_remote)(origin);
+        *self.remote_slot() = Some(Arc::clone(&remote));
+        self.start_sync(&remote);
         if remember {
             self.remember(ShellMode::Remote, origin);
         }
@@ -365,6 +550,7 @@ impl Shell {
         if let Some(remote) = self.remote_slot().take() {
             remote.close();
         }
+        self.stop_sync();
     }
 
     fn remember(&self, mode: ShellMode, target: &str) {

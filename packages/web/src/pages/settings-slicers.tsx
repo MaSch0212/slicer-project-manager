@@ -267,12 +267,14 @@ export function SlicersSection(props: { client?: DesktopClient }) {
         )}
       </Show>
 
-      {/* Spec 6.3's unfinished-session list. It is here rather than only beside the launch control
-          because a session outlives the project page it was started from, and outlives the run of
-          the app, which is the case a settings page is the only home for. No project is named
+      {/* What a slicer was handed outside the library and still has: only a launch the library
+          could not serve in place leaves one (an older version's launch, or a server file that had
+          not been synced to this computer yet). A slicer saves into the library folder itself
+          otherwise, so this shows only while there is something to resolve. No project is named
           here, so an orphan is asked which one it belongs to. */}
       <SlicerSessionsCard
         level={3}
+        hideWhenEmpty
         deps={props.client ? { client: props.client.slicers } : undefined}
       />
     </div>

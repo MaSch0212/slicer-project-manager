@@ -158,6 +158,9 @@ pub struct LaunchedSession {
 
 pub type OnLaunched = Arc<dyn Fn(LaunchedSession) + Send + Sync>;
 
+/// Where a remote file is on this computer, by file id (see `SlicerLauncherOptions::synced_path`).
+pub type SyncedPath = Arc<dyn Fn(&str) -> Option<PathBuf> + Send + Sync>;
+
 pub struct SlicerLauncherOptions {
     /// `<data>/slicer-sessions`. Created lazily, only by a launch that needs a directory.
     pub sessions_dir: PathBuf,
@@ -183,6 +186,12 @@ pub struct SlicerLauncherOptions {
     /// How long after the slicer's process has exited a new-project copy that nobody changed is
     /// removed from the project folder again. Ten seconds, the settle the sessions use.
     pub copy_settle_ms: u64,
+    /// In remote mode, where a server file already is on this computer because the library is
+    /// synced (see [`crate::library_sync`]). A file found there is launched exactly as a local
+    /// library's file is, in place or copied into its project folder, and the sync carries what the
+    /// slicer saves back to the server. `None` (not synced yet, or no sync) falls back to a
+    /// download into a launch directory.
+    pub synced_path: SyncedPath,
 }
 
 impl SlicerLauncherOptions {
@@ -207,6 +216,7 @@ impl SlicerLauncherOptions {
             now: Arc::new(now_ms),
             new_launch_id: Arc::new(spm_core::new_id),
             copy_settle_ms: super::sessions::EXIT_SETTLE_MS,
+            synced_path: Arc::new(|_| None),
         }
     }
 }
@@ -579,6 +589,18 @@ impl SlicerLauncher {
                 AppError::not_found("that file is not in that project")
                     .with_details(details(&[("fileId", Value::from(file_id))]))
             })?;
+        let indexed = Classification {
+            kind: file.kind,
+            slicer: file.slicer,
+            unreadable: false,
+        };
+        if let Some(synced) = (self.options.synced_path)(file_id) {
+            return Ok(SourceFile {
+                name: base_name(&file.name.replace('/', std::path::MAIN_SEPARATOR_STR)),
+                indexed,
+                abs_path: Some(synced),
+            });
+        }
         if spm_core::validate::file_name(&file.name).is_err() {
             return Err(AppError::validation(
                 "the server named that file in a way this app cannot use",
@@ -587,11 +609,7 @@ impl SlicerLauncher {
         }
         Ok(SourceFile {
             name: file.name.clone(),
-            indexed: Classification {
-                kind: file.kind,
-                slicer: file.slicer,
-                unreadable: false,
-            },
+            indexed,
             abs_path: None,
         })
     }

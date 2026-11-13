@@ -46,7 +46,18 @@ export type LibraryMode = "unset" | "local" | "remote";
  * What the desktop shell reports about its library: the mode, and the folder or the server
  * origin that goes with it (the other is `null`).
  */
-export type LibraryStateDto = { mode: LibraryMode, dir: string | null, origin: string | null, };
+export type LibraryStateDto = { mode: LibraryMode, dir: string | null, origin: string | null, 
+/**
+ * With a server: the folder its library is synced into, and how that is going.
+ */
+sync?: LibrarySyncDto, };
+
+/**
+ * Where a connected server's library is synced on this computer.
+ */
+export type LibrarySyncDto = { dir: string, phase: LibrarySyncPhase, lastSyncedAt: number | null, lastError: string | null, };
+
+export type LibrarySyncPhase = "starting" | "syncing" | "idle" | "waitingForSignIn" | "error";
 
 export type UserStatus = "pending" | "active" | "disabled";
 

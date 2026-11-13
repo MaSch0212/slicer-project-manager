@@ -69,7 +69,6 @@ import {
 } from '../ui'
 import { FilePreview } from './file-preview'
 import { ProjectFormDialog } from './project-form-dialog'
-import { SlicerSessionsCard } from './slicer-sessions-card'
 
 const POLL_MS = 4000
 /** A preview that is still pending after this many polls is left alone until the next visit. */
@@ -735,20 +734,6 @@ export function ProjectDetail(props: {
                         </ul>
                       </Show>
                     </section>
-
-                    {/* Beside the launch control, narrowed to this project (plus any orphan,
-                        which has to be offered somewhere): the files a slicer still has. */}
-                    <Show when={slicerLaunch.available()}>
-                      <SlicerSessionsCard
-                        projectId={props.id}
-                        hideWhenEmpty
-                        reloadOn={slicerLaunch.launched}
-                        onImported={() => {
-                          void detail.load()
-                          props.onChanged?.()
-                        }}
-                      />
-                    </Show>
 
                     <ProjectFormDialog
                       open={editing()}

@@ -44,7 +44,9 @@ pub use dev_proxy::{DevProxy, resolve_dev_ui_origin};
 pub use error::{ApiError, blocking, status_for};
 pub use extract::{ParsedJson, Session};
 pub use origin::normalize_public_origin;
-pub use routes::{MAX_ARCHIVE_BYTES, UPLOAD_NAME_HEADER, router};
+pub use routes::{
+    MAX_ARCHIVE_BYTES, SYNC_BASE_HEADER, SYNC_PATH_HEADER, UPLOAD_NAME_HEADER, router,
+};
 pub use state::{AppState, AuthMode, Clock, HttpOptions, UiSource, capabilities_for};
 pub use static_files::{Assets, DirAssets};
 

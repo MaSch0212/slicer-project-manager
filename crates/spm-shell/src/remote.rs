@@ -139,13 +139,23 @@ pub fn is_plaintext_to_another_machine(origin: &str) -> bool {
 /// What the shell forwards from the webview's request to the server, and nothing else.
 ///
 /// An allow-list because the webview is the untrusted side and this is the one place its bytes
-/// reach another machine. Three entries earn their place: `content-type` (the server's JSON
-/// parsing reads it), `accept`, and `x-spm-file-name`, which is how an upload names its file.
+/// reach another machine. Five entries earn their place: `content-type` (the server's JSON
+/// parsing reads it), `accept`, `x-spm-file-name`, which is how an upload names its file, and the
+/// sync's `x-spm-sync-path` and `x-spm-sync-base`, which only ever describe a write the session
+/// could make anyway.
 ///
 /// `cookie`, `origin`, `referer`, `host` and `authorization` are **not** on it: the session is the
 /// shell's to hold (see [`RemoteHost`]), and a server must see no `Origin` from this app, so that
 /// no CORS decision is ever made on it.
-const FORWARDED_REQUEST_HEADERS: [&str; 3] = ["content-type", "accept", "x-spm-file-name"];
+const FORWARDED_REQUEST_HEADERS: [&str; 5] = [
+    "content-type",
+    "accept",
+    "x-spm-file-name",
+    // The desktop sync's two (see `crate::library_sync`): the path a file is written at and the
+    // version it replaces.
+    "x-spm-sync-path",
+    "x-spm-sync-base",
+];
 
 /// Headers that describe one hop of a connection, not the message: never passed on from the server.
 const HOP_BY_HOP: [&str; 8] = [

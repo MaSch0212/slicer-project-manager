@@ -18,10 +18,12 @@ mod capabilities;
 mod files;
 mod import;
 mod projects;
+mod sync;
 mod users;
 
 pub use files::UPLOAD_NAME_HEADER;
 pub use import::MAX_ARCHIVE_BYTES;
+pub use sync::{SYNC_BASE_HEADER, SYNC_PATH_HEADER};
 
 /// The HTTP router over a library.
 ///
@@ -36,6 +38,7 @@ pub fn router(state: AppState) -> Router {
         .merge(account::routes(&state))
         .merge(projects::routes())
         .merge(files::routes())
+        .merge(sync::routes())
         .merge(import::routes(&state));
     if state.sessions() {
         // Local mode has one user and no passwords: nothing to sign in to, nothing to administer.

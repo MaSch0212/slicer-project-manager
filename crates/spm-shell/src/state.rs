@@ -175,3 +175,29 @@ pub fn write_state_with(
 ) -> io::Result<()> {
     write_json_file_with(state_file, &Value::Object(state.clone()), io)
 }
+
+/// The key of the folder each server's library is synced into, by origin.
+pub const SYNC_DIRS_KEY: &str = "syncDirs";
+
+/// The folder `origin`'s library is synced into, if one was chosen.
+pub fn read_sync_dir(state_file: &Path, origin: &str) -> Option<String> {
+    read_state(state_file)
+        .get(SYNC_DIRS_KEY)?
+        .get(origin)?
+        .as_str()
+        .filter(|dir| !dir.is_empty())
+        .map(str::to_owned)
+}
+
+/// Remembers the folder `origin`'s library is synced into.
+pub fn remember_sync_dir(state_file: &Path, origin: &str, dir: &str) -> io::Result<()> {
+    let mut state = read_state(state_file);
+    let mut dirs = state
+        .get(SYNC_DIRS_KEY)
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    dirs.insert(origin.to_owned(), Value::String(dir.to_owned()));
+    state.insert(SYNC_DIRS_KEY.to_owned(), Value::Object(dirs));
+    write_state(state_file, &state)
+}

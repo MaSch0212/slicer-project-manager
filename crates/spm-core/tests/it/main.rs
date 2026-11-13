@@ -16,6 +16,7 @@ mod files;
 mod fixtures;
 mod import_curamanager;
 mod import_zip;
+mod library_sync;
 mod log;
 mod logging;
 mod match_key;

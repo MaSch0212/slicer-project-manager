@@ -26,7 +26,7 @@ use spm_shell::slicers::launch::{LaunchedSource, SLICER_CWD_DIR, SLICER_SESSIONS
 use spm_shell::slicers::registry::{SLICER_IDS, slicer};
 use support::slicers::{
     ANYCUBIC_EXE, BAMBU_EXE, CURA_12, CURA_12_EXE, CURA_13_EXE, Env, Harness, HarnessOptions,
-    ORCA_EXE, PRUSA_EXE, install, machine, step_bytes, stl_bytes,
+    ORCA_EXE, PRUSA_EXE, StubRemote, install, machine, step_bytes, stl_bytes,
 };
 use support::threemf::{
     bambu_lineage_project, cura_project, deflated, patch_zip_headers, plain_mesh_3mf,
@@ -1389,4 +1389,38 @@ fn the_slice_info_fixture_still_labels_the_lineage_the_way_classify_3mf_reads_it
     // Guards the two Bambu-lineage assertions above against a fixture that silently stopped
     // producing the header they are about.
     assert!(slice_info(&["X-BBL-Client-Type"]).contains("X-BBL-Client-Type"));
+}
+
+#[test]
+fn a_remote_file_that_is_synced_here_is_launched_in_place_and_nothing_is_downloaded() {
+    let env = Env::new();
+    let synced_dir = env.dir("synced");
+    let synced = synced_dir.join("bracket.3mf");
+    std::fs::write(&synced, b"a synced slicer project").unwrap();
+    let remote = StubRemote::new("https://library.invalid");
+    let h = Harness::new(
+        &env,
+        HarnessOptions {
+            is_remote: true,
+            remote: Some(remote.clone()),
+            synced: Some(("file-1".to_owned(), synced.clone())),
+            ..HarnessOptions::default()
+        },
+    );
+
+    h.launcher
+        .open("file-1", "project-1", &as_is(Some(SlicerId::Orca)))
+        .unwrap();
+
+    assert_eq!(h.spawner.paths(), [synced.to_string_lossy().into_owned()]);
+    assert!(
+        !remote.calls().iter().any(|(_, path)| path.contains("/raw")),
+        "{:?}",
+        remote.calls()
+    );
+    assert!(
+        h.sessions().is_empty(),
+        "no launch directory: {:?}",
+        h.sessions()
+    );
 }

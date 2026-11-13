@@ -25,11 +25,12 @@ use crate::dto::{
     BrowseNoticeDto, BrowseNoticeKind, BrowseStateDto, BrowseTabsDto, Capabilities, CoreFileDto,
     CoreProjectDetailDto, CoreProjectDto, DEFAULT_SETTINGS, DiscardedSessionsDto, EntryDiff,
     FileCounts, FileDto, FileKind, FileState, Language, LibraryMode, LibraryStateDto,
-    LocalLibraryDto, ModelSiteDto, PreviewState, ProjectDetailDto, ProjectDto, ProjectQuery,
-    ProjectState, ProjectViewDto, RemoteLibraryDto, RescanResultDto, SettingsDto, SettingsPatch,
-    SlicerConfigDto, SlicerId, SlicerInstallDto, SlicerInstallOrigin, SlicerInstallState,
-    SlicerLaunchDto, SlicerLaunchMode, SlicerLaunchOptions, SlicerSessionDto, SortDir, SortKey,
-    Theme, UserDto, UserStatus, ViewMode, ZipImportResultDto,
+    LibrarySyncDto, LibrarySyncPhase, LocalLibraryDto, ModelSiteDto, PreviewState,
+    ProjectDetailDto, ProjectDto, ProjectQuery, ProjectState, ProjectViewDto, RemoteLibraryDto,
+    RescanResultDto, SettingsDto, SettingsPatch, SlicerConfigDto, SlicerId, SlicerInstallDto,
+    SlicerInstallOrigin, SlicerInstallState, SlicerLaunchDto, SlicerLaunchMode,
+    SlicerLaunchOptions, SlicerSessionDto, SortDir, SortKey, Theme, UserDto, UserStatus, ViewMode,
+    ZipImportResultDto,
 };
 use crate::error::{
     AppErrorCode, DETECTION_FAILED, ErrorBody, ErrorEnvelope, QuotaExceededDetails,
@@ -76,6 +77,8 @@ fn types_ts() -> String {
         RemoteLibraryDto,
         LibraryMode,
         LibraryStateDto,
+        LibrarySyncDto,
+        LibrarySyncPhase,
         // users
         UserStatus,
         UserDto,

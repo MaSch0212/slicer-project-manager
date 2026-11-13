@@ -181,9 +181,6 @@ beforeEach(async () => {
   )
   slicers.get.mockResolvedValue(CONFIG)
   slicers.open.mockResolvedValue(LAUNCH)
-  // The unfinished-session card renders beside the launch control and asks for this on mount; its
-  // own behaviour is `slicer-sessions-card.test.tsx`'s, and what this file asserts is only that it
-  // is mounted where the launch controls are and nowhere else.
   slicers.sessions.mockResolvedValue([])
 })
 
@@ -218,7 +215,7 @@ describe('handing a file to a slicer', () => {
     expect(names()).toContain('Start a new OrcaSlicer project from bracket.3mf')
   })
 
-  it('shows the unfinished-session card beside the launch controls once it has something', async () => {
+  it('shows no card of files a slicer still has: a slicer saves into the project folder', async () => {
     slicers.sessions.mockResolvedValue([
       {
         launchId: 'launch-1',
@@ -234,33 +231,6 @@ describe('handing a file to a slicer', () => {
     ])
     await open()
     await ready()
-
-    await screen.findByRole('heading', { name: en.slicerSessions.title })
-    expect(slicers.sessions).toHaveBeenCalled()
-  })
-
-  it('leaves the session card out while no slicer has anything of this project', async () => {
-    await open()
-    await ready()
-
-    await waitFor(() => expect(slicers.sessions).toHaveBeenCalled())
-    expect(screen.queryByRole('heading', { name: en.slicerSessions.title })).toBeNull()
-  })
-
-  it('asks for the sessions again after a launch, which is when one appears', async () => {
-    await open()
-    await ready()
-    await waitFor(() => expect(slicers.sessions).toHaveBeenCalledTimes(1))
-
-    press(NEW('benchy.stl'))
-
-    await waitFor(() => expect(slicers.sessions).toHaveBeenCalledTimes(2))
-  })
-
-  it('shows no session card at all where the shell cannot launch anything', async () => {
-    // The pair to the test above: `canLaunchSlicer` is false here, so a card that rendered anyway
-    // would be a card asking a refusing transport for a list on every project page in the browser.
-    await open(BROWSER)
 
     expect(screen.queryByRole('heading', { name: en.slicerSessions.title })).toBeNull()
     expect(slicers.sessions).not.toHaveBeenCalled()

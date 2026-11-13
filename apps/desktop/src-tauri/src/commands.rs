@@ -16,12 +16,13 @@ use serde_json::{Map, Value};
 use spm_core::AppError;
 use spm_core::dto::{
     BrowseDownloadDto, BrowseMatchDto, BrowseNoticeDto, BrowseTabsDto, DiscardedSessionsDto,
-    FileDto, LibraryMode, LibraryStateDto, LocalLibraryDto, RemoteLibraryDto, SlicerConfigDto,
-    SlicerLaunchDto, SlicerSessionDto,
+    FileDto, LibraryMode, LibraryStateDto, LibrarySyncDto, LibrarySyncPhase, LocalLibraryDto,
+    RemoteLibraryDto, SlicerConfigDto, SlicerLaunchDto, SlicerSessionDto,
 };
 use spm_shell::browse::commands::BrowseCommands;
 use spm_shell::browse::service::BrowseServices;
 use spm_shell::library::PromptTrigger;
+use spm_shell::library_sync::{SyncPhase, SyncStatus};
 use spm_shell::shell::{ActiveMode, Shell};
 use spm_shell::slicers::api::SlicerCommands;
 use spm_shell::slicers::service::SlicerServices;
@@ -72,23 +73,55 @@ pub fn library_state(shell: &Shell) -> LibraryStateDto {
             mode: LibraryMode::Unset,
             dir: None,
             origin: None,
+            sync: None,
         },
         ActiveMode::Local => LibraryStateDto {
             mode: LibraryMode::Local,
             dir: shell.library().dir().map(|dir| dir.display().to_string()),
             origin: None,
+            sync: None,
         },
         ActiveMode::Remote => LibraryStateDto {
             mode: LibraryMode::Remote,
             dir: None,
             origin: shell.remote().map(|remote| remote.origin().to_owned()),
+            sync: shell.sync_status().map(sync_dto),
         },
+    }
+}
+
+fn sync_dto(status: SyncStatus) -> LibrarySyncDto {
+    LibrarySyncDto {
+        dir: status.root,
+        phase: match status.phase {
+            SyncPhase::Starting => LibrarySyncPhase::Starting,
+            SyncPhase::Syncing => LibrarySyncPhase::Syncing,
+            SyncPhase::Idle => LibrarySyncPhase::Idle,
+            SyncPhase::WaitingForSignIn => LibrarySyncPhase::WaitingForSignIn,
+            SyncPhase::Error => LibrarySyncPhase::Error,
+        },
+        last_synced_at: status.last_synced_at,
+        last_error: status.last_error,
     }
 }
 
 #[tauri::command]
 pub fn desktop_library_state(ctx: State<'_, AppCtx>) -> LibraryStateDto {
     library_state(&ctx.shell)
+}
+
+/// Asks for the folder the connected server's library is synced into (a native dialog: the page
+/// never names a path). `null` is a cancelled dialog.
+#[tauri::command]
+pub async fn desktop_library_sync_choose(
+    ctx: State<'_, AppCtx>,
+) -> Result<Option<LibrarySyncDto>, CommandError> {
+    let shell = Arc::clone(&ctx.shell);
+    tokio::task::spawn_blocking(move || shell.pick_sync_dir())
+        .await
+        .map_err(internal)?
+        .map(|status| status.map(sync_dto))
+        .map_err(CommandError::from)
 }
 
 /// Opens the native folder dialog and opens what the user picks. `null` is a cancelled dialog,

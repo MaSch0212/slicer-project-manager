@@ -355,7 +355,14 @@ async fn dispatch_api(shell: &Shell, request: Request) -> Response {
     let is_capabilities =
         request.method() == Method::GET && request.uri().path() == "/api/capabilities";
     if let Some(remote) = shell.remote() {
-        return remote.proxy(request).await;
+        let writes = request.method() != Method::GET;
+        let response = remote.proxy(request).await;
+        // A sign-in, an upload, a deletion: the synced folder should follow now, not at the next
+        // poll.
+        if writes && response.status().is_success() {
+            shell.kick_sync();
+        }
+        return response;
     }
     if let Some(session) = shell.session() {
         if is_capabilities {

@@ -18,11 +18,13 @@ describe('the desktop client', () => {
     await client.pickFolder()
     await client.connectRemote('https://print.example.com')
     await client.chooseLibrary()
+    await client.chooseSyncFolder()
     expect(invoke.mock.calls).toEqual([
       ['desktop_library_state', undefined],
       ['desktop_library_pick', undefined],
       ['desktop_library_connect', { url: 'https://print.example.com' }],
       ['desktop_library_choose', undefined],
+      ['desktop_library_sync_choose', undefined],
     ])
   })
 

@@ -105,6 +105,7 @@ impl SlicerServices {
         let for_session = Arc::clone(shell);
         let for_mode = Arc::clone(shell);
         let for_remote = Arc::clone(shell);
+        let for_synced = Arc::downgrade(shell);
         SlicerServices::new(SlicerServicesParts {
             data_dir,
             host,
@@ -117,7 +118,13 @@ impl SlicerServices {
             }),
             spawner: Arc::new(ProcessSpawner::new()),
             tune_sessions: None,
-            tune_launcher: None,
+            tune_launcher: Some(Box::new(move |options| {
+                options.synced_path = Arc::new(move |file_id| {
+                    for_synced
+                        .upgrade()
+                        .and_then(|shell| shell.synced_path_of(file_id))
+                });
+            })),
         })
     }
 

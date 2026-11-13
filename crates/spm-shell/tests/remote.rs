@@ -133,6 +133,8 @@ async fn only_the_three_allowed_request_headers_are_forwarded() {
             ("content-type", "application/json"),
             ("accept", "application/json"),
             ("x-spm-file-name", "benchy.stl"),
+            ("x-spm-sync-path", "parts%2Farm.stl"),
+            ("x-spm-sync-base", "absent"),
             ("x-forwarded-for", "10.0.0.9"),
             ("authorization", "Bearer secret"),
             ("cookie", "spm_launch=the-launch-secret; evil=1"),
@@ -144,7 +146,13 @@ async fn only_the_three_allowed_request_headers_are_forwarded() {
     ))
     .await;
     let seen = upstream.last();
-    for kept in ["content-type", "accept", "x-spm-file-name"] {
+    for kept in [
+        "content-type",
+        "accept",
+        "x-spm-file-name",
+        "x-spm-sync-path",
+        "x-spm-sync-base",
+    ] {
         assert!(seen.headers.contains_key(kept), "{kept} was dropped");
     }
     // The launch cookie must never leave the machine, and a server must see no `Origin` from this

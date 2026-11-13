@@ -70,6 +70,30 @@ pub struct LibraryStateDto {
     pub mode: LibraryMode,
     pub dir: Option<String>,
     pub origin: Option<String>,
+    /// With a server: the folder its library is synced into, and how that is going.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub sync: Option<LibrarySyncDto>,
+}
+
+/// Where a connected server's library is synced on this computer.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct LibrarySyncDto {
+    pub dir: String,
+    pub phase: LibrarySyncPhase,
+    pub last_synced_at: Option<i64>,
+    pub last_error: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub enum LibrarySyncPhase {
+    Starting,
+    Syncing,
+    Idle,
+    WaitingForSignIn,
+    Error,
 }
 
 /// The remote server a shell is pointed at (spec 2.6's other mode): the origin and nothing else.

@@ -12,5 +12,6 @@ mod logging;
 mod projects;
 mod rate_limit;
 mod static_ui;
+mod sync;
 mod users;
 mod wire;
