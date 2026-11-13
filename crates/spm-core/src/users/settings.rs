@@ -83,6 +83,19 @@ fn filter_tags_codec() -> JsonCodec<Vec<String>, impl Fn(Value) -> Option<Vec<St
     })
 }
 
+/// The saved views: a list of valid views, at most the cap. One stored row holds all of them,
+/// so a value this no longer accepts leaves the user with *no* views rather than some — which is
+/// the same "reject, don't corrupt" rule every other key follows, applied to a list.
+fn views_codec() -> JsonCodec<
+    Vec<crate::dto::ProjectViewDto>,
+    impl Fn(Value) -> Option<Vec<crate::dto::ProjectViewDto>>,
+> {
+    JsonCodec::new(|value| {
+        let views: Vec<crate::dto::ProjectViewDto> = serde_json::from_value(value).ok()?;
+        validate::project_views(&views).ok()
+    })
+}
+
 /// A user's settings: the shipped defaults, overlaid with whatever valid rows they have stored.
 pub fn get_settings(lib: &Library, ctx: &Ctx) -> Result<SettingsDto> {
     let stored: HashMap<String, String> = {
@@ -124,6 +137,9 @@ pub fn get_settings(lib: &Library, ctx: &Ctx) -> Result<SettingsDto> {
     if let Some(tags) = get("filterTags").and_then(|raw| filter_tags_codec().decode(raw)) {
         settings.filter_tags = tags;
     }
+    if let Some(views) = get("views").and_then(|raw| views_codec().decode(raw)) {
+        settings.views = views;
+    }
     Ok(settings)
 }
 
@@ -155,6 +171,9 @@ pub fn put_settings(lib: &Library, ctx: &Ctx, patch: SettingsPatch) -> Result<Se
     }
     if let Some(tags) = &patch.filter_tags {
         entries.push(("filterTags", filter_tags_codec().encode(tags)));
+    }
+    if let Some(views) = &patch.views {
+        entries.push(("views", views_codec().encode(views)));
     }
 
     {

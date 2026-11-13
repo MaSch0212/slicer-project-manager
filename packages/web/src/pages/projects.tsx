@@ -1,5 +1,5 @@
 import { useNavigate, useParams } from '@solidjs/router'
-import { createSignal, For, onCleanup, Show } from 'solid-js'
+import { createEffect, createSignal, For, onCleanup, Show } from 'solid-js'
 import { t } from '../core/i18n'
 import { errorMessage } from '../core/i18n/errors'
 import { notify } from '../core/notify'
@@ -17,6 +17,7 @@ import {
   writePanelWidth,
 } from '../core/panel-width'
 import { settings } from '../core/stores'
+import { shapeOf } from '../core/views'
 import { SEARCH_MAX_LENGTH, type ProjectDto } from '../api/generated'
 import {
   Alert,
@@ -89,6 +90,13 @@ export default function ProjectsPage() {
     onRememberFailed: () => notify.error(t('projects.filterNotRemembered')),
   })
   void store.start()
+
+  /**
+   * The list follows the settings. Picking a saved view in the sidebar writes them, and this is
+   * how that reaches a page that is already open; it also corrects a list built from the defaults
+   * because the settings had not loaded yet when the page mounted.
+   */
+  createEffect(() => store.applyShape(shapeOf(settings.settings())))
 
   const [creating, setCreating] = createSignal(false)
   const [rescanning, setRescanning] = createSignal(false)

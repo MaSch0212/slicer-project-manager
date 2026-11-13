@@ -9,6 +9,7 @@ import {
   onMount,
   Show,
 } from 'solid-js'
+import { VIEWS_MAX } from '../api/generated'
 import { desktop, isDesktop } from '../core/desktop'
 import { capabilities } from '../core/stores'
 import { errorMessage } from '../core/i18n/errors'
@@ -31,7 +32,9 @@ import {
   X,
   FolderOpen,
   Globe,
+  Layers,
   MenuTrigger,
+  Pencil,
   Plus,
   Settings as SettingsIcon,
   TitleBarButton,
@@ -39,6 +42,7 @@ import {
   WindowBarBrand,
   type MenuEntry,
 } from '../ui'
+import { EditViewsDialog, SaveViewDialog, ViewsNav } from './views-nav'
 
 /**
  * The app shell (subsystem G): sidebar from `md` up, a drawer below it, the notification surface,
@@ -50,6 +54,9 @@ export function Shell(props: RouteSectionProps) {
   const location = useLocation()
   const [drawerOpen, setDrawerOpen] = createSignal(false)
   const [maximized, setMaximized] = createSignal(false)
+  const [savingView, setSavingView] = createSignal(false)
+  // Null when the editor is shut; otherwise which view's name to select, if any.
+  const [editingViews, setEditingViews] = createSignal<{ focus: string | null } | null>(null)
 
   /**
    * The window's own bar, in the desktop app only. The maximised state is asked for after every
@@ -109,6 +116,18 @@ export function Shell(props: RouteSectionProps) {
       label: t('projects.newProject'),
       icon: Plus,
       onSelect: () => navigate('/projects?new=1'),
+    },
+    { type: 'separator' },
+    {
+      label: t('views.save'),
+      icon: Layers,
+      disabled: settings.settings().views.length >= VIEWS_MAX,
+      onSelect: () => setSavingView(true),
+    },
+    {
+      label: t('views.edit'),
+      icon: Pencil,
+      onSelect: () => setEditingViews({ focus: null }),
     },
     { type: 'separator' },
     {
@@ -223,19 +242,26 @@ export function Shell(props: RouteSectionProps) {
   }
 
   const entries = (isCollapsed: boolean) => (
-    <NavList>
-      <For each={navEntries()}>
-        {(entry) => (
-          <NavItem
-            label={navLabel(entry)}
-            icon={entry.icon}
-            href={entry.route ?? undefined}
-            onClick={entry.route === null ? () => void onSignOut() : undefined}
-            collapsed={isCollapsed}
-          />
-        )}
-      </For>
-    </NavList>
+    <div class="flex flex-col gap-4">
+      <NavList>
+        <For each={navEntries()}>
+          {(entry) => (
+            <NavItem
+              label={navLabel(entry)}
+              icon={entry.icon}
+              href={entry.route ?? undefined}
+              onClick={entry.route === null ? () => void onSignOut() : undefined}
+              collapsed={isCollapsed}
+            />
+          )}
+        </For>
+      </NavList>
+      <ViewsNav
+        collapsed={isCollapsed}
+        onSave={() => setSavingView(true)}
+        onEdit={(focus) => setEditingViews({ focus })}
+      />
+    </div>
   )
 
   return (
@@ -283,6 +309,14 @@ export function Shell(props: RouteSectionProps) {
           <nav aria-label={t('nav.label')}>{entries(false)}</nav>
         </Drawer>
       </Show>
+      <SaveViewDialog open={savingView()} onOpenChange={setSavingView} />
+      <EditViewsDialog
+        open={editingViews() !== null}
+        focus={editingViews()?.focus ?? null}
+        onOpenChange={(open) => {
+          if (!open) setEditingViews(null)
+        }}
+      />
       <ToastRegion label={t('common.notifications')} />
     </>
   )

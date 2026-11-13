@@ -14,6 +14,7 @@ import {
   PROJECTS_PAGE_SIZE,
   sortValueOf,
 } from './projects-store'
+import type { ViewShape } from './views'
 
 // Ported from the former Angular features/projects/projects.store.spec.ts. The Angular specs drove `resource()`
 // and settled the application; this store is plain signals and promises, so the same cases run by
@@ -445,5 +446,66 @@ describe('projects store: tags', () => {
     await expect(store.rescan()).resolves.toEqual({ adopted: 1, filesAdded: 2 })
     await vi.waitFor(() => expect(client.projects.list.mock.calls.length).toBe(lists + 2))
     expect(client.projects.tags.mock.calls.length).toBe(tags + 2)
+  })
+})
+
+/**
+ * A saved view is applied by writing the settings; this is the half that makes a list already on
+ * screen follow them. It reads the settings and never writes them, so it cannot fight the page.
+ */
+describe('projects store: following a chosen view', () => {
+  const shape = (over: Partial<Omit<ViewShape, 'viewMode'>> = {}): Omit<ViewShape, 'viewMode'> => ({
+    sort: 'updatedAt',
+    dir: 'desc',
+    includeArchived: false,
+    tags: [],
+    ...over,
+  })
+
+  it('re-queries with everything the view decides, and keeps the search', async () => {
+    const { store, client, patch } = setup()
+    await store.start()
+    store.setSearch('benchy')
+    await Promise.resolve()
+
+    store.applyShape(shape({ sort: 'name', dir: 'asc', includeArchived: true, tags: ['petg'] }))
+
+    expect(store.query()).toEqual({
+      search: 'benchy',
+      sort: 'name',
+      dir: 'asc',
+      includeArchived: true,
+      tags: ['petg'],
+    })
+    expect(client.projects.list).toHaveBeenLastCalledWith({
+      search: 'benchy',
+      sort: 'name',
+      dir: 'asc',
+      includeArchived: true,
+      tags: ['petg'],
+      limit: PROJECTS_PAGE_SIZE,
+    })
+    // Settings are where this comes from; writing them back is what would cause a loop.
+    expect(patch).not.toHaveBeenCalled()
+  })
+
+  it('drops what the view does not ask for, rather than leaving it set', async () => {
+    const { store } = setup({ includeArchived: true, filterTags: ['petg'] })
+    await store.start()
+
+    store.applyShape(shape())
+
+    expect(store.query()).toEqual({ sort: 'updatedAt', dir: 'desc' })
+  })
+
+  it('does nothing at all when the list is already showing that', async () => {
+    const { store, client } = setup({ filterTags: ['petg'] })
+    await store.start()
+    const before = client.projects.list.mock.calls.length
+
+    // The same selection in another order is the same selection.
+    store.applyShape(shape({ tags: ['petg'] }))
+
+    expect(client.projects.list.mock.calls).toHaveLength(before)
   })
 })

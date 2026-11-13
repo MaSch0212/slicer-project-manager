@@ -27,6 +27,12 @@ pub const SEARCH_MAX_LENGTH: usize = 200;
 pub const PROJECT_LIMIT_MAX: i64 = 200;
 /// How many tags a remembered filter (and so a stored `filterTags` setting) may hold.
 pub const FILTER_TAGS_MAX: usize = 50;
+/// How many saved views one user may keep. A judgement, not a measurement: enough for any way of
+/// working, few enough that the sidebar stays a sidebar and the settings row stays small.
+pub const VIEWS_MAX: usize = 30;
+/// The longest name a saved view may carry. Long enough for a phrase, short enough that the
+/// sidebar row still reads as a row.
+pub const VIEW_NAME_MAX: usize = 80;
 
 // ---------------------------------------------------------------------------------------------
 // Issues
@@ -192,6 +198,51 @@ pub fn filter_tags(values: &[String]) -> Result<Vec<String>, String> {
         return Err(format!("at most {FILTER_TAGS_MAX} tags"));
     }
     values.iter().map(|value| tag_name(value)).collect()
+}
+
+/// A saved view, trimmed: a usable name, an icon name from the web app's set, and the same tag
+/// rules the filter has. Returns it with the strings trimmed.
+pub fn project_view(
+    view: &crate::dto::ProjectViewDto,
+) -> Result<crate::dto::ProjectViewDto, String> {
+    let id = js_trim(&view.id);
+    length_between(id, 1, 64, "view id")?;
+    let name = js_trim(&view.name);
+    length_between(name, 1, VIEW_NAME_MAX, "view name")?;
+    let icon = js_trim(&view.icon);
+    length_between(icon, 1, 40, "view icon")?;
+    // An icon is a name the web app looks up in its own set, never anything it renders: keeping
+    // it to the shape of an identifier means a stored value can only ever miss, not surprise.
+    if !icon.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
+        return Err("view icon must be a plain name".to_owned());
+    }
+    Ok(crate::dto::ProjectViewDto {
+        id: id.to_owned(),
+        name: name.to_owned(),
+        icon: icon.to_owned(),
+        tags: filter_tags(&view.tags)?,
+        ..view.clone()
+    })
+}
+
+/// The saved views: at most [`VIEWS_MAX`], each valid, and no two sharing an id (the sidebar and
+/// the address both name one by id, and two rows answering to the same name is a bug with no
+/// right behaviour).
+pub fn project_views(
+    values: &[crate::dto::ProjectViewDto],
+) -> Result<Vec<crate::dto::ProjectViewDto>, String> {
+    if values.len() > VIEWS_MAX {
+        return Err(format!("at most {VIEWS_MAX} views"));
+    }
+    let views = values
+        .iter()
+        .map(project_view)
+        .collect::<Result<Vec<_>, String>>()?;
+    let mut seen = std::collections::HashSet::new();
+    if let Some(duplicate) = views.iter().find(|view| !seen.insert(view.id.clone())) {
+        return Err(format!("two views share the id {}", duplicate.id));
+    }
+    Ok(views)
 }
 
 fn project_name(value: &str) -> Result<String, String> {
@@ -584,8 +635,13 @@ impl Validate for crate::dto::SettingsPatch {
             .filter_tags
             .as_deref()
             .and_then(|tags| issues.check(&["filterTags"], filter_tags(tags)));
+        let views = self
+            .views
+            .as_deref()
+            .and_then(|views| issues.check(&["views"], project_views(views)));
         issues.finish().map(|()| crate::dto::SettingsPatch {
             filter_tags: tags,
+            views,
             ..self
         })
     }

@@ -422,6 +422,28 @@ pub enum ViewMode {
     List,
 }
 
+/// A saved view of the project list: the filters, the sort order and the layout, under a name.
+///
+/// **The search box is never part of one.** A keyword is something you type to find one thing;
+/// a view is where you work. Saving it would mean a view that shows almost nothing and no
+/// obvious reason why.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectViewDto {
+    /// The id this process minted for it. Stable across renames, so the sidebar can keep a
+    /// selection and the page can name one in its address.
+    pub id: String,
+    pub name: String,
+    /// One of the names in the web app's own icon set. An unknown one draws the default.
+    pub icon: String,
+    pub view_mode: ViewMode,
+    pub sort: SortKey,
+    pub dir: SortDir,
+    pub include_archived: bool,
+    /// The tags it narrows to; empty is "every project".
+    pub tags: Vec<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct SettingsDto {
@@ -436,6 +458,8 @@ pub struct SettingsDto {
     pub include_archived: bool,
     /// The tag names the projects page's filter is narrowed to. Spec H §5.
     pub filter_tags: Vec<String>,
+    /// The user's saved views of the project list, in the order the sidebar lists them.
+    pub views: Vec<ProjectViewDto>,
 }
 
 /// The shipped defaults. A user with no `user_settings` rows sees exactly this.
@@ -448,6 +472,7 @@ pub const DEFAULT_SETTINGS: SettingsDto = SettingsDto {
     nav_collapsed: false,
     include_archived: false,
     filter_tags: Vec::new(),
+    views: Vec::new(),
 };
 
 impl Default for SettingsDto {
@@ -485,6 +510,11 @@ pub struct SettingsPatch {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub filter_tags: Option<Vec<String>>,
+    /// The whole list, in order. There is no patch *within* it: reordering, renaming and
+    /// deleting are all "here is the list now", which is one rule instead of four.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub views: Option<Vec<ProjectViewDto>>,
 }
 
 /// `Partial<Record<SlicerId, string>>` as a map; used by [`SlicerConfigDto`].

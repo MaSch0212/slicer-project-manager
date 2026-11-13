@@ -32,7 +32,8 @@ export const DEFAULT_SETTINGS: SettingsDto = {
   "dir": "desc",
   "navCollapsed": false,
   "includeArchived": false,
-  "filterTags": []
+  "filterTags": [],
+  "views": []
 }
 
 /** `details.reason` of the `Internal` raised when slicer detection could not run at all. */
@@ -46,3 +47,9 @@ export const PROJECT_LIMIT_MAX = 200
 
 /** How many tags a remembered filter may hold. */
 export const FILTER_TAGS_MAX = 50
+
+/** How many saved views of the project list one user may keep. */
+export const VIEWS_MAX = 30
+
+/** The longest name a saved view may carry. */
+export const VIEW_NAME_MAX = 80

@@ -140,8 +140,38 @@ export function NavList(props: { children: JSX.Element }) {
   return <ul class="flex list-none flex-col gap-0.5 p-0">{props.children}</ul>
 }
 
-const navItem =
+/** The look of one row in the sidebar, shared by the fixed entries and the saved views. */
+export const navItemClass =
   'flex h-9 w-full items-center gap-3 rounded-control px-2.5 text-sm font-medium text-fg-muted transition-colors hover:bg-surface-2 hover:text-fg aria-[current=page]:bg-accent-soft aria-[current=page]:text-accent-soft-fg'
+
+/**
+ * A heading over a group of sidebar rows, with room for one control at its right end. Hidden
+ * (but still read) when the sidebar is collapsed to icons, where there is no width for words.
+ */
+export function NavHeading(props: {
+  children: JSX.Element
+  collapsed?: boolean
+  action?: JSX.Element
+}) {
+  return (
+    <div
+      class={cx(
+        'flex h-7 items-center gap-1 pr-0.5 pl-2.5',
+        props.collapsed && 'justify-center pr-0 pl-0',
+      )}
+    >
+      <h2
+        class={cx(
+          'flex-1 truncate text-xs font-medium tracking-wide text-fg-muted uppercase',
+          props.collapsed && 'sr-only',
+        )}
+      >
+        {props.children}
+      </h2>
+      <Show when={props.action}>{props.action}</Show>
+    </div>
+  )
+}
 
 /**
  * One navigation entry: a link when it has an `href`, a button when it does something instead
@@ -163,11 +193,11 @@ export function NavItem(props: {
   )
   const control = () =>
     props.href ? (
-      <A href={props.href} class={navItem}>
+      <A href={props.href} class={navItemClass}>
         {content}
       </A>
     ) : (
-      <button type="button" class={navItem} onClick={() => props.onClick?.()}>
+      <button type="button" class={navItemClass} onClick={() => props.onClick?.()}>
         {content}
       </button>
     )

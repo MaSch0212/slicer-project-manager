@@ -22,6 +22,7 @@ describe('generated contract', () => {
       navCollapsed: false,
       includeArchived: false,
       filterTags: [],
+      views: [],
     })
   })
 

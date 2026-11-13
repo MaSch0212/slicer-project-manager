@@ -10,6 +10,7 @@ import {
   expectPanel,
   open,
   settingsSaved,
+  sidebarNav,
   useServer,
 } from './support'
 
@@ -35,6 +36,7 @@ test.beforeEach(async ({ page }) => {
     includeArchived: false,
     filterTags: [],
     viewMode: 'grid',
+    views: [],
   })
   await asAdmin(page, state.server)
 })
@@ -301,4 +303,63 @@ test('deleting a project asks first, and keeps or erases the files as chosen', a
 
   await expect(page.getByRole('heading', { name: 'Delete Keep Files', level: 2 })).toHaveCount(0)
   await expect(page.getByRole('heading', { name: 'Delete Erase Files', level: 2 })).toHaveCount(0)
+})
+
+/**
+ * Saved views, end to end: the thing no unit test reaches is that picking one in the *shell*
+ * reaches a projects page that is already mounted, through the settings and nothing else.
+ */
+test('a view keeps what the list is showing and brings it back from the sidebar', async ({
+  page,
+}) => {
+  await projectsPage(page)
+
+  let saved = settingsSaved(page)
+  await page.getByRole('combobox', { name: 'Sort by' }).selectOption({ label: 'A–Z' })
+  await saved
+  saved = settingsSaved(page)
+  await page.getByRole('button', { name: 'Tags' }).click()
+  await page.getByRole('listbox').getByRole('option', { name: 'gadgets' }).click()
+  await saved
+  await page.keyboard.press('Escape')
+  await expect.poll(() => titles(page)).toEqual(['Cable Clip', 'Phone Stand'])
+
+  saved = settingsSaved(page)
+  await sidebarNav(page).getByRole('button', { name: 'Save this view…' }).click()
+  const dialog = page.getByRole('dialog')
+  await dialog.getByLabel('Name').fill('Gadgets')
+  await dialog.getByRole('radio', { name: 'Printer' }).click()
+  await dialog.getByRole('button', { name: 'Save view' }).click()
+  await saved
+  await expect(dialog).toBeHidden()
+
+  // It is the view the list is showing, which is read off the settings rather than remembered.
+  const row = sidebarNav(page).getByRole('button', { name: /^Gadgets/ })
+  await expect(row).toHaveAttribute('aria-current', 'page')
+
+  // Leaving it by hand takes the mark away: there is no stale "current view" to disagree.
+  saved = settingsSaved(page)
+  await page.getByRole('button', { name: 'Tags' }).click()
+  await page.getByRole('listbox').getByRole('option', { name: 'gadgets' }).click()
+  await saved
+  await page.keyboard.press('Escape')
+  // Not a count: tests before this one in the file add and remove projects of their own.
+  await expect(page.getByRole('heading', { name: 'Benchy', level: 2 })).toBeVisible()
+  await expect(row).not.toHaveAttribute('aria-current', 'page')
+
+  // And picking it again puts every part of it back on the page that is already open.
+  saved = settingsSaved(page)
+  await row.click()
+  await saved
+  await expect.poll(() => titles(page)).toEqual(['Cable Clip', 'Phone Stand'])
+  await expect(page.getByRole('button', { name: 'Tags' })).toContainText('1')
+  await expect(page.getByRole('combobox', { name: 'Sort by' })).toHaveValue('name:asc')
+  await expect(row).toHaveAttribute('aria-current', 'page')
+
+  // It lives on the account, so a reload still has it.
+  await page.reload()
+  await expect(sidebarNav(page).getByRole('button', { name: /^Gadgets/ })).toHaveAttribute(
+    'aria-current',
+    'page',
+  )
 })

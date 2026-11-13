@@ -26,6 +26,8 @@ fn default_settings_matches_the_shipped_defaults_exactly() {
             "navCollapsed": false,
             "includeArchived": false,
             "filterTags": [],
+            // A new installation has no saved views: the project list is what it always was.
+            "views": [],
         })
     );
 }

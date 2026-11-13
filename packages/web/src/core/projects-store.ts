@@ -9,6 +9,7 @@ import {
 } from '../api/generated'
 import { api, type ApiClient } from './api/client'
 import { settings as settingsStore } from './stores'
+import { sameTags, type ViewShape } from './views'
 
 /**
  * How many projects one page holds (subsystem H 3.3). 48 is divisible by 2, 3, 4 and 6, so the
@@ -205,6 +206,36 @@ export function createProjectsStore(deps: Partial<ProjectsStoreDeps> = {}) {
     setSort(sort: SettingsDto['sort'], dir: SettingsDto['dir']): Promise<void> {
       applyQuery((current) => ({ ...current, sort, dir }))
       return settings.patch({ sort, dir })
+    },
+
+    /**
+     * Follows the settings' own copy of the filter, which is what choosing a saved view elsewhere
+     * in the app changes. The page calls this from an effect, so a view picked in the sidebar
+     * reaches a list that is already open.
+     *
+     * One direction only: it reads the settings and never writes them. Every control on the page
+     * writes its own setting as it goes, so by the time this runs the two normally already agree
+     * and it does nothing — which is also what keeps it from fighting the page it follows. The
+     * search box is left exactly as it is: a view is not a search (see `core/views.ts`).
+     */
+    applyShape(shape: Omit<ViewShape, 'viewMode'>): void {
+      const current = query()
+      if (
+        current.sort === shape.sort &&
+        current.dir === shape.dir &&
+        (current.includeArchived ?? false) === shape.includeArchived &&
+        sameTags(current.tags ?? [], shape.tags)
+      ) {
+        return
+      }
+      applyQuery((existing) => {
+        const next: ProjectQuery = { ...existing, sort: shape.sort, dir: shape.dir }
+        delete next.includeArchived
+        delete next.tags
+        if (shape.includeArchived) next.includeArchived = true
+        if (shape.tags.length > 0) next.tags = [...shape.tags]
+        return next
+      })
     },
 
     /**

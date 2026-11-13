@@ -1,7 +1,12 @@
 import { createMemoryHistory, MemoryRouter, Route } from '@solidjs/router'
 import { fireEvent, render, screen, waitFor, within } from '@solidjs/testing-library'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { DEFAULT_SETTINGS, type Capabilities, type UserDto } from '../api/generated'
+import {
+  DEFAULT_SETTINGS,
+  type Capabilities,
+  type ProjectViewDto,
+  type UserDto,
+} from '../api/generated'
 import { ApiError } from '../core/api/error'
 
 const ADMIN: UserDto = {
@@ -22,6 +27,30 @@ const EVERY_ENTRY: Capabilities = {
   canConfigureSlicers: false,
   canBrowseModelSites: true,
 }
+
+/** Two saved views: the first is the shape the shipped defaults have, so it starts active. */
+const VIEWS: ProjectViewDto[] = [
+  {
+    id: 'v1',
+    name: 'Everything',
+    icon: 'layers',
+    viewMode: 'grid',
+    sort: 'updatedAt',
+    dir: 'desc',
+    includeArchived: false,
+    tags: [],
+  },
+  {
+    id: 'v2',
+    name: 'Old prints',
+    icon: 'archive',
+    viewMode: 'list',
+    sort: 'name',
+    dir: 'asc',
+    includeArchived: true,
+    tags: ['petg'],
+  },
+]
 
 const api = vi.hoisted(() => ({
   capabilities: vi.fn(),
@@ -64,13 +93,20 @@ import { auth, capabilities, settings } from '../core/stores'
 import { Shell } from './shell'
 
 async function setup(
-  options: { caps?: Capabilities; navCollapsed?: boolean; path?: string; ready?: string } = {},
+  options: {
+    caps?: Capabilities
+    navCollapsed?: boolean
+    path?: string
+    ready?: string
+    views?: ProjectViewDto[]
+  } = {},
 ) {
   api.capabilities.mockResolvedValue(options.caps ?? EVERY_ENTRY)
   api.account.me.mockResolvedValue(ADMIN)
   api.settings.get.mockResolvedValue({
     ...DEFAULT_SETTINGS,
     navCollapsed: options.navCollapsed ?? false,
+    views: options.views ?? [],
   })
   api.settings.put.mockImplementation((patch: object) =>
     Promise.resolve({ ...DEFAULT_SETTINGS, ...patch }),
@@ -302,5 +338,119 @@ describe('Shell drawer', () => {
     fireEvent.click(within(await drawerNav()).getByRole('link', { name: 'Settings' }))
     await screen.findByText('settings page')
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+  })
+})
+
+/**
+ * Saved views: the sort order, the layout, the archive switch and the tag filter under a name.
+ * The row marked as current is derived from the settings, never remembered, so it can never
+ * disagree with what the list is actually showing.
+ */
+describe('Shell saved views', () => {
+  const viewButton = (name: string) =>
+    within(sidebar()).getByRole('button', { name: new RegExp(`^${name}`) })
+  /** Kobalte's menus open on a key press and choose on pointer-up, as the other suites do it. */
+  const act = async (view: string, item: string) => {
+    fireEvent.keyDown(within(sidebar()).getByRole('button', { name: `Options for ${view}` }), {
+      key: 'Enter',
+    })
+    fireEvent.pointerUp(await screen.findByRole('menuitem', { name: item }), {
+      pointerType: 'mouse',
+    })
+  }
+
+  it('lists them and marks the one the list is showing', async () => {
+    await setup({ views: VIEWS })
+
+    expect(viewButton('Everything').getAttribute('aria-current')).toBe('page')
+    expect(viewButton('Old prints').getAttribute('aria-current')).toBeNull()
+  })
+
+  it('writes every part of a view when one is picked, and nothing else', async () => {
+    await setup({ views: VIEWS, path: '/settings', ready: 'settings page' })
+
+    fireEvent.click(viewButton('Old prints'))
+
+    await screen.findByText('projects page')
+    expect(api.settings.put).toHaveBeenCalledWith({
+      viewMode: 'list',
+      sort: 'name',
+      dir: 'asc',
+      includeArchived: true,
+      filterTags: ['petg'],
+    })
+  })
+
+  it('marks none at all once the list no longer matches any of them', async () => {
+    await setup({ views: VIEWS })
+
+    await settings.patch({ sort: 'createdAt' })
+
+    expect(viewButton('Everything').getAttribute('aria-current')).toBeNull()
+    expect(viewButton('Old prints').getAttribute('aria-current')).toBeNull()
+  })
+
+  it('deletes one from its own menu, sending the whole shorter list', async () => {
+    await setup({ views: VIEWS })
+
+    await act('Old prints', 'Delete')
+
+    await waitFor(() =>
+      expect(api.settings.put).toHaveBeenCalledWith({
+        views: [expect.objectContaining({ id: 'v1' })],
+      }),
+    )
+  })
+
+  it('keeps what the list is showing as a new view, with the icon that was chosen', async () => {
+    await setup({ views: [] })
+
+    fireEvent.click(within(sidebar()).getByRole('button', { name: 'Save this view…' }))
+    const dialog = await screen.findByRole('dialog')
+    fireEvent.input(within(dialog).getByLabelText(/Name/), { target: { value: '  Functional  ' } })
+    fireEvent.click(within(dialog).getByRole('radio', { name: 'Printer' }))
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save view' }))
+
+    await waitFor(() =>
+      expect(api.settings.put).toHaveBeenCalledWith({
+        views: [
+          {
+            id: 'view-1',
+            name: 'Functional',
+            icon: 'printer',
+            viewMode: 'grid',
+            sort: 'updatedAt',
+            dir: 'desc',
+            includeArchived: false,
+            tags: [],
+          },
+        ],
+      }),
+    )
+  })
+
+  it('renames one in the editor, and puts them in the order asked for', async () => {
+    await setup({ views: VIEWS })
+
+    await act('Everything', 'Rename')
+    const dialog = await screen.findByRole('dialog')
+
+    const field = within(dialog).getByLabelText('Name of Everything')
+    fireEvent.blur(field, { target: { value: 'All projects' } })
+    await waitFor(() =>
+      expect(api.settings.put).toHaveBeenCalledWith({
+        views: [
+          expect.objectContaining({ name: 'All projects' }),
+          expect.objectContaining({ id: 'v2' }),
+        ],
+      }),
+    )
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Move Old prints up' }))
+    await waitFor(() =>
+      expect(api.settings.put).toHaveBeenCalledWith({
+        views: [expect.objectContaining({ id: 'v2' }), expect.objectContaining({ id: 'v1' })],
+      }),
+    )
   })
 })

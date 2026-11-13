@@ -143,13 +143,22 @@ includeArchived: boolean,
 /**
  * The tag names the projects page's filter is narrowed to. Spec H §5.
  */
-filterTags: Array<string>, };
+filterTags: Array<string>, 
+/**
+ * The user's saved views of the project list, in the order the sidebar lists them.
+ */
+views: Array<ProjectViewDto>, };
 
 /**
  * `Partial<SettingsDto>`: the body of a settings update. Every key is optional; an absent key is
  * left as it is. The server parses request input with `validate::parse_settings_patch`.
  */
-export type SettingsPatch = { theme?: Theme, language?: Language, viewMode?: ViewMode, sort?: SortKey, dir?: SortDir, navCollapsed?: boolean, includeArchived?: boolean, filterTags?: Array<string>, };
+export type SettingsPatch = { theme?: Theme, language?: Language, viewMode?: ViewMode, sort?: SortKey, dir?: SortDir, navCollapsed?: boolean, includeArchived?: boolean, filterTags?: Array<string>, 
+/**
+ * The whole list, in order. There is no patch *within* it: reordering, renaming and
+ * deleting are all "here is the list now", which is one rule instead of four.
+ */
+views?: Array<ProjectViewDto>, };
 
 export type LoginInput = { username: string, password: string, };
 
@@ -370,6 +379,28 @@ export type BrowseTabsDto = { attached: boolean, tabs: Array<BrowseStateDto>, ac
  * disables the control rather than letting a click fail.
  */
 canOpenMore: boolean, };
+
+/**
+ * A saved view of the project list: the filters, the sort order and the layout, under a name.
+ *
+ * **The search box is never part of one.** A keyword is something you type to find one thing;
+ * a view is where you work. Saving it would mean a view that shows almost nothing and no
+ * obvious reason why.
+ */
+export type ProjectViewDto = { 
+/**
+ * The id this process minted for it. Stable across renames, so the sidebar can keep a
+ * selection and the page can name one in its address.
+ */
+id: string, name: string, 
+/**
+ * One of the names in the web app's own icon set. An unknown one draws the default.
+ */
+icon: string, viewMode: ViewMode, sort: SortKey, dir: SortDir, includeArchived: boolean, 
+/**
+ * The tags it narrows to; empty is "every project".
+ */
+tags: Array<string>, };
 
 export type BrowseDownloadState = "progressing" | "completed" | "cancelled" | "interrupted";
 

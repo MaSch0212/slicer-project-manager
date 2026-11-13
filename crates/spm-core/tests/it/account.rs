@@ -2,7 +2,9 @@ use rusqlite::params;
 use serde_json::{Value, json};
 use spm_core::auth::password::{PW_ALGO, PW_ITERATIONS, hash_password_with};
 use spm_core::auth::tokens::timing_safe_equal;
-use spm_core::dto::{DEFAULT_SETTINGS, SettingsPatch, Theme};
+use spm_core::dto::{
+    DEFAULT_SETTINGS, ProjectViewDto, SettingsPatch, SortDir, SortKey, Theme, ViewMode,
+};
 use spm_core::files::paths::{safe_join, user_root};
 use spm_core::testing::TempLibrary;
 use spm_core::users::settings::JsonCodec;
@@ -452,4 +454,141 @@ fn a_new_password_below_the_floor_is_refused_by_core_itself() {
     );
     // A refused attempt burns nothing: the invite still works.
     assert!(activate_account(&boot_lib, &boot.token, PASSWORD, None).is_ok());
+}
+
+// ---- saved views ------------------------------------------------------------------------------
+//
+// A view is a named set of filters, a sort order and a layout. It lives beside the other
+// settings, on the account, so it follows the user to whatever machine they open the library on.
+
+fn a_view(id: &str, name: &str) -> ProjectViewDto {
+    ProjectViewDto {
+        id: id.to_owned(),
+        name: name.to_owned(),
+        icon: "layers".to_owned(),
+        view_mode: ViewMode::List,
+        sort: SortKey::Name,
+        dir: SortDir::Asc,
+        include_archived: true,
+        tags: vec!["petg".to_owned()],
+    }
+}
+
+#[test]
+fn views_round_trip_through_put_and_get_settings() {
+    let lib = TempLibrary::new();
+    let ctx = activated(&lib);
+
+    assert!(get_settings(&lib, &ctx).unwrap().views.is_empty());
+    let views = vec![a_view("v1", "Everything"), a_view("v2", "Functional")];
+    let patch = SettingsPatch {
+        views: Some(views.clone()),
+        ..Default::default()
+    };
+
+    assert_eq!(put_settings(&lib, &ctx, patch).unwrap().views, views);
+    assert_eq!(get_settings(&lib, &ctx).unwrap().views, views);
+}
+
+// The whole list is one value, so "delete the second one" is "here is the list now".
+#[test]
+fn putting_a_shorter_list_is_how_a_view_is_deleted() {
+    let lib = TempLibrary::new();
+    let ctx = activated(&lib);
+    let both = vec![a_view("v1", "One"), a_view("v2", "Two")];
+    put_settings(
+        &lib,
+        &ctx,
+        SettingsPatch {
+            views: Some(both),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+
+    let left = vec![a_view("v2", "Two")];
+    let after = put_settings(
+        &lib,
+        &ctx,
+        SettingsPatch {
+            views: Some(left.clone()),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+
+    assert_eq!(after.views, left);
+    assert_eq!(get_settings(&lib, &ctx).unwrap().views, left);
+}
+
+#[test]
+fn a_view_is_refused_for_a_name_an_icon_or_a_tag_it_cannot_have() {
+    let lib = TempLibrary::new();
+    let ctx = activated(&lib);
+    let refused = |view: ProjectViewDto| {
+        put_settings(
+            &lib,
+            &ctx,
+            SettingsPatch {
+                views: Some(vec![view]),
+                ..Default::default()
+            },
+        )
+        .is_err()
+    };
+
+    assert!(refused(ProjectViewDto {
+        name: "   ".to_owned(),
+        ..a_view("v1", "x")
+    }));
+    assert!(refused(ProjectViewDto {
+        id: String::new(),
+        ..a_view("v1", "x")
+    }));
+    // An icon is a name the web app looks up, never anything it renders.
+    assert!(refused(ProjectViewDto {
+        icon: "../secret".to_owned(),
+        ..a_view("v1", "x")
+    }));
+    assert!(refused(ProjectViewDto {
+        tags: vec!["   ".to_owned()],
+        ..a_view("v1", "x")
+    }));
+    // Nothing was stored by any of them.
+    assert!(get_settings(&lib, &ctx).unwrap().views.is_empty());
+}
+
+#[test]
+fn two_views_cannot_share_an_id_and_the_list_is_bounded() {
+    let lib = TempLibrary::new();
+    let ctx = activated(&lib);
+    let put = |views: Vec<ProjectViewDto>| {
+        put_settings(
+            &lib,
+            &ctx,
+            SettingsPatch {
+                views: Some(views),
+                ..Default::default()
+            },
+        )
+    };
+
+    // The sidebar and the address both name a view by id; two answering to one name is a bug
+    // with no right behaviour.
+    assert!(put(vec![a_view("same", "One"), a_view("same", "Two")]).is_err());
+    let too_many: Vec<ProjectViewDto> = (0..=spm_core::validate::VIEWS_MAX)
+        .map(|i| a_view(&format!("v{i}"), "x"))
+        .collect();
+    assert!(put(too_many).is_err());
+}
+
+// One row holds the lot, so a value this build no longer accepts leaves the user with no views
+// rather than some: the same "reject, don't corrupt" rule the other keys follow.
+#[test]
+fn a_stored_views_value_that_fails_the_schema_falls_back_to_no_views() {
+    let lib = TempLibrary::new();
+    let ctx = activated(&lib);
+    store_setting(&lib, &ctx, "views", r#"[{"id":"v1","name":"x"}]"#);
+
+    assert!(get_settings(&lib, &ctx).unwrap().views.is_empty());
 }

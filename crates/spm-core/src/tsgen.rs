@@ -26,10 +26,10 @@ use crate::dto::{
     CoreProjectDetailDto, CoreProjectDto, DEFAULT_SETTINGS, DiscardedSessionsDto, EntryDiff,
     FileCounts, FileDto, FileKind, FileState, Language, LibraryMode, LibraryStateDto,
     LocalLibraryDto, ModelSiteDto, PreviewState, ProjectDetailDto, ProjectDto, ProjectQuery,
-    ProjectState, RemoteLibraryDto, RescanResultDto, SettingsDto, SettingsPatch, SlicerConfigDto,
-    SlicerId, SlicerInstallDto, SlicerInstallOrigin, SlicerInstallState, SlicerLaunchDto,
-    SlicerLaunchMode, SlicerLaunchOptions, SlicerSessionDto, SortDir, SortKey, Theme, UserDto,
-    UserStatus, ViewMode, ZipImportResultDto,
+    ProjectState, ProjectViewDto, RemoteLibraryDto, RescanResultDto, SettingsDto, SettingsPatch,
+    SlicerConfigDto, SlicerId, SlicerInstallDto, SlicerInstallOrigin, SlicerInstallState,
+    SlicerLaunchDto, SlicerLaunchMode, SlicerLaunchOptions, SlicerSessionDto, SortDir, SortKey,
+    Theme, UserDto, UserStatus, ViewMode, ZipImportResultDto,
 };
 use crate::error::{
     AppErrorCode, DETECTION_FAILED, ErrorBody, ErrorEnvelope, QuotaExceededDetails,
@@ -37,7 +37,7 @@ use crate::error::{
 use crate::validate::{
     ActivateInput, ChangePasswordInput, CreateProjectInput, CreateUserInput, FILTER_TAGS_MAX,
     FileRenameInput, LoginInput, PROJECT_LIMIT_MAX, ProfilePatch, ProjectPatch, SEARCH_MAX_LENGTH,
-    TagBody, UpdateUserInput,
+    TagBody, UpdateUserInput, VIEW_NAME_MAX, VIEWS_MAX,
 };
 
 /// Where the checked-in files live, relative to this crate.
@@ -129,6 +129,7 @@ fn types_ts() -> String {
         BrowseBounds,
         BrowseStateDto,
         BrowseTabsDto,
+        ProjectViewDto,
         BrowseDownloadState,
         BrowseDownloadDto,
         BrowseNoticeKind,
@@ -159,7 +160,11 @@ fn constants_ts() -> String {
          /** The largest page a project query may ask for. */\n\
          export const PROJECT_LIMIT_MAX = {PROJECT_LIMIT_MAX}\n\n\
          /** How many tags a remembered filter may hold. */\n\
-         export const FILTER_TAGS_MAX = {FILTER_TAGS_MAX}\n"
+         export const FILTER_TAGS_MAX = {FILTER_TAGS_MAX}\n\n\
+         /** How many saved views of the project list one user may keep. */\n\
+         export const VIEWS_MAX = {VIEWS_MAX}\n\n\
+         /** The longest name a saved view may carry. */\n\
+         export const VIEW_NAME_MAX = {VIEW_NAME_MAX}\n"
     )
 }
 

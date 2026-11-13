@@ -124,13 +124,25 @@ export function MenuTrigger(props: {
   items: readonly MenuEntry[]
   placement?: 'bottom-start' | 'bottom-end'
   /**
+   * Opens the menu from outside as well as from its own trigger: a sidebar row opens this one on
+   * a right-click anywhere along it. The menu still positions itself against the trigger, so the
+   * panel appears where pressing the trigger would have put it.
+   */
+  open?: boolean
+  onOpenChange?: (open: boolean) => void
+  /**
    * Draws the trigger. `trigger` is the primitive's own props — the press handlers, the
    * `aria-expanded`/`aria-haspopup` pair and the ref it positions against — and **must be spread
    * last** onto the element, so that nothing the caller sets quietly replaces them.
    */
   children: (api: { trigger: TriggerProps; expanded: boolean }) => JSX.Element
 }) {
-  const [open, setOpen] = createSignal(false)
+  const [uncontrolled, setUncontrolled] = createSignal(false)
+  const open = () => props.open ?? uncontrolled()
+  const setOpen = (next: boolean) => {
+    setUncontrolled(next)
+    props.onOpenChange?.(next)
+  }
   createOverlayClaim(open)
   return (
     <DropdownMenu
