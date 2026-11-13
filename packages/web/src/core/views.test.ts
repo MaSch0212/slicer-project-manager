@@ -3,6 +3,7 @@ import type { ProjectViewDto } from '../api/generated'
 import { hasViewIcon } from '../ui/nav-views'
 import {
   activeView,
+  currentView,
   DEFAULT_VIEW_ICON,
   duplicateView,
   editView,
@@ -140,5 +141,26 @@ describe('keeping the list of views', () => {
 describe('the icons', () => {
   it('can all be drawn: a name with no picture would be a blank row', () => {
     for (const icon of VIEW_ICONS) expect(hasViewIcon(icon), icon).toBe(true)
+  })
+})
+
+describe('the view the list is in', () => {
+  const twins = [view({ id: 'a', name: 'First' }), view({ id: 'b', name: 'Twin' })]
+
+  it('is the picked one, even when an earlier one has the same filters', () => {
+    expect(currentView(twins, shape(), 'b')).toEqual({ view: twins[1], modified: false })
+  })
+
+  it('stays the picked one once its filters change, and says so', () => {
+    expect(currentView(twins, shape({ sort: 'name' }), 'b')).toEqual({
+      view: twins[1],
+      modified: true,
+    })
+  })
+
+  it('falls back to matching when nothing, or a deleted view, was picked', () => {
+    expect(currentView(twins, shape(), null)?.view.id).toBe('a')
+    expect(currentView(twins, shape(), 'gone')?.view.id).toBe('a')
+    expect(currentView(twins, shape({ sort: 'name' }), null)).toBeNull()
   })
 })

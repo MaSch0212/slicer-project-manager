@@ -72,6 +72,13 @@ describe('navEntriesFor', () => {
     expect(ids(SERVED, admin)).toContain('users')
     expect(ids({ ...SERVED, canManageUsers: false }, admin)).not.toContain('users')
   })
+  it('leaves Settings to the title bar where the window draws one', () => {
+    const under = (settingsInTitleBar: boolean) =>
+      navEntriesFor(LOCAL, anon, { settingsInTitleBar }).map((entry) => entry.id)
+    expect(under(true)).toEqual(['projects'])
+    // A browser has no title bar of the app's own: the sidebar is the way there.
+    expect(under(false)).toEqual(['projects', 'settings'])
+  })
   it('offers sign-out only where there is a session to end', () => {
     expect(ids(LOCAL, user)).not.toContain('sign-out')
     expect(ids(SERVED, user).at(-1)).toBe('sign-out')

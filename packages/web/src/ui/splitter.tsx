@@ -94,7 +94,7 @@ export function SplitPane(props: { label: string; width: number; children: JSX.E
   return (
     <aside
       aria-label={props.label}
-      class="relative min-h-0 w-full shrink-0 overflow-y-auto border-l border-border md:w-(--pane-width)"
+      class="relative flex min-h-0 w-full shrink-0 flex-col overflow-hidden border-l border-border md:w-(--pane-width)"
       style={{ '--pane-width': `${props.width}px` }}
     >
       {props.children}

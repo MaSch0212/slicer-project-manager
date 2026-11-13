@@ -1,6 +1,7 @@
 import { createMemo, createRoot } from 'solid-js'
 import type { Capabilities } from '../api/generated'
 import { Layers, LogOut, Search, Settings, Users, type IconComponent } from '../ui/icons'
+import { isDesktop } from './desktop'
 import { t, type TranslationKey } from './i18n'
 import { auth, capabilities } from './stores'
 
@@ -21,10 +22,16 @@ export type NavEntry = {
  * is this" (parent spec 2.4).
  *
  * Import and Change-folder are not here: the settings page offers both.
+ *
+ * `settingsInTitleBar` drops the Settings entry where the window's own title bar already has a
+ * button for it and the app menu an entry: a third way to the same page was just noise. It is
+ * about where the chrome is drawn, not about what the shell can do — a browser has no title bar
+ * of the app's own, so there the sidebar is still the way to settings.
  */
 export function navEntriesFor(
   caps: Capabilities,
   session: { isAuthenticated: boolean; isAdmin: boolean },
+  options: { settingsInTitleBar?: boolean } = {},
 ): readonly NavEntry[] {
   // The same expression as the auth guard, for the same reason: with nothing to sign in *to*,
   // the navigation must not wait for a user.
@@ -35,7 +42,9 @@ export function navEntriesFor(
   if (caps.canBrowseModelSites) {
     entries.push({ id: 'browse', labelKey: 'browse.title', icon: Search, route: '/browse' })
   }
-  entries.push({ id: 'settings', labelKey: 'settings.title', icon: Settings, route: '/settings' })
+  if (!options.settingsInTitleBar) {
+    entries.push({ id: 'settings', labelKey: 'settings.title', icon: Settings, route: '/settings' })
+  }
   if (caps.canManageUsers && session.isAdmin) {
     entries.push({ id: 'users', labelKey: 'admin.title', icon: Users, route: '/admin/users' })
   }
@@ -49,10 +58,11 @@ export function navEntriesFor(
 
 export const navEntries = createRoot(() =>
   createMemo(() =>
-    navEntriesFor(capabilities.capabilities(), {
-      isAuthenticated: auth.isAuthenticated(),
-      isAdmin: auth.isAdmin(),
-    }),
+    navEntriesFor(
+      capabilities.capabilities(),
+      { isAuthenticated: auth.isAuthenticated(), isAdmin: auth.isAdmin() },
+      { settingsInTitleBar: isDesktop() },
+    ),
   ),
 )
 
@@ -68,7 +78,7 @@ const FULL_BLEED: readonly ((path: string) => boolean)[] = [
   (path) => path === '/browse',
   (path) => path === '/settings',
   // The list and the detail panel beside it are two scrolling columns of one frame.
-  (path) => path === '/projects' || /^\/projects\/[^/]+$/.test(path),
+  (path) => path === '/projects' || /^\/projects\/[^/]+(\/view\/[^/]+)?$/.test(path),
 ]
 
 /** Whether this path is one of them. */

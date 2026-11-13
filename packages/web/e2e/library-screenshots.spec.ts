@@ -116,10 +116,22 @@ test.describe('library screenshots', () => {
           await setView('grid')
           await page.goto(`${server.origin}/projects`)
           await expect(page.getByRole('heading', { name: 'Benchy' })).toBeVisible()
-          await page.getByRole('button', { name: 'Tags' }).click()
-          await page.getByRole('listbox').waitFor()
+          await page.getByRole('button', { name: /^Filters/ }).click()
+          await page.getByRole('dialog', { name: 'Filters' }).waitFor()
           await page.waitForTimeout(300)
-          await page.screenshot({ path: shot('projects-tags-open') })
+          await page.screenshot({ path: shot('projects-filters-open') })
+          await page.keyboard.press('Escape')
+
+          // The project beside the list, with its tag picker open.
+          await page.goto(`${server.origin}/projects/${seeded['Benchy']!.id}`)
+          const panel = page.getByRole('complementary', { name: 'Project details' })
+          await expect(panel.getByRole('heading', { name: 'Benchy', level: 2 })).toBeVisible()
+          await page.waitForLoadState('networkidle')
+          await page.screenshot({ path: shot('detail-panel') })
+          await panel.getByRole('button', { name: 'Choose tags' }).click()
+          await page.getByRole('dialog', { name: 'Choose tags' }).waitFor()
+          await page.waitForTimeout(300)
+          await page.screenshot({ path: shot('detail-tag-picker') })
         })
 
         test('saved views in the sidebar, and the editor', async ({ page }) => {
@@ -190,6 +202,7 @@ test.describe('library screenshots', () => {
             `${server.origin}/projects/${hinge.id}/view/${hinge.fileIds['hinge.step']}`,
           )
           await expect(page.getByText('no preview for STEP', { exact: false })).toBeVisible()
+          await page.waitForTimeout(400)
           await page.screenshot({ path: shot('viewer-step') })
         })
 

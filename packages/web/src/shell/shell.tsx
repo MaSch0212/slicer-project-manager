@@ -43,6 +43,7 @@ import {
   type MenuEntry,
 } from '../ui'
 import { EditViewsDialog, SaveViewDialog, ViewsNav } from './views-nav'
+import { editingViews, saveViewOpen, setEditingViews, setSaveViewOpen } from '../core/view-actions'
 
 /**
  * The app shell (subsystem G): sidebar from `md` up, a drawer below it, the notification surface,
@@ -54,9 +55,6 @@ export function Shell(props: RouteSectionProps) {
   const location = useLocation()
   const [drawerOpen, setDrawerOpen] = createSignal(false)
   const [maximized, setMaximized] = createSignal(false)
-  const [savingView, setSavingView] = createSignal(false)
-  // Null when the editor is shut; otherwise which view's name to select, if any.
-  const [editingViews, setEditingViews] = createSignal<{ focus: string | null } | null>(null)
 
   /**
    * The window's own bar, in the desktop app only. The maximised state is asked for after every
@@ -122,7 +120,7 @@ export function Shell(props: RouteSectionProps) {
       label: t('views.save'),
       icon: Layers,
       disabled: settings.settings().views.length >= VIEWS_MAX,
-      onSelect: () => setSavingView(true),
+      onSelect: () => setSaveViewOpen(true),
     },
     {
       label: t('views.edit'),
@@ -256,11 +254,7 @@ export function Shell(props: RouteSectionProps) {
           )}
         </For>
       </NavList>
-      <ViewsNav
-        collapsed={isCollapsed}
-        onSave={() => setSavingView(true)}
-        onEdit={(focus) => setEditingViews({ focus })}
-      />
+      <ViewsNav collapsed={isCollapsed} />
     </div>
   )
 
@@ -309,7 +303,7 @@ export function Shell(props: RouteSectionProps) {
           <nav aria-label={t('nav.label')}>{entries(false)}</nav>
         </Drawer>
       </Show>
-      <SaveViewDialog open={savingView()} onOpenChange={setSavingView} />
+      <SaveViewDialog open={saveViewOpen()} onOpenChange={setSaveViewOpen} />
       <EditViewsDialog
         open={editingViews() !== null}
         focus={editingViews()?.focus ?? null}

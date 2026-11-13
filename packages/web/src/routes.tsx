@@ -44,8 +44,7 @@ const capability =
     </RequireCapability>
   )
 
-// Lazy chunks. The viewer will carry Three.js, so it is split off from the start.
-const ViewerPage = lazy(() => import('./pages/viewer'))
+// Lazy chunks. (The 3D viewer is one too, loaded by the file preview, not by a route.)
 const AdminUsersPage = lazy(() => import('./pages/admin-users'))
 const BrowsePage = lazy(() => import('./pages/browse'))
 const ConnectPage = lazy(() => import('./pages/connect'))
@@ -57,10 +56,14 @@ export const routes: RouteDefinition[] = [
   { path: '/', component: redirectToProjects },
   { path: '/login', component: LoginPage },
   { path: '/activate', component: ActivatePage },
-  // One route, two paths: `/projects/abc` is the list with that project open beside it, and
-  // keeping it the same route is what stops the list reloading every time one is selected.
-  { path: ['/projects', '/projects/:id'], component: auth(ProjectsPage) },
-  { path: '/projects/:id/view/:fileId', component: auth(ViewerPage) },
+  // One route, three paths: `/projects/abc` is the list with that project open beside it, and
+  // `/projects/abc/view/f1` is that with one of its files in the preview popup. Keeping it the
+  // same route is what stops the list reloading every time one is selected or previewed, and the
+  // address is what makes the back button close the popup and a link reopen it.
+  {
+    path: ['/projects', '/projects/:id', '/projects/:id/view/:fileId'],
+    component: auth(ProjectsPage),
+  },
   { path: '/import', component: auth(ImportPage) },
   { path: '/settings', component: auth(SettingsPage) },
   // Slicers was its own page until the settings page became one scroll. The capability gate moved

@@ -132,7 +132,7 @@ const BROWSER: Capabilities = {
 /** The detail as the route used to render it: a page of its own, keyed on `:id`. */
 function RoutedDetail() {
   const params = useParams<{ id: string }>()
-  return <ProjectDetail id={params.id} variant="page" />
+  return <ProjectDetail id={params.id} />
 }
 
 function renderPage() {

@@ -14,6 +14,8 @@ export function Stage(props: {
   focusable?: boolean
   label?: string
   onKeyDown?: (event: KeyboardEvent) => void
+  /** Fills its container instead of taking a share of the window: the preview popup's body. */
+  fill?: boolean
   class?: string
 }) {
   // A `<Show>` passed as `overlay` is a truthy accessor even while it renders nothing, so what is
@@ -22,7 +24,10 @@ export function Stage(props: {
   return (
     <div
       class={cx(
-        'relative h-[60dvh] min-h-72 w-full overflow-hidden rounded-card border border-border bg-stage sm:h-[70dvh]',
+        'relative w-full overflow-hidden bg-stage',
+        props.fill
+          ? 'min-h-0 flex-1'
+          : 'h-[60dvh] min-h-72 rounded-card border border-border sm:h-[70dvh]',
         props.class,
       )}
     >

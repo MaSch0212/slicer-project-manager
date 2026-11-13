@@ -1,7 +1,7 @@
 import { expect, test, type Locator, type Page } from '@playwright/test'
 import { binaryStl, cube, obj, paddedObj, stepStub, threeMf, cylinder } from './fixtures'
 import { seedLibrary, type SeededProject, type SeedProject } from './seed'
-import { asAdmin, expectHeading, open, useServer, expectPanel } from './support'
+import { asAdmin, detailPanel, open, useServer, expectPanel } from './support'
 
 /**
  * The viewer, in a real browser: pixels reach the screen, the three formats draw, the stage reads
@@ -59,7 +59,15 @@ test.beforeEach(async ({ page }) => {
 })
 
 const CANVAS_LABEL = /^3D view of the model/
-const BACK = 'Back to the project'
+
+/**
+ * The preview is a popup over the project, not a page: its title is the file's name, and closing
+ * it is the way back. Scoped, because the panel behind it has a close button of its own.
+ */
+const preview = (page: Page) => page.getByRole('dialog')
+const expectPreviewOf = (page: Page, file: string) =>
+  expect(preview(page).getByRole('heading', { name: file, exact: true })).toBeVisible()
+const closePreview = (page: Page) => preview(page).getByRole('button', { name: 'Close' }).click()
 
 type Rgb = [number, number, number]
 
@@ -256,12 +264,11 @@ async function readStageColour(stage: Locator): Promise<Rgb> {
 const viewerUrl = (name: string, file: string) =>
   `/projects/${project(name).id}/view/${project(name).fileIds[file]}`
 
-/** Opens one file in the viewer and waits for a model to be on the stage. */
-/** Opens a model from the project panel: a card further down it has to be scrolled to first. */
+/** Opens a file's preview from its card in the project panel; a card lower down is scrolled to. */
 async function openModelCard(page: Page, file: string) {
-  const link = page.getByRole('link', { name: `View in 3D: ${file}` })
-  await link.scrollIntoViewIfNeeded()
-  await link.click()
+  const card = detailPanel(page).getByRole('button', { name: file, exact: true })
+  await card.scrollIntoViewIfNeeded()
+  await card.click()
 }
 
 async function openInViewer(page: Page, name: string, file: string): Promise<Locator> {
@@ -275,7 +282,7 @@ async function openInViewer(page: Page, name: string, file: string): Promise<Loc
 
 test('the viewer draws the model rather than an empty stage', async ({ page }) => {
   const stage = await openInViewer(page, MODELS, 'cube.stl')
-  await expectHeading(page, 'cube.stl')
+  await expectPreviewOf(page, 'cube.stl')
 
   // The drawing buffer is the panel, not the 1x1 the resize clamp falls back to when the container
   // has no box.
@@ -312,13 +319,13 @@ for (const [file, format] of [
     const frame = await readFrame(page, stage)
     expect(frame.modelShare).toBeGreaterThan(0.05)
     expect(frame.faceTones).toHaveLength(3)
-    // The page offers the file for download and the way back, with the file's own name as title.
-    await expectHeading(page, file)
-    await expect(page.getByRole('link', { name: 'Download' })).toHaveAttribute(
+    // The popup offers the file for download and a way out, with the file's own name as title.
+    await expectPreviewOf(page, file)
+    await expect(preview(page).getByRole('link', { name: `Download: ${file}` })).toHaveAttribute(
       'href',
       new RegExp(`^/api/files/${project(MODELS).fileIds[file]}/raw$`),
     )
-    await expect(page.getByRole('link', { name: BACK })).toBeVisible()
+    await expect(preview(page).getByRole('button', { name: 'Close' })).toBeVisible()
   })
 }
 
@@ -419,7 +426,7 @@ test('a model opens in the opening view even if the stage was dragged while it l
     await held
     await route.continue()
   })
-  await page.getByRole('link', { name: BACK }).click()
+  await closePreview(page)
   await expectPanel(page, MODELS)
   await openModelCard(page, 'cube.stl')
 
@@ -489,17 +496,17 @@ test('files the viewer cannot draw say why, and nothing is fetched or rendered f
   })
   const cases: [string, RegExp][] = [
     ['hinge.step', /There is no preview for STEP files/],
-    ['notes.txt', /cannot open a \.txt file/],
+    ['notes.txt', /no preview for this kind of file/],
   ]
   for (const [file, message] of cases) {
     await open(page, state.server, viewerUrl(ODDS, file))
-    await expectHeading(page, file)
-    await expect(page.getByRole('status').filter({ hasText: message })).toBeVisible()
+    await expectPreviewOf(page, file)
+    await expect(preview(page).getByText(message)).toBeVisible()
     await expect(page.getByRole('img', { name: CANVAS_LABEL })).toHaveCount(0)
     await expect(page.getByRole('button', { name: 'Reset view' })).toHaveCount(0)
-    // The page still offers the way back and the file itself.
-    await expect(page.getByRole('link', { name: BACK })).toBeVisible()
-    await expect(page.getByRole('link', { name: 'Download' })).toBeVisible()
+    // What can be done with it is the content of the popup, labelled.
+    await expect(preview(page).getByRole('link', { name: 'Download', exact: true })).toBeVisible()
+    await expect(preview(page).getByRole('button', { name: 'Rename', exact: true })).toBeVisible()
   }
   expect(fetched).toEqual([])
 })
@@ -512,16 +519,31 @@ test('a file that cannot be read as a model says so, and a missing file says it 
   await expect(page.getByRole('img', { name: CANVAS_LABEL })).toHaveCount(0)
 
   await open(page, state.server, `/projects/${project(ODDS).id}/view/00000000-no-such-file`)
-  await expect(page.getByRole('alert')).toContainText('This file is not part of this project')
+  await expect(
+    preview(page).getByText('This file is not part of this project any more.'),
+  ).toBeVisible()
 })
 
-test('the viewer is reached from a model card and returns to its project', async ({ page }) => {
+test('the preview opens from a model card as a popup, and closing it leaves the project open', async ({
+  page,
+}) => {
   await open(page, state.server, `/projects/${project(MODELS).id}`)
   await expectPanel(page, MODELS)
   await openModelCard(page, 'cube.obj')
   await expect(page.getByRole('img', { name: CANVAS_LABEL })).toBeVisible({ timeout: 30_000 })
-  await expectHeading(page, 'cube.obj')
-  await page.getByRole('link', { name: BACK }).click()
+  await expectPreviewOf(page, 'cube.obj')
+  // Over the project, not instead of it: the panel is still behind the popup.
+  await expect(page).toHaveURL(new RegExp(`/projects/${project(MODELS).id}/view/`))
+  await closePreview(page)
+  await expect(preview(page)).toBeHidden()
+  await expectPanel(page, MODELS)
+  await expect(page).toHaveURL(new RegExp(`/projects/${project(MODELS).id}$`))
+
+  // The back button closes it too, because the popup is part of the address.
+  await openModelCard(page, 'cube.obj')
+  await expectPreviewOf(page, 'cube.obj')
+  await page.goBack()
+  await expect(preview(page)).toBeHidden()
   await expectPanel(page, MODELS)
 })
 
@@ -575,7 +597,8 @@ test('twenty trips through the viewer do not accumulate WebGL contexts', async (
   for (let trip = 0; trip < TRIPS; trip++) {
     await openModelCard(page, 'cube.stl')
     await expect(page.getByRole('img', { name: CANVAS_LABEL })).toBeVisible({ timeout: 30_000 })
-    await page.getByRole('link', { name: BACK }).click()
+    await closePreview(page)
+    await expect(preview(page)).toBeHidden()
     await expectPanel(page, MODELS)
   }
 

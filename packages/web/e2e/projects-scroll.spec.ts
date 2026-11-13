@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test'
 import { seedBulkProjects } from './seed'
-import { asAdmin, expectHeading, open, useServer } from './support'
+import { asAdmin, expectHeading, open, openFilters, searchProjects, useServer } from './support'
 
 /** More than two pages of 48, so scrolling has to load twice and the second page is a short one. */
 const TOTAL = 110
@@ -70,13 +70,14 @@ test('search and the tag filter apply to the whole library, not to the pages loa
 
   // "Bulk 10" matches Bulk 100-109 only: none of them is on the first page (001-048), so a filter
   // applied to the loaded pages alone would find nothing.
-  await page.getByRole('searchbox', { name: 'Search' }).fill('Bulk 10')
+  await searchProjects(page, 'Bulk 10')
   await expect(cards(page)).toHaveCount(10)
 
-  await page.getByRole('searchbox', { name: 'Search' }).fill('')
+  await searchProjects(page, '')
   await expect(cards(page)).toHaveCount(PAGE_SIZE)
-  await page.getByRole('button', { name: 'Tags' }).click()
-  await page.getByRole('option', { name: 'fifth' }).click()
+  const filters = await openFilters(page)
+  await filters.getByRole('checkbox', { name: 'fifth' }).click()
+  await page.keyboard.press('Escape')
   // Every fifth project carries the tag.
   await expect(cards(page)).toHaveCount(TOTAL / 5)
   await expect(loadMore(page)).toBeHidden()
@@ -125,4 +126,9 @@ test('the page scrolls inside the frame, and the sidebar does not move with it',
   expect(scrolled.asideTop).toBeLessThanOrEqual(1)
   expect(scrolled.asideHeight).toBeLessThanOrEqual(scrolled.viewport + 1)
   await expect(page.getByRole('link', { name: 'Projects' })).toBeInViewport()
+  // The toolbar sits above the scroller, not in it: with the list two pages down, search, the
+  // filters and the sort are where they were.
+  const toolbar = page.getByRole('group', { name: 'Project list' })
+  await expect(toolbar).toBeInViewport({ ratio: 1 })
+  expect((await toolbar.boundingBox())!.y).toBeLessThan(80)
 })

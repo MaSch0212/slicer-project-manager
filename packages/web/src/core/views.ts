@@ -159,3 +159,29 @@ export function duplicateView(
   next.splice(index + 1, 0, copy)
   return next
 }
+
+/** The view the list belongs to, and whether it has been changed since it was picked. */
+export type CurrentView = { view: ProjectViewDto; modified: boolean }
+
+/**
+ * Which view the list is in.
+ *
+ * The one the user picked, when it still exists — **even if it matches another view, or none**.
+ * Two views can be saved over the same filters, and matching alone cannot tell them apart: it
+ * always answered with the first, whichever was clicked. Once its filters are changed the picked
+ * view stays the current one and says it is `modified`, which is how the app this follows
+ * behaves: the change is a draft on top of the view, to be kept or thrown away.
+ *
+ * With nothing picked (a fresh device, or the picked view was deleted) the first view the list
+ * matches stands in, unmodified by definition.
+ */
+export function currentView(
+  views: readonly ProjectViewDto[],
+  shape: ViewShape,
+  picked: string | null,
+): CurrentView | null {
+  const chosen = picked === null ? undefined : views.find((view) => view.id === picked)
+  if (chosen) return { view: chosen, modified: !matchesView(shape, chosen) }
+  const matching = activeView(views, shape)
+  return matching ? { view: matching, modified: false } : null
+}

@@ -8,9 +8,13 @@ import {
   detailPanel,
   expectHeading,
   expectPanel,
+  filtersButton,
   open,
+  openFilters,
+  searchProjects,
   settingsSaved,
   sidebarNav,
+  sortBy,
   useServer,
 } from './support'
 
@@ -63,35 +67,32 @@ test('lists the projects, hiding the archived ones until asked', async ({ page }
   ])
 
   const saved = settingsSaved(page)
-  await page.getByRole('button', { name: 'Show archived' }).click()
-  await expect(page.getByRole('button', { name: 'Show archived' })).toHaveAttribute(
-    'aria-pressed',
-    'true',
-  )
+  const filters = await openFilters(page)
+  await filters.getByText('Show archived', { exact: true }).click()
+  await expect(filters.getByRole('switch', { name: 'Show archived' })).toBeChecked()
+  await page.keyboard.press('Escape')
+  // The funnel counts it, so a list with archived projects in it never looks like the default.
+  await expect(filtersButton(page)).toHaveAccessibleName('Filters, 1 active')
   await expect(card(page, 'Retired Bracket')).toBeVisible()
   await expect(card(page, 'Retired Bracket').getByText('Archived', { exact: true })).toBeVisible()
   await saved
 
   // The choice is remembered: it is still on after a reload.
   await page.reload()
-  await expect(page.getByRole('button', { name: 'Show archived' })).toHaveAttribute(
-    'aria-pressed',
-    'true',
-  )
+  await expect(filtersButton(page)).toHaveAccessibleName('Filters, 1 active')
   await expect(card(page, 'Retired Bracket')).toBeVisible()
 })
 
 test('search narrows the list as you type, and says so when nothing matches', async ({ page }) => {
   await projectsPage(page)
-  const search = page.getByRole('searchbox', { name: 'Search' })
 
-  await search.fill('clip')
+  await searchProjects(page, 'clip')
   await expect.poll(() => titles(page)).toEqual(['Cable Clip'])
 
-  await search.fill('no such project anywhere')
+  await searchProjects(page, 'no such project anywhere')
   await expect(page.getByRole('heading', { name: 'No projects match your filter' })).toBeVisible()
 
-  await search.fill('')
+  await searchProjects(page, '')
   await expect.poll(async () => (await titles(page)).length).toBe(5)
 })
 
@@ -99,53 +100,63 @@ test('the tag filter lists the library tags, counts the chosen ones and narrows 
   page,
 }) => {
   await projectsPage(page)
-  const tags = page.getByRole('button', { name: 'Tags' })
-  await expect(tags).toHaveAttribute('aria-expanded', 'false')
+  await expect(filtersButton(page)).toHaveAccessibleName('Filters')
 
-  await tags.click()
-  await expect(tags).toHaveAttribute('aria-expanded', 'true')
-  const list = page.getByRole('listbox')
-  await expect(list).toBeVisible()
+  const panel = await openFilters(page)
+  const list = panel.getByRole('group', { name: 'Tags' })
   for (const name of ['boats', 'calibration', 'desk', 'gadgets']) {
-    await expect(list.getByRole('option', { name })).toBeVisible()
+    await expect(list.getByRole('checkbox', { name })).toBeVisible()
   }
 
   const saved = settingsSaved(page)
-  await list.getByRole('option', { name: 'gadgets' }).click()
-  await expect(tags).toContainText('1')
+  await list.getByRole('checkbox', { name: 'gadgets' }).click()
+  await expect(list.getByRole('checkbox', { name: 'gadgets' })).toHaveAttribute(
+    'aria-checked',
+    'true',
+  )
+  await expect(filtersButton(page)).toHaveAccessibleName('Filters, 1 active')
   await expect.poll(async () => (await titles(page)).sort()).toEqual(['Cable Clip', 'Phone Stand'])
   await saved
 
+  // The field narrows the list of tags itself.
+  await panel.getByRole('searchbox', { name: 'Find a tag' }).fill('cal')
+  await expect(list.getByRole('checkbox')).toHaveCount(1)
+  await panel.getByRole('searchbox', { name: 'Find a tag' }).fill('')
+
   // Choosing it again clears it: the count follows the selection down as well as up.
-  await list.getByRole('option', { name: 'gadgets' }).click()
-  await expect(tags).not.toContainText('1')
+  await list.getByRole('checkbox', { name: 'gadgets' }).click()
+  await expect(filtersButton(page)).toHaveAccessibleName('Filters')
   await page.keyboard.press('Escape')
-  await expect(tags).toHaveAttribute('aria-expanded', 'false')
+  await expect(panel).toBeHidden()
   await expect.poll(async () => (await titles(page)).length).toBe(5)
 })
 
 test('the sort order changes the list and is remembered', async ({ page }) => {
   await projectsPage(page)
-  const sort = page.getByRole('combobox', { name: 'Sort by' })
 
   let saved = settingsSaved(page)
-  await sort.selectOption({ label: 'A–Z' })
+  await sortBy(page, 'Name')
   await saved
   await expect
     .poll(() => titles(page))
     .toEqual(['Benchy', 'Cable Clip', 'Calibration Cube', 'Empty Project', 'Phone Stand'])
 
   saved = settingsSaved(page)
-  await sort.selectOption({ label: 'Newest' })
+  await sortBy(page, 'Descending')
   await saved
-  // The last project created is first.
+  await expect.poll(async () => (await titles(page))[0]).toBe('Phone Stand')
+
+  saved = settingsSaved(page)
+  await sortBy(page, 'Created')
+  await saved
+  // The last project created is first: a date reads newest first.
   await expect.poll(async () => (await titles(page))[0]).toBe('Empty Project')
 
   saved = settingsSaved(page)
-  await sort.selectOption({ label: 'A–Z' })
+  await sortBy(page, 'Name')
   await saved
   await page.reload()
-  await expect(page.getByRole('combobox', { name: 'Sort by' })).toHaveValue('name:asc')
+  await expect(page.getByRole('button', { name: 'Sort: Name, Ascending' })).toBeVisible()
   await expect(page.getByRole('heading', { name: 'Benchy', level: 2 })).toBeVisible()
   expect((await titles(page))[0]).toBe('Benchy')
 })
@@ -206,10 +217,12 @@ test('a project is created with its details and tags', async ({ page }) => {
 
   await expect(page).toHaveURL(/\/projects\/[0-9a-f-]+$/)
   await expectPanel(page, 'Wall Hook')
-  await expect(page.getByRole('link', { name: 'https://example.com/hook' })).toBeVisible()
+  // The site, not the whole address; the link still goes to all of it.
+  const site = detailPanel(page).getByRole('link', { name: 'example.com' })
+  await expect(site).toHaveAttribute('href', 'https://example.com/hook')
   await expect(page.getByText('Holds one coat.')).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Remove tag hooks' })).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Remove tag wall' })).toBeVisible()
+  await expect(detailPanel(page).getByText('hooks', { exact: true })).toBeVisible()
+  await expect(detailPanel(page).getByText('wall', { exact: true })).toBeVisible()
   expect(existsSync(join(state.server.libraryDir, state.server.username, 'Wall Hook'))).toBe(true)
 
   await detailPanel(page).getByRole('button', { name: 'Close' }).click()
@@ -233,15 +246,25 @@ test('a project is edited: name, notes and tags', async ({ page }) => {
   await expectPanel(page, 'Edited')
   await expect(page.getByText('after', { exact: true })).toBeVisible()
 
-  // Tags are edited in place, each change its own request.
-  const tagBox = page.getByRole('textbox', { name: 'Add tag' })
-  await tagBox.fill('fresh')
-  await tagBox.press('Enter')
-  await expect(page.getByRole('button', { name: 'Remove tag fresh' })).toBeVisible()
+  // Tags are picked from a list with a checkmark on each, and a new one is typed into its field;
+  // each change is its own request.
+  const chip = detailPanel(page).getByText('fresh', { exact: true })
+  await detailPanel(page).getByRole('button', { name: 'Choose tags' }).click()
+  const picker = page.getByRole('dialog', { name: 'Choose tags' })
+  await picker.getByRole('searchbox', { name: 'Find or add a tag' }).fill('fresh')
+  await picker.getByRole('searchbox', { name: 'Find or add a tag' }).press('Enter')
+  await expect(picker.getByRole('checkbox', { name: 'fresh' })).toHaveAttribute(
+    'aria-checked',
+    'true',
+  )
+  await page.keyboard.press('Escape')
+  await expect(chip).toBeVisible()
   await page.reload()
-  await expect(page.getByRole('button', { name: 'Remove tag fresh' })).toBeVisible()
-  await page.getByRole('button', { name: 'Remove tag fresh' }).click()
-  await expect(page.getByRole('button', { name: 'Remove tag fresh' })).toHaveCount(0)
+  await expect(chip).toBeVisible()
+  await detailPanel(page).getByRole('button', { name: 'Choose tags' }).click()
+  await picker.getByRole('checkbox', { name: 'fresh' }).click()
+  await page.keyboard.press('Escape')
+  await expect(chip).toHaveCount(0)
 })
 
 test('a project is archived and restored', async ({ page }) => {
@@ -315,11 +338,11 @@ test('a view keeps what the list is showing and brings it back from the sidebar'
   await projectsPage(page)
 
   let saved = settingsSaved(page)
-  await page.getByRole('combobox', { name: 'Sort by' }).selectOption({ label: 'A–Z' })
+  await sortBy(page, 'Name')
   await saved
   saved = settingsSaved(page)
-  await page.getByRole('button', { name: 'Tags' }).click()
-  await page.getByRole('listbox').getByRole('option', { name: 'gadgets' }).click()
+  let panel = await openFilters(page)
+  await panel.getByRole('checkbox', { name: 'gadgets' }).click()
   await saved
   await page.keyboard.press('Escape')
   await expect.poll(() => titles(page)).toEqual(['Cable Clip', 'Phone Stand'])
@@ -333,28 +356,32 @@ test('a view keeps what the list is showing and brings it back from the sidebar'
   await saved
   await expect(dialog).toBeHidden()
 
-  // It is the view the list is showing, which is read off the settings rather than remembered.
   const row = sidebarNav(page).getByRole('button', { name: /^Gadgets/ })
   await expect(row).toHaveAttribute('aria-current', 'page')
 
-  // Leaving it by hand takes the mark away: there is no stale "current view" to disagree.
+  // Changing a filter by hand keeps the view current and marks it as changed, with a way back
+  // and a way to keep the change — Questkeep's draft.
   saved = settingsSaved(page)
-  await page.getByRole('button', { name: 'Tags' }).click()
-  await page.getByRole('listbox').getByRole('option', { name: 'gadgets' }).click()
+  panel = await openFilters(page)
+  await panel.getByRole('checkbox', { name: 'gadgets' }).click()
   await saved
   await page.keyboard.press('Escape')
   // Not a count: tests before this one in the file add and remove projects of their own.
   await expect(page.getByRole('heading', { name: 'Benchy', level: 2 })).toBeVisible()
-  await expect(row).not.toHaveAttribute('aria-current', 'page')
+  await expect(row).toHaveAttribute('aria-current', 'page')
+  await expect(row).toContainText('Changed since it was saved')
+  const changes = page.getByRole('group', { name: 'Unsaved changes to Gadgets' })
+  await expect(changes).toBeVisible()
 
-  // And picking it again puts every part of it back on the page that is already open.
+  // Reset puts every part of it back on the page that is already open.
   saved = settingsSaved(page)
-  await row.click()
+  await changes.getByRole('button', { name: 'Reset to Gadgets' }).click()
   await saved
   await expect.poll(() => titles(page)).toEqual(['Cable Clip', 'Phone Stand'])
-  await expect(page.getByRole('button', { name: 'Tags' })).toContainText('1')
-  await expect(page.getByRole('combobox', { name: 'Sort by' })).toHaveValue('name:asc')
-  await expect(row).toHaveAttribute('aria-current', 'page')
+  await expect(filtersButton(page)).toHaveAccessibleName('Filters, 1 active')
+  await expect(page.getByRole('button', { name: 'Sort: Name, Ascending' })).toBeVisible()
+  await expect(changes).toBeHidden()
+  await expect(row).not.toContainText('Changed since it was saved')
 
   // It lives on the account, so a reload still has it.
   await page.reload()

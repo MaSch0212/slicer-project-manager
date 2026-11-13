@@ -79,3 +79,32 @@ export const detailPanel = (page: Page) =>
 /** Asserts the panel has arrived for this project. */
 export const expectPanel = (page: Page, name: string | RegExp) =>
   expect(detailPanel(page).getByRole('heading', { name, level: 2 })).toBeVisible()
+
+/**
+ * The projects toolbar's search. It is a magnifier the size of the other tools that opens into a
+ * field, so a person (and this) presses it first; the field then takes the text.
+ */
+export async function searchProjects(page: Page, text: string): Promise<void> {
+  const field = page.getByRole('searchbox', { name: 'Search' })
+  if (!(await field.evaluate((input) => input === document.activeElement))) {
+    await page.getByRole('button', { name: 'Search', exact: true }).click()
+  }
+  await field.fill(text)
+}
+
+/** The funnel: "Filters", or "Filters, 2 active" once something narrows the list. */
+export const filtersButton = (page: Page) => page.getByRole('button', { name: /^Filters/ })
+
+/** Opens the filter panel and returns it. Escape closes it again. */
+export async function openFilters(page: Page) {
+  await filtersButton(page).click()
+  const panel = page.getByRole('dialog', { name: 'Filters' })
+  await expect(panel).toBeVisible()
+  return panel
+}
+
+/** Picks a sort field (or a direction) from the toolbar's sort menu. */
+export async function sortBy(page: Page, entry: string): Promise<void> {
+  await page.getByRole('button', { name: /^Sort: / }).click()
+  await page.getByRole('menuitem', { name: entry, exact: true }).click()
+}

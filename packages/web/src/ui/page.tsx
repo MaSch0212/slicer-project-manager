@@ -118,3 +118,39 @@ export function PageHeader(props: {
     </header>
   )
 }
+
+/**
+ * The fixed top row of a panel beside a list: the title on one line, then its actions as icons,
+ * then the close. Icons rather than labelled buttons because a panel is as narrow as the user
+ * drags it, and a title squeezed into a column of single words beside three wrapping buttons was
+ * what labelled ones did. Same height as the list's toolbar, so the two rows read as one line.
+ */
+export function PanelHeader(props: {
+  title: JSX.Element
+  /** 2 in a page that already has its `<h1>`. */
+  level?: 2 | 3
+  actions?: JSX.Element
+  close?: { label: string; onClick: () => void }
+}) {
+  return (
+    <header class="flex h-12 shrink-0 items-center gap-1 border-b border-border pr-2 pl-4">
+      <Dynamic
+        component={`h${props.level ?? 2}`}
+        class="min-w-0 flex-1 truncate text-base font-semibold tracking-tight text-fg"
+      >
+        {props.title}
+      </Dynamic>
+      <Show when={props.actions}>
+        <div class="flex shrink-0 items-center gap-0.5">{props.actions}</div>
+      </Show>
+      <Show when={props.close}>
+        {(close) => (
+          <>
+            <div class="mx-1 h-5 border-l border-border" aria-hidden="true" />
+            <IconButton icon={X} label={close().label} onClick={() => close().onClick()} />
+          </>
+        )}
+      </Show>
+    </header>
+  )
+}

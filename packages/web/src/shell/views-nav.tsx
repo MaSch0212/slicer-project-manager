@@ -1,12 +1,18 @@
-import { useNavigate } from '@solidjs/router'
+import { useLocation, useNavigate } from '@solidjs/router'
 import { createEffect, createSignal, For, on, Show } from 'solid-js'
 import { VIEW_NAME_MAX, VIEWS_MAX, type ProjectViewDto } from '../api/generated'
 import { t } from '../core/i18n'
-import { errorMessage } from '../core/i18n/errors'
-import { notify } from '../core/notify'
 import { settings } from '../core/stores'
 import {
-  activeView,
+  current,
+  forgetPicked,
+  openView,
+  saveViews as save,
+  setEditingViews,
+  setSaveViewOpen,
+} from '../core/view-actions'
+import { pickView } from '../core/view-selection'
+import {
   DEFAULT_VIEW_ICON,
   duplicateView,
   editView,
@@ -46,50 +52,22 @@ function iconLabel(icon: string): string {
 }
 
 /**
- * Writes the whole list of views. Every change — a new one, a rename, a reorder, a deletion — is
- * "here is the list now": one rule, one call, and no way for two of them to disagree about what
- * the list holds.
- */
-async function save(next: readonly ProjectViewDto[]): Promise<boolean> {
-  try {
-    await settings.patch({ views: [...next] })
-    return true
-  } catch (error) {
-    notify.error(errorMessage(error))
-    return false
-  }
-}
-
-/**
  * The saved views in the sidebar (subsystem H): the sort order, the layout, the archive switch
  * and the tag filter, under a name you picked.
  *
- * Choosing one writes those settings and the projects page follows them. That is also why the row
- * marked as current is *derived* from the settings rather than remembered: change a filter on the
- * page and the mark simply goes out, because there is no stored "current view" to go stale.
+ * Choosing one writes those settings and the projects page follows them. The row marked as
+ * current is the one picked (see `currentView`); a change made on the page since marks it as
+ * modified rather than taking the mark away.
  */
-export function ViewsNav(props: {
-  collapsed?: boolean
-  /** Opens the dialog that keeps what the list is showing as a new view. */
-  onSave: () => void
-  /** Opens the editor, with one view's name selected when it was reached by "Rename". */
-  onEdit: (focus: string | null) => void
-}) {
+export function ViewsNav(props: { collapsed?: boolean }) {
   const navigate = useNavigate()
+  const location = useLocation()
   const views = () => settings.settings().views
-  const current = () => activeView(views(), shapeOf(settings.settings()))
 
   function apply(view: ProjectViewDto): void {
-    navigate('/projects')
-    void settings
-      .patch({
-        viewMode: view.viewMode,
-        sort: view.sort,
-        dir: view.dir,
-        includeArchived: view.includeArchived,
-        filterTags: [...view.tags],
-      })
-      .catch((error: unknown) => notify.error(errorMessage(error)))
+    // Only from elsewhere: on the list already, a project open beside it stays open.
+    if (!location.pathname.startsWith('/projects')) navigate('/projects')
+    openView(view)
   }
 
   const rowMenu = (view: ProjectViewDto) => ({
@@ -100,7 +78,11 @@ export function ViewsNav(props: {
         icon: RefreshCw,
         onSelect: () => void save(reshapeView(views(), view.id, shapeOf(settings.settings()))),
       },
-      { label: t('views.rename'), icon: Pencil, onSelect: () => props.onEdit(view.id) },
+      {
+        label: t('views.rename'),
+        icon: Pencil,
+        onSelect: () => setEditingViews({ focus: view.id }),
+      },
       {
         label: t('views.duplicate'),
         icon: Copy,
@@ -112,10 +94,13 @@ export function ViewsNav(props: {
         label: t('views.delete'),
         icon: Trash2,
         danger: true,
-        onSelect: () => void save(removeView(views(), view.id)),
+        onSelect: () => {
+          forgetPicked(view.id)
+          void save(removeView(views(), view.id))
+        },
       },
       { type: 'separator' as const },
-      { label: t('views.edit'), icon: Pencil, onSelect: () => props.onEdit(null) },
+      { label: t('views.edit'), icon: Pencil, onSelect: () => setEditingViews({ focus: null }) },
     ],
   })
 
@@ -130,7 +115,7 @@ export function ViewsNav(props: {
               size="sm"
               label={t('views.save')}
               disabled={views().length >= VIEWS_MAX}
-              onClick={() => props.onSave()}
+              onClick={() => setSaveViewOpen(true)}
             />
           </Show>
         }
@@ -143,7 +128,9 @@ export function ViewsNav(props: {
             <NavViewItem
               label={view.name}
               icon={viewIcon(view.icon)}
-              active={current()?.id === view.id}
+              active={current()?.view.id === view.id}
+              modified={current()?.view.id === view.id && current()?.modified === true}
+              modifiedLabel={t('views.modified')}
               collapsed={props.collapsed}
               onClick={() => apply(view)}
               menu={rowMenu(view)}
@@ -181,13 +168,14 @@ export function SaveViewDialog(props: { open: boolean; onOpenChange: (open: bool
   async function confirm(): Promise<void> {
     if (name().trim() === '' || saving()) return
     const views = settings.settings().views
+    const id = newViewId(views)
     setSaving(true)
-    const ok = await save([
-      ...views,
-      viewFrom(newViewId(views), name(), icon(), shapeOf(settings.settings())),
-    ])
+    const ok = await save([...views, viewFrom(id, name(), icon(), shapeOf(settings.settings()))])
     setSaving(false)
-    if (ok) props.onOpenChange(false)
+    if (!ok) return
+    // The list is now in the view just made, even when an older one has the same filters.
+    pickView(id)
+    props.onOpenChange(false)
   }
 
   return (
@@ -342,7 +330,10 @@ export function EditViewsDialog(props: {
                   icon={Trash2}
                   size="sm"
                   label={t('views.deleteOf', { name: view.name })}
-                  onClick={() => void save(removeView(views(), view.id))}
+                  onClick={() => {
+                    forgetPicked(view.id)
+                    void save(removeView(views(), view.id))
+                  }}
                 />
               </li>
             )}

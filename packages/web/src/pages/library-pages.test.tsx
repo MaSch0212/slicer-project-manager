@@ -1,4 +1,4 @@
-import { createMemoryHistory, MemoryRouter, Route, useParams } from '@solidjs/router'
+import { createMemoryHistory, MemoryRouter, Route, useNavigate, useParams } from '@solidjs/router'
 import { fireEvent, render, screen, waitFor, within } from '@solidjs/testing-library'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
@@ -41,10 +41,23 @@ import { ProjectDetail } from './project-detail'
 import ProjectsPage from './projects'
 import { settings } from '../core/stores'
 
-/** The detail as the route used to render it: a page of its own, keyed on `:id`. */
+/**
+ * The detail on its own, keyed on `:id`, wired the way the projects page wires it: the close goes
+ * back to the list and the preview is part of the address.
+ */
 function RoutedDetail() {
-  const params = useParams<{ id: string }>()
-  return <ProjectDetail id={params.id} variant="page" />
+  const params = useParams<{ id: string; fileId?: string }>()
+  const navigate = useNavigate()
+  return (
+    <ProjectDetail
+      id={params.id}
+      onClose={() => navigate('/projects')}
+      previewFileId={params.fileId ?? null}
+      onPreview={(fileId) =>
+        navigate(fileId ? `/projects/${params.id}/view/${fileId}` : `/projects/${params.id}`)
+      }
+    />
+  )
 }
 
 const project = (over: Partial<ProjectDto> = {}): ProjectDto => ({
@@ -83,7 +96,7 @@ function renderAt(path: string) {
   return render(() => (
     <MemoryRouter history={history}>
       <Route path="/projects" component={ProjectsPage} />
-      <Route path="/projects/:id" component={() => <RoutedDetail />} />
+      <Route path={['/projects/:id', '/projects/:id/view/:fileId']} component={RoutedDetail} />
       <Route path="/import" component={ImportPage} />
     </MemoryRouter>
   ))
@@ -174,32 +187,35 @@ describe('ProjectsPage', () => {
     expect(api.projects.list).toHaveBeenCalledTimes(2)
   })
 
-  it('sorts, with the choice remembered', async () => {
+  it('sorts from the toolbar menu, picking the direction the field reads in, and remembers it', async () => {
     renderAt('/projects')
-    const sort = await screen.findByRole('combobox', { name: 'Sort by' })
-    fireEvent.change(sort, { target: { value: 'name:asc' } })
+    const sort = await screen.findByRole('button', { name: 'Sort: Last changed, Descending' })
+    fireEvent.keyDown(sort, { key: 'Enter' })
+    fireEvent.pointerUp(await screen.findByRole('menuitem', { name: 'Name' }), {
+      pointerType: 'mouse',
+    })
     await waitFor(() =>
       expect(api.projects.list).toHaveBeenLastCalledWith(
         expect.objectContaining({ sort: 'name', dir: 'asc' }),
       ),
     )
     expect(api.settings.put).toHaveBeenCalledWith({ sort: 'name', dir: 'asc' })
+    await screen.findByRole('button', { name: 'Sort: Name, Ascending' })
   })
 
-  it('toggles archived projects with one named, pressed button, and remembers it', async () => {
+  it('shows archived projects from the filter panel, counts it, and remembers it', async () => {
     renderAt('/projects')
-    const button = await screen.findByRole('button', { name: 'Show archived' })
-    expect(button.getAttribute('aria-pressed')).toBe('false')
-    fireEvent.click(button)
+    fireEvent.click(await screen.findByRole('button', { name: 'Filters' }))
+    const archived = await screen.findByRole('switch', { name: 'Show archived' })
+    expect((archived as HTMLInputElement).checked).toBe(false)
+    fireEvent.click(archived)
     await waitFor(() =>
       expect(api.projects.list).toHaveBeenLastCalledWith(
         expect.objectContaining({ includeArchived: true }),
       ),
     )
     expect(api.settings.put).toHaveBeenCalledWith({ includeArchived: true })
-    expect(screen.getByRole('button', { name: 'Show archived' }).getAttribute('aria-pressed')).toBe(
-      'true',
-    )
+    expect(screen.getByRole('button', { name: 'Filters, 1 active' })).toBeTruthy()
   })
 
   it('switches between grid and list and remembers the view', async () => {
@@ -211,12 +227,33 @@ describe('ProjectsPage', () => {
     expect((screen.getByRole('radio', { name: 'List' }) as HTMLInputElement).checked).toBe(true)
   })
 
-  it('opens the tag filter with a count badge only once tags are selected', async () => {
+  it('narrows by tag from the filter panel, with a pill for each that can take it off again', async () => {
     api.projects.list.mockResolvedValue([project()])
+    api.projects.tags.mockResolvedValue(['boats', 'gadgets'])
     settings.reset()
     renderAt('/projects')
-    const trigger = await screen.findByRole('button', { name: 'Tags' })
-    expect(trigger.textContent).toBe('Tags')
+    const funnel = await screen.findByRole('button', { name: 'Filters' })
+    // No count while nothing narrows the list.
+    expect(funnel.textContent).toBe('')
+
+    fireEvent.click(funnel)
+    const tags = await screen.findByRole('group', { name: 'Tags' })
+    fireEvent.click(within(tags).getByRole('checkbox', { name: 'gadgets' }))
+    await waitFor(() =>
+      expect(api.projects.list).toHaveBeenLastCalledWith(
+        expect.objectContaining({ tags: ['gadgets'] }),
+      ),
+    )
+    expect(
+      within(tags).getByRole('checkbox', { name: 'gadgets' }).getAttribute('aria-checked'),
+    ).toBe('true')
+    expect(screen.getByRole('button', { name: 'Filters, 1 active' }).textContent).toBe('1')
+
+    // With no saved view in play the filters are spelled out under the toolbar.
+    const pills = screen.getByRole('group', { name: 'Active filters' })
+    fireEvent.click(within(pills).getByRole('button', { name: 'Remove gadgets' }))
+    await waitFor(() => expect(api.settings.put).toHaveBeenLastCalledWith({ filterTags: [] }))
+    expect(screen.queryByRole('group', { name: 'Active filters' })).toBeNull()
   })
 
   it('starts from the filter the user left, and says so in the request', async () => {
@@ -232,11 +269,8 @@ describe('ProjectsPage', () => {
         expect.objectContaining({ includeArchived: true, tags: ['boats'] }),
       ),
     )
-    const trigger = await screen.findByRole('button', { name: 'Tags' })
-    expect(trigger.textContent).toBe('Tags1')
-    expect(screen.getByRole('button', { name: 'Show archived' }).getAttribute('aria-pressed')).toBe(
-      'true',
-    )
+    // One tag and the archive switch.
+    expect((await screen.findByRole('button', { name: 'Filters, 2 active' })).textContent).toBe('2')
   })
 
   it('shows a skeleton while loading, and an empty state with a way forward', async () => {
@@ -357,8 +391,11 @@ describe('ProjectDetailPage', () => {
       detail({ website: 'https://example.com/m', notes: 'Print slowly', files: [file()] }),
     )
     renderAt('/projects/p1')
-    await screen.findByRole('heading', { name: 'Benchy', level: 1 })
-    const site = screen.getByRole('link', { name: 'https://example.com/m' })
+    await screen.findByRole('heading', { name: 'Benchy', level: 2 })
+    // The site is what it says; the link and the hover still carry the whole address.
+    const site = screen.getByRole('link', { name: 'example.com' })
+    expect(site.getAttribute('href')).toBe('https://example.com/m')
+    expect(site.getAttribute('title')).toBe('https://example.com/m')
     expect(site.getAttribute('target')).toBe('_blank')
     expect(screen.getByText('Print slowly')).toBeTruthy()
     expect(screen.getByText('boats')).toBeTruthy()
@@ -439,7 +476,7 @@ describe('ProjectDetailPage', () => {
     expect(screen.getByText('Other file')).toBeTruthy()
   })
 
-  it('offers the viewer for models only, and a download for every file', async () => {
+  it('opens every file in the preview popup from its card, the ones with no 3D view too', async () => {
     api.projects.get.mockResolvedValue(
       detail({
         files: [
@@ -456,22 +493,32 @@ describe('ProjectDetailPage', () => {
     )
     renderAt('/projects/p1')
     await screen.findByRole('heading', { name: 'a.stl' })
-    const view = screen.getByRole('link', { name: 'View in 3D: a.stl' })
-    expect(view.getAttribute('href')).toBe('/projects/p1/view/m')
-    expect(screen.queryByRole('link', { name: 'View in 3D: b.txt' })).toBeNull()
     const download = screen.getByRole('link', { name: 'Download: a.stl' })
     expect(download.getAttribute('href')).toBe('/api/files/f1/raw')
     expect(download.getAttribute('download')).toBe('a.stl')
-    expect(screen.getByRole('link', { name: 'Download: b.txt' })).toBeTruthy()
+
+    // The card's title is its open control, and the heading keeps the file's name.
+    expect(screen.getByRole('heading', { name: 'b.txt' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'b.txt' }))
+    const popup = await screen.findByRole('dialog')
+    expect(within(popup).getByRole('heading', { name: 'b.txt' })).toBeTruthy()
+    // No 3D view, so what can be done with it is the content, labelled.
+    expect(within(popup).getByText(/no preview for this kind of file/)).toBeTruthy()
+    expect(within(popup).getByRole('link', { name: 'Download' })).toBeTruthy()
+    expect(within(popup).getByRole('button', { name: 'Rename' })).toBeTruthy()
+
+    fireEvent.click(within(popup).getByRole('button', { name: 'Close' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
   })
 
   it('warns about a missing folder and will not take uploads', async () => {
     api.projects.get.mockResolvedValue(detail({ state: 'missing' }))
     renderAt('/projects/p1')
     await screen.findByText('The project folder is missing')
-    expect(
-      (screen.getByRole('button', { name: 'Choose files' }) as HTMLButtonElement).disabled,
-    ).toBe(true)
+    const add = screen.getByRole('button', {
+      name: 'Files cannot be added while the project folder is missing.',
+    }) as HTMLButtonElement
+    expect(add.disabled).toBe(true)
   })
 
   it('shows an archived project as archived and offers to restore it', async () => {
@@ -492,27 +539,42 @@ describe('ProjectDetailPage', () => {
     )
   })
 
-  it('adds a tag, and removes one', async () => {
+  it('picks tags from a list with a checkmark on each the project has, and adds new ones', async () => {
+    api.projects.tags.mockResolvedValue(['boats', 'petg'])
     renderAt('/projects/p1')
-    await screen.findByRole('heading', { name: 'Benchy', level: 1 })
-    const box = screen.getByRole('textbox', { name: 'Add tag' })
-    fireEvent.input(box, { target: { value: 'petg' } })
-    fireEvent.keyDown(box, { key: 'Enter' })
+    await screen.findByRole('heading', { name: 'Benchy', level: 2 })
+    // The tags are shown as they are, not as a text field.
+    expect(screen.queryByRole('textbox', { name: 'Add tag' })).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Choose tags' }))
+    const list = await screen.findByRole('group', { name: 'Tags' })
+    await within(list).findByRole('checkbox', { name: 'petg' })
+    expect(within(list).getByRole('checkbox', { name: 'boats' }).getAttribute('aria-checked')).toBe(
+      'true',
+    )
+    fireEvent.click(within(list).getByRole('checkbox', { name: 'petg' }))
     await waitFor(() => expect(api.projects.addTag).toHaveBeenCalledWith('p1', 'petg'))
 
-    fireEvent.click(screen.getByRole('button', { name: 'Remove tag boats' }))
+    fireEvent.click(within(list).getByRole('checkbox', { name: 'boats' }))
     await waitFor(() => expect(api.projects.removeTag).toHaveBeenCalledWith('p1', 'boats'))
+
+    // A name that is not a tag yet is offered as a new one.
+    const field = screen.getByRole('searchbox', { name: 'Find or add a tag' })
+    fireEvent.input(field, { target: { value: 'functional' } })
+    fireEvent.click(within(list).getByRole('button', { name: 'Add "functional"' }))
+    await waitFor(() => expect(api.projects.addTag).toHaveBeenCalledWith('p1', 'functional'))
   })
 
   it('shows the server refusal of a tag and puts the tags back', async () => {
     api.projects.addTag.mockRejectedValue(new ApiError('Validation', 'bad'))
     renderAt('/projects/p1')
-    await screen.findByRole('heading', { name: 'Benchy', level: 1 })
-    const box = screen.getByRole('textbox', { name: 'Add tag' })
-    fireEvent.input(box, { target: { value: 'bad' } })
-    fireEvent.keyDown(box, { key: 'Enter' })
+    await screen.findByRole('heading', { name: 'Benchy', level: 2 })
+    fireEvent.click(screen.getByRole('button', { name: 'Choose tags' }))
+    const field = await screen.findByRole('searchbox', { name: 'Find or add a tag' })
+    fireEvent.input(field, { target: { value: 'bad' } })
+    fireEvent.keyDown(field, { key: 'Enter' })
     await screen.findByText('A tag must be between 1 and 60 characters')
-    expect(screen.queryByText('bad')).toBeNull()
+    expect(screen.queryByRole('checkbox', { name: 'bad' })).toBeNull()
   })
 
   it('edits name, website and notes, and clears a website that was emptied', async () => {
@@ -584,7 +646,7 @@ describe('ProjectDetailPage', () => {
       within(await screen.findByRole('dialog')).getByRole('button', { name: 'Yes, delete' }),
     )
     await screen.findByText('Something went wrong')
-    expect(screen.getByRole('heading', { name: 'Benchy', level: 1 })).toBeTruthy()
+    expect(screen.getByRole('heading', { name: 'Benchy', level: 2 })).toBeTruthy()
   })
 
   it('uploads several files with progress and reloads each, and shows a quota failure with numbers', async () => {
@@ -601,7 +663,7 @@ describe('ProjectDetailPage', () => {
         }),
       )
     const { container } = renderAt('/projects/p1')
-    await screen.findByRole('heading', { name: 'Benchy', level: 1 })
+    await screen.findByRole('heading', { name: 'Benchy', level: 2 })
     const input = container.querySelector('input[type="file"]') as HTMLInputElement
     const a = new File(['a'], 'a.stl')
     const b = new File(['b'], 'b.stl')

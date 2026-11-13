@@ -90,6 +90,7 @@ vi.mock('../core/desktop', () => ({
 }))
 
 import { auth, capabilities, settings } from '../core/stores'
+import { pickView } from '../core/view-selection'
 import { Shell } from './shell'
 
 async function setup(
@@ -139,6 +140,7 @@ const labels = (nav: HTMLElement) =>
 beforeEach(() => {
   vi.clearAllMocks()
   settings.reset()
+  pickView(null)
   auth.setUser(null)
   shellHost.isDesktop = false
   shellHost.window.state.mockResolvedValue({ isMaximized: false })
@@ -381,7 +383,31 @@ describe('Shell saved views', () => {
     })
   })
 
-  it('marks none at all once the list no longer matches any of them', async () => {
+  it('marks the one that was picked, even when another has the same filters', async () => {
+    // Two views saved without changing anything in between: matching alone always said "the
+    // first", whichever was clicked.
+    const twin = { ...VIEWS[0]!, id: 'v3', name: 'Twin' }
+    await setup({ views: [VIEWS[0]!, twin] })
+
+    fireEvent.click(viewButton('Twin'))
+
+    await waitFor(() => expect(viewButton('Twin').getAttribute('aria-current')).toBe('page'))
+    expect(viewButton('Everything').getAttribute('aria-current')).toBeNull()
+  })
+
+  it('keeps the picked one current once its filters change, and says it was changed', async () => {
+    await setup({ views: VIEWS })
+    fireEvent.click(viewButton('Old prints'))
+    await waitFor(() => expect(api.settings.put).toHaveBeenCalled())
+
+    await settings.patch({ sort: 'createdAt' })
+
+    expect(viewButton('Old prints').getAttribute('aria-current')).toBe('page')
+    expect(viewButton('Old prints').textContent).toContain('Changed since it was saved')
+    expect(viewButton('Everything').getAttribute('aria-current')).toBeNull()
+  })
+
+  it('marks none at all when nothing was picked and the list matches none', async () => {
     await setup({ views: VIEWS })
 
     await settings.patch({ sort: 'createdAt' })

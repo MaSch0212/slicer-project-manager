@@ -188,3 +188,14 @@ export function webLink(value: string | undefined): string | undefined {
     return undefined
   }
 }
+
+/**
+ * What the detail panel shows of a project's website: the site, not the address. A full model
+ * URL is a long string of ids and slugs that says less than "printables.com" does, and the link
+ * still goes to the whole address. Undefined for anything that is not an http(s) URL.
+ */
+export function siteLabel(value: string | undefined): string | undefined {
+  const href = webLink(value)
+  if (!href) return undefined
+  return new URL(href).host
+}

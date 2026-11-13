@@ -1,41 +1,31 @@
-import { useParams } from '@solidjs/router'
-import { createEffect, createMemo, createSignal, on, onCleanup, Show } from 'solid-js'
-import { createProjectDetail } from '../core/project-detail'
-import { t } from '../core/i18n'
+import { createEffect, createSignal, Match, on, onCleanup, Show, Switch } from 'solid-js'
+import type { FileDto } from '../api/generated'
 import { formatBytes } from '../core/format-bytes'
-import {
-  Alert,
-  Button,
-  Download,
-  LinkButton,
-  PageHeader,
-  Progress,
-  RotateCcw,
-  Stage,
-  Text,
-} from '../ui'
+import { t } from '../core/i18n'
+import { Alert, Button, Progress, Stage, Text } from '../ui'
 import { buildModel, fetchModel, ModelLoadError, type LoadFailure } from '../viewer/load-model'
-import { judgeFile, SUPPORTED_FORMATS } from '../viewer/model-kind'
+import { judgeFile } from '../viewer/model-kind'
 import { createModelViewer, NoWebGlError, type ModelViewer } from '../viewer/scene'
 
 type ViewerState =
   | { status: 'loading'; progress: number | null }
   | { status: 'ready' }
-  | { status: 'step' }
-  | { status: 'slicerProject' }
-  | { status: 'unsupported'; extension: string }
   | { status: 'oversized'; extension: string; sizeBytes: number }
-  | { status: 'failed'; reason: LoadFailure | 'project'; extension: string }
+  | { status: 'failed'; reason: LoadFailure; extension: string }
 
 /**
- * The interactive 3D viewer: `/projects/:id/view/:fileId`, a lazy chunk (three.js lives here and
- * nowhere else). It loads the project to find the file, decides from the file's name and kind what
- * can be done with it (see `judgeFile`), and only then touches WebGL: a STEP file, a slicer project
- * or an unknown format gets a clear message and no download, no renderer.
+ * The interactive 3D stage for one model file, filling the preview popup. A lazy chunk: three.js
+ * lives here and nowhere else, and it is loaded only once a file the viewer can draw is opened.
+ *
+ * Whether a file is a model at all is decided before this is ever mounted (see `judgeFile` and
+ * the preview); what this decides is whether it is small enough to load without asking, and then
+ * whether it loaded. `onReset` hands the page the "back to the opening view" action once there is
+ * a model to reset, and takes it away again when there is not.
  */
-export default function ViewerPage() {
-  const params = useParams<{ id: string; fileId: string }>()
-  const detail = createProjectDetail(() => params.id)
+export default function ModelPreview(props: {
+  file: FileDto
+  onReset?: (reset: (() => void) | null) => void
+}) {
   const [state, setState] = createSignal<ViewerState>({ status: 'loading', progress: null })
   const [noWebGl, setNoWebGl] = createSignal(false)
 
@@ -43,10 +33,8 @@ export default function ViewerPage() {
   let progressRegion: HTMLDivElement | undefined
   let viewer: ModelViewer | undefined
   let inFlight: AbortController | undefined
-  // Identifies the load that may still write state: a superseded load (route change) is dropped.
+  // Identifies the load that may still write state: a superseded one (another file) is dropped.
   let token = 0
-
-  const file = createMemo(() => detail.detail()?.files.find((f) => f.id === params.fileId))
 
   function ensureViewer(): ModelViewer | undefined {
     if (viewer) return viewer
@@ -66,28 +54,12 @@ export default function ViewerPage() {
     const mine = ++token
     inFlight?.abort()
     inFlight = undefined
+    props.onReset?.(null)
     setState({ status: 'loading', progress: null })
 
-    const current = file()
-    if (!current) {
-      // The project did not load at all, or loaded without this file.
-      const missing = detail.detail() !== undefined
-      setState({ status: 'failed', reason: missing ? 'missing' : 'project', extension: '' })
-      return
-    }
+    const current = props.file
     const verdict = judgeFile(current)
-    if (verdict.status === 'step') {
-      setState({ status: 'step' })
-      return
-    }
-    if (verdict.status === 'slicerProject') {
-      setState({ status: 'slicerProject' })
-      return
-    }
-    if (verdict.status === 'unsupported') {
-      setState({ status: 'unsupported', extension: verdict.extension })
-      return
-    }
+    if (verdict.status !== 'viewable') return
     const extension = current.name.slice(current.name.lastIndexOf('.'))
     if (!confirmed && current.sizeBytes > verdict.limitBytes) {
       setState({ status: 'oversized', extension, sizeBytes: current.sizeBytes })
@@ -112,6 +84,7 @@ export default function ViewerPage() {
       if (mine !== token) return
       scene.setModel(model)
       setState({ status: 'ready' })
+      props.onReset?.(() => viewer?.resetView())
     } catch (error) {
       if (mine !== token) return
       const reason = error instanceof ModelLoadError ? error.reason : 'parse'
@@ -121,23 +94,12 @@ export default function ViewerPage() {
     }
   }
 
-  // Load the project whenever the route's project changes, then (re)decide about the file once
-  // that has settled. `loading` going false is the signal, so the first run waits for the fetch.
-  createEffect(
-    on(
-      () => params.id,
-      () => void detail.load(),
-    ),
-  )
-  createEffect(
-    on([() => detail.loading(), () => params.fileId], ([loading]) => {
-      if (!loading) void load()
-    }),
-  )
+  createEffect(on([() => props.file.id, () => props.file.sizeBytes], () => void load()))
 
   onCleanup(() => {
     token++
     inFlight?.abort()
+    props.onReset?.(null)
     viewer?.dispose()
     viewer = undefined
   })
@@ -148,129 +110,82 @@ export default function ViewerPage() {
       ? Math.round(current.progress * 100)
       : null
   }
-  const showsStage = () => {
-    const status = state().status
-    return !noWebGl() && (status === 'loading' || status === 'ready')
-  }
   const loadingLabel = () =>
     percent() === null ? t('viewer.loading') : t('viewer.loadingPercent', { percent: percent()! })
 
-  const message = (): string | null => {
+  const failure = (): string | null => {
     const current = state()
-    switch (current.status) {
-      case 'step':
-        return t('viewer.step')
-      case 'slicerProject':
-        return t('viewer.slicerProject')
-      case 'unsupported':
-        return t('viewer.unsupported', {
-          extension: current.extension,
-          formats: SUPPORTED_FORMATS.join(', '),
-        })
-      case 'oversized':
-        return t('viewer.tooLarge', {
-          extension: current.extension,
-          size: formatBytes(current.sizeBytes),
-        })
-      case 'failed':
-        switch (current.reason) {
-          case 'project':
-            return detail.loadError() ?? t('viewer.fetchFailed')
-          case 'missing':
-            return t('viewer.missingFile')
-          case 'fetch':
-            return t('viewer.fetchFailed')
-          case 'parse':
-            return t('viewer.parseFailed', { extension: current.extension })
-          case 'empty':
-            return t('viewer.emptyModel')
-        }
+    if (current.status === 'oversized') {
+      return t('viewer.tooLarge', {
+        extension: current.extension,
+        size: formatBytes(current.sizeBytes),
+      })
     }
-    return null
+    if (current.status !== 'failed') return null
+    switch (current.reason) {
+      case 'missing':
+        return t('viewer.missingFile')
+      case 'fetch':
+        return t('viewer.fetchFailed')
+      case 'parse':
+        return t('viewer.parseFailed', { extension: current.extension })
+      case 'empty':
+        return t('viewer.emptyModel')
+    }
   }
-  // Nothing went wrong when the file simply is not a model this viewer opens.
-  const messageVariant = () => (state().status === 'failed' ? 'danger' : 'warning')
 
   return (
-    <div class="flex flex-col gap-4">
-      <PageHeader
-        title={file()?.name ?? t('viewer.title')}
-        back={{ href: `/projects/${params.id}`, label: t('viewer.back') }}
-        actions={
-          <>
-            <Show when={file()}>
-              {(current) => (
-                <LinkButton
-                  href={current().rawUrl}
-                  external
-                  download={current().name}
-                  icon={Download}
-                >
-                  {t('projects.download')}
-                </LinkButton>
-              )}
-            </Show>
-            <Show when={state().status === 'ready'}>
-              <Button icon={RotateCcw} onClick={() => viewer?.resetView()}>
-                {t('viewer.resetView')}
-              </Button>
-            </Show>
-          </>
-        }
-      />
-
-      <Show when={noWebGl()}>
-        <Alert variant="danger">{t('viewer.noWebgl')}</Alert>
-      </Show>
-
-      <Show when={message()}>
-        {(text) => (
-          <div class="flex flex-col items-start gap-3">
-            <Alert variant={messageVariant()} class="w-full">
-              {text()}
-            </Alert>
-            <Show when={state().status === 'oversized'}>
-              <Button
-                variant="primary"
-                onClick={() => {
-                  void load(true)
-                  // The button is about to disappear; keep focus on the status that replaces it.
-                  queueMicrotask(() => progressRegion?.focus())
-                }}
-              >
-                {t('viewer.loadAnyway')}
-              </Button>
-            </Show>
-          </div>
-        )}
-      </Show>
-
-      <Stage
-        ref={(element) => (host = element)}
-        class={showsStage() ? undefined : 'hidden'}
-        focusable={state().status === 'ready'}
-        label={t('viewer.canvasLabel')}
-        onKeyDown={(event) => void viewer?.handleKey(event)}
-        overlay={
-          <Show when={state().status === 'loading'}>
+    <Stage
+      fill
+      ref={(element) => (host = element)}
+      focusable={state().status === 'ready'}
+      label={t('viewer.canvasLabel')}
+      onKeyDown={(event) => void viewer?.handleKey(event)}
+      // One `Switch`, not a fragment of `Show`s: the stage decides whether to draw its overlay card
+      // from what this resolves to, and a fragment of empty `Show`s is not nothing.
+      overlay={
+        <Switch>
+          <Match when={noWebGl()}>
+            <Alert variant="danger">{t('viewer.noWebgl')}</Alert>
+          </Match>
+          <Match when={state().status === 'loading'}>
             <div
               ref={(el) => (progressRegion = el)}
               tabindex="-1"
               role="status"
-              class="flex w-full max-w-xs flex-col items-center gap-3"
+              class="flex w-full flex-col items-center gap-3"
             >
               <Progress
                 class="max-w-xs"
                 label={loadingLabel()}
-                value={
-                  state().status === 'loading' && percent() !== null ? percent()! / 100 : undefined
-                }
+                value={percent() === null ? undefined : percent()! / 100}
               />
               <Text variant="muted">{loadingLabel()}</Text>
             </div>
-          </Show>
-        }
-      />
-    </div>
+          </Match>
+          <Match when={failure()}>
+            {(text) => (
+              <div class="flex flex-col items-start gap-3">
+                <Alert variant={state().status === 'failed' ? 'danger' : 'warning'} class="w-full">
+                  {text()}
+                </Alert>
+                <Show when={state().status === 'oversized'}>
+                  <Button
+                    variant="primary"
+                    onClick={() => {
+                      void load(true)
+                      // The button is about to disappear; keep focus on the status that replaces it.
+                      queueMicrotask(() => progressRegion?.focus())
+                    }}
+                  >
+                    {t('viewer.loadAnyway')}
+                  </Button>
+                </Show>
+              </div>
+            )}
+          </Match>
+        </Switch>
+      }
+    />
   )
 }

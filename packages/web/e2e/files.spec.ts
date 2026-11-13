@@ -59,7 +59,7 @@ test('an uploaded model shows up, gets a rendered thumbnail, and can be download
   expect((await response.body()).equals(bytes)).toBe(true)
 })
 
-test('every kind of file is classified, and only a model is offered the viewer', async ({
+test('every kind of file is classified, and every one opens a preview from its card', async ({
   page,
 }) => {
   const id = await newProject('Upload Kinds')
@@ -77,14 +77,16 @@ test('every kind of file is classified, and only a model is offered the viewer',
   }
   await expect(fileCard(page, 'notes.txt').getByText('Other file')).toBeVisible()
   await expect(fileCard(page, 'notes.txt').getByText('No preview')).toBeVisible()
-  await expect(fileCard(page, 'notes.txt').getByRole('link', { name: /^View in 3D/ })).toHaveCount(
-    0,
-  )
-  for (const name of ['a.stl', 'b.obj', 'c.3mf']) {
-    await expect(
-      fileCard(page, name).getByRole('link', { name: `View in 3D: ${name}` }),
-    ).toBeVisible()
-  }
+
+  // A file with no 3D view still opens one: its kind, why there is no view, and its actions.
+  await fileCard(page, 'notes.txt').getByRole('button', { name: 'notes.txt', exact: true }).click()
+  const popup = page.getByRole('dialog')
+  await expect(popup.getByRole('heading', { name: 'notes.txt' })).toBeVisible()
+  await expect(popup.getByText(/no preview for this kind of file/)).toBeVisible()
+  await expect(popup.getByRole('link', { name: 'Download', exact: true })).toBeVisible()
+  await popup.getByRole('button', { name: 'Close' }).click()
+  await expect(popup).toBeHidden()
+  await expectPanel(page, 'Upload Kinds')
 })
 
 test('a file is renamed, and a name that cannot be a file name is refused', async ({ page }) => {

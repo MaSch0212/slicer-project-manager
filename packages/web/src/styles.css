@@ -76,6 +76,9 @@
   --color-success-soft: light-dark(#f0fdf4, #0f2418);
   --color-warning-text: light-dark(#a16207, #facc15);
   --color-warning-soft: light-dark(#fefce8, #2a2210);
+  /* The "unsaved changes" group around a view's draft, and its hover. */
+  --color-warning-border: light-dark(#fde68a, #5a4512);
+  --color-warning-hover: light-dark(#fef3c7, #3a2e14);
 
   /* Shape */
   --radius-xs: 4px;

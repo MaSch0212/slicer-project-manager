@@ -59,11 +59,14 @@ export function Thumb(props: {
  * With `href` the whole card is one link (the title carries it and stretches over the card, so the
  * card has a single link in the accessibility tree and a large target for a thumb); the actions
  * sit above that stretched area and stay independently clickable. Without `href` the card is not a
- * link at all. `layout` is the grid tile or the list row: the same content, arranged either way.
+ * link at all. `onOpen` does the same with a button, for a card that opens something in place
+ * (a file's preview) rather than going somewhere. `layout` is the grid tile or the list row: the
+ * same content, arranged either way.
  */
 export function MediaCard(props: {
   layout?: MediaCardLayout
   href?: string
+  onOpen?: () => void
   title: string
   as?: 'h2' | 'h3'
   image?: string
@@ -97,7 +100,22 @@ export function MediaCard(props: {
           class="truncate text-sm font-semibold tracking-tight text-fg"
           title={props.title}
         >
-          <Show when={props.href} fallback={props.title}>
+          <Show
+            when={props.href}
+            fallback={
+              <Show when={props.onOpen} fallback={props.title}>
+                {/* Named by the title alone: it sits in the heading, and a label of its own would
+                    rename the heading too. */}
+                <button
+                  type="button"
+                  onClick={() => props.onOpen?.()}
+                  class="max-w-full cursor-pointer truncate rounded-xs text-left outline-offset-4 after:absolute after:inset-0 after:content-['']"
+                >
+                  {props.title}
+                </button>
+              </Show>
+            }
+          >
             <A
               href={props.href!}
               class="rounded-xs outline-offset-4 after:absolute after:inset-0 after:content-['']"

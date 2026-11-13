@@ -3,12 +3,7 @@ import { createEffect, createSignal, For, onCleanup, Show } from 'solid-js'
 import { t } from '../core/i18n'
 import { errorMessage } from '../core/i18n/errors'
 import { notify } from '../core/notify'
-import {
-  createProjectsStore,
-  isFiltered,
-  parseSortValue,
-  sortValueOf,
-} from '../core/projects-store'
+import { createProjectsStore, isFiltered } from '../core/projects-store'
 import {
   clampPanelWidth,
   PANEL_MAX_WIDTH,
@@ -17,37 +12,53 @@ import {
   writePanelWidth,
 } from '../core/panel-width'
 import { settings } from '../core/stores'
+import {
+  current as currentView,
+  resetCurrentView,
+  setSaveViewOpen,
+  updateCurrentView,
+} from '../core/view-actions'
 import { shapeOf } from '../core/views'
-import { SEARCH_MAX_LENGTH, type ProjectDto } from '../api/generated'
+import { SEARCH_MAX_LENGTH, type ProjectDto, type SettingsDto } from '../api/generated'
 import {
   Alert,
-  Archive,
-  ArchiveX,
-  ArrowUpDown,
+  ArrowDownWideNarrow,
+  ArrowUpNarrowWide,
   Badge,
+  BookmarkPlus,
   Button,
+  CheckList,
   EmptyState,
-  Input,
+  FilterPill,
+  FilterPillButton,
+  FilterPills,
+  Funnel,
   Layers,
   LayoutGrid,
   List,
   MediaCard,
-  MultiSelect,
-  PageHeader,
+  MenuTrigger,
   Plus,
+  Popover,
+  PopoverDivider,
+  PopoverSection,
   RefreshCw,
   ScrollSentinel,
-  SegmentedControl,
   Search,
-  Select,
   Skeleton,
   Spinner,
   Splitter,
   SplitPane,
+  Switch,
   Tag,
-  ToggleIconButton,
-  Upload,
-  LinkButton,
+  Toolbar,
+  ToolbarSearch,
+  ToolbarSpacer,
+  ToolButton,
+  ToolToggleGroup,
+  Undo2,
+  ViewChanges,
+  type MenuEntry,
 } from '../ui'
 import { cx } from '../ui'
 import { ProjectDetail } from './project-detail'
@@ -107,29 +118,69 @@ export default function ProjectsPage() {
   onCleanup(() => clearTimeout(searchTimer))
 
   const viewMode = () => settings.settings().viewMode
-  const sortOptions = () => [
-    { value: 'updatedAt:desc', label: t('settings.sortUpdated') },
-    { value: 'name:asc', label: t('settings.sortName') },
-    { value: 'createdAt:desc', label: t('settings.sortNewest') },
-  ]
   const selectedTags = () => store.query().tags ?? []
   const archivedShown = () => store.query().includeArchived === true
+  /** What the funnel's badge counts: each chosen tag, and showing archived projects. */
+  const filterCount = () => selectedTags().length + (archivedShown() ? 1 : 0)
+
+  /**
+   * The open view and whether it was changed since. The pills under the toolbar spell the filters
+   * out only then — or with no view at all — as the app this follows does: a saved view's own
+   * filters are its business, and show as the count on the funnel.
+   */
+  const view = () => currentView()
+  const showPills = () => filterCount() > 0 && (view() === null || view()?.modified === true)
 
   function onSearch(value: string) {
     clearTimeout(searchTimer)
     searchTimer = setTimeout(() => store.setSearch(value), SEARCH_DEBOUNCE_MS)
   }
 
-  async function onSort(value: string) {
-    const parsed = parseSortValue(value)
-    if (!parsed) return
+  async function onSort(sort: SettingsDto['sort'], dir: SettingsDto['dir']) {
     try {
-      await store.setSort(parsed.sort, parsed.dir)
+      await store.setSort(sort, dir)
     } catch {
       // Applied locally, not remembered: the settings store already rolled the key back.
       notify.error(t('projects.filterNotRemembered'))
     }
   }
+
+  /**
+   * The sort menu: the field, then the direction. Picking a field takes the direction that field
+   * reads naturally in (names A to Z, dates newest first); the two entries below turn it round.
+   */
+  const SORT_FIELDS: readonly { key: SettingsDto['sort']; dir: SettingsDto['dir'] }[] = [
+    { key: 'updatedAt', dir: 'desc' },
+    { key: 'name', dir: 'asc' },
+    { key: 'createdAt', dir: 'desc' },
+  ]
+  // The query always carries both once the store has started; the defaults only satisfy the type.
+  const sortKey = (): SettingsDto['sort'] => store.query().sort ?? 'updatedAt'
+  const sortDir = (): SettingsDto['dir'] => store.query().dir ?? 'desc'
+  const sortField = (key: SettingsDto['sort']) =>
+    t(('projects.sortField_' + key) as 'projects.sortField_name')
+  const sortDirection = () =>
+    sortDir() === 'asc' ? t('projects.sortAscending') : t('projects.sortDescending')
+  const sortLabel = () =>
+    t('projects.sortedBy', { field: sortField(sortKey()), direction: sortDirection() })
+  const sortMenu = (): MenuEntry[] => [
+    ...SORT_FIELDS.map((field) => ({
+      label: sortField(field.key),
+      checked: sortKey() === field.key,
+      onSelect: () => void onSort(field.key, field.dir),
+    })),
+    { type: 'separator' },
+    {
+      label: t('projects.sortAscending'),
+      checked: sortDir() === 'asc',
+      onSelect: () => void onSort(sortKey(), 'asc'),
+    },
+    {
+      label: t('projects.sortDescending'),
+      checked: sortDir() === 'desc',
+      onSelect: () => void onSort(sortKey(), 'desc'),
+    },
+  ]
 
   async function onViewMode(mode: 'grid' | 'list') {
     try {
@@ -198,7 +249,7 @@ export default function ProjectsPage() {
    * `/projects/abc` is the list with that one selected, so a link, the back button and a reload
    * all land where the user expects, and there is no second copy of the selection to drift.
    */
-  const params = useParams<{ id?: string }>()
+  const params = useParams<{ id?: string; fileId?: string }>()
   const selected = () => params.id ?? null
   const [panelWidth, setPanelWidth] = createSignal(readPanelWidth())
   const resize = (width: number) => {
@@ -214,175 +265,245 @@ export default function ProjectsPage() {
 
   return (
     <div class="flex min-h-0 flex-1">
-      {/*
-        `relative` is load-bearing: an absolutely positioned descendant with no positioned
-        ancestor is laid out against the initial containing block, so the `sr-only` status line
-        at the foot of a long list ends up at the foot of the *document* and gives the window a
-        scrollbar beside the title bar. Positioning the scroller contains them.
-      */}
       <div
         class={cx(
-          'relative min-h-0 min-w-0 flex-1 overflow-y-auto',
+          '@container/list flex min-h-0 min-w-0 flex-1 flex-col',
           // On a phone there is no room for two columns: the panel is the page while it is open.
-          selected() !== null && 'hidden md:block',
+          selected() !== null && 'hidden md:flex',
         )}
       >
-        <div class="@container mx-auto flex w-full max-w-6xl flex-col gap-6 px-4 py-6 md:px-8 md:py-8">
-          <PageHeader
-            title={t('projects.title')}
-            actions={
-              <>
-                <LinkButton href="/import" icon={Upload}>
-                  {t('import.title')}
-                </LinkButton>
-                <Button icon={RefreshCw} loading={rescanning()} onClick={() => void onRescan()}>
-                  {t('projects.rescan')}
-                </Button>
-                <Button variant="primary" icon={Plus} onClick={() => setCreating(true)}>
-                  {t('projects.newProject')}
-                </Button>
-              </>
-            }
+        <h1 class="sr-only">{t('projects.title')}</h1>
+        {/* The toolbar and the pills are outside the scroller: the list moves, they never do. */}
+        <Toolbar label={t('projects.toolbar')}>
+          <ToolbarSearch
+            label={t('projects.search')}
+            clearLabel={t('projects.clearSearch')}
+            value={store.query().search ?? ''}
+            maxLength={SEARCH_MAX_LENGTH}
+            onInput={onSearch}
           />
-
-          <div class="flex flex-wrap items-center gap-2">
-            <div class="w-full min-w-0 sm:max-w-[350px] sm:flex-1">
-              <Input
-                type="search"
-                leading={Search}
-                aria-label={t('projects.search')}
-                placeholder={t('projects.search')}
-                maxLength={SEARCH_MAX_LENGTH}
-                autocomplete="off"
-                onInput={(event) => onSearch(event.currentTarget.value)}
+          <Popover
+            label={t('projects.filters')}
+            trigger={({ trigger, expanded }) => (
+              <ToolButton
+                icon={Funnel}
+                label={
+                  filterCount() > 0
+                    ? t('projects.filtersActive', { count: filterCount() })
+                    : t('projects.filters')
+                }
+                badge={filterCount()}
+                expanded={expanded}
+                trigger={trigger}
               />
-            </div>
-            <div class="flex w-full flex-wrap items-center gap-2 sm:ml-auto sm:w-auto">
-              <div class="w-full sm:w-auto">
-                <Select
-                  aria-label={t('settings.sort')}
-                  leading={ArrowUpDown}
-                  class="sm:min-w-44"
-                  options={sortOptions()}
-                  value={sortValueOf(store.query())}
-                  onChange={(value) => void onSort(value)}
-                />
-              </div>
-              <ToggleIconButton
-                label={t('projects.includeArchived')}
-                pressed={archivedShown()}
-                onPressedChange={(next) => void store.setIncludeArchived(next)}
-                iconOn={Archive}
-                iconOff={ArchiveX}
-              />
-              <div class="min-w-0 flex-1 sm:w-36 sm:flex-none">
-                <MultiSelect
-                  class="w-full"
-                  label={t('projects.tags')}
-                  emptyText={t('common.noOptions')}
-                  options={store.knownTags().map((tag) => ({ value: tag, label: tag }))}
-                  value={selectedTags()}
-                  onChange={(next) => void store.setTags(next)}
-                />
-              </div>
-              <SegmentedControl
-                iconOnly
-                label={t('projects.viewMode')}
-                value={viewMode()}
-                onChange={(mode) => void onViewMode(mode)}
-                options={[
-                  { value: 'grid', label: t('projects.viewModeGrid'), icon: LayoutGrid },
-                  { value: 'list', label: t('projects.viewModeList'), icon: List },
-                ]}
-              />
-            </div>
-          </div>
-
-          <Show
-            when={!store.loadFailed()}
-            fallback={
-              <div class="flex flex-col items-start gap-3">
-                <Alert variant="danger" class="w-full">
-                  {t('projects.loadFailed')}
-                </Alert>
-                <Button icon={RefreshCw} onClick={() => void store.reload()}>
-                  {t('common.retry')}
-                </Button>
-              </div>
-            }
+            )}
           >
+            <PopoverSection title={t('projects.tags')} class="min-h-0 flex-1">
+              <CheckList
+                label={t('projects.tags')}
+                searchLabel={t('projects.findTag')}
+                emptyText={t('projects.noTags')}
+                noMatchText={t('projects.noTagMatches')}
+                options={store.knownTags()}
+                value={selectedTags()}
+                onChange={(next) => void store.setTags(next)}
+              />
+            </PopoverSection>
+            <PopoverDivider />
+            <div class="p-3">
+              <Switch
+                label={t('projects.includeArchived')}
+                checked={archivedShown()}
+                onChange={(next) => void store.setIncludeArchived(next)}
+              />
+            </div>
+          </Popover>
+          <MenuTrigger label={t('settings.sort')} items={sortMenu()}>
+            {({ trigger, expanded }) => (
+              <ToolButton
+                icon={sortDir() === 'asc' ? ArrowUpNarrowWide : ArrowDownWideNarrow}
+                label={sortLabel()}
+                expanded={expanded}
+                trigger={trigger}
+              />
+            )}
+          </MenuTrigger>
+          <Show when={view()?.modified ? view() : null}>
+            {(changed) => (
+              <ViewChanges
+                label={t('views.unsavedChangesTo', { name: changed().view.name })}
+                text={t('views.unsaved')}
+                reset={{
+                  label: t('views.resetTo', { name: changed().view.name }),
+                  icon: Undo2,
+                  onClick: resetCurrentView,
+                }}
+                save={{
+                  label: t('views.saveChanges'),
+                  icon: BookmarkPlus,
+                  items: [
+                    {
+                      label: t('views.updateNamed', { name: changed().view.name }),
+                      onSelect: () => void updateCurrentView(),
+                    },
+                    { label: t('views.saveAsNew'), onSelect: () => setSaveViewOpen(true) },
+                  ],
+                }}
+              />
+            )}
+          </Show>
+          <ToolbarSpacer />
+          <ToolToggleGroup
+            label={t('projects.viewMode')}
+            value={viewMode()}
+            onChange={(mode) => void onViewMode(mode)}
+            options={[
+              { value: 'grid', label: t('projects.viewModeGrid'), icon: LayoutGrid },
+              { value: 'list', label: t('projects.viewModeList'), icon: List },
+            ]}
+          />
+          <ToolButton
+            icon={RefreshCw}
+            label={t('projects.rescan')}
+            disabled={rescanning()}
+            onClick={() => void onRescan()}
+          />
+          <Button
+            variant="primary"
+            size="sm"
+            icon={Plus}
+            aria-label={t('projects.newProject')}
+            title={t('projects.newProject')}
+            onClick={() => setCreating(true)}
+          >
+            <span class="hidden @2xl/list:inline">{t('projects.newProject')}</span>
+          </Button>
+        </Toolbar>
+        <Show when={showPills()}>
+          <FilterPills label={t('projects.activeFilters')}>
+            <For each={selectedTags()}>
+              {(tag) => (
+                <FilterPill
+                  name={t('projects.tagFilterName')}
+                  value={tag}
+                  removeLabel={t('projects.removeFilter', { name: tag })}
+                  onRemove={() =>
+                    void store.setTags(selectedTags().filter((selected) => selected !== tag))
+                  }
+                />
+              )}
+            </For>
+            <Show when={archivedShown()}>
+              <FilterPill
+                value={t('projects.archivedShown')}
+                removeLabel={t('projects.removeFilter', { name: t('projects.archivedShown') })}
+                onRemove={() => void store.setIncludeArchived(false)}
+              />
+            </Show>
+            <FilterPillButton
+              onClick={() => {
+                void store.setTags([])
+                if (archivedShown()) void store.setIncludeArchived(false)
+              }}
+            >
+              {t('projects.clearFilters')}
+            </FilterPillButton>
+          </FilterPills>
+        </Show>
+        {/*
+          `relative` is load-bearing: an absolutely positioned descendant with no positioned
+          ancestor is laid out against the initial containing block, so the `sr-only` status line
+          at the foot of a long list ends up at the foot of the *document* and gives the window a
+          scrollbar beside the title bar. Positioning the scroller contains them.
+        */}
+        <div class="relative min-h-0 flex-1 overflow-y-auto">
+          <div class="@container mx-auto flex w-full max-w-6xl flex-col gap-6 px-4 py-5 md:px-6">
             <Show
-              when={!store.loadingFirst()}
+              when={!store.loadFailed()}
               fallback={
-                <ul class={listClass()} aria-busy="true" aria-label={t('common.loading')}>
-                  <For each={Array.from({ length: 8 })}>
-                    {() => (
-                      <li>
-                        <Skeleton
-                          class={viewMode() === 'grid' ? 'aspect-4/5 w-full' : 'h-20 w-full'}
-                        />
-                      </li>
-                    )}
-                  </For>
-                </ul>
+                <div class="flex flex-col items-start gap-3">
+                  <Alert variant="danger" class="w-full">
+                    {t('projects.loadFailed')}
+                  </Alert>
+                  <Button icon={RefreshCw} onClick={() => void store.reload()}>
+                    {t('common.retry')}
+                  </Button>
+                </div>
               }
             >
               <Show
-                when={store.items().length > 0}
+                when={!store.loadingFirst()}
                 fallback={
-                  isFiltered(store.query()) ? (
-                    <EmptyState
-                      icon={Search}
-                      title={t('projects.noMatches')}
-                      description={t('projects.noMatchesHint')}
-                    />
-                  ) : (
-                    <EmptyState
-                      icon={Layers}
-                      title={t('projects.empty')}
-                      description={t('projects.emptyHint')}
-                      action={
-                        <Button variant="primary" icon={Plus} onClick={() => setCreating(true)}>
-                          {t('projects.newProject')}
-                        </Button>
-                      }
-                    />
-                  )
+                  <ul class={listClass()} aria-busy="true" aria-label={t('common.loading')}>
+                    <For each={Array.from({ length: 8 })}>
+                      {() => (
+                        <li>
+                          <Skeleton
+                            class={viewMode() === 'grid' ? 'aspect-4/5 w-full' : 'h-20 w-full'}
+                          />
+                        </li>
+                      )}
+                    </For>
+                  </ul>
                 }
               >
-                <ul class={listClass()}>
-                  <For each={store.items()}>{card}</For>
-                </ul>
-                <div class="flex flex-col items-center gap-3">
-                  <Show when={store.loadingMore()}>
-                    <Spinner label={t('common.loading')} />
-                  </Show>
-                  <Show when={store.loadMoreFailed()}>
-                    <Alert variant="danger">{t('projects.loadMoreFailed')}</Alert>
-                  </Show>
-                  <Show when={store.hasMore()}>
-                    {/* Never disabled while loading: that would drop keyboard focus to the page. */}
-                    <Button
-                      aria-busy={store.loadingMore() ? 'true' : undefined}
-                      onClick={() => void onLoadMore()}
-                    >
-                      {t('projects.loadMore')}
-                    </Button>
-                  </Show>
-                  <ScrollSentinel
-                    onReach={() => void onLoadMore()}
-                    disabled={!store.hasMore() || store.loadMoreFailed()}
-                    rearmKey={store.items().length}
-                  />
-                  <p class="sr-only" role="status">
-                    <Show when={announced()}>
-                      {(count) => t('projects.showing', { count: count() })}
+                <Show
+                  when={store.items().length > 0}
+                  fallback={
+                    isFiltered(store.query()) ? (
+                      <EmptyState
+                        icon={Search}
+                        title={t('projects.noMatches')}
+                        description={t('projects.noMatchesHint')}
+                      />
+                    ) : (
+                      <EmptyState
+                        icon={Layers}
+                        title={t('projects.empty')}
+                        description={t('projects.emptyHint')}
+                        action={
+                          <Button variant="primary" icon={Plus} onClick={() => setCreating(true)}>
+                            {t('projects.newProject')}
+                          </Button>
+                        }
+                      />
+                    )
+                  }
+                >
+                  <ul class={listClass()}>
+                    <For each={store.items()}>{card}</For>
+                  </ul>
+                  <div class="flex flex-col items-center gap-3">
+                    <Show when={store.loadingMore()}>
+                      <Spinner label={t('common.loading')} />
                     </Show>
-                  </p>
-                </div>
+                    <Show when={store.loadMoreFailed()}>
+                      <Alert variant="danger">{t('projects.loadMoreFailed')}</Alert>
+                    </Show>
+                    <Show when={store.hasMore()}>
+                      {/* Never disabled while loading: that would drop keyboard focus to the page. */}
+                      <Button
+                        aria-busy={store.loadingMore() ? 'true' : undefined}
+                        onClick={() => void onLoadMore()}
+                      >
+                        {t('projects.loadMore')}
+                      </Button>
+                    </Show>
+                    <ScrollSentinel
+                      onReach={() => void onLoadMore()}
+                      disabled={!store.hasMore() || store.loadMoreFailed()}
+                      rearmKey={store.items().length}
+                    />
+                    <p class="sr-only" role="status">
+                      <Show when={announced()}>
+                        {(count) => t('projects.showing', { count: count() })}
+                      </Show>
+                    </p>
+                  </div>
+                </Show>
               </Show>
             </Show>
-          </Show>
+          </div>
         </div>
       </div>
       <Show when={selected()}>
@@ -399,14 +520,15 @@ export default function ProjectsPage() {
               />
             </div>
             <SplitPane label={t('projects.detailPanel')} width={panelWidth()}>
-              <div class="px-4 py-6 md:px-6">
-                <ProjectDetail
-                  id={id()}
-                  variant="panel"
-                  onClose={() => navigate('/projects')}
-                  onChanged={() => void store.reload()}
-                />
-              </div>
+              <ProjectDetail
+                id={id()}
+                onClose={() => navigate('/projects')}
+                onChanged={() => void store.reload()}
+                previewFileId={params.fileId ?? null}
+                onPreview={(fileId) =>
+                  navigate(fileId ? `/projects/${id()}/view/${fileId}` : `/projects/${id()}`)
+                }
+              />
             </SplitPane>
           </>
         )}

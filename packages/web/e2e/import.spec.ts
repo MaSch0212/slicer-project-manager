@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
 import { curaManagerArchive } from './fixtures'
-import { asAdmin, expectHeading, open, sidebarNav, useServer } from './support'
+import { asAdmin, expectHeading, open, openFilters, sidebarNav, useServer } from './support'
 
 const state = useServer()
 
@@ -46,21 +46,30 @@ test('a zipped CuraManager library is imported from the settings page and shows 
 
   // The sidecar said the second project is archived: it is there, behind "Show archived".
   await expect(page.getByRole('heading', { name: 'Zip Import Beta settings' })).toHaveCount(0)
-  await page.getByRole('button', { name: 'Show archived' }).click()
+  let filters = await openFilters(page)
+  await filters.getByText('Show archived', { exact: true }).click()
+  await page.keyboard.press('Escape')
   const beta = page
     .locator('main ul > li')
     .filter({ has: page.getByRole('heading', { name: 'Zip Import Beta settings', exact: true }) })
   await expect(beta).toBeVisible()
   await expect(beta.getByText('Archived', { exact: true })).toBeVisible()
   // Put the shared account's filter back for whatever runs after this in the file.
-  await page.getByRole('button', { name: 'Show archived' }).click()
+  filters = await openFilters(page)
+  await filters.getByText('Show archived', { exact: true }).click()
+  await page.keyboard.press('Escape')
 })
 
-test('/import still works on its own, and the projects page links to it', async ({ page }) => {
+test('/import still works on its own, and the projects page no longer offers it', async ({
+  page,
+}) => {
+  // An import is done once, so it lives in settings; the list's toolbar is for the list.
   await open(page, state.server, '/projects')
   await expectHeading(page, 'Projects')
-  await page.getByRole('link', { name: 'Import', exact: true }).click()
-  await expect(page).toHaveURL(`${state.server.origin}/import`)
+  await expect(page.getByRole('link', { name: 'Import', exact: true })).toHaveCount(0)
+
+  // Links and bookmarks to the old page still land somewhere that works.
+  await open(page, state.server, '/import')
   await expectHeading(page, 'Import a CuraManager library')
 
   await page.locator('input[type="file"]').setInputFiles(zipFile('standalone.zip', ' route'))

@@ -52,6 +52,12 @@ export function NavViewItem(props: {
   label: string
   icon: IconComponent
   active?: boolean
+  /**
+   * The list is in this view but its filters were changed since: a dot, as in the app this
+   * follows, and the same words for a screen reader.
+   */
+  modified?: boolean
+  modifiedLabel?: string
   collapsed?: boolean
   onClick: () => void
   menu?: { label: string; items: readonly MenuEntry[] }
@@ -72,6 +78,16 @@ export function NavViewItem(props: {
     >
       <Dynamic component={props.icon} class="size-4 shrink-0" aria-hidden="true" />
       <span class={cx('truncate', props.collapsed && 'sr-only')}>{props.label}</span>
+      <Show when={props.modified}>
+        <span
+          class={cx(
+            'size-1.5 shrink-0 rounded-full bg-warning-text',
+            props.collapsed && 'absolute top-1.5 right-1.5',
+          )}
+          aria-hidden="true"
+        />
+        <span class="sr-only">{props.modifiedLabel}</span>
+      </Show>
     </button>
   )
   return (
