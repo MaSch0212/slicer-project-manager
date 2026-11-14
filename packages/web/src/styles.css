@@ -161,3 +161,63 @@
     }
   }
 }
+
+/*
+ * Syntax colours for the text preview (highlight.js marks tokens up with these classes). The
+ * GitHub palettes, light and dark, against the surface the code sits on.
+ */
+@layer components {
+  .code-view .hljs-comment,
+  .code-view .hljs-quote {
+    color: light-dark(#6e7781, #8b949e);
+    font-style: italic;
+  }
+  .code-view .hljs-keyword,
+  .code-view .hljs-selector-tag,
+  .code-view .hljs-built_in,
+  .code-view .hljs-type,
+  .code-view .hljs-doctag {
+    color: light-dark(#cf222e, #ff7b72);
+  }
+  .code-view .hljs-string,
+  .code-view .hljs-regexp,
+  .code-view .hljs-meta .hljs-string {
+    color: light-dark(#0a3069, #a5d6ff);
+  }
+  .code-view .hljs-number,
+  .code-view .hljs-literal,
+  .code-view .hljs-symbol,
+  .code-view .hljs-bullet,
+  .code-view .hljs-variable,
+  .code-view .hljs-template-variable {
+    color: light-dark(#0550ae, #79c0ff);
+  }
+  .code-view .hljs-attr,
+  .code-view .hljs-attribute,
+  .code-view .hljs-property,
+  .code-view .hljs-params {
+    color: light-dark(#0550ae, #79c0ff);
+  }
+  .code-view .hljs-tag,
+  .code-view .hljs-name,
+  .code-view .hljs-selector-id,
+  .code-view .hljs-selector-class {
+    color: light-dark(#116329, #7ee787);
+  }
+  .code-view .hljs-title,
+  .code-view .hljs-section,
+  .code-view .hljs-function {
+    color: light-dark(#8250df, #d2a8ff);
+    font-weight: 600;
+  }
+  .code-view .hljs-meta,
+  .code-view .hljs-punctuation {
+    color: light-dark(#57606a, #8b949e);
+  }
+  .code-view .hljs-emphasis {
+    font-style: italic;
+  }
+  .code-view .hljs-strong {
+    font-weight: 600;
+  }
+}

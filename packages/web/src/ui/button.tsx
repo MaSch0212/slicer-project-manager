@@ -5,7 +5,8 @@ import { cx } from './cx'
 import type { IconComponent } from './icons'
 import { Spinner } from './spinner'
 
-export type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'danger'
+/** `selected` is the pressed state of a toggle: tinted in the accent, so on and off read apart. */
+export type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'danger' | 'selected'
 export type ButtonSize = 'sm' | 'md'
 
 const base =
@@ -16,6 +17,7 @@ const variants: Record<ButtonVariant, string> = {
   secondary: 'border-border bg-surface text-fg shadow-card hover:bg-surface-2',
   ghost: 'border-transparent bg-transparent text-fg hover:bg-surface-2',
   danger: 'border-transparent bg-danger-solid text-danger-fg hover:bg-danger-solid-hover',
+  selected: 'border-accent bg-accent-soft text-accent-soft-fg hover:bg-accent-soft',
 }
 
 const sizes: Record<ButtonSize, string> = {

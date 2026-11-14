@@ -274,15 +274,16 @@ test('a project is archived and restored', async ({ page }) => {
   await open(page, state.server, `/projects/${created.id}`)
   await expectPanel(page, 'Archive Me')
 
-  await page.getByRole('button', { name: 'Archive this project' }).click()
+  // One toggle, pressed while the project is archived.
+  const toggle = page.getByRole('button', { name: 'Archived', exact: true })
+  await expect(toggle).toHaveAttribute('aria-pressed', 'false')
+  await toggle.click()
   await expect(page.getByText('Archived', { exact: true })).toBeVisible()
-  await expect(
-    page.getByRole('button', { name: 'Restore this project from the archive' }),
-  ).toBeVisible()
+  await expect(toggle).toHaveAttribute('aria-pressed', 'true')
 
-  await page.getByRole('button', { name: 'Restore this project from the archive' }).click()
+  await toggle.click()
   await expect(page.getByText('Archived', { exact: true })).toHaveCount(0)
-  await expect(page.getByRole('button', { name: 'Archive this project' })).toBeVisible()
+  await expect(toggle).toHaveAttribute('aria-pressed', 'false')
 })
 
 test('deleting a project asks first, and keeps or erases the files as chosen', async ({ page }) => {

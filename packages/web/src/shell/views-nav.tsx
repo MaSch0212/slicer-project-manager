@@ -1,5 +1,6 @@
 import { useLocation, useNavigate } from '@solidjs/router'
 import { createEffect, createSignal, For, on, Show } from 'solid-js'
+import { Dynamic } from 'solid-js/web'
 import { VIEW_NAME_MAX, VIEWS_MAX, type ProjectViewDto } from '../api/generated'
 import { t } from '../core/i18n'
 import { settings } from '../core/stores'
@@ -28,6 +29,7 @@ import {
 } from '../core/views'
 import {
   Button,
+  buttonClass,
   ChevronDown,
   ChevronUp,
   Copy,
@@ -36,12 +38,12 @@ import {
   FormField,
   IconButton,
   Input,
-  Menu,
   NavHeading,
   NavList,
   NavViewItem,
   Pencil,
   Plus,
+  Popover,
   RefreshCw,
   Text,
   Trash2,
@@ -55,8 +57,8 @@ function iconLabel(icon: string): string {
 }
 
 /**
- * The saved views in the sidebar (subsystem H): the sort order, the layout, the archive switch
- * and the tag filter, under a name you picked.
+ * The saved views in the sidebar (subsystem H): the sort order, the layout, the grouping, the
+ * archive switch and the tag filter, under a name you picked.
  *
  * Choosing one writes those settings and the projects page follows them. The row marked as
  * current is the one picked (see `currentView`); a change made on the page since marks it as
@@ -287,14 +289,6 @@ export function EditViewsDialog(props: {
     void save(editView(views(), view.id, { name }))
   }
 
-  const iconItems = (view: ProjectViewDto) =>
-    VIEW_ICONS.map((name) => ({
-      label: iconLabel(name),
-      icon: viewIcon(name),
-      checked: name === view.icon,
-      onSelect: () => void save(editView(views(), view.id, { icon: name })),
-    }))
-
   return (
     <Dialog
       open={props.open}
@@ -309,14 +303,31 @@ export function EditViewsDialog(props: {
           <For each={views()}>
             {(view, index) => (
               <li class="flex items-center gap-1.5">
-                <Menu
-                  iconOnly
-                  icon={viewIcon(view.icon)}
-                  variant="secondary"
-                  placement="bottom-start"
+                <Popover
                   label={t('views.iconOf', { name: view.name })}
-                  items={iconItems(view)}
-                />
+                  placement="bottom-start"
+                  trigger={({ trigger }) => (
+                    <button
+                      type="button"
+                      aria-label={t('views.iconOf', { name: view.name })}
+                      title={t('views.iconOf', { name: view.name })}
+                      class={buttonClass('secondary', 'md', true)}
+                      {...trigger}
+                    >
+                      <Dynamic component={viewIcon(view.icon)} class="size-4" aria-hidden="true" />
+                    </button>
+                  )}
+                >
+                  <div class="w-80 p-3">
+                    <ViewIconPicker
+                      label={t('views.iconOf', { name: view.name })}
+                      icons={VIEW_ICONS}
+                      nameOf={iconLabel}
+                      value={view.icon}
+                      onChange={(icon) => void save(editView(views(), view.id, { icon }))}
+                    />
+                  </div>
+                </Popover>
                 <Input
                   ref={(element: HTMLInputElement) => fields.set(view.id, element)}
                   value={view.name}

@@ -32,3 +32,30 @@ export function setFilesViewMode(next: FilesViewMode): void {
     // Blocked storage: the choice lasts until the app closes.
   }
 }
+
+/**
+ * Whether a project's files are grouped by their kind, on this device. Off by default, so a
+ * project with three files stays three rows.
+ */
+const GROUPED_KEY = 'spm.filesGrouped'
+
+function readGrouped(): boolean {
+  try {
+    return localStorage.getItem(GROUPED_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+
+const [grouped, setGrouped] = createSignal(readGrouped())
+
+export const filesGrouped = grouped
+
+export function setFilesGrouped(next: boolean): void {
+  setGrouped(next)
+  try {
+    localStorage.setItem(GROUPED_KEY, next ? '1' : '0')
+  } catch {
+    // Blocked storage: the choice lasts until the app closes.
+  }
+}

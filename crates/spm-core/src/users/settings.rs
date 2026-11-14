@@ -21,7 +21,7 @@ use crate::error::Result;
 use crate::validate::{self, Validate};
 
 /// Stores a value as an enum member's wire spelling; any other raw value decodes to `None`. This
-/// is what every enum-shaped key (theme, language, viewMode, sort, dir) uses.
+/// is what every enum-shaped key (theme, language, viewMode, sort, dir, groupBy) uses.
 pub fn encode_enum<T: Serialize>(value: &T) -> String {
     match serde_json::to_value(value) {
         Ok(Value::String(text)) => text,
@@ -140,6 +140,12 @@ pub fn get_settings(lib: &Library, ctx: &Ctx) -> Result<SettingsDto> {
     if let Some(views) = get("views").and_then(|raw| views_codec().decode(raw)) {
         settings.views = views;
     }
+    if let Some(group_by) = get("groupBy").and_then(decode_enum) {
+        settings.group_by = group_by;
+    }
+    if let Some(group_list) = get("groupList").and_then(decode_bool) {
+        settings.group_list = group_list;
+    }
     Ok(settings)
 }
 
@@ -174,6 +180,12 @@ pub fn put_settings(lib: &Library, ctx: &Ctx, patch: SettingsPatch) -> Result<Se
     }
     if let Some(views) = &patch.views {
         entries.push(("views", views_codec().encode(views)));
+    }
+    if let Some(group_by) = &patch.group_by {
+        entries.push(("groupBy", encode_enum(group_by)));
+    }
+    if let Some(group_list) = patch.group_list {
+        entries.push(("groupList", encode_bool(group_list)));
     }
 
     {

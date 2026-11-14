@@ -68,8 +68,15 @@ describe('which files the viewer opens', () => {
     })
   })
 
-  it('refuses a slicer project on its kind, whatever its extension says', () => {
-    expect(judgeFile({ name: 'plate.3mf', kind: 'slicer_project' })).toEqual({
+  it('draws a slicer project saved as 3MF, which is a 3MF like any other', () => {
+    expect(judgeFile({ name: 'plate.3mf', kind: 'slicer_project' })).toMatchObject({
+      status: 'viewable',
+      format: '3mf',
+    })
+  })
+
+  it('refuses a slicer project in any other format on its kind', () => {
+    expect(judgeFile({ name: 'plate.obj', kind: 'slicer_project' })).toEqual({
       status: 'slicerProject',
     })
   })

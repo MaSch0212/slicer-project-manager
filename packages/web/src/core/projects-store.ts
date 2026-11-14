@@ -29,6 +29,8 @@ export type ProjectsStoreDeps = {
   settings: SettingsPort
   /** Told when a filter was applied but could not be remembered (spec H 5). */
   onRememberFailed?: (error: unknown) => void
+  /** Starts fetching the whole list rather than a page at a time (see `setUnpaged`). */
+  unpaged?: boolean
 }
 
 /**
@@ -78,6 +80,16 @@ export function createProjectsStore(deps: Partial<ProjectsStoreDeps> = {}) {
   // A token, not state: which filter the accumulated pages belong to. Bumped by every reset and
   // captured before an await, so an answer for a filter the user has left is discarded whole.
   let generation = 0
+  /**
+   * Whether the list is fetched whole rather than a page at a time. A grouped list is: a group
+   * built from the first page alone would claim to be complete while the rest of its members sit
+   * on pages not yet loaded.
+   */
+  const [unpaged, setUnpagedSignal] = createSignal(deps.unpaged ?? false)
+
+  /** The current query as one request: page zero, or everything. */
+  const firstRequest = (): ProjectQuery =>
+    unpaged() ? { ...query() } : { ...query(), limit: PROJECTS_PAGE_SIZE }
 
   /** Page zero for the current query. A superseded answer (older generation) is dropped. */
   async function loadFirstPage(): Promise<void> {
@@ -91,7 +103,7 @@ export function createProjectsStore(deps: Partial<ProjectsStoreDeps> = {}) {
     setLoadingFirst(true)
     setLoadFailed(false)
     try {
-      const page = await client.projects.list({ ...query(), limit: PROJECTS_PAGE_SIZE })
+      const page = await client.projects.list(firstRequest())
       if (mine !== generation) return
       setFirstPage(page)
     } catch {
@@ -113,7 +125,7 @@ export function createProjectsStore(deps: Partial<ProjectsStoreDeps> = {}) {
   }
 
   function hasMore(): boolean {
-    if (loadFailed() || loadingFirst()) return false
+    if (loadFailed() || loadingFirst() || unpaged()) return false
     return (lastPageLength() ?? firstPage().length) === PROJECTS_PAGE_SIZE
   }
 
@@ -173,6 +185,13 @@ export function createProjectsStore(deps: Partial<ProjectsStoreDeps> = {}) {
 
     reload: loadFirstPage,
 
+    /** Fetches the whole list (true) or a page at a time (false); a change reloads it. */
+    setUnpaged(flag: boolean): void {
+      if (unpaged() === flag) return
+      setUnpagedSignal(flag)
+      void loadFirstPage()
+    },
+
     /**
      * Fetches page zero again **without** going back to "loading": the rows on screen are swapped
      * for their newer selves where they changed (a cover that has been made since, a file count),
@@ -182,7 +201,7 @@ export function createProjectsStore(deps: Partial<ProjectsStoreDeps> = {}) {
     async refreshInPlace(): Promise<void> {
       const mine = generation
       try {
-        const page = await client.projects.list({ ...query(), limit: PROJECTS_PAGE_SIZE })
+        const page = await client.projects.list(firstRequest())
         if (mine !== generation) return
         const fresh = new Map(page.map((project) => [project.id, project]))
         setFirstPage(page)
@@ -240,7 +259,7 @@ export function createProjectsStore(deps: Partial<ProjectsStoreDeps> = {}) {
      * and it does nothing — which is also what keeps it from fighting the page it follows. The
      * search box is left exactly as it is: a view is not a search (see `core/views.ts`).
      */
-    applyShape(shape: Omit<ViewShape, 'viewMode'>): void {
+    applyShape(shape: Pick<ViewShape, 'sort' | 'dir' | 'includeArchived' | 'tags'>): void {
       const current = query()
       if (
         current.sort === shape.sort &&

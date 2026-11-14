@@ -2,12 +2,14 @@ import { createSignal, lazy, Match, Show, Suspense, Switch, type JSX } from 'sol
 import type { FileDto } from '../api/generated'
 import { formatBytes } from '../core/format-bytes'
 import { t } from '../core/i18n'
+import { previewKindOf, type PreviewKind } from '../core/preview-kind'
 import { fileKindKey } from '../core/project-detail'
 import { slicerDisplayName } from '../core/slicer-names'
 import {
   Badge,
   FileBox,
   IconButton,
+  ImageView,
   MediaDialog,
   MediaFallback,
   MediaLoading,
@@ -19,6 +21,9 @@ import { judgeFile, SUPPORTED_FORMATS } from '../viewer/model-kind'
 
 // three.js lives in this chunk and nowhere else: it loads the first time a model is previewed.
 const ModelPreview = lazy(() => import('./viewer'))
+// The highlighter, and the archive reader, likewise load the first time they are needed.
+const TextPreview = lazy(() => import('./text-preview'))
+const ArchivePreview = lazy(() => import('./archive-preview'))
 
 const KIND_VARIANT: Record<FileDto['kind'], BadgeVariant> = {
   model: 'neutral',
@@ -44,7 +49,10 @@ export function FilePreview(props: {
   actions: (file: FileDto, compact: boolean) => JSX.Element
 }) {
   const [reset, setReset] = createSignal<(() => void) | null>(null)
-  const viewable = (file: FileDto) => !props.folderMissing && judgeFile(file).status === 'viewable'
+  /** How this file is shown; `none` for one that has only its picture and its actions. */
+  const kind = (file: FileDto): PreviewKind => (props.folderMissing ? 'none' : previewKindOf(file))
+  const shown = (want: PreviewKind) =>
+    props.file && kind(props.file) === want ? props.file : undefined
 
   /** Why a file has no 3D view, said for the popup, where its actions are right there. */
   const reason = (file: FileDto): string => {
@@ -87,15 +95,15 @@ export function FilePreview(props: {
         </Show>
       }
       actions={
-        <Show when={props.file && viewable(props.file) ? props.file : undefined}>
+        <Show when={props.file && kind(props.file) !== 'none' ? props.file : undefined}>
           {(file) => (
             <>
-              <Show when={reset()}>
+              <Show when={kind(file()) === 'model' && reset()}>
                 {(action) => (
                   <IconButton
                     icon={RotateCcw}
                     label={t('viewer.resetView')}
-                    onClick={() => action()()}
+                    onClick={() => (action() as () => void)()}
                   />
                 )}
               </Show>
@@ -111,10 +119,29 @@ export function FilePreview(props: {
             <Text variant="muted">{t('viewer.missingFile')}</Text>
           </div>
         </Match>
-        <Match when={props.file && viewable(props.file) ? props.file : undefined}>
+        <Match when={shown('model')}>
           {(file) => (
             <Suspense fallback={<MediaLoading label={t('viewer.loading')} />}>
               <ModelPreview file={file()} onReset={(action) => setReset(() => action)} />
+            </Suspense>
+          )}
+        </Match>
+        <Match when={shown('image')}>
+          {(file) => (
+            <ImageView src={file().rawUrl} alt={t('viewer.thumbnailAlt', { name: file().name })} />
+          )}
+        </Match>
+        <Match when={shown('text')}>
+          {(file) => (
+            <Suspense fallback={<MediaLoading label={t('viewer.loading')} />}>
+              <TextPreview name={file().name} url={file().rawUrl} />
+            </Suspense>
+          )}
+        </Match>
+        <Match when={shown('archive')}>
+          {(file) => (
+            <Suspense fallback={<MediaLoading label={t('viewer.loading')} />}>
+              <ArchivePreview file={file()} />
             </Suspense>
           )}
         </Match>

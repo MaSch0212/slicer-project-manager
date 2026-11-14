@@ -483,7 +483,7 @@ describe('ProjectDetailPage', () => {
           file({ id: 'm', name: 'a.stl' }),
           file({
             id: 'o',
-            name: 'b.txt',
+            name: 'b.pdf',
             kind: 'other',
             previewState: 'unsupported',
             thumbUrl: undefined,
@@ -498,10 +498,10 @@ describe('ProjectDetailPage', () => {
     expect(download.getAttribute('download')).toBe('a.stl')
 
     // The card's title is its open control, and the heading keeps the file's name.
-    expect(screen.getByRole('heading', { name: 'b.txt' })).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: 'b.txt' }))
+    expect(screen.getByRole('heading', { name: 'b.pdf' })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: 'b.pdf' }))
     const popup = await screen.findByRole('dialog')
-    expect(within(popup).getByRole('heading', { name: 'b.txt' })).toBeTruthy()
+    expect(within(popup).getByRole('heading', { name: 'b.pdf' })).toBeTruthy()
     // No 3D view, so what can be done with it is the content, labelled.
     expect(within(popup).getByText(/no preview for this kind of file/)).toBeTruthy()
     expect(within(popup).getByRole('link', { name: 'Download' })).toBeTruthy()
@@ -509,6 +509,38 @@ describe('ProjectDetailPage', () => {
 
     fireEvent.click(within(popup).getByRole('button', { name: 'Close' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+  })
+
+  it('shows a text file in the popup as its contents, highlighted', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response('{"layer_height": 0.2}\n'))
+    vi.stubGlobal('fetch', fetchMock)
+    try {
+      api.projects.get.mockResolvedValue(
+        detail({
+          files: [
+            file({
+              id: 'j',
+              name: 'settings.json',
+              kind: 'other',
+              previewState: 'unsupported',
+              thumbUrl: undefined,
+              rawUrl: '/api/files/j/raw',
+            }),
+          ],
+        }),
+      )
+      renderAt('/projects/p1')
+      fireEvent.click(await screen.findByRole('button', { name: 'settings.json' }))
+      const popup = await screen.findByRole('dialog')
+      const code = await within(popup).findByRole('region', { name: 'Contents of settings.json' })
+      expect(fetchMock).toHaveBeenCalledWith('/api/files/j/raw', expect.anything())
+      expect(code.textContent).toContain('"layer_height"')
+      expect(code.querySelector('.hljs-attr')?.textContent).toBe('"layer_height"')
+      // Its actions are in the header, as for a model.
+      expect(within(popup).getByRole('link', { name: 'Download: settings.json' })).toBeTruthy()
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 
   it('warns about a missing folder and will not take uploads', async () => {
@@ -524,8 +556,10 @@ describe('ProjectDetailPage', () => {
   it('shows an archived project as archived and offers to restore it', async () => {
     api.projects.get.mockResolvedValue(detail({ isArchived: true }))
     renderAt('/projects/p1')
-    await screen.findByText('Archived')
-    fireEvent.click(screen.getByRole('button', { name: 'Restore this project from the archive' }))
+    // One toggle, pressed while archived: two look-alike icons were hard to tell apart.
+    const toggle = await screen.findByRole('button', { name: 'Archived' })
+    expect(toggle.getAttribute('aria-pressed')).toBe('true')
+    fireEvent.click(toggle)
     await waitFor(() =>
       expect(api.projects.update).toHaveBeenCalledWith('p1', { isArchived: false }),
     )
@@ -533,7 +567,9 @@ describe('ProjectDetailPage', () => {
 
   it('archives a project that is not archived', async () => {
     renderAt('/projects/p1')
-    fireEvent.click(await screen.findByRole('button', { name: 'Archive this project' }))
+    const toggle = await screen.findByRole('button', { name: 'Archived' })
+    expect(toggle.getAttribute('aria-pressed')).toBe('false')
+    fireEvent.click(toggle)
     await waitFor(() =>
       expect(api.projects.update).toHaveBeenCalledWith('p1', { isArchived: true }),
     )

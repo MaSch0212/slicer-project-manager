@@ -58,7 +58,7 @@ export function IconButton(
 
 /**
  * An icon-only button with two states, like "show archived": one control with one accessible name,
- * `aria-pressed` saying which state it is in, and the icon (plus a lifted look) showing it. The
+ * `aria-pressed` saying which state it is in, and the icon (plus an accent tint) showing it. The
  * name never changes with the state: a name that flipped would be announced as a different control
  * on every press.
  */
@@ -82,6 +82,7 @@ export function ToggleIconButton(
     'label',
     'size',
     'onClick',
+    'class',
   ])
   return (
     <IconButton
@@ -89,7 +90,10 @@ export function ToggleIconButton(
       icon={local.pressed ? local.iconOn : local.iconOff}
       label={local.label}
       size={local.size}
-      variant={local.pressed ? 'secondary' : 'ghost'}
+      // Pressed is tinted in the accent, not merely lifted: two states of one icon must read as
+      // two states at a glance, which a slightly different background did not.
+      variant={local.pressed ? 'selected' : 'ghost'}
+      class={local.class}
       aria-pressed={local.pressed}
       onClick={(event) => {
         if (typeof local.onClick === 'function') local.onClick(event)

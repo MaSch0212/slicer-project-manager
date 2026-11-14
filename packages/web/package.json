@@ -13,6 +13,7 @@
     "@kobalte/core": "^0.13.14",
     "@solidjs/router": "^1.0.0",
     "@tauri-apps/api": "2.12.4",
+    "highlight.js": "^11.12.0",
     "lucide-solid": "^1.61.0",
     "solid-js": "^1.9.17",
     "three": "^0.185.1"

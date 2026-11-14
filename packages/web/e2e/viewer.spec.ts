@@ -44,6 +44,7 @@ const PLAN: SeedProject[] = [
     files: [
       { name: 'hinge.step', bytes: stepStub() },
       { name: 'notes.txt', bytes: new TextEncoder().encode('not a model\n') },
+      { name: 'manual.pdf', bytes: new TextEncoder().encode('%PDF-1.4\n') },
       { name: 'broken.stl', bytes: new TextEncoder().encode('solid broken\nendsolid broken\n') },
       { name: 'pin.stl', bytes: binaryStl(cylinder(3, 12)) },
     ],
@@ -496,7 +497,7 @@ test('files the viewer cannot draw say why, and nothing is fetched or rendered f
   })
   const cases: [string, RegExp][] = [
     ['hinge.step', /There is no preview for STEP files/],
-    ['notes.txt', /no preview for this kind of file/],
+    ['manual.pdf', /no preview for this kind of file/],
   ]
   for (const [file, message] of cases) {
     await open(page, state.server, viewerUrl(ODDS, file))
@@ -509,6 +510,17 @@ test('files the viewer cannot draw say why, and nothing is fetched or rendered f
     await expect(preview(page).getByRole('button', { name: 'Rename', exact: true })).toBeVisible()
   }
   expect(fetched).toEqual([])
+})
+
+// A text file is no model, but it is something to read: the popup shows its contents.
+test('a text file opens as its contents, with its actions in the header', async ({ page }) => {
+  await open(page, state.server, viewerUrl(ODDS, 'notes.txt'))
+  await expectPreviewOf(page, 'notes.txt')
+  await expect(preview(page).getByRole('region', { name: 'Contents of notes.txt' })).toContainText(
+    'not a model',
+  )
+  await expect(page.getByRole('img', { name: CANVAS_LABEL })).toHaveCount(0)
+  await expect(preview(page).getByRole('link', { name: 'Download: notes.txt' })).toBeVisible()
 })
 
 test('a file that cannot be read as a model says so, and a missing file says it is gone', async ({

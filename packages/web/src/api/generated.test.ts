@@ -23,6 +23,8 @@ describe('generated contract', () => {
       includeArchived: false,
       filterTags: [],
       views: [],
+      groupBy: 'none',
+      groupList: false,
     })
   })
 

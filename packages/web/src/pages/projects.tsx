@@ -1,8 +1,18 @@
 import { useNavigate, useParams } from '@solidjs/router'
-import { createEffect, createSignal, For, onCleanup, Show } from 'solid-js'
+import { createEffect, createMemo, createSignal, For, onCleanup, Show } from 'solid-js'
 import { t } from '../core/i18n'
 import { onLibraryChanged } from '../core/library-events'
 import { errorMessage } from '../core/i18n/errors'
+import {
+  groupByLabel,
+  groupProjects,
+  isCollapsed,
+  pickedGroup,
+  pickGroup,
+  PROJECT_GROUPS,
+  setAllCollapsed,
+  toggleCollapsed,
+} from '../core/grouping'
 import { notify } from '../core/notify'
 import { createProjectsStore, isFiltered } from '../core/projects-store'
 import {
@@ -20,7 +30,12 @@ import {
   updateCurrentView,
 } from '../core/view-actions'
 import { shapeOf } from '../core/views'
-import { SEARCH_MAX_LENGTH, type ProjectDto, type SettingsDto } from '../api/generated'
+import {
+  SEARCH_MAX_LENGTH,
+  type ProjectDto,
+  type ProjectGroupBy,
+  type SettingsDto,
+} from '../api/generated'
 import {
   Alert,
   ArrowDownWideNarrow,
@@ -34,7 +49,11 @@ import {
   FilterPillButton,
   FilterPills,
   Funnel,
+  GroupList,
+  GroupSection,
+  ItemList,
   Layers,
+  LayoutList,
   LayoutGrid,
   List,
   MediaCard,
@@ -103,8 +122,79 @@ export default function ProjectsPage() {
   const navigate = useNavigate()
   const store = createProjectsStore({
     onRememberFailed: () => notify.error(t('projects.filterNotRemembered')),
+    unpaged: settings.settings().groupBy !== 'none',
   })
   void store.start()
+
+  /**
+   * Grouping, as Questkeep does it: by a field the view remembers, groups that fold away, and
+   * optionally the groups listed beside the projects so one can be picked. A grouped list is
+   * fetched whole, so no group claims to be complete while its members sit on unloaded pages.
+   */
+  const groupBy = (): ProjectGroupBy => settings.settings().groupBy
+  const grouped = () => groupBy() !== 'none'
+  const groupListShown = () => grouped() && settings.settings().groupList
+  const groupField = () => `projects.${groupBy()}`
+  createEffect(() => store.setUnpaged(grouped()))
+  const groups = createMemo(() => groupProjects(store.items(), groupBy()))
+  /** The group picked in the group list, while it still exists and the list is shown. */
+  const picked = () => {
+    if (!groupListShown()) return null
+    const key = pickedGroup(groupField())
+    return groups().some((group) => group.key === key) ? key : null
+  }
+  const shownGroups = () => {
+    const key = picked()
+    return key === null ? groups() : groups().filter((group) => group.key === key)
+  }
+  const groupToggleLabel = (key: string) =>
+    isCollapsed(groupField(), key) ? t('grouping.expandGroup') : t('grouping.collapseGroup')
+
+  async function patchSettings(patch: Parameters<typeof settings.patch>[0]) {
+    try {
+      await settings.patch(patch)
+    } catch (error) {
+      notify.error(errorMessage(error))
+    }
+  }
+
+  const groupMenu = (): MenuEntry[] => [
+    {
+      label: groupByLabel('none'),
+      checked: groupBy() === 'none',
+      onSelect: () => void patchSettings({ groupBy: 'none' }),
+    },
+    { type: 'separator' },
+    ...PROJECT_GROUPS.map((by) => ({
+      label: groupByLabel(by),
+      checked: groupBy() === by,
+      onSelect: () => void patchSettings({ groupBy: by }),
+    })),
+    { type: 'separator' },
+    {
+      label: t('grouping.groupList'),
+      checked: groupListShown(),
+      disabled: !grouped(),
+      onSelect: () => void patchSettings({ groupList: !settings.settings().groupList }),
+    },
+    {
+      label: t('grouping.collapseAll'),
+      disabled: !grouped(),
+      onSelect: () =>
+        setAllCollapsed(
+          groupField(),
+          groups().map((group) => group.key),
+          true,
+        ),
+    },
+    {
+      label: t('grouping.expandAll'),
+      disabled: !grouped(),
+      onSelect: () => setAllCollapsed(groupField(), [], false),
+    },
+  ]
+  const groupButtonLabel = () =>
+    grouped() ? t('grouping.groupedBy', { group: groupByLabel(groupBy()) }) : t('grouping.group')
 
   /**
    * The list follows the settings. Picking a saved view in the sidebar writes them, and this is
@@ -285,11 +375,6 @@ export default function ProjectsPage() {
     writePanelWidth(next)
   }
 
-  const listClass = () =>
-    viewMode() === 'grid'
-      ? 'm-0 grid list-none grid-cols-[repeat(auto-fill,minmax(13rem,1fr))] gap-4 p-0'
-      : 'm-0 flex list-none flex-col gap-2 p-0'
-
   return (
     <div class="flex min-h-0 flex-1">
       <div
@@ -350,6 +435,17 @@ export default function ProjectsPage() {
               <ToolButton
                 icon={sortDir() === 'asc' ? ArrowUpNarrowWide : ArrowDownWideNarrow}
                 label={sortLabel()}
+                expanded={expanded}
+                trigger={trigger}
+              />
+            )}
+          </MenuTrigger>
+          <MenuTrigger label={t('grouping.group')} items={groupMenu()}>
+            {({ trigger, expanded }) => (
+              <ToolButton
+                icon={LayoutList}
+                label={groupButtonLabel()}
+                on={grouped()}
                 expanded={expanded}
                 trigger={trigger}
               />
@@ -443,93 +539,137 @@ export default function ProjectsPage() {
           at the foot of a long list ends up at the foot of the *document* and gives the window a
           scrollbar beside the title bar. Positioning the scroller contains them.
         */}
-        <div class="relative min-h-0 flex-1 overflow-y-auto">
-          <div class="@container mx-auto flex w-full max-w-6xl flex-col gap-6 px-4 py-5 md:px-6">
-            <Show
-              when={!store.loadFailed()}
-              fallback={
-                <div class="flex flex-col items-start gap-3">
-                  <Alert variant="danger" class="w-full">
-                    {t('projects.loadFailed')}
-                  </Alert>
-                  <Button icon={RefreshCw} onClick={() => void store.reload()}>
-                    {t('common.retry')}
-                  </Button>
-                </div>
-              }
-            >
+        <div class="flex min-h-0 flex-1">
+          <Show when={groupListShown() && !store.loadingFirst() && !store.loadFailed()}>
+            <div class="hidden md:flex">
+              <GroupList
+                label={t('grouping.groupListLabel')}
+                allLabel={t('grouping.allGroups')}
+                total={store.items().length}
+                groups={groups().map((group) => ({
+                  key: group.key,
+                  label: group.label,
+                  count: group.items.length,
+                }))}
+                value={picked()}
+                onChange={(key) => pickGroup(groupField(), key)}
+              />
+            </div>
+          </Show>
+          <div class="relative min-h-0 flex-1 overflow-y-auto">
+            <div class="@container mx-auto flex w-full max-w-6xl flex-col gap-6 px-4 py-5 md:px-6">
               <Show
-                when={!store.loadingFirst()}
+                when={!store.loadFailed()}
                 fallback={
-                  <ul class={listClass()} aria-busy="true" aria-label={t('common.loading')}>
-                    <For each={Array.from({ length: 8 })}>
-                      {() => (
-                        <li>
-                          <Skeleton
-                            class={viewMode() === 'grid' ? 'aspect-4/5 w-full' : 'h-20 w-full'}
-                          />
-                        </li>
-                      )}
-                    </For>
-                  </ul>
+                  <div class="flex flex-col items-start gap-3">
+                    <Alert variant="danger" class="w-full">
+                      {t('projects.loadFailed')}
+                    </Alert>
+                    <Button icon={RefreshCw} onClick={() => void store.reload()}>
+                      {t('common.retry')}
+                    </Button>
+                  </div>
                 }
               >
                 <Show
-                  when={store.items().length > 0}
+                  when={!store.loadingFirst()}
                   fallback={
-                    isFiltered(store.query()) ? (
-                      <EmptyState
-                        icon={Search}
-                        title={t('projects.noMatches')}
-                        description={t('projects.noMatchesHint')}
-                      />
-                    ) : (
-                      <EmptyState
-                        icon={Layers}
-                        title={t('projects.empty')}
-                        description={t('projects.emptyHint')}
-                        action={
-                          <Button variant="primary" icon={Plus} onClick={() => setCreating(true)}>
-                            {t('projects.newProject')}
-                          </Button>
-                        }
-                      />
-                    )
+                    <ItemList layout={viewMode()} busy label={t('common.loading')}>
+                      <For each={Array.from({ length: 8 })}>
+                        {() => (
+                          <li>
+                            <Skeleton
+                              class={
+                                viewMode() === 'grid' ? 'aspect-4/5 w-full' : 'my-1.5 h-10 w-full'
+                              }
+                            />
+                          </li>
+                        )}
+                      </For>
+                    </ItemList>
                   }
                 >
-                  <ul class={listClass()}>
-                    <For each={store.items()}>{card}</For>
-                  </ul>
-                  <div class="flex flex-col items-center gap-3">
-                    <Show when={store.loadingMore()}>
-                      <Spinner label={t('common.loading')} />
+                  <Show
+                    when={store.items().length > 0}
+                    fallback={
+                      isFiltered(store.query()) ? (
+                        <EmptyState
+                          icon={Search}
+                          title={t('projects.noMatches')}
+                          description={t('projects.noMatchesHint')}
+                        />
+                      ) : (
+                        <EmptyState
+                          icon={Layers}
+                          title={t('projects.empty')}
+                          description={t('projects.emptyHint')}
+                          action={
+                            <Button variant="primary" icon={Plus} onClick={() => setCreating(true)}>
+                              {t('projects.newProject')}
+                            </Button>
+                          }
+                        />
+                      )
+                    }
+                  >
+                    <Show
+                      when={grouped()}
+                      fallback={
+                        <ItemList layout={viewMode()}>
+                          <For each={store.items()}>{card}</For>
+                        </ItemList>
+                      }
+                    >
+                      <div class="flex flex-col gap-4">
+                        <For each={shownGroups()}>
+                          {(group) => (
+                            <GroupSection
+                              label={group.label}
+                              count={group.items.length}
+                              collapsed={isCollapsed(groupField(), group.key)}
+                              onToggle={() => toggleCollapsed(groupField(), group.key)}
+                              toggleLabel={groupToggleLabel(group.key)}
+                              level={2}
+                            >
+                              <ItemList layout={viewMode()}>
+                                <For each={group.items}>{card}</For>
+                              </ItemList>
+                            </GroupSection>
+                          )}
+                        </For>
+                      </div>
                     </Show>
-                    <Show when={store.loadMoreFailed()}>
-                      <Alert variant="danger">{t('projects.loadMoreFailed')}</Alert>
-                    </Show>
-                    <Show when={store.hasMore()}>
-                      {/* Never disabled while loading: that would drop keyboard focus to the page. */}
-                      <Button
-                        aria-busy={store.loadingMore() ? 'true' : undefined}
-                        onClick={() => void onLoadMore()}
-                      >
-                        {t('projects.loadMore')}
-                      </Button>
-                    </Show>
-                    <ScrollSentinel
-                      onReach={() => void onLoadMore()}
-                      disabled={!store.hasMore() || store.loadMoreFailed()}
-                      rearmKey={store.items().length}
-                    />
-                    <p class="sr-only" role="status">
-                      <Show when={announced()}>
-                        {(count) => t('projects.showing', { count: count() })}
+                    <div class="flex flex-col items-center gap-3">
+                      <Show when={store.loadingMore()}>
+                        <Spinner label={t('common.loading')} />
                       </Show>
-                    </p>
-                  </div>
+                      <Show when={store.loadMoreFailed()}>
+                        <Alert variant="danger">{t('projects.loadMoreFailed')}</Alert>
+                      </Show>
+                      <Show when={store.hasMore()}>
+                        {/* Never disabled while loading: that would drop keyboard focus to the page. */}
+                        <Button
+                          aria-busy={store.loadingMore() ? 'true' : undefined}
+                          onClick={() => void onLoadMore()}
+                        >
+                          {t('projects.loadMore')}
+                        </Button>
+                      </Show>
+                      <ScrollSentinel
+                        onReach={() => void onLoadMore()}
+                        disabled={!store.hasMore() || store.loadMoreFailed()}
+                        rearmKey={store.items().length}
+                      />
+                      <p class="sr-only" role="status">
+                        <Show when={announced()}>
+                          {(count) => t('projects.showing', { count: count() })}
+                        </Show>
+                      </p>
+                    </div>
+                  </Show>
                 </Show>
               </Show>
-            </Show>
+            </div>
           </div>
         </div>
       </div>

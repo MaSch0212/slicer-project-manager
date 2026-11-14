@@ -4,7 +4,14 @@ import { api } from '../core/api/client'
 import { formatBytes } from '../core/format-bytes'
 import { t } from '../core/i18n'
 import { onLibraryChanged } from '../core/library-events'
-import { filesViewMode, setFilesViewMode } from '../core/files-view'
+import { filesGrouped, filesViewMode, setFilesGrouped, setFilesViewMode } from '../core/files-view'
+import {
+  fileGroupKind,
+  groupFiles,
+  isCollapsed,
+  toggleCollapsed,
+  type FileGroupKind,
+} from '../core/grouping'
 import {
   createProjectDetail,
   fileKindKey,
@@ -23,7 +30,6 @@ import {
   Alert,
   AlertTriangle,
   Archive,
-  ArchiveRestore,
   Badge,
   Button,
   buttonClass,
@@ -36,16 +42,24 @@ import {
   Download,
   DropTarget,
   EmptyState,
+  FileArchive,
   FileBox,
+  FileCode,
+  FileImage,
   FilePickButton,
   FilePlus,
+  FileText,
   FormField,
+  Globe,
+  GroupSection,
   Heading,
   IconButton,
   IconLinkButton,
   ImageOff,
   Input,
+  ItemList,
   LayoutGrid,
+  LayoutList,
   Link,
   LinkButton,
   List as ListIcon,
@@ -62,6 +76,7 @@ import {
   Tag,
   Tags as TagsIcon,
   Text,
+  ToggleIconButton,
   ToolToggleGroup,
   Trash2,
   type BadgeVariant,
@@ -69,6 +84,9 @@ import {
 } from '../ui'
 import { FilePreview } from './file-preview'
 import { ProjectFormDialog } from './project-form-dialog'
+
+/** Where the files' folded-away groups are remembered: one field, the kind. */
+const FILES_FIELD = 'files'
 
 const POLL_MS = 4000
 /** A preview that is still pending after this many polls is left alone until the next visit. */
@@ -78,6 +96,16 @@ const KIND_VARIANT: Record<FileDto['kind'], BadgeVariant> = {
   model: 'neutral',
   slicer_project: 'accent',
   other: 'neutral',
+}
+
+/** What a file with no 3D preview shows in its picture's place: an icon of its kind. */
+const OTHER_ICON: Record<FileGroupKind, IconComponent> = {
+  slicerProject: FileBox,
+  model: FileBox,
+  image: FileImage,
+  text: FileCode,
+  archive: FileArchive,
+  other: FileText,
 }
 
 const PREVIEW_ICON: Record<FileDto['previewState'], IconComponent> = {
@@ -349,11 +377,6 @@ export function ProjectDetail(props: {
     </Show>
   )
 
-  const listClass = () =>
-    viewMode() === 'grid'
-      ? 'm-0 grid list-none grid-cols-[repeat(auto-fill,minmax(10rem,1fr))] gap-3 p-0'
-      : 'm-0 flex list-none flex-col gap-2 p-0'
-
   // Every file opens its preview from its card, the ones with no 3D view included: the popup is
   // where their picture and their actions are.
   const fileCard = (file: FileDto, folderMissing: boolean) => (
@@ -366,7 +389,11 @@ export function ProjectDetail(props: {
         image={file.previewState === 'ready' ? file.thumbUrl : undefined}
         placeholder={t(previewStateKey(file, folderMissing))}
         placeholderIcon={
-          file.kind === 'other' || folderMissing ? ImageOff : PREVIEW_ICON[file.previewState]
+          folderMissing
+            ? ImageOff
+            : file.kind === 'other'
+              ? OTHER_ICON[fileGroupKind(file)]
+              : PREVIEW_ICON[file.previewState]
         }
         meta={formatBytes(file.sizeBytes)}
         badges={
@@ -400,13 +427,15 @@ export function ProjectDetail(props: {
                   label={t('projects.edit')}
                   onClick={() => setEditing(true)}
                 />
-                <IconButton
-                  icon={project().isArchived ? ArchiveRestore : Archive}
-                  label={project().isArchived ? t('projects.unarchive') : t('projects.archive')}
-                  onClick={() =>
-                    void detail
-                      .update({ isArchived: !project().isArchived })
-                      .then(() => props.onChanged?.())
+                {/* One toggle rather than two look-alike icons: pressed is archived, and the
+                    accent tint says so at a glance. */}
+                <ToggleIconButton
+                  iconOn={Archive}
+                  iconOff={Archive}
+                  label={t('projects.archivedToggle')}
+                  pressed={project().isArchived}
+                  onPressedChange={(next) =>
+                    void detail.update({ isArchived: next }).then(() => props.onChanged?.())
                   }
                 />
                 <IconButton
@@ -435,7 +464,7 @@ export function ProjectDetail(props: {
             window. In a 460px panel a `lg:grid-cols-4` file grid makes four hundred-pixel cards
             and clips their own buttons away; the viewport is 1280 and knows nothing about it.
           */}
-          <div class="@container flex flex-col gap-6 px-4 py-5">
+          <div class="@container flex flex-col gap-4 px-4 py-3">
             <Show
               when={!detail.loadError() || detail.detail()}
               fallback={
@@ -469,12 +498,6 @@ export function ProjectDetail(props: {
               >
                 {(project) => (
                   <>
-                    <Show when={project().isArchived}>
-                      <div class="flex flex-wrap gap-2">
-                        <Badge>{t('projects.archived')}</Badge>
-                      </div>
-                    </Show>
-
                     <Show when={project().state === 'missing'}>
                       <Alert variant="warning" title={t('projects.missingTitle')}>
                         {t('projects.missingHint')}
@@ -525,92 +548,93 @@ export function ProjectDetail(props: {
                       )}
                     </Show>
 
-                    <Card class="flex flex-col gap-5" padding="lg">
-                      <div class="grid gap-5 @2xl:grid-cols-2">
-                        <div class="flex min-w-0 flex-col gap-1">
-                          <Text variant="label">{t('projects.website')}</Text>
-                          <Show
-                            when={project().website}
-                            fallback={<Text variant="muted">&ndash;</Text>}
-                          >
-                            {(site) => (
-                              <Show
-                                when={webLink(site())}
-                                fallback={<Text class="break-all">{site()}</Text>}
-                              >
-                                {/* The site, not the address: the link still goes to all of it,
-                                    and the full address is one hover away. */}
-                                {(href) => (
-                                  <Link href={href()} external title={href()} class="truncate">
-                                    {siteLabel(site())}
-                                  </Link>
-                                )}
-                              </Show>
-                            )}
-                          </Show>
-                        </div>
-                        <div class="flex flex-col gap-1">
-                          <Text variant="label">{t('projects.notes')}</Text>
-                          <Show
-                            when={project().notes}
-                            fallback={<Text variant="muted">{t('projects.noNotes')}</Text>}
-                          >
-                            {(notes) => (
-                              <Text class="break-words whitespace-pre-wrap">{notes()}</Text>
-                            )}
-                          </Show>
-                        </div>
-                      </div>
-                      {/* The tags as they are, and one button that opens the list to pick from,
-                          with a checkmark on each this project has — not a text field. */}
-                      <div class="flex flex-col gap-2">
-                        <div class="flex items-center justify-between gap-2">
-                          <Text variant="label">{t('projects.tags')}</Text>
-                          <Popover
-                            label={t('projects.chooseTags')}
-                            placement="bottom-end"
-                            onOpenChange={(open) => open && void loadLibraryTags()}
-                            trigger={({ trigger }) => (
-                              <button
-                                type="button"
-                                aria-label={t('projects.chooseTags')}
-                                title={t('projects.chooseTags')}
-                                class={buttonClass('ghost', 'sm', true)}
-                                {...trigger}
-                              >
-                                <TagsIcon class="size-4" aria-hidden="true" />
-                              </button>
-                            )}
-                          >
-                            <div class="flex min-h-0 flex-col p-3">
-                              <CheckList
-                                label={t('projects.tags')}
-                                searchLabel={t('projects.findOrAddTag')}
-                                emptyText={t('projects.noTags')}
-                                noMatchText={t('projects.noTagMatches')}
-                                options={tagOptions()}
-                                value={tags()}
-                                onChange={(next) => void onTagsChange(next)}
-                                createLabel={(name) => t('common.createTag', { name })}
-                                maxLength={TAG_MAX_LENGTH}
-                                autofocus
-                              />
-                            </div>
-                          </Popover>
-                        </div>
-                        <Show
-                          when={tags().length > 0}
-                          fallback={<Text variant="muted">{t('projects.noProjectTags')}</Text>}
-                        >
-                          <div class="flex flex-wrap gap-1.5">
-                            <For each={tags()}>{(tag) => <Tag>{tag}</Tag>}</For>
-                          </div>
+                    {/*
+                      The project's facts, packed: the archived mark, the website and the tags on
+                      one wrapping line, the notes under it only when there are any. It used to be
+                      a padded card with a labelled cell for each, a dash or "No notes" in the
+                      empty ones, and took a third of the panel before the first file.
+                    */}
+                    <div class="flex flex-col gap-2">
+                      <div class="flex flex-wrap items-center gap-1.5">
+                        <Show when={project().isArchived}>
+                          <Badge variant="warning">
+                            <Archive class="size-3" aria-hidden="true" />
+                            {t('projects.archived')}
+                          </Badge>
                         </Show>
+                        <Show when={project().website}>
+                          {(site) => (
+                            <Show
+                              when={webLink(site())}
+                              fallback={
+                                <Text variant="small" as="span" class="break-all">
+                                  {site()}
+                                </Text>
+                              }
+                            >
+                              {/* The site, not the address: the link still goes to all of it,
+                                  and the full address is one hover away. */}
+                              {(href) => (
+                                <Link
+                                  href={href()}
+                                  external
+                                  title={href()}
+                                  class="inline-flex max-w-full min-w-0 items-center gap-1 pr-1"
+                                >
+                                  <Globe class="size-3.5 shrink-0" aria-hidden="true" />
+                                  <span class="truncate">{siteLabel(site())}</span>
+                                </Link>
+                              )}
+                            </Show>
+                          )}
+                        </Show>
+                        <For each={tags()}>{(tag) => <Tag>{tag}</Tag>}</For>
+                        {/* One button that opens the list to pick from, with a checkmark on each
+                            tag this project has — not a text field. */}
+                        <Popover
+                          label={t('projects.chooseTags')}
+                          placement="bottom-start"
+                          onOpenChange={(open) => open && void loadLibraryTags()}
+                          trigger={({ trigger }) => (
+                            <button
+                              type="button"
+                              aria-label={t('projects.chooseTags')}
+                              title={t('projects.chooseTags')}
+                              class={buttonClass('ghost', 'sm')}
+                              {...trigger}
+                            >
+                              <TagsIcon class="size-3.5" aria-hidden="true" />
+                              <Show when={tags().length === 0}>{t('projects.addTags')}</Show>
+                            </button>
+                          )}
+                        >
+                          <div class="flex min-h-0 flex-col p-3">
+                            <CheckList
+                              label={t('projects.tags')}
+                              searchLabel={t('projects.findOrAddTag')}
+                              emptyText={t('projects.noTags')}
+                              noMatchText={t('projects.noTagMatches')}
+                              options={tagOptions()}
+                              value={tags()}
+                              onChange={(next) => void onTagsChange(next)}
+                              createLabel={(name) => t('common.createTag', { name })}
+                              maxLength={TAG_MAX_LENGTH}
+                              autofocus
+                            />
+                          </div>
+                        </Popover>
                       </div>
-                    </Card>
+                      <Show when={project().notes}>
+                        {(notes) => (
+                          <Text variant="small" class="break-words whitespace-pre-wrap">
+                            {notes()}
+                          </Text>
+                        )}
+                      </Show>
+                    </div>
 
-                    <section class="flex flex-col gap-4" aria-labelledby="files-heading">
-                      <div class="flex flex-wrap items-center justify-between gap-3">
+                    <section class="flex flex-col gap-3" aria-labelledby="files-heading">
+                      <div class="flex flex-wrap items-center justify-between gap-2">
                         <div class="flex items-center gap-2">
                           <Heading level={3}>
                             <span id="files-heading">{t('projects.files')}</span>
@@ -650,6 +674,14 @@ export function ProjectDetail(props: {
                               },
                               { value: 'list', label: t('projects.viewModeList'), icon: ListIcon },
                             ]}
+                          />
+                          <ToggleIconButton
+                            iconOn={LayoutList}
+                            iconOff={LayoutList}
+                            size="sm"
+                            label={t('grouping.groupFiles')}
+                            pressed={filesGrouped()}
+                            onPressedChange={setFilesGrouped}
                           />
                           <FilePickButton
                             label={
@@ -727,11 +759,41 @@ export function ProjectDetail(props: {
                           />
                         }
                       >
-                        <ul class={listClass()}>
-                          <For each={project().files}>
-                            {(file) => fileCard(file, project().state === 'missing')}
-                          </For>
-                        </ul>
+                        <Show
+                          when={filesGrouped()}
+                          fallback={
+                            <ItemList layout={viewMode()} tile="sm">
+                              <For each={project().files}>
+                                {(file) => fileCard(file, project().state === 'missing')}
+                              </For>
+                            </ItemList>
+                          }
+                        >
+                          <div class="flex flex-col gap-3">
+                            <For each={groupFiles(project().files)}>
+                              {(group) => (
+                                <GroupSection
+                                  label={group.label}
+                                  count={group.items.length}
+                                  collapsed={isCollapsed(FILES_FIELD, group.key)}
+                                  onToggle={() => toggleCollapsed(FILES_FIELD, group.key)}
+                                  toggleLabel={
+                                    isCollapsed(FILES_FIELD, group.key)
+                                      ? t('grouping.expandGroup')
+                                      : t('grouping.collapseGroup')
+                                  }
+                                  level={4}
+                                >
+                                  <ItemList layout={viewMode()} tile="sm">
+                                    <For each={group.items}>
+                                      {(file) => fileCard(file, project().state === 'missing')}
+                                    </For>
+                                  </ItemList>
+                                </GroupSection>
+                              )}
+                            </For>
+                          </div>
+                        </Show>
                       </Show>
                     </section>
 

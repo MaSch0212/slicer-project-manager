@@ -3,7 +3,7 @@ import type { ProjectViewDto, SettingsDto } from '../api/generated'
 /**
  * Saved views of the project list.
  *
- * A view is a name over four things: the sort order, the layout, whether archived projects are
+ * A view is a name over the sort order, the layout, the grouping, whether archived projects are
  * shown, and which tags the list is narrowed to. **Not the search box** — a keyword is something
  * you type to find one thing, and a view you cannot leave without clearing a search is a trap.
  *
@@ -16,11 +16,46 @@ import type { ProjectViewDto, SettingsDto } from '../api/generated'
 /** What a view decides. The rest of the query — the search — is never part of one. */
 export type ViewShape = Pick<
   ProjectViewDto,
-  'viewMode' | 'sort' | 'dir' | 'includeArchived' | 'tags'
+  'viewMode' | 'sort' | 'dir' | 'includeArchived' | 'tags' | 'groupBy' | 'groupList'
 >
 
 /** The icons a view may carry, by the name stored for it. The web app owns this list. */
-export const VIEW_ICONS = ['layers', 'archive', 'tag', 'printer', 'box', 'clock', 'search'] as const
+export const VIEW_ICONS = [
+  'layers',
+  'archive',
+  'tag',
+  'printer',
+  'box',
+  'clock',
+  'search',
+  'star',
+  'heart',
+  'bookmark',
+  'folder',
+  'flag',
+  'wrench',
+  'hammer',
+  'ruler',
+  'puzzle',
+  'gem',
+  'gift',
+  'palette',
+  'lightbulb',
+  'rocket',
+  'shield',
+  'zap',
+  'crown',
+  'trophy',
+  'sparkles',
+  'flame',
+  'leaf',
+  'house',
+  'car',
+  'gamepad',
+  'cat',
+  'calendar',
+  'briefcase',
+] as const
 
 export type ViewIcon = (typeof VIEW_ICONS)[number]
 
@@ -31,10 +66,10 @@ export function isViewIcon(name: string): name is ViewIcon {
   return (VIEW_ICONS as readonly string[]).includes(name)
 }
 
-/** What the settings record calls the four things a view decides. */
+/** What the settings record calls the things a view decides. */
 type ShapeSettings = Pick<
   SettingsDto,
-  'viewMode' | 'sort' | 'dir' | 'includeArchived' | 'filterTags'
+  'viewMode' | 'sort' | 'dir' | 'includeArchived' | 'filterTags' | 'groupBy' | 'groupList'
 >
 
 /** The settings that make up a view, taken from the whole settings record. */
@@ -45,6 +80,8 @@ export function shapeOf(settings: ShapeSettings): ViewShape {
     dir: settings.dir,
     includeArchived: settings.includeArchived,
     tags: [...settings.filterTags].sort(),
+    groupBy: settings.groupBy,
+    groupList: settings.groupList,
   }
 }
 
@@ -63,7 +100,9 @@ export function matchesView(shape: ViewShape, view: ProjectViewDto): boolean {
     shape.sort === view.sort &&
     shape.dir === view.dir &&
     shape.includeArchived === view.includeArchived &&
-    sameTags(shape.tags, view.tags)
+    sameTags(shape.tags, view.tags) &&
+    shape.groupBy === view.groupBy &&
+    shape.groupList === view.groupList
   )
 }
 
@@ -91,6 +130,8 @@ export function viewFrom(id: string, name: string, icon: string, shape: ViewShap
     dir: shape.dir,
     includeArchived: shape.includeArchived,
     tags: [...shape.tags],
+    groupBy: shape.groupBy,
+    groupList: shape.groupList,
   }
 }
 

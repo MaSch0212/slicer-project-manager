@@ -39,7 +39,7 @@ export async function saveViews(next: readonly ProjectViewDto[]): Promise<boolea
   }
 }
 
-/** Puts a view's own sort, layout, archive switch and tags on the list. */
+/** Puts a view's own sort, layout, grouping, archive switch and tags on the list. */
 function applyShapeOf(view: ProjectViewDto): void {
   void settings
     .patch({
@@ -48,6 +48,8 @@ function applyShapeOf(view: ProjectViewDto): void {
       dir: view.dir,
       includeArchived: view.includeArchived,
       filterTags: [...view.tags],
+      groupBy: view.groupBy,
+      groupList: view.groupList,
     })
     .catch((error: unknown) => notify.error(errorMessage(error)))
 }

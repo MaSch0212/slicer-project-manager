@@ -26,9 +26,9 @@ use crate::dto::{
     CoreProjectDetailDto, CoreProjectDto, DEFAULT_SETTINGS, DiscardedSessionsDto, EntryDiff,
     FileCounts, FileDto, FileKind, FileState, Language, LibraryMode, LibraryStateDto,
     LibrarySyncDto, LibrarySyncPhase, LocalLibraryDto, ModelSiteDto, PreviewState,
-    ProjectDetailDto, ProjectDto, ProjectQuery, ProjectState, ProjectViewDto, RemoteLibraryDto,
-    RescanResultDto, SettingsDto, SettingsPatch, SlicerConfigDto, SlicerId, SlicerInstallDto,
-    SlicerInstallOrigin, SlicerInstallState, SlicerLaunchDto, SlicerLaunchMode,
+    ProjectDetailDto, ProjectDto, ProjectGroupBy, ProjectQuery, ProjectState, ProjectViewDto,
+    RemoteLibraryDto, RescanResultDto, SettingsDto, SettingsPatch, SlicerConfigDto, SlicerId,
+    SlicerInstallDto, SlicerInstallOrigin, SlicerInstallState, SlicerLaunchDto, SlicerLaunchMode,
     SlicerLaunchOptions, SlicerSessionDto, SortDir, SortKey, Theme, UserDto, UserStatus, ViewMode,
     ZipImportResultDto,
 };
@@ -103,6 +103,7 @@ fn types_ts() -> String {
         Theme,
         Language,
         ViewMode,
+        ProjectGroupBy,
         SettingsDto,
         SettingsPatch,
         // request bodies

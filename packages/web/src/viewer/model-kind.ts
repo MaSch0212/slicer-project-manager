@@ -60,15 +60,19 @@ export const SUPPORTED_FORMATS: readonly string[] = ['STL', 'OBJ', '3MF']
 /**
  * Decides what to do with a file, by its extension and the kind the server classified it as. The
  * extension comes first so a STEP file gets its own message whatever its kind; then a slicer
- * project (a 3MF the server read as a project has no single mesh to show) and anything else the
- * server did not call a model are turned away.
+ * project in a format other than 3MF and anything else the server did not call a model or a
+ * project are turned away.
  */
 export function judgeFile(file: { name: string; kind: string }): ViewerVerdict {
   const extension = extensionOf(file.name)
   if (extension === '.step' || extension === '.stp') return { status: 'step' }
   const format = formatOfExtension(extension)
   if (format === undefined) return { status: 'unsupported', extension: extension || file.name }
-  if (file.kind === 'slicer_project') return { status: 'slicerProject' }
-  if (file.kind !== 'model') return { status: 'unsupported', extension }
+  // A slicer project saved as 3MF is a 3MF like any other: its plate is drawn (see `threemf.ts`
+  // for the multi-part files slicers write). Only another kind of project has nothing to draw.
+  if (file.kind === 'slicer_project' && format !== '3mf') return { status: 'slicerProject' }
+  if (file.kind !== 'model' && file.kind !== 'slicer_project') {
+    return { status: 'unsupported', extension }
+  }
   return { status: 'viewable', format, limitBytes: sizeLimit(format) }
 }

@@ -33,7 +33,9 @@ export const DEFAULT_SETTINGS: SettingsDto = {
   "navCollapsed": false,
   "includeArchived": false,
   "filterTags": [],
-  "views": []
+  "views": [],
+  "groupBy": "none",
+  "groupList": false
 }
 
 /** `details.reason` of the `Internal` raised when slicer detection could not run at all. */

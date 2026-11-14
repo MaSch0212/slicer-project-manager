@@ -85,72 +85,115 @@ export function MediaCard(props: {
   class?: string
 }) {
   const list = () => props.layout === 'list'
-  return (
-    <div
+  const title = () => (
+    <Dynamic
+      component={props.as ?? 'h2'}
       class={cx(
-        'relative flex h-full rounded-card border border-border bg-surface text-fg shadow-card transition-colors hover:border-border-input',
-        list() ? 'flex-row items-center gap-3 p-2' : 'flex-col overflow-hidden',
-        props.class,
+        'truncate text-sm tracking-tight text-fg',
+        list() ? 'font-medium' : 'font-semibold',
       )}
+      title={props.title}
     >
-      <Thumb
-        src={props.image}
-        alt={props.imageAlt ?? ''}
-        placeholder={props.placeholder}
-        placeholderIcon={props.placeholderIcon}
-        class={cx(
-          list()
-            ? 'aspect-square size-16 shrink-0 rounded-control'
-            : 'aspect-[4/3] w-full border-b border-border',
-        )}
-      />
-      <div class={cx('flex min-w-0 flex-col gap-1.5', list() ? 'flex-1 py-0.5' : 'p-3')}>
-        <Dynamic
-          component={props.as ?? 'h2'}
-          class="truncate text-sm font-semibold tracking-tight text-fg"
-          title={props.title}
-        >
-          <Show
-            when={props.href}
-            fallback={
-              <Show when={props.onOpen} fallback={props.title}>
-                {/* Named by the title alone: it sits in the heading, and a label of its own would
-                    rename the heading too. */}
-                <button
-                  type="button"
-                  onClick={() => props.onOpen?.()}
-                  class="max-w-full cursor-pointer truncate rounded-xs text-left outline-offset-4 after:absolute after:inset-0 after:content-['']"
-                >
-                  {props.title}
-                </button>
-              </Show>
-            }
-          >
-            <A
-              href={props.href!}
-              class="rounded-xs outline-offset-4 after:absolute after:inset-0 after:content-['']"
+      <Show
+        when={props.href}
+        fallback={
+          <Show when={props.onOpen} fallback={props.title}>
+            {/* Named by the title alone: it sits in the heading, and a label of its own would
+                rename the heading too. */}
+            <button
+              type="button"
+              onClick={() => props.onOpen?.()}
+              class="max-w-full cursor-pointer truncate rounded-xs text-left outline-offset-4 after:absolute after:inset-0 after:content-['']"
             >
               {props.title}
-            </A>
+            </button>
           </Show>
-        </Dynamic>
-        <Show when={props.meta}>
-          <div class="text-xs text-fg-muted">{props.meta}</div>
-        </Show>
-        <Show when={props.badges}>
-          <div class="flex flex-wrap items-center gap-1">{props.badges}</div>
-        </Show>
-      </div>
-      <Show when={props.actions}>
+        }
+      >
+        <A
+          href={props.href!}
+          class="rounded-xs outline-offset-4 after:absolute after:inset-0 after:content-['']"
+        >
+          {props.title}
+        </A>
+      </Show>
+    </Dynamic>
+  )
+  return (
+    <Show
+      when={list()}
+      fallback={
         <div
           class={cx(
-            'relative z-10 flex items-center gap-1',
-            list() ? 'shrink-0 pr-1' : 'justify-end px-2 pb-2',
+            'relative flex h-full flex-col overflow-hidden rounded-card border border-border bg-surface text-fg shadow-card transition-colors hover:border-border-input',
+            props.class,
           )}
         >
-          {props.actions}
+          <Thumb
+            src={props.image}
+            alt={props.imageAlt ?? ''}
+            placeholder={props.placeholder}
+            placeholderIcon={props.placeholderIcon}
+            class="aspect-[4/3] w-full border-b border-border"
+          />
+          <div class="flex min-w-0 flex-col gap-1.5 p-3">
+            {title()}
+            <Show when={props.meta}>
+              <div class="text-xs text-fg-muted">{props.meta}</div>
+            </Show>
+            <Show when={props.badges}>
+              <div class="flex flex-wrap items-center gap-1">{props.badges}</div>
+            </Show>
+          </div>
+          <Show when={props.actions}>
+            <div class="relative z-10 flex items-center justify-end gap-1 px-2 pb-2">
+              {props.actions}
+            </div>
+          </Show>
         </div>
-      </Show>
-    </div>
+      }
+    >
+      {/*
+        A row: two lines of text (the name, then the badges on one line that clips rather than
+        wraps), the meta at the right, then the actions. No card around it: the list draws the
+        rules between rows, so a long list reads as one table rather than a stack of boxes.
+      */}
+      <div
+        class={cx(
+          'relative flex items-center gap-3 px-2 py-1.5 text-fg transition-colors hover:bg-surface-2',
+          props.class,
+        )}
+      >
+        <Thumb
+          src={props.image}
+          alt={props.imageAlt ?? ''}
+          placeholderIcon={props.placeholderIcon}
+          class="aspect-square size-10 shrink-0 rounded-control"
+        />
+        <div class="flex min-w-0 flex-1 flex-col gap-0.5">
+          {title()}
+          <div class="flex h-5 min-w-0 items-center gap-1 overflow-hidden">
+            <Show
+              when={props.badges}
+              fallback={
+                <Show when={!props.image && props.placeholder}>
+                  <span class="truncate text-xs text-fg-muted">{props.placeholder}</span>
+                </Show>
+              }
+            >
+              {props.badges}
+            </Show>
+          </div>
+        </div>
+        <Show when={props.meta}>
+          <div class="shrink-0 text-xs whitespace-nowrap text-fg-muted tabular-nums">
+            {props.meta}
+          </div>
+        </Show>
+        <Show when={props.actions}>
+          <div class="relative z-10 flex shrink-0 items-center gap-0.5">{props.actions}</div>
+        </Show>
+      </div>
+    </Show>
   )
 }

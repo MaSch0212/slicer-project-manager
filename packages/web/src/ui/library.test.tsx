@@ -77,7 +77,9 @@ describe('MediaCard', () => {
 
   it('arranges the same content as a tile or as a row', () => {
     const { container, unmount } = render(() => <MediaCard title="x" layout="list" />)
-    expect(container.firstElementChild!.className).toContain('flex-row')
+    // A row: one line of items across, no card around it.
+    expect(container.firstElementChild!.className).toContain('items-center')
+    expect(container.firstElementChild!.className).not.toContain('rounded-card')
     unmount()
     const grid = render(() => <MediaCard title="x" layout="grid" />)
     expect(grid.container.firstElementChild!.className).toContain('flex-col')

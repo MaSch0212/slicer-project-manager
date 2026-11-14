@@ -3,7 +3,8 @@ use serde_json::{Value, json};
 use spm_core::auth::password::{PW_ALGO, PW_ITERATIONS, hash_password_with};
 use spm_core::auth::tokens::timing_safe_equal;
 use spm_core::dto::{
-    DEFAULT_SETTINGS, ProjectViewDto, SettingsPatch, SortDir, SortKey, Theme, ViewMode,
+    DEFAULT_SETTINGS, ProjectGroupBy, ProjectViewDto, SettingsPatch, SortDir, SortKey, Theme,
+    ViewMode,
 };
 use spm_core::files::paths::{safe_join, user_root};
 use spm_core::testing::TempLibrary;
@@ -471,6 +472,8 @@ fn a_view(id: &str, name: &str) -> ProjectViewDto {
         dir: SortDir::Asc,
         include_archived: true,
         tags: vec!["petg".to_owned()],
+        group_by: ProjectGroupBy::Tag,
+        group_list: true,
     }
 }
 
@@ -556,6 +559,46 @@ fn a_view_is_refused_for_a_name_an_icon_or_a_tag_it_cannot_have() {
     }));
     // Nothing was stored by any of them.
     assert!(get_settings(&lib, &ctx).unwrap().views.is_empty());
+}
+
+// Views saved before grouping existed carry no grouping fields; they still load, ungrouped.
+#[test]
+fn a_view_stored_before_grouping_existed_loads_ungrouped() {
+    let lib = TempLibrary::new();
+    let ctx = activated(&lib);
+    store_setting(
+        &lib,
+        &ctx,
+        "views",
+        r#"[{"id":"v1","name":"Old","icon":"layers","viewMode":"grid","sort":"name","dir":"asc","includeArchived":false,"tags":[]}]"#,
+    );
+
+    let views = get_settings(&lib, &ctx).unwrap().views;
+    assert_eq!(views.len(), 1);
+    assert_eq!(views[0].group_by, ProjectGroupBy::None);
+    assert!(!views[0].group_list);
+}
+
+#[test]
+fn the_grouping_round_trips_through_put_and_get_settings() {
+    let lib = TempLibrary::new();
+    let ctx = activated(&lib);
+    assert_eq!(
+        get_settings(&lib, &ctx).unwrap().group_by,
+        ProjectGroupBy::None
+    );
+
+    let patch = SettingsPatch {
+        group_by: Some(ProjectGroupBy::Updated),
+        group_list: Some(true),
+        ..Default::default()
+    };
+    let after = put_settings(&lib, &ctx, patch).unwrap();
+    assert_eq!(after.group_by, ProjectGroupBy::Updated);
+    assert!(after.group_list);
+    let read = get_settings(&lib, &ctx).unwrap();
+    assert_eq!(read.group_by, ProjectGroupBy::Updated);
+    assert!(read.group_list);
 }
 
 #[test]

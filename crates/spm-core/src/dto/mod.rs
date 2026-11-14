@@ -446,6 +446,21 @@ pub enum ViewMode {
     List,
 }
 
+/// How the project list splits its projects into groups. A project with several tags appears in
+/// each of their groups. Grouping happens in the web app; the server only remembers the choice.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub enum ProjectGroupBy {
+    #[default]
+    None,
+    Tag,
+    Status,
+    Content,
+    Updated,
+    Created,
+    Name,
+}
+
 /// A saved view of the project list: the filters, the sort order and the layout, under a name.
 ///
 /// **The search box is never part of one.** A keyword is something you type to find one thing;
@@ -466,6 +481,12 @@ pub struct ProjectViewDto {
     pub include_archived: bool,
     /// The tags it narrows to; empty is "every project".
     pub tags: Vec<String>,
+    /// How the list is grouped. Views saved before grouping existed load as ungrouped.
+    #[serde(default)]
+    pub group_by: ProjectGroupBy,
+    /// Lists the groups beside the projects, so one can be picked (only while grouped).
+    #[serde(default)]
+    pub group_list: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -484,6 +505,10 @@ pub struct SettingsDto {
     pub filter_tags: Vec<String>,
     /// The user's saved views of the project list, in the order the sidebar lists them.
     pub views: Vec<ProjectViewDto>,
+    /// How the projects page groups its list.
+    pub group_by: ProjectGroupBy,
+    /// Whether the projects page lists its groups beside the projects.
+    pub group_list: bool,
 }
 
 /// The shipped defaults. A user with no `user_settings` rows sees exactly this.
@@ -497,6 +522,8 @@ pub const DEFAULT_SETTINGS: SettingsDto = SettingsDto {
     include_archived: false,
     filter_tags: Vec::new(),
     views: Vec::new(),
+    group_by: ProjectGroupBy::None,
+    group_list: false,
 };
 
 impl Default for SettingsDto {
@@ -539,6 +566,12 @@ pub struct SettingsPatch {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub views: Option<Vec<ProjectViewDto>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub group_by: Option<ProjectGroupBy>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub group_list: Option<bool>,
 }
 
 /// `Partial<Record<SlicerId, string>>` as a map; used by [`SlicerConfigDto`].

@@ -277,9 +277,9 @@ SPECIAL EXCEPTION FOR LZMA COMPRESSION MODULE
 Igor Pavlov and Amir Szekely, the authors of the LZMA compression module for NSIS, expressly permit you to statically or dynamically link your code (or bind by name) to the files from the LZMA compression module for NSIS without subjecting your linked code to the terms of the Common Public license version 1.0. Any modifications or additions to files from the LZMA compression module for NSIS, however, are subject to the terms of the Common Public License version 1.0.
 ```
 
-## Rust crates (223)
+## Rust crates (225)
 
-The normal dependencies of `spm-server` (Linux, musl: 128 crates) and of the desktop app (Windows: 221 crates), from `Cargo.lock`; 126 are in both. Licences as declared by each crate: MIT OR Apache-2.0 (113), MIT (43), Apache-2.0 OR MIT (21), Unicode-3.0 (15), MIT/Apache-2.0 (5), BSD-3-Clause (3), Unlicense OR MIT (3), Apache-2.0 (2), Unlicense/MIT (2), (MIT OR Apache-2.0) AND Unicode-3.0 (1), 0BSD OR MIT OR Apache-2.0 (1), Apache-2.0 / MIT (1), Apache-2.0 AND MIT (1), Apache-2.0 OR BSL-1.0 (1), BSD-2-Clause OR Apache-2.0 OR MIT (1), BSD-3-Clause AND MIT (1), BSD-3-Clause/MIT (1), CC0-1.0 (1), CC0-1.0 OR MIT-0 OR Apache-2.0 (1), MIT AND BSD-3-Clause (1), MIT OR Apache-2.0 OR Zlib (1), MIT OR Zlib OR Apache-2.0 (1), MPL-2.0 (1), Zlib (1), Zlib OR Apache-2.0 OR MIT (1). These crates ship no licence file, so the standard text of their declared licence is given, with the authors from their `Cargo.toml`: alloc-stdlib 0.3.0, ts-rs 12.0.1, webview2-com 0.39.1, webview2-com-sys 0.39.1.
+The normal dependencies of `spm-server` (Linux, musl: 132 crates) and of the desktop app (Windows: 221 crates), from `Cargo.lock`; 128 are in both. Licences as declared by each crate: MIT OR Apache-2.0 (113), MIT (43), Apache-2.0 OR MIT (21), Unicode-3.0 (15), MIT/Apache-2.0 (5), BSD-3-Clause (3), Unlicense OR MIT (3), Apache-2.0 (2), ISC (2), Unlicense/MIT (2), (MIT OR Apache-2.0) AND Unicode-3.0 (1), 0BSD OR MIT OR Apache-2.0 (1), Apache-2.0 / MIT (1), Apache-2.0 AND MIT (1), Apache-2.0 OR BSL-1.0 (1), BSD-2-Clause OR Apache-2.0 OR MIT (1), BSD-3-Clause AND MIT (1), BSD-3-Clause/MIT (1), CC0-1.0 (1), CC0-1.0 OR MIT-0 OR Apache-2.0 (1), MIT AND BSD-3-Clause (1), MIT OR Apache-2.0 OR Zlib (1), MIT OR Zlib OR Apache-2.0 (1), MPL-2.0 (1), Zlib (1), Zlib OR Apache-2.0 OR MIT (1). These crates ship no licence file, so the standard text of their declared licence is given, with the authors from their `Cargo.toml`: alloc-stdlib 0.3.0, ts-rs 12.0.1, webview2-com 0.39.1, webview2-com-sys 0.39.1.
 
 | Crate                       | Version          | Licence                             | In      |
 | --------------------------- | ---------------- | ----------------------------------- | ------- |
@@ -363,6 +363,8 @@ The normal dependencies of `spm-server` (Linux, musl: 128 crates) and of the des
 | idna_adapter                | 1.2.2            | Apache-2.0 OR MIT                   | both    |
 | indexmap                    | 2.14.2           | Apache-2.0 OR MIT                   | desktop |
 | infer                       | 0.22.0           | MIT                                 | desktop |
+| inotify                     | 0.11.5           | ISC                                 | server  |
+| inotify-sys                 | 0.1.8            | ISC                                 | server  |
 | ipnet                       | 2.12.2           | MIT OR Apache-2.0                   | desktop |
 | itoa                        | 1.0.18           | MIT OR Apache-2.0                   | both    |
 | json-patch                  | 4.2.0            | MIT/Apache-2.0                      | desktop |
@@ -380,8 +382,8 @@ The normal dependencies of `spm-server` (Linux, musl: 128 crates) and of the des
 | mio                         | 1.2.4            | MIT                                 | both    |
 | muda                        | 0.20.0           | Apache-2.0 OR MIT                   | desktop |
 | native-tls                  | 0.2.18           | MIT OR Apache-2.0                   | desktop |
-| notify                      | 8.2.1            | CC0-1.0                             | desktop |
-| notify-types                | 2.1.0            | MIT OR Apache-2.0                   | desktop |
+| notify                      | 8.2.1            | CC0-1.0                             | both    |
+| notify-types                | 2.1.0            | MIT OR Apache-2.0                   | both    |
 | num-conv                    | 0.2.2            | MIT OR Apache-2.0                   | both    |
 | once_cell                   | 1.21.4           | MIT OR Apache-2.0                   | both    |
 | open                        | 5.4.5            | MIT                                 | desktop |
@@ -5989,6 +5991,26 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+```
+
+#### inotify 0.11.5 and 1 more
+
+Used by: inotify 0.11.5, inotify-sys 0.1.8
+
+```text
+Copyright (c) Hanno Braun and contributors
+
+Permission to use, copy, modify, and/or distribute this software for any purpose
+with or without fee is hereby granted, provided that the above copyright notice
+and this permission notice appear in all copies.
+
+THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH
+REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND
+FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT,
+INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS
+OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER
+TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF
+THIS SOFTWARE.
 ```
 
 #### ipnet 2.12.2
@@ -12134,9 +12156,9 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 ```
 
-## npm packages (30)
+## npm packages (31)
 
-The production dependency closure of `@spm/web`, whose build output is embedded in both artifacts. (A bundler drops what is unused, so a package here may contribute only part of its code.) Licences as declared: MIT (25), Apache-2.0 (2), 0BSD (1), Apache-2.0 OR MIT (1), ISC (1).
+The production dependency closure of `@spm/web`, whose build output is embedded in both artifacts. (A bundler drops what is unused, so a package here may contribute only part of its code.) Licences as declared: MIT (25), Apache-2.0 (2), 0BSD (1), Apache-2.0 OR MIT (1), BSD-3-Clause (1), ISC (1).
 
 | Package                                 | Licence           |
 | --------------------------------------- | ----------------- |
@@ -12162,6 +12184,7 @@ The production dependency closure of `@spm/web`, whose build output is embedded 
 | @swc/helpers@0.5.23                     | Apache-2.0        |
 | @tauri-apps/api@2.12.4                  | Apache-2.0 OR MIT |
 | csstype@3.2.3                           | MIT               |
+| highlight.js@11.12.0                    | BSD-3-Clause      |
 | lucide-solid@1.61.0                     | ISC               |
 | seroval-plugins@1.6.12                  | MIT               |
 | seroval@1.6.12                          | MIT               |
@@ -13256,6 +13279,42 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+```
+
+#### highlight.js@11.12.0
+
+Used by: highlight.js@11.12.0
+
+```text
+BSD 3-Clause License
+
+Copyright (c) 2006, Ivan Sagalaev.
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+* Redistributions of source code must retain the above copyright notice, this
+  list of conditions and the following disclaimer.
+
+* Redistributions in binary form must reproduce the above copyright notice,
+  this list of conditions and the following disclaimer in the documentation
+  and/or other materials provided with the distribution.
+
+* Neither the name of the copyright holder nor the names of its
+  contributors may be used to endorse or promote products derived from
+  this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
 
 #### lucide-solid@1.61.0

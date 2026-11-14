@@ -39,6 +39,8 @@ const VIEWS: ProjectViewDto[] = [
     dir: 'desc',
     includeArchived: false,
     tags: [],
+    groupBy: 'none',
+    groupList: false,
   },
   {
     id: 'v2',
@@ -49,6 +51,8 @@ const VIEWS: ProjectViewDto[] = [
     dir: 'asc',
     includeArchived: true,
     tags: ['petg'],
+    groupBy: 'none',
+    groupList: false,
   },
 ]
 
@@ -344,8 +348,8 @@ describe('Shell drawer', () => {
 })
 
 /**
- * Saved views: the sort order, the layout, the archive switch and the tag filter under a name.
- * The row marked as current is derived from the settings, never remembered, so it can never
+ * Saved views: the sort order, the layout, the grouping, the archive switch and the tag filter
+ * under a name. The row marked as current is derived from the settings, never remembered, so it can never
  * disagree with what the list is actually showing.
  */
 describe('Shell saved views', () => {
@@ -380,6 +384,8 @@ describe('Shell saved views', () => {
       dir: 'asc',
       includeArchived: true,
       filterTags: ['petg'],
+      groupBy: 'none',
+      groupList: false,
     })
   })
 
@@ -489,6 +495,8 @@ describe('Shell saved views', () => {
             dir: 'desc',
             includeArchived: false,
             tags: [],
+            groupBy: 'none',
+            groupList: false,
           },
         ],
       }),

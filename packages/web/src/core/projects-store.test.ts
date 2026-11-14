@@ -454,7 +454,8 @@ describe('projects store: tags', () => {
  * screen follow them. It reads the settings and never writes them, so it cannot fight the page.
  */
 describe('projects store: following a chosen view', () => {
-  const shape = (over: Partial<Omit<ViewShape, 'viewMode'>> = {}): Omit<ViewShape, 'viewMode'> => ({
+  type StoreShape = Pick<ViewShape, 'sort' | 'dir' | 'includeArchived' | 'tags'>
+  const shape = (over: Partial<StoreShape> = {}): StoreShape => ({
     sort: 'updatedAt',
     dir: 'desc',
     includeArchived: false,
@@ -590,3 +591,27 @@ describe('projects store: refreshing in place', () => {
 
 /** Lets every already-resolved promise run its continuation. */
 const waitForIdle = () => new Promise((resolve) => setTimeout(resolve, 0))
+
+/** A grouped list is fetched whole: a group built from one page would claim to be complete. */
+describe('projects store: unpaged for grouping', () => {
+  it('asks for every row, and has no more to load', async () => {
+    const list = vi.fn().mockResolvedValue(fullPage('a'))
+    const { store } = setup({}, list)
+    await store.start()
+    expect(store.hasMore()).toBe(true)
+
+    store.setUnpaged(true)
+    await vi.waitFor(() => expect(list).toHaveBeenCalledTimes(2))
+    expect(list).toHaveBeenLastCalledWith({ sort: 'updatedAt', dir: 'desc' })
+    await vi.waitFor(() => expect(store.loadingFirst()).toBe(false))
+    expect(store.hasMore()).toBe(false)
+
+    // Setting the same again reloads nothing.
+    store.setUnpaged(true)
+    expect(list).toHaveBeenCalledTimes(2)
+
+    store.setUnpaged(false)
+    await vi.waitFor(() => expect(list).toHaveBeenCalledTimes(3))
+    expect(list).toHaveBeenLastCalledWith(expect.objectContaining({ limit: PROJECTS_PAGE_SIZE }))
+  })
+})

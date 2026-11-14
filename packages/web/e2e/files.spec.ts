@@ -78,12 +78,14 @@ test('every kind of file is classified, and every one opens a preview from its c
   await expect(fileCard(page, 'notes.txt').getByText('Other file')).toBeVisible()
   await expect(fileCard(page, 'notes.txt').getByText('No preview')).toBeVisible()
 
-  // A file with no 3D view still opens one: its kind, why there is no view, and its actions.
+  // A file with no 3D view still opens one: a text file shows what it says, and its actions.
   await fileCard(page, 'notes.txt').getByRole('button', { name: 'notes.txt', exact: true }).click()
   const popup = page.getByRole('dialog')
   await expect(popup.getByRole('heading', { name: 'notes.txt' })).toBeVisible()
-  await expect(popup.getByText(/no preview for this kind of file/)).toBeVisible()
-  await expect(popup.getByRole('link', { name: 'Download', exact: true })).toBeVisible()
+  await expect(popup.getByRole('region', { name: 'Contents of notes.txt' })).toContainText(
+    'print at 0.2 mm',
+  )
+  await expect(popup.getByRole('link', { name: 'Download: notes.txt' })).toBeVisible()
   await popup.getByRole('button', { name: 'Close' }).click()
   await expect(popup).toBeHidden()
   await expectPanel(page, 'Upload Kinds')

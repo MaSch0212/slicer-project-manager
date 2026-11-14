@@ -25,6 +25,8 @@ const shape = (over: Partial<ViewShape> = {}): ViewShape => ({
   dir: 'desc',
   includeArchived: false,
   tags: [],
+  groupBy: 'none',
+  groupList: false,
   ...over,
 })
 
@@ -37,13 +39,15 @@ const view = (over: Partial<ProjectViewDto> = {}): ProjectViewDto => ({
 })
 
 describe('what a view is made of', () => {
-  it('takes the four things a view decides out of the settings, and not the search', () => {
+  it('takes the things a view decides out of the settings, and not the search', () => {
     const taken = shapeOf({
       viewMode: 'list',
       sort: 'name',
       dir: 'asc',
       includeArchived: true,
       filterTags: ['petg', 'boats'],
+      groupBy: 'tag',
+      groupList: true,
     })
 
     expect(taken).toEqual({
@@ -53,6 +57,8 @@ describe('what a view is made of', () => {
       includeArchived: true,
       // Sorted, so two selections of the same tags are one selection.
       tags: ['boats', 'petg'],
+      groupBy: 'tag',
+      groupList: true,
     })
     expect('search' in taken).toBe(false)
   })

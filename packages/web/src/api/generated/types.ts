@@ -142,6 +142,12 @@ export type Language = "en" | "de";
 
 export type ViewMode = "grid" | "list";
 
+/**
+ * How the project list splits its projects into groups. A project with several tags appears in
+ * each of their groups. Grouping happens in the web app; the server only remembers the choice.
+ */
+export type ProjectGroupBy = "none" | "tag" | "status" | "content" | "updated" | "created" | "name";
+
 export type SettingsDto = { theme: Theme, language: Language, viewMode: ViewMode, sort: SortKey, dir: SortDir, 
 /**
  * Whether the navigation sidebar is collapsed to icons. Desktop layout only; see §4.
@@ -158,7 +164,15 @@ filterTags: Array<string>,
 /**
  * The user's saved views of the project list, in the order the sidebar lists them.
  */
-views: Array<ProjectViewDto>, };
+views: Array<ProjectViewDto>, 
+/**
+ * How the projects page groups its list.
+ */
+groupBy: ProjectGroupBy, 
+/**
+ * Whether the projects page lists its groups beside the projects.
+ */
+groupList: boolean, };
 
 /**
  * `Partial<SettingsDto>`: the body of a settings update. Every key is optional; an absent key is
@@ -169,7 +183,7 @@ export type SettingsPatch = { theme?: Theme, language?: Language, viewMode?: Vie
  * The whole list, in order. There is no patch *within* it: reordering, renaming and
  * deleting are all "here is the list now", which is one rule instead of four.
  */
-views?: Array<ProjectViewDto>, };
+views?: Array<ProjectViewDto>, groupBy?: ProjectGroupBy, groupList?: boolean, };
 
 export type LoginInput = { username: string, password: string, };
 
@@ -411,7 +425,15 @@ icon: string, viewMode: ViewMode, sort: SortKey, dir: SortDir, includeArchived: 
 /**
  * The tags it narrows to; empty is "every project".
  */
-tags: Array<string>, };
+tags: Array<string>, 
+/**
+ * How the list is grouped. Views saved before grouping existed load as ungrouped.
+ */
+groupBy: ProjectGroupBy, 
+/**
+ * Lists the groups beside the projects, so one can be picked (only while grouped).
+ */
+groupList: boolean, };
 
 export type BrowseDownloadState = "progressing" | "completed" | "cancelled" | "interrupted";
 
