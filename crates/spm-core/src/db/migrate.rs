@@ -5,14 +5,15 @@ use crate::error::Result;
 /// The schema, in order. These files are the legacy app's, byte for byte, and applying them with
 /// the same `PRAGMA user_version` bookkeeping is what lets an existing `.spm/app.db` open
 /// unchanged. Never edit one; add the next number.
-const MIGRATIONS: [(i64, &str); 3] = [
+const MIGRATIONS: [(i64, &str); 4] = [
     (1, include_str!("migrations/001_init.sql")),
     (2, include_str!("migrations/002_preview_claim.sql")),
     (3, include_str!("migrations/003_classifier_version.sql")),
+    (4, include_str!("migrations/004_released_folders.sql")),
 ];
 
 /// The schema version a fully migrated database reports in `PRAGMA user_version`.
-pub const SCHEMA_VERSION: i64 = 3;
+pub const SCHEMA_VERSION: i64 = 4;
 
 /// Applies every migration newer than `PRAGMA user_version`, each in its own transaction, and
 /// returns the resulting version.

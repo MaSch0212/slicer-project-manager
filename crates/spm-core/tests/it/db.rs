@@ -7,7 +7,7 @@ use spm_core::files::classify::CLASSIFIER_VERSION;
 use spm_core::new_id;
 use spm_core::testing::TempLibrary;
 
-const TABLES: [&str; 9] = [
+const TABLES: [&str; 10] = [
     "users",
     "activation_tokens",
     "sessions",
@@ -17,6 +17,7 @@ const TABLES: [&str; 9] = [
     "files",
     "previews",
     "user_settings",
+    "released_folders",
 ];
 
 const INSERT_USER: &str =
@@ -56,16 +57,16 @@ fn migrations_create_every_table_and_set_user_version() {
             "missing table {table}"
         );
     }
-    assert_eq!(user_version(&conn), 3);
-    assert_eq!(SCHEMA_VERSION, 3);
+    assert_eq!(user_version(&conn), 4);
+    assert_eq!(SCHEMA_VERSION, 4);
 }
 
 #[test]
 fn run_migrations_is_idempotent() {
     let lib = TempLibrary::new();
     let conn = lib.db();
-    assert_eq!(run_migrations(&conn).unwrap(), 3);
-    assert_eq!(run_migrations(&conn).unwrap(), 3);
+    assert_eq!(run_migrations(&conn).unwrap(), 4);
+    assert_eq!(run_migrations(&conn).unwrap(), 4);
 }
 
 /// Migration 003 backfills a sentinel *below* the shipping classifier version, and that is the
@@ -95,7 +96,7 @@ fn migration_003_marks_every_pre_existing_row_as_predating_the_classifier() {
     )
     .unwrap();
 
-    assert_eq!(run_migrations(&conn).unwrap(), 3);
+    assert_eq!(run_migrations(&conn).unwrap(), 4);
 
     let marks: Vec<i64> = conn
         .prepare("SELECT classified_by FROM files ORDER BY id")

@@ -153,16 +153,18 @@ fn stored_hash(lib: &Library, user: &str) -> (i64, Vec<u8>) {
 }
 
 #[test]
-fn a_legacy_library_opens_without_migrating_or_losing_anything() {
+fn a_legacy_library_opens_without_losing_anything() {
     let dir = tempfile::tempdir().unwrap();
     legacy_library(dir.path());
     let lib = open(dir.path());
 
+    // The legacy schema is 3. Everything after it only adds (004: the folders a delete released),
+    // so opening one migrates it forward and every row below is still there, unchanged.
     let version: i64 = lib
         .db()
         .query_row("PRAGMA user_version", [], |row| row.get(0))
         .unwrap();
-    assert_eq!(version, 3);
+    assert_eq!(version, 4);
     for (table, expected) in [
         ("users", 4),
         ("sessions", 1),

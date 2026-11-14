@@ -829,6 +829,10 @@ async fn opening_a_folder_migrates_it_and_seeds_exactly_one_local_user() {
         .db()
         .query_row("PRAGMA user_version", [], |row| row.get(0))
         .unwrap();
-    assert_eq!(version, 3, "all three migrations are applied");
+    assert_eq!(
+        version,
+        spm_core::db::migrate::SCHEMA_VERSION,
+        "every migration is applied"
+    );
     assert!(dir.join(".spm").join("app.db").is_file());
 }

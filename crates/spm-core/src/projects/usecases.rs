@@ -318,10 +318,24 @@ pub fn delete_project(lib: &Library, ctx: &Ctx, id: &str, delete_files: bool) ->
             _ => {}
         }
     }
-    lib.db().execute(
-        "DELETE FROM projects WHERE id = ? AND owner_id = ?",
-        params![id, ctx.user_id],
-    )?;
+    {
+        let mut conn = lib.db();
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        tx.execute(
+            "DELETE FROM projects WHERE id = ? AND owner_id = ?",
+            params![id, ctx.user_id],
+        )?;
+        // The folder stays, and a rescan adopts every folder it has no project for: without this
+        // the watched library would bring the project straight back. See migration 004.
+        if !delete_files {
+            tx.execute(
+                "INSERT INTO released_folders (owner_id, dir_name, released_at) VALUES (?, ?, ?)
+                 ON CONFLICT (owner_id, dir_name) DO UPDATE SET released_at = excluded.released_at",
+                params![ctx.user_id, row.dir_name, now_ms()],
+            )?;
+        }
+        tx.commit()?;
+    }
     lib.log().info(
         "project deleted",
         fields![

@@ -1,7 +1,8 @@
 //! Reconciling the database with what is on disk (parent spec 3.5).
 //!
 //! The disk is the truth for *which files exist*; the database is the truth for everything a user
-//! typed (names, notes, tags). A rescan therefore adopts folders it has no row for, marks projects
+//! typed (names, notes, tags). A rescan therefore adopts folders it has no row for (except a folder
+//! whose project was deleted with its files kept, see migration 004), marks projects
 //! whose folder vanished as `missing` (never deleting metadata: the drive may just be unmounted),
 //! and indexes, re-indexes and forgets files. A folder renamed in Explorer is neither: when a
 //! project's folder is gone and exactly one new folder holds exactly its files (same paths, sizes
@@ -308,8 +309,25 @@ pub fn rescan(
             project.state = "ok".to_owned();
             by_dir_name.insert(new, project);
         }
+        // Folders whose project was deleted with its files kept are not adopted again; an entry
+        // whose folder has gone is dropped, so a folder of that name made later is (migration 004).
+        let released: HashSet<String> = {
+            let mut statement =
+                tx.prepare("SELECT dir_name FROM released_folders WHERE owner_id = ?")?;
+            let rows = statement.query_map(params![ctx.user_id], |row| row.get::<_, String>(0))?;
+            rows.collect::<std::result::Result<_, _>>()?
+        };
+        for gone in released
+            .iter()
+            .filter(|dir_name| !on_disk.contains(*dir_name))
+        {
+            tx.execute(
+                "DELETE FROM released_folders WHERE owner_id = ? AND dir_name = ?",
+                params![ctx.user_id, gone],
+            )?;
+        }
         for dir_name in &on_disk {
-            if by_dir_name.contains_key(dir_name) {
+            if by_dir_name.contains_key(dir_name) || released.contains(dir_name) {
                 continue;
             }
             let id = new_id();

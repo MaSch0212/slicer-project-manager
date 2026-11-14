@@ -8,7 +8,8 @@ use spm_core::testing::{TempLibrary, seed_file_row, seed_user};
 use spm_core::validate::{CreateProjectInput, ProjectPatch};
 use spm_core::{
     AppErrorCode, Ctx, Library, add_tag, create_project, delete_project, get_project,
-    list_projects, list_tags, new_id, remove_tag, update_project, update_project_moving_folder,
+    list_projects, list_tags, new_id, remove_tag, rescan, update_project,
+    update_project_moving_folder,
 };
 
 use crate::common::code_of;
@@ -216,6 +217,60 @@ fn delete_project_keeps_the_folder_unless_delete_files_is_set() {
             .unwrap()
             .is_empty()
     );
+}
+
+// The library is watched, and a rescan adopts every folder it has no project for: a project
+// deleted with its files kept must not be adopted straight back from the folder it left.
+#[test]
+fn a_folder_kept_by_a_delete_is_not_adopted_again_until_it_is_gone() {
+    let lib = TempLibrary::new();
+    let ctx = seed_user(&lib, "marc");
+    let keep = create_project(&lib, &ctx, input("Keep")).unwrap();
+    let folder = lib.dir().join("marc").join("Keep");
+    std::fs::write(folder.join("a.stl"), "solid").unwrap();
+    delete_project(&lib, &ctx, &keep.id, false).unwrap();
+
+    let result = rescan(&lib, &ctx, None).unwrap();
+    assert_eq!(result.adopted, 0);
+    assert!(
+        list_projects(&lib, &ctx, &ProjectQuery::default())
+            .unwrap()
+            .is_empty()
+    );
+    assert!(folder.is_dir());
+
+    // Renamed in Explorer, it is a new folder, and adopted as one.
+    let renamed = lib.dir().join("marc").join("Keep again");
+    std::fs::rename(&folder, &renamed).unwrap();
+    assert_eq!(rescan(&lib, &ctx, None).unwrap().adopted, 1);
+
+    // Once the released folder is gone the entry is too, so a folder of that name made later is
+    // adopted as usual.
+    std::fs::create_dir(&folder).unwrap();
+    assert_eq!(rescan(&lib, &ctx, None).unwrap().adopted, 1);
+    let mut names: Vec<String> = list_projects(&lib, &ctx, &ProjectQuery::default())
+        .unwrap()
+        .into_iter()
+        .map(|project| project.name)
+        .collect();
+    names.sort();
+    assert_eq!(names, ["Keep", "Keep again"]);
+}
+
+// Deleting with the files leaves nothing to remember.
+#[test]
+fn deleting_with_the_files_releases_no_folder() {
+    let lib = TempLibrary::new();
+    let ctx = seed_user(&lib, "marc");
+    let wipe = create_project(&lib, &ctx, input("Wipe")).unwrap();
+    delete_project(&lib, &ctx, &wipe.id, true).unwrap();
+    let released: i64 = lib
+        .db()
+        .query_row("SELECT COUNT(*) FROM released_folders", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    assert_eq!(released, 0);
 }
 
 #[test]
