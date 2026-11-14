@@ -101,3 +101,39 @@ async fn files_stream_in_local_mode_too() {
         .await;
     assert_eq!(raw.text(), "solid a");
 }
+
+#[tokio::test]
+async fn renaming_a_project_renames_its_folder_in_local_mode_only() {
+    let server = local();
+    let id = server.new_project("", "Benchy").await["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let renamed = server
+        .fetch(
+            &format!("/api/projects/{id}"),
+            Req::patch().json(&json!({ "name": "Benchy Boat" })),
+        )
+        .await;
+    assert_eq!(renamed.status, 200, "{}", renamed.text());
+    assert!(server.dir().join("Benchy Boat").is_dir());
+    assert!(!server.dir().join("Benchy").exists());
+
+    // On a server the folder stays where it is.
+    let shared = TestServer::new();
+    let cookie = shared.login_as_admin().await;
+    let id = shared.new_project(&cookie, "Benchy").await["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let renamed = shared
+        .fetch(
+            &format!("/api/projects/{id}"),
+            Req::patch()
+                .cookie(&cookie)
+                .json(&json!({ "name": "Benchy Boat" })),
+        )
+        .await;
+    assert_eq!(renamed.status, 200, "{}", renamed.text());
+    assert!(shared.dir().join("admin").join("Benchy").is_dir());
+}

@@ -8,7 +8,7 @@ use spm_core::dto::ProjectQuery;
 use spm_core::validate::{CreateProjectInput, ProjectPatch, TagBody, parse_project_query};
 use spm_core::{
     AppError, add_tag, create_project, delete_project, get_project, list_projects, list_tags,
-    remove_tag, rescan, update_project,
+    remove_tag, rescan, update_project, update_project_moving_folder,
 };
 
 use crate::decorate::{decorate_project, decorate_project_detail};
@@ -159,7 +159,17 @@ async fn patch(
     ParsedJson(patch): ParsedJson<ProjectPatch>,
 ) -> Result<Response, ApiError> {
     let lib = state.lib().clone();
-    let project = blocking(move || update_project(&lib, &ctx, &id, patch)).await?;
+    // A library on this computer (the desktop's local mode) is the user's own folder: renaming a
+    // project renames its folder too. A server's folders never move.
+    let local = !state.sessions();
+    let project = blocking(move || {
+        if local {
+            update_project_moving_folder(&lib, &ctx, &id, patch)
+        } else {
+            update_project(&lib, &ctx, &id, patch)
+        }
+    })
+    .await?;
     Ok(json(&decorate_project(&project)))
 }
 

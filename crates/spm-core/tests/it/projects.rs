@@ -8,7 +8,7 @@ use spm_core::testing::{TempLibrary, seed_file_row, seed_user};
 use spm_core::validate::{CreateProjectInput, ProjectPatch};
 use spm_core::{
     AppErrorCode, Ctx, Library, add_tag, create_project, delete_project, get_project,
-    list_projects, list_tags, new_id, remove_tag, update_project,
+    list_projects, list_tags, new_id, remove_tag, update_project, update_project_moving_folder,
 };
 
 use crate::common::code_of;
@@ -603,4 +603,68 @@ fn create_and_update_validate_their_input_in_core() {
         code_of(update_project(&lib, &ctx, &created.id, bad_url)),
         AppErrorCode::Validation
     );
+}
+
+// ---- a rename in a library on this computer moves the folder ------------------------------------
+
+fn rename_to(name: &str) -> ProjectPatch {
+    ProjectPatch {
+        name: Some(name.to_owned()),
+        ..Default::default()
+    }
+}
+
+fn folders(lib: &Library) -> Vec<String> {
+    let mut names: Vec<String> = std::fs::read_dir(lib.dir().join("marc"))
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    names.sort();
+    names
+}
+
+#[test]
+fn a_rename_moves_a_folder_named_after_the_project_with_its_files() {
+    let lib = TempLibrary::new();
+    let ctx = seed_user(&lib, "marc");
+    let project = create_project(&lib, &ctx, input("Benchy")).unwrap();
+    let file = spm_core::upload_file(&lib, &ctx, &project.id, "a.stl", 7, &b"solid a"[..]).unwrap();
+
+    let renamed =
+        update_project_moving_folder(&lib, &ctx, &project.id, rename_to("Benchy: v2")).unwrap();
+
+    assert_eq!(renamed.name, "Benchy: v2");
+    assert_eq!(folders(&lib), [sanitize_dir_name("Benchy: v2")]);
+    let resolved = spm_core::resolve_file_path(&lib, &ctx, &file.id).unwrap();
+    assert_eq!(std::fs::read(resolved.abs_path).unwrap(), b"solid a");
+}
+
+#[test]
+fn a_folder_named_otherwise_stays_and_the_server_variant_never_moves_one() {
+    let lib = TempLibrary::new();
+    let ctx = seed_user(&lib, "marc");
+    let project = create_project(&lib, &ctx, input("Benchy")).unwrap();
+    // A name of its own, set where the folder does not follow (the server's rule).
+    update_project(&lib, &ctx, &project.id, rename_to("My Boat")).unwrap();
+    assert_eq!(folders(&lib), ["Benchy"]);
+
+    update_project_moving_folder(&lib, &ctx, &project.id, rename_to("My Boat 2")).unwrap();
+    assert_eq!(folders(&lib), ["Benchy"]);
+}
+
+#[test]
+fn a_taken_folder_name_gets_a_number_and_a_change_of_case_is_kept() {
+    let lib = TempLibrary::new();
+    let ctx = seed_user(&lib, "marc");
+    let project = create_project(&lib, &ctx, input("benchy")).unwrap();
+    update_project_moving_folder(&lib, &ctx, &project.id, rename_to("Benchy")).unwrap();
+    assert_eq!(folders(&lib), ["Benchy"]);
+
+    // A folder nobody adopted yet, and another project's folder, both count as taken.
+    std::fs::create_dir_all(lib.dir().join("marc").join("Boat")).unwrap();
+    create_project(&lib, &ctx, input("Boat (2)")).unwrap();
+    update_project_moving_folder(&lib, &ctx, &project.id, rename_to("Boat")).unwrap();
+    assert_eq!(folders(&lib), ["Boat", "Boat (2)", "Boat (3)"]);
+    let detail = get_project(&lib, &ctx, &project.id).unwrap();
+    assert_eq!(detail.project.name, "Boat");
 }

@@ -56,7 +56,10 @@ pub use projects::import_curamanager::{
 pub use projects::import_zip::import_curamanager_zip;
 pub use projects::queries::{get_project, list_projects, list_tags};
 pub use projects::rescan::{RescanProgress, rescan};
-pub use projects::usecases::{add_tag, create_project, delete_project, remove_tag, update_project};
+pub use projects::usecases::{
+    add_tag, create_project, delete_project, remove_tag, update_project,
+    update_project_moving_folder,
+};
 pub use users::account::{change_password, me, update_profile};
 pub use users::admin::{
     CreatedUser, create_user, delete_user, list_users, reissue_invite, require_admin, update_user,

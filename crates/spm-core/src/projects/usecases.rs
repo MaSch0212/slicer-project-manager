@@ -9,7 +9,7 @@ use std::io::ErrorKind;
 use rusqlite::types::Value;
 use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params, params_from_iter};
 
-use super::queries::{get_project_in, require_project_row};
+use super::queries::{ProjectRow, get_project_in, require_project_row};
 use crate::clock::now_ms;
 use crate::ctx::Ctx;
 use crate::db::Library;
@@ -141,6 +141,109 @@ pub fn update_project(
     update_project_unchecked(lib, ctx, id, patch.validate()?)
 }
 
+/// [`update_project`] for a library on this computer, where **the folder follows a rename**: a
+/// project whose folder is named after it (its old name, or the folder name that name makes) moves
+/// to the folder its new name makes, the way a new project's folder is named. A folder the user
+/// named otherwise keeps its name.
+///
+/// The rename itself always succeeds; the folder is a best effort. A folder that cannot be moved
+/// right now (a slicer has a file in it open, on Windows) or whose new name is taken by a folder no
+/// project has keeps its name, and that is logged. The server never calls this: there, other
+/// people's tools may know the folder by its name.
+pub fn update_project_moving_folder(
+    lib: &Library,
+    ctx: &Ctx,
+    id: &str,
+    patch: ProjectPatch,
+) -> Result<CoreProjectDto> {
+    let patch = patch.validate()?;
+    let before = require_project_row(&lib.db(), ctx, id)?;
+    let new_name = patch.name.clone();
+    let project = update_project_unchecked(lib, ctx, id, patch)?;
+    match new_name {
+        Some(new_name) if new_name != before.name => {
+            move_folder_after_rename(lib, ctx, &before, &new_name)?;
+            Ok(get_project_in(&lib.db(), ctx, id)?.project)
+        }
+        _ => Ok(project),
+    }
+}
+
+/// Moves a project's folder to the one its new name makes, if the folder was named after it.
+fn move_folder_after_rename(
+    lib: &Library,
+    ctx: &Ctx,
+    before: &ProjectRow,
+    new_name: &str,
+) -> Result<()> {
+    if before.dir_name != before.name && before.dir_name != sanitize_dir_name(&before.name) {
+        return Ok(());
+    }
+    let wanted = sanitize_dir_name(new_name);
+    if wanted == before.dir_name {
+        return Ok(());
+    }
+    let mut conn = lib.db();
+    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+    let user = require_user_row(&tx, &ctx.user_id)?;
+    let from = project_dir(lib, &user.library_dir, &before.dir_name)?;
+    // A change of case only is the same folder to Windows: no other name needs finding.
+    let target_name = if wanted.to_lowercase() == before.dir_name.to_lowercase() {
+        wanted
+    } else {
+        let mut candidate = wanted.clone();
+        let mut n = 2;
+        loop {
+            let has_project = tx
+                .query_row(
+                    "SELECT 1 FROM projects WHERE owner_id = ? AND dir_name = ?",
+                    params![ctx.user_id, candidate],
+                    |_| Ok(()),
+                )
+                .optional()?
+                .is_some();
+            // A folder no project has yet (the next rescan would adopt it) is taken too.
+            if !has_project && !project_dir(lib, &user.library_dir, &candidate)?.exists() {
+                break candidate;
+            }
+            candidate = format!("{wanted} ({n})");
+            n += 1;
+        }
+    };
+    let to = project_dir(lib, &user.library_dir, &target_name)?;
+    if let Err(error) = fs::rename(&from, &to) {
+        lib.log().warn(
+            "project folder kept its name",
+            fields![
+                "projectId" => &before.id,
+                "dirName" => &before.dir_name,
+                "wanted" => &target_name,
+                "error" => error.to_string(),
+            ],
+        );
+        return Ok(());
+    }
+    tx.execute(
+        "UPDATE projects SET dir_name = ? WHERE id = ? AND owner_id = ?",
+        params![target_name, before.id, ctx.user_id],
+    )?;
+    if let Err(error) = tx.commit() {
+        // The row still names the old folder: put the folder back where the row says it is.
+        let _ = fs::rename(&to, &from);
+        return Err(error.into());
+    }
+    lib.log().info(
+        "project folder renamed with its project",
+        fields![
+            "projectId" => &before.id,
+            "from" => &before.dir_name,
+            "to" => &target_name,
+            "userId" => &ctx.user_id,
+        ],
+    );
+    Ok(())
+}
+
 pub(crate) fn update_project_unchecked(
     lib: &Library,
     ctx: &Ctx,
@@ -151,7 +254,8 @@ pub(crate) fn update_project_unchecked(
     let mut params: Vec<Value> = Vec::new();
     let mut fields_set: Vec<&str> = Vec::new();
 
-    // dir_name deliberately does not follow name: a rename must never move a folder.
+    // dir_name does not follow name here: on a server a rename must never move a folder. A library
+    // on this computer moves it afterwards (`update_project_moving_folder`).
     if let Some(name) = &patch.name {
         sets.push("name = ?");
         params.push(Value::Text(name.clone()));
