@@ -199,6 +199,19 @@ async fn a_connected_server_is_synced_into_a_folder_both_ways_through_the_proxy(
         "the server's folder and files stay where they were"
     );
 
+    // A project renamed in the app renames its folder here.
+    let renamed = client
+        .send(
+            client
+                .request(reqwest::Method::PATCH, &format!("/api/projects/{id}"))
+                .json(&json!({ "name": "Robot Renamed" })),
+        )
+        .await;
+    assert_eq!(renamed.status, 200, "{}", renamed.text());
+    let moved = root.join("Robot Renamed").join("arm.stl");
+    eventually("the folder to follow the rename", || moved.is_file()).await;
+    assert!(!root.join("Robot").exists());
+
     // Signing out pauses it.
     let out = client.post_json("/api/auth/logout", &json!({})).await;
     assert!(out.status < 300, "{}", out.text());

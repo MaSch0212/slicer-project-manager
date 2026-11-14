@@ -23,7 +23,8 @@
 //!
 //! Projects map to top-level folders by id in the base, so a folder keeps its project even when the
 //! server's folder of the same project has another name, and a folder renamed here keeps its
-//! project (recognised by holding exactly the files last agreed for it). A folder whose project is gone from the
+//! project (recognised by holding exactly the files last agreed for it). The other way round, a
+//! project renamed in the app renames its folder here, when the folder was named after it. A folder whose project is gone from the
 //! server is moved to the trash, unless something in it changed here, in which case it is uploaded
 //! again as a new project: nothing anybody changed is ever thrown away by a sync.
 
@@ -42,6 +43,7 @@ use serde::{Deserialize, Serialize};
 use spm_core::AppError;
 use spm_core::files::hash::file_content_hash;
 use spm_core::library_sync::{BaseVersion, SyncFile, SyncManifest, parse_hex, to_hex};
+use spm_core::projects::usecases::sanitize_dir_name;
 use spm_core::watch::{LibraryWatch, is_transient_name};
 use tokio_util::io::ReaderStream;
 
@@ -332,6 +334,10 @@ pub struct SyncState {
 pub struct ProjectBase {
     /// The top-level folder the project lives in here.
     pub dir: String,
+    /// The project's name on the server when it was last seen: a different name in the manifest is
+    /// a rename in the app, which the folder follows. `None` until a manifest has said.
+    #[serde(default)]
+    pub name: Option<String>,
     /// By `/`-separated path relative to the project folder.
     pub files: BTreeMap<String, FileBase>,
 }
@@ -641,19 +647,22 @@ pub fn sync_once(
         .collect();
 
     // 0. Folders renamed here: the project goes with its folder.
+    let mut renamed_here: HashSet<String> = HashSet::new();
     for (id, new_dir) in renamed_dirs(root, state, &dirs)? {
         let Some(base) = state.projects.get_mut(&id) else {
             continue;
         };
         let old_dir = std::mem::replace(&mut base.dir, new_dir.clone());
         pass.report.renamed += 1;
+        renamed_here.insert(id.clone());
         // The server's name follows when it was the folder's name, as a new folder's is.
         if let Some(project) = remote.get(id.as_str())
             && project.name == old_dir
         {
             match server.rename_project(&id, &new_dir) {
-                // A name another project has already: the project keeps its name.
-                Ok(()) | Err(SyncError::Conflict) => {}
+                Ok(()) => base.name = Some(new_dir.clone()),
+                // Refused because the project changed meanwhile: it keeps its name.
+                Err(SyncError::Conflict) => {}
                 Err(error) => return Err(error),
             }
         }
@@ -671,6 +680,10 @@ pub fn sync_once(
         match remote.get(id.as_str()) {
             Some(project) if here => {
                 let entry = state.projects.get_mut(&id).expect("known");
+                // The manifest predates a rename this pass made itself: its name is stale.
+                if !renamed_here.contains(&id) && follow_app_rename(root, entry, &project.name) {
+                    pass.report.renamed += 1;
+                }
                 pass.sync_files(&id, entry, &project.files)?;
             }
             Some(project) => {
@@ -739,6 +752,7 @@ pub fn sync_once(
             project.id.clone(),
             ProjectBase {
                 dir,
+                name: Some(project.name.clone()),
                 files: BTreeMap::new(),
             },
         );
@@ -758,6 +772,8 @@ pub fn sync_once(
             id.clone(),
             ProjectBase {
                 dir: dir.clone(),
+                // Taken from the next manifest: the server may have trimmed the folder's name.
+                name: None,
                 files: BTreeMap::new(),
             },
         );
@@ -766,6 +782,54 @@ pub fn sync_once(
     }
 
     Ok(pass.report)
+}
+
+/// A project renamed in the app: its folder here is renamed to match, when it was named after the
+/// project (a folder the user named differently keeps its name). Returns whether it moved.
+///
+/// A folder that cannot be renamed right now (a slicer has a file in it open) keeps the old name in
+/// the base, so the next pass tries again; a name that another folder here already has is given
+/// up on, and the folder stays as it is.
+fn follow_app_rename(root: &Path, base: &mut ProjectBase, server_name: &str) -> bool {
+    let Some(old_name) = base.name.clone() else {
+        base.name = Some(server_name.to_owned());
+        return false;
+    };
+    if old_name == server_name {
+        return false;
+    }
+    let named_after = base.dir == old_name || base.dir == sanitize_dir_name(&old_name);
+    let wanted = sanitize_dir_name(server_name);
+    if !named_after || wanted.is_empty() || wanted == base.dir {
+        base.name = Some(server_name.to_owned());
+        return false;
+    }
+    let target = root.join(&wanted);
+    // A change of case only is the same folder to Windows: `exists` would say it is taken.
+    let case_only = wanted.to_lowercase() == base.dir.to_lowercase();
+    if !case_only && target.exists() {
+        diag::warn(&format!(
+            "the project \"{server_name}\" was renamed, but a folder \"{wanted}\" is already in the \
+             sync folder; \"{}\" keeps its name",
+            base.dir
+        ));
+        base.name = Some(server_name.to_owned());
+        return false;
+    }
+    match fs::rename(root.join(&base.dir), &target) {
+        Ok(()) => {
+            base.dir = wanted;
+            base.name = Some(server_name.to_owned());
+            true
+        }
+        Err(error) => {
+            diag::warn(&format!(
+                "could not rename the folder \"{}\" to \"{wanted}\" ({error}); trying again later",
+                base.dir
+            ));
+            false
+        }
+    }
 }
 
 /// What identifies a folder's content without reading it: every file's path, size and modification

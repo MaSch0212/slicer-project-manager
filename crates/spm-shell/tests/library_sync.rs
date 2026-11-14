@@ -519,3 +519,82 @@ fn a_renamed_folder_whose_project_has_a_name_of_its_own_keeps_that_name() {
     assert_eq!(manifest.projects.len(), 1);
     assert_eq!(manifest.projects[0].name, "The Robot");
 }
+
+fn rename_on_server(world: &World, project_id: &str, name: &str) {
+    world.server.rename_project(project_id, name).unwrap();
+}
+
+#[test]
+fn a_project_renamed_in_the_app_renames_its_folder_here() {
+    let mut world = World::new();
+    let id = world.server_project("Robot", &[("arm.stl", "arm"), ("parts/leg.stl", "leg")]);
+    world.sync();
+
+    rename_on_server(&world, &id, "Robot: Mk2");
+    let report = world.sync();
+    assert_eq!(report.renamed, 1);
+    assert_eq!(report.uploaded + report.downloaded, 0, "nothing is copied");
+    // Named the way a new project's folder would be.
+    assert_eq!(
+        world.local_files(),
+        pairs(&[
+            ("Robot- Mk2/arm.stl", "arm"),
+            ("Robot- Mk2/parts/leg.stl", "leg")
+        ])
+    );
+    assert!(!world.sync().changed_anything());
+
+    // And it goes on syncing under the new name.
+    later();
+    world.write_local("Robot- Mk2/arm.stl", "arm, edited");
+    assert_eq!(world.sync().uploaded, 1);
+}
+
+#[test]
+fn a_change_of_case_only_renames_the_folder_too() {
+    let mut world = World::new();
+    let id = world.server_project("robot", &[("arm.stl", "arm")]);
+    world.sync();
+    rename_on_server(&world, &id, "Robot");
+    assert_eq!(world.sync().renamed, 1);
+    let names: Vec<String> = fs::read_dir(world.root())
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|name| !name.starts_with('.'))
+        .collect();
+    assert_eq!(names, ["Robot"]);
+}
+
+#[test]
+fn a_folder_named_otherwise_keeps_its_name_when_the_project_is_renamed() {
+    let mut world = World::new();
+    // A project whose name is not its folder's: renamed in the app before it was ever synced.
+    let id = world.server_project("Robot", &[("arm.stl", "arm")]);
+    rename_on_server(&world, &id, "The Robot");
+    world.sync();
+    assert_eq!(world.local_files(), pairs(&[("Robot/arm.stl", "arm")]));
+
+    rename_on_server(&world, &id, "The Robot, v2");
+    assert_eq!(world.sync().renamed, 0);
+    assert_eq!(world.local_files(), pairs(&[("Robot/arm.stl", "arm")]));
+}
+
+#[test]
+fn a_new_folder_named_like_another_project_gets_a_project_of_its_own() {
+    let mut world = World::new();
+    let id = world.server_project("Robot", &[("arm.stl", "arm")]);
+    rename_on_server(&world, &id, "The Robot");
+    world.sync();
+
+    // "The Robot" is also the name of the project in the folder "Robot": the new folder still gets
+    // a project of its own, and the old one is not merged into it.
+    world.write_local("The Robot/x.stl", "x");
+    let report = world.sync();
+    assert_eq!(report.projects_created, 1, "{report:?}");
+    let manifest = sync_manifest(&world.server.lib, &world.server.ctx).unwrap();
+    let mut names: Vec<&str> = manifest.projects.iter().map(|p| p.name.as_str()).collect();
+    names.sort();
+    assert_eq!(names, ["The Robot", "The Robot"]);
+    assert!(!world.sync().changed_anything());
+    assert!(world.root().join("The Robot").join("x.stl").is_file());
+}
