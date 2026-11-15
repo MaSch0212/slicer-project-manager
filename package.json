@@ -18,8 +18,9 @@
     "gen:types": "cargo run -p spm-core --example gen_ts",
     "icons": "node tools/generate-icons.ts",
     "notices": "node tools/generate-notices.mjs",
+    "clean:stale": "node tools/sweep.mjs",
     "lint:rust": "cargo clippy --workspace --all-targets --all-features -- -D warnings && cargo clippy -p spm-core -- -D warnings && cargo fmt --all --check",
-    "verify": "pnpm lint && pnpm fmt:check && pnpm typecheck && pnpm test && pnpm test:tools && pnpm test:rust && pnpm lint:rust"
+    "verify": "pnpm lint && pnpm fmt:check && pnpm typecheck && pnpm test && pnpm test:tools && pnpm test:rust && pnpm lint:rust && node tools/sweep.mjs --soft"
   },
   "devDependencies": {
     "@playwright/test": "^1.64.1",

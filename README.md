@@ -252,20 +252,21 @@ wins (`SPM_PORT=9000 pnpm dev:server`). The activation line is printed in that t
 
 The rest of the root scripts:
 
-| Script            | What it does                                                     |
-| ----------------- | ---------------------------------------------------------------- |
-| `pnpm lint`       | `oxlint`                                                         |
-| `pnpm fmt`        | `oxfmt` (`pnpm fmt:check` only checks)                           |
-| `pnpm typecheck`  | `tsc --noEmit` in every package                                  |
-| `pnpm test`       | Vitest (jsdom + Solid Testing Library) in `packages/web`         |
-| `pnpm test:tools` | the icon assets' test (`tools/icons.test.ts`, Node's own runner) |
-| `pnpm test:rust`  | `cargo test --workspace --all-features`                          |
-| `pnpm lint:rust`  | `cargo clippy` with warnings denied, then `cargo fmt --check`    |
-| `pnpm verify`     | all of the above, in that order: what CI runs                    |
-| `pnpm e2e`        | the Playwright suite against the real server                     |
-| `pnpm gen:types`  | regenerate the TypeScript DTO types (below)                      |
-| `pnpm icons`      | regenerate the app icons (below)                                 |
-| `pnpm notices`    | regenerate `THIRD-PARTY-NOTICES.md` (below)                      |
+| Script             | What it does                                                      |
+| ------------------ | ----------------------------------------------------------------- |
+| `pnpm lint`        | `oxlint`                                                          |
+| `pnpm fmt`         | `oxfmt` (`pnpm fmt:check` only checks)                            |
+| `pnpm typecheck`   | `tsc --noEmit` in every package                                   |
+| `pnpm test`        | Vitest (jsdom + Solid Testing Library) in `packages/web`          |
+| `pnpm test:tools`  | the icon assets' test (`tools/icons.test.ts`, Node's own runner)  |
+| `pnpm test:rust`   | `cargo test --workspace --all-features`                           |
+| `pnpm lint:rust`   | `cargo clippy` with warnings denied, then `cargo fmt --check`     |
+| `pnpm verify`      | all of the above, in that order: what CI runs, then `clean:stale` |
+| `pnpm e2e`         | the Playwright suite against the real server                      |
+| `pnpm gen:types`   | regenerate the TypeScript DTO types (below)                       |
+| `pnpm icons`       | regenerate the app icons (below)                                  |
+| `pnpm notices`     | regenerate `THIRD-PARTY-NOTICES.md` (below)                       |
+| `pnpm clean:stale` | drop stale build output from `target/` (below)                    |
 
 ### Layout
 
@@ -277,14 +278,15 @@ The rest of the root scripts:
 | `crates/spm-shell`       | the desktop's logic without Tauri: libraries, remote proxy, slicers, model browser                                                    |
 | `apps/desktop/src-tauri` | the Tauri app (crate `spm-desktop`); `apps/desktop` is its CLI package                                                                |
 | `packages/web`           | the SolidJS + Tailwind 4 web app, one build for the browser and the desktop                                                           |
-| `tools/`                 | repo scripts: dev server, icon generator, notices generator                                                                           |
+| `tools/`                 | repo scripts: dev server, icon generator, notices generator, target sweep                                                             |
 | `assets/icons/`          | the three source SVGs every icon is drawn from                                                                                        |
 
 ### Tests
 
     pnpm verify
 
-runs every check CI runs. It needs no browser and opens no window.
+runs every check CI runs. It needs no browser and opens no window. It ends by sweeping stale
+build output (below), which is housekeeping and can never fail the run.
 
     pnpm e2e
 
@@ -347,6 +349,19 @@ for the npm packages in the embedded web bundle, and each package's own licence 
 hand-written sections in `tools/notices-static.md` (the Rust standard library, SQLite, musl,
 the WebView2 loader, NSIS). Run it after a dependency change and commit the result. The desktop
 installer ships the file beside the program.
+
+### Stale build output
+
+Cargo never cleans `target/`: every toolchain update, dependency bump and deleted test leaves its
+artifacts behind, and the folder grows without bound (the workspace, the Tauri app and the test
+binaries are all debug-built). `pnpm clean:stale` (`tools/sweep.mjs`) runs
+[cargo-sweep](https://github.com/holmgr/cargo-sweep) over it: artifacts of toolchains that are no
+longer installed, and artifacts no build has used in the last seven days. Install it once with
+`cargo install cargo-sweep`; without it the step prints one line and does nothing.
+
+`pnpm verify` ends with the same sweep (`--soft`), after the checks. It is housekeeping, not a
+check: a sweep that fails prints a warning and never fails `verify`, and it is skipped in CI,
+where the target folder starts empty.
 
 ### Dependency policy
 
