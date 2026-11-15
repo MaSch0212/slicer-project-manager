@@ -48,7 +48,16 @@ strip = true
 # worker loops survive a panicking pass; under `abort` both guards would be inert and the same bug
 # would kill the whole server. `spm-server/tests/release_profile.rs` keeps it that way.
 
+# Debug info is most of what fills `target/` (tens of gigabytes across the workspace, the
+# desktop app and every test binary). `line-tables-only` keeps what we actually read — the file
+# and line of every frame in a panic or `RUST_BACKTRACE` — and drops the rest; a debugger can
+# still step through our crates but no longer sees local variables.
+[profile.dev]
+debug = "line-tables-only"
+
 # PBKDF2 at 600 000 iterations dominates the auth tests; optimise dependencies (sha2, pbkdf2, ...)
 # even in debug builds so a test that hashes a password takes tenths of a second.
 [profile.dev.package."*"]
 opt-level = 2
+# Dependencies are never debugged here, and their debug info dwarfs ours.
+debug = false

@@ -350,7 +350,7 @@ hand-written sections in `tools/notices-static.md` (the Rust standard library, S
 the WebView2 loader, NSIS). Run it after a dependency change and commit the result. The desktop
 installer ships the file beside the program.
 
-### Stale build output
+### Build output on disk
 
 Cargo never cleans `target/`: every toolchain update, dependency bump and deleted test leaves its
 artifacts behind, and the folder grows without bound (the workspace, the Tauri app and the test
@@ -358,6 +358,12 @@ binaries are all debug-built). `pnpm clean:stale` (`tools/sweep.mjs`) runs
 [cargo-sweep](https://github.com/holmgr/cargo-sweep) over it: artifacts of toolchains that are no
 longer installed, and artifacts no build has used in the last seven days. Install it once with
 `cargo install cargo-sweep`; without it the step prints one line and does nothing.
+
+What is built is kept small too: `[profile.dev]` sets `debug = "line-tables-only"`, and
+dependencies get no debug info at all (`[profile.dev.package."*"]`). Full debug info is most of
+what fills `target/` — a debug build of `spm-core` alone is 338 MB this way against 665 MB with
+it. Panics and `RUST_BACKTRACE` still name the file and line of every frame; a debugger can still
+step through our crates, but no longer shows local variables, and dependencies are opaque to it.
 
 `pnpm verify` ends with the same sweep (`--soft`), after the checks. It is housekeeping, not a
 check: a sweep that fails prints a warning and never fails `verify`, and it is skipped in CI,
